@@ -9,7 +9,10 @@ GuardDog only ever sees a directory. It analyzes statically and never runs the c
 GuardDog is noisy, so we keep only `threat-*` rules, with our own severity table. Its
 `capability-*` rules ("makes network requests", "reads files") describe most libraries.
 Heuristics never go above high: critical is reserved for proven taint paths and
-known-malicious advisories.
+known-malicious advisories. In very popular packages (the vendored top-PyPI list),
+medium heuristics drop to low: there they are almost always legitimate features
+(e.g. typer's shell-completion installer writing to ~/.bashrc), while high-confidence
+threat rules still fire at full severity in case a popular package is hijacked.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from sniff_test.analyzers import _proc
+from sniff_test.analyzers.pypi_meta import is_popular
 from sniff_test.analyzers.python_deps import Resolution, ResolvedPackage, fetch_artifact
 from sniff_test.analyzers.semgrep import neutralize_ignores
 from sniff_test.deps.uv import Artifact
@@ -120,6 +124,8 @@ def to_findings(data: dict, pkg: ResolvedPackage, art: Artifact) -> list[Finding
         sev = SEVERITY.get(rule, _UNKNOWN_THREAT)
         if sev is None:
             continue
+        if sev is Severity.MEDIUM and is_popular(pkg.name):
+            sev = Severity.LOW
         hits = hits if isinstance(hits, list) else [hits]
         first = hits[0] if isinstance(hits[0], dict) else {}
         where = str(first.get("location", ""))

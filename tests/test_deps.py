@@ -397,3 +397,87 @@ def test_guarddog_skips_ha_provided_packages(tmp_path):
         "aiohttp", "3.14.5", {"x86_64"}, ha_provided=True
     )
     assert guarddog.run(res, tmp_path).state is AnalyzerState.NOT_APPLICABLE
+
+
+# --- dep-vuln policy (decided 2026-11-08) ---------------------------------------------------
+
+_CRIT = [{"id": "C", "severity": [{"score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}]}]
+
+
+def test_python_cve_alone_is_never_critical_but_stays_inbound():
+    [f] = osv.to_findings([_pkg("x", _CRIT, [{"ids": ["C"], "max_severity": "9.8"}])], None, set())
+    assert f.severity is Severity.HIGH and Tag.INBOUND in f.tags
+
+
+def test_bundled_npm_cve_is_capped_at_medium_without_inbound():
+    p = _pkg("js-yaml", _CRIT, [{"ids": ["C"], "max_severity": "9.8"}], "npm")
+    [f] = osv.to_findings([p], "package-lock.json", set(), osv.NPM_POLICY)
+    assert f.severity is Severity.MEDIUM and Tag.INBOUND not in f.tags
+    assert "bundled into the card" in f.message
+
+
+def test_dev_only_npm_packages_report_malware_but_not_cves():
+    cve = _pkg("vite", _CRIT, [{"ids": ["C"], "max_severity": "9.8"}], "npm")
+    mal = osv._Pkg("flatmap-stream", "0.1.1", "npm", {"MAL-1": {"id": "MAL-1"}}, [])
+    dev = {("vite", "1.0"), ("flatmap-stream", "0.1.1")}
+    found = osv.to_findings([cve, mal], "package-lock.json", set(), osv.NPM_POLICY, dev)
+    assert [f.rule_id for f in found] == ["dep-malicious"]
+
+
+def test_npm_dev_only_from_lockfile_v3_and_v1(tmp_path):
+    v3 = tmp_path / "v3" / "package-lock.json"
+    v3.parent.mkdir()
+    v3.write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {
+                    "": {"name": "card"},
+                    "node_modules/vite": {"version": "8.0.0", "dev": True},
+                    "node_modules/@babel/core": {"version": "7.0.0", "devOptional": True},
+                    "node_modules/lit": {"version": "3.1.0"},
+                    "node_modules/a/node_modules/semver": {"version": "7.0.0", "dev": True},
+                    "node_modules/b/node_modules/semver": {"version": "7.0.0"},  # also bundled
+                },
+            }
+        )
+    )
+    assert osv.npm_dev_only(v3) == {("vite", "8.0.0"), ("@babel/core", "7.0.0")}
+    v1 = tmp_path / "v1" / "package-lock.json"
+    v1.parent.mkdir()
+    v1.write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 1,
+                "dependencies": {
+                    "rollup": {
+                        "version": "2.0.0",
+                        "dev": True,
+                        "dependencies": {"fsevents": {"version": "2.1.0", "dev": True}},
+                    },
+                    "lit": {"version": "3.1.0"},
+                },
+            }
+        )
+    )
+    assert osv.npm_dev_only(v1) == {("rollup", "2.0.0"), ("fsevents", "2.1.0")}
+    yarn = tmp_path / "yarn.lock"
+    yarn.write_text("# yarn\n")
+    assert osv.npm_dev_only(yarn) == set()
+
+
+def test_guarddog_medium_heuristics_drop_to_low_in_popular_packages():
+    data = {
+        "results": {
+            "threat-filesystem-autostart": [{"location": "typer/x.py:1", "match": ".bashrc"}],
+            "threat-network-exfil-messenger": [{"location": "typer/y.py:2", "match": "discord"}],
+        }
+    }
+    art = Artifact("https://x", "typer-0.15.2-py3-none-any.whl", None, "wheel")
+    popular = python_deps.ResolvedPackage("typer", "0.15.2", {"x86_64"})
+    sev = {f.rule_id: f.severity for f in guarddog.to_findings(data, popular, art)}
+    assert sev["dep-guarddog-filesystem-autostart"] is Severity.LOW
+    assert sev["dep-guarddog-network-exfil-messenger"] is Severity.HIGH  # hijack still loud
+    obscure = python_deps.ResolvedPackage("zzz-obscure-lib", "1.0", {"x86_64"})
+    sev = {f.rule_id: f.severity for f in guarddog.to_findings(data, obscure, art)}
+    assert sev["dep-guarddog-filesystem-autostart"] is Severity.MEDIUM

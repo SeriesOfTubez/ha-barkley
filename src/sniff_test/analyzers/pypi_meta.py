@@ -37,6 +37,10 @@ def _top_set() -> frozenset[str]:
     return frozenset(_top_packages())
 
 
+def is_popular(name: str) -> bool:
+    return reqs.normalize(name) in _top_set()
+
+
 def _osa_distance(a: str, b: str, limit: int) -> int:
     """Optimal string alignment distance (Levenshtein + adjacent transpositions)."""
     if abs(len(a) - len(b)) > limit:

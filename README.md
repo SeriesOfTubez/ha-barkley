@@ -17,7 +17,23 @@ uv run sniff-test scan owner/repo --ref v1.2.3                  # a specific tag
 uv run sniff-test scan ./path/to/repo                           # local checkout
 uv run sniff-test scan owner/repo --exposure public             # HA reachable from the internet
 uv run sniff-test scan owner/repo --json -o report.json         # machine-readable report
+uv run sniff-test scan owner/repo --ha-version 2026.10.2        # resolve deps for a specific HA release
+uv run sniff-test scan ./path/to/repo --offline                 # no PyPI/OSV lookups (marked incomplete)
 ```
+
+## What gets checked
+
+- **Code** (Semgrep, bundled HA-specific rules): token and data exfiltration, encoded
+  payload loaders, auth internals, other integrations' credentials, unauthenticated views.
+- **Python dependencies** (integrations): the `manifest.json` requirements are resolved
+  the way HA installs them (HA's constraints, its Python version, PyPI plus HA's wheel
+  index) for both x86_64 and aarch64 HA OS / Container. Then: typosquats (offline, from
+  the name alone), VCS/URL requirements, brand-new packages, known vulnerabilities and
+  known-malicious packages (osv-scanner), and heuristic malware checks (GuardDog) on every
+  package HA doesn't already ship.
+- **npm dependencies** (cards): the repo's lockfile, checked with osv-scanner. Known
+  malware is reported for every package; CVEs only for packages bundled into the card,
+  not for build-only tools.
 
 | Score | Verdict |
 |---|---|
@@ -37,18 +53,27 @@ installs it. Archives are extracted into a fresh temp dir outside this repo with
 zip-slip, symlink and size protections, and in-tree `.semgrepignore`/`.gitignore` files
 are removed so a repo can't hide files from the scanner.
 
+Dependencies are resolved with `uv pip compile --no-build` (wheels only), so no
+`setup.py` or build backend ever runs; packages that only ship source archives are
+downloaded and extracted, never built. Manifest requirements are validated before uv sees
+them, so a manifest can't smuggle in installer options like `-e` or `--index-url`.
+Lockfiles are scanned in isolation with Sniff Test's own osv-scanner config, so a planted
+`osv-scanner.toml` can't hide a malicious package.
+
 ## Requirements
 
-Python 3.13, [uv](https://docs.astral.sh/uv/), and on `PATH`: `semgrep`
-(`osv-scanner` and `guarddog` will be needed by upcoming dependency analysis).
-A GitHub token (`GITHUB_TOKEN`, or a logged-in `gh`) avoids API rate limits.
+Python 3.13, [uv](https://docs.astral.sh/uv/), and on `PATH`: `semgrep`, `osv-scanner`
+(v2) and `guarddog` (3.2). A missing tool marks the scan incomplete. A GitHub token
+(`GITHUB_TOKEN`, or a logged-in `gh`) avoids API rate limits. HA release data and the
+resolved package sets are cached in `~/.cache/sniff-test/` (override with
+`SNIFF_TEST_CACHE`).
 
 ## Development
 
 ```sh
 uv sync
 uv run pytest                 # unit + rule tests + planted-malware fixtures
-uv run pytest -m network      # opt-in tests that hit GitHub
+uv run pytest -m network      # opt-in tests that hit GitHub / PyPI / OSV
 uv run ruff check . && uv run ruff format --check .
 semgrep scan --test --config rules/ tests/rules/
 ```

@@ -3,6 +3,15 @@
 - Python: the resolved pylock.toml per platform (already fully resolved, so --no-resolve).
 - Cards: the repo's npm lockfile, from the source tree at the scanned ref.
 
+Scoring policy for plain CVEs (dep-vuln), decided 2026-11-08 after the baseline showed
+card lockfiles are almost entirely build tooling:
+- Python deps: CVSS-mapped but capped at high (a CVE alone never means "do not install");
+  network-vector (AV:N) CVEs are tagged inbound, so --exposure public raises them.
+- Cards: dev-only packages (build tools; never in the shipped .js) get no dep-vuln;
+  bundled packages are capped at medium, with no inbound tag (browser code).
+- dep-malicious is critical everywhere, dev packages included: a malicious build tool
+  can inject code into the bundle (the event-stream attack).
+
 A scanned repo can ship an `osv-scanner.toml` that ignores advisories (e.g. hides a
 MAL- entry). So lockfiles are copied alone into an empty directory of ours, and we always
 pass our own empty `--config`.
@@ -93,7 +102,26 @@ def _ids_text(ids: list[str]) -> str:
     return ", ".join(ids[:_MAX_IDS]) + more
 
 
-def to_findings(pkgs: list[_Pkg], file: str | None, skip_vulns: set[str]) -> list[Finding]:
+@dataclass(frozen=True)
+class VulnPolicy:
+    max_severity: Severity
+    inbound: bool  # tag network-vector CVEs as inbound surface
+    where: str  # how the package reaches the user, for the message
+
+
+PYTHON_POLICY = VulnPolicy(Severity.HIGH, True, "installed into Home Assistant's Python")
+NPM_POLICY = VulnPolicy(Severity.MEDIUM, False, "bundled into the card's JavaScript")
+
+
+def to_findings(
+    pkgs: list[_Pkg],
+    file: str | None,
+    skip_vulns: set[str],
+    policy: VulnPolicy = PYTHON_POLICY,
+    dev_only: set[tuple[str, str]] | frozenset[tuple[str, str]] = frozenset(),
+) -> list[Finding]:
+    """skip_vulns: names whose CVEs aren't ours to report (HA-provided).
+    dev_only: (name, version) of build-only packages: malware is reported, CVEs aren't."""
     out: list[Finding] = []
     for p in sorted(pkgs, key=lambda p: (p.name, p.version)):
         evidence_base = f"{p.name}@{p.version} ({p.ecosystem})"
@@ -119,13 +147,15 @@ def to_findings(pkgs: list[_Pkg], file: str | None, skip_vulns: set[str]) -> lis
                 )
             )
             continue
-        if p.name in skip_vulns or not p.groups:
+        if p.name in skip_vulns or (p.name, p.version) in dev_only or not p.groups:
             continue
         scored = [(_group_score(g, p.vulns), g) for g in p.groups]
         best_score, best = max(scored, key=lambda sg: sg[0] if sg[0] is not None else 5.0)
         severity = _severity_for(best_score) if best_score is not None else Severity.MEDIUM
+        severity = min(severity, policy.max_severity)
         ids = [g["ids"][0] for _s, g in scored if g.get("ids")]
-        tags = frozenset({Tag.INBOUND}) if _network_vector(best, p.vulns) else frozenset()
+        inbound = policy.inbound and _network_vector(best, p.vulns)
+        tags = frozenset({Tag.INBOUND}) if inbound else frozenset()
         cvss = f"max CVSS {best_score:g}" if best_score is not None else "severity unknown"
         out.append(
             Finding(
@@ -134,7 +164,7 @@ def to_findings(pkgs: list[_Pkg], file: str | None, skip_vulns: set[str]) -> lis
                 severity=severity,
                 category=Category.DEPENDENCY,
                 message=(
-                    f"{p.name} {p.version} has {len(ids)} known "
+                    f"{p.name} {p.version} ({policy.where}) has {len(ids)} known "
                     f"{'vulnerability' if len(ids) == 1 else 'vulnerabilities'} ({cvss}): "
                     f"{_ids_text(ids)}. Check whether a fixed version is available."
                 ),
@@ -231,6 +261,40 @@ def run_python(resolution: Resolution | None, work: Path) -> AnalyzerResult:
     return AnalyzerResult(name, state, findings, detail, tool_version=osv_version())
 
 
+def npm_dev_only(lockfile: Path) -> set[tuple[str, str]]:
+    """(name, version) pairs that appear in a package-lock only as dev dependencies.
+
+    yarn.lock and pnpm-lock.yaml don't mark dev packages per entry; for those we can't
+    tell, so everything is treated as bundled (and capped at medium).
+    """
+    if lockfile.name not in ("package-lock.json", "npm-shrinkwrap.json"):
+        return set()
+    try:
+        data = json.loads(lockfile.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    flags: dict[tuple[str, str], bool] = {}  # True while every occurrence is dev-only
+
+    def note(name: str, meta: dict[str, Any]) -> None:
+        key = (name, str(meta.get("version", "")))
+        is_dev = bool(meta.get("dev") or meta.get("devOptional"))
+        flags[key] = flags.get(key, True) and is_dev
+
+    packages = data.get("packages")
+    if isinstance(packages, dict):  # lockfileVersion 2/3
+        for path, meta in packages.items():
+            if path and "node_modules/" in path and isinstance(meta, dict):
+                note(path.rsplit("node_modules/", 1)[-1], meta)
+    else:  # lockfileVersion 1: nested "dependencies"
+        stack = [data.get("dependencies") or {}]
+        while stack:
+            for name, meta in stack.pop().items():
+                if isinstance(meta, dict):
+                    note(name, meta)
+                    stack.append(meta.get("dependencies") or {})
+    return {k for k, dev in flags.items() if dev}
+
+
 def _declares_npm_deps(source_root: Path) -> bool:
     try:
         pkg = json.loads((source_root / "package.json").read_text(encoding="utf-8"))
@@ -282,7 +346,7 @@ def run_npm(target: Target, work: Path) -> AnalyzerResult:
         if pkgs is None:
             errors.append(f"{lf.name}: {err}")
             continue
-        findings += to_findings(pkgs, lf.name, set())
+        findings += to_findings(pkgs, lf.name, set(), NPM_POLICY, npm_dev_only(lf))
     state = AnalyzerState.ERROR if errors else AnalyzerState.OK
     detail = ", ".join(lf.name for lf in lockfiles) + (f"; {' | '.join(errors)}" if errors else "")
     return AnalyzerResult(name, state, findings, detail, tool_version=osv_version())
