@@ -67,6 +67,9 @@ class Finding:
     # Rule ids this finding replaces when both hit the same line (a more specific,
     # better-explained match wins, even if it is less severe).
     supersedes: frozenset[str] = frozenset()
+    # Install platforms a dependency finding applies to (e.g. {"x86_64", "aarch64"});
+    # empty when the finding isn't platform-specific.
+    platforms: frozenset[str] = frozenset()
 
     @property
     def id(self) -> str:

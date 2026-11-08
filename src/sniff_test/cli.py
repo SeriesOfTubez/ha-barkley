@@ -9,6 +9,7 @@ import sys
 from rich.console import Console
 
 from sniff_test import __version__
+from sniff_test.deps.ha_env import valid_version
 from sniff_test.fetch.github import GitHubError
 from sniff_test.fetch.hacs import FetchError
 from sniff_test.models import TargetKind
@@ -50,11 +51,24 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fail-under", type=int, metavar="SCORE", help="exit 3 if score < SCORE")
     s.add_argument("--jobs", type=int, help="parallel jobs for semgrep (lower = less RAM)")
     s.add_argument("--keep-workspace", action="store_true", help="don't delete the temp dir")
+    s.add_argument(
+        "--ha-version",
+        metavar="YYYY.M.P",
+        help="resolve dependencies against this Home Assistant release (default: latest stable)",
+    )
+    s.add_argument(
+        "--offline",
+        action="store_true",
+        help="skip checks that need PyPI/OSV (local scans only; the scan is marked incomplete)",
+    )
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.ha_version and not valid_version(args.ha_version):
+        parser.error(f"--ha-version: expected YYYY.M.P, got {args.ha_version!r}")
     out = Console()
     err = Console(stderr=True)
     if not args.json:
@@ -67,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
             kind=TargetKind(args.category) if args.category else None,
             keep_workspace=args.keep_workspace,
             jobs=args.jobs,
+            ha_version=args.ha_version,
+            offline=args.offline,
         )
     except (FetchError, GitHubError, UnsafeArchiveError) as e:
         err.print(f"[red]🐕 couldn't get a sniff:[/] {e}")

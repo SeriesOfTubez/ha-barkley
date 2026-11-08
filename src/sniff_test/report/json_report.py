@@ -70,6 +70,7 @@ def _finding_json(f: Finding) -> dict[str, Any]:
         "line": f.line,
         "evidence": sanitize_untrusted(f.evidence),
         "analyzer": f.analyzer,
+        "platforms": sorted(f.platforms),
     }
 
 
@@ -149,6 +150,7 @@ def ai_brief(scan: ScanResult, findings: list[Finding]) -> dict[str, Any]:
                     f"{f.file}:{f.line}" if f.file and f.line else f.file, 200
                 ),
                 "evidence_untrusted": sanitize_untrusted(f.evidence),
+                "platforms": sorted(f.platforms),
             }
             for f in findings
         ],

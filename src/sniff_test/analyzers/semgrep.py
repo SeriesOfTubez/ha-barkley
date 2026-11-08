@@ -34,7 +34,7 @@ def rules_dir() -> Path:
     return Path(str(resources.files("sniff_test") / "rules"))
 
 
-def _neutralize_ignores(root: Path) -> None:
+def neutralize_ignores(root: Path) -> None:
     """Hostile repos can ship ignore files to hide payloads from the scanner.
 
     Delete every ignore file in our extracted copy, then drop an empty .semgrepignore at
@@ -170,7 +170,7 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
         return AnalyzerResult(NAME, AnalyzerState.SKIPPED, detail="semgrep not installed")
     version = _version(exe)
     root = target.root.resolve()
-    _neutralize_ignores(root)
+    neutralize_ignores(root)
     run_dir = work / "semgrep-run"
     run_dir.mkdir(exist_ok=True)
     cmd = [

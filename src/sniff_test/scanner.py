@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
-from sniff_test.analyzers import semgrep
+from sniff_test.analyzers import guarddog, osv, pypi_meta, python_deps, semgrep
+from sniff_test.deps import ha_env
 from sniff_test.fetch.hacs import fetch
-from sniff_test.models import AnalyzerResult, AnalyzerState, Finding, TargetKind
+from sniff_test.models import AnalyzerResult, AnalyzerState, Finding, Target, TargetKind
 from sniff_test.report.json_report import ScanResult
 from sniff_test.scoring import Exposure, apply_exposure, score
 from sniff_test.workspace import workspace
@@ -41,6 +43,44 @@ def _dedupe(findings: list[Finding]) -> list[Finding]:
     ]
 
 
+def _dependency_analyzers(
+    target: Target,
+    ws: Path,
+    ha_version: str | None,
+    offline: bool,
+    jobs: int | None,
+    say: Callable[[str], None],
+) -> list[AnalyzerResult]:
+    if target.kind is TargetKind.PLUGIN:
+        say("osv (npm)")
+        if offline:
+            return [AnalyzerResult("osv-npm", AnalyzerState.SKIPPED, detail="offline")]
+        return [osv.run_npm(target, ws)]
+
+    env, env_error = None, "offline"
+    if not offline:
+        say("home assistant constraints")
+        try:
+            env = ha_env.load(ha_version)
+        except ha_env.HAEnvError as e:
+            env_error = str(e)
+    say("resolving dependencies")
+    deps_result, resolution = python_deps.run(target, ws, env)
+    if env is None and deps_result.state is AnalyzerState.SKIPPED:
+        deps_result.detail = env_error
+    elif env is not None:
+        deps_result.detail = f"HA {env.version}, Python {env.python_version}: {deps_result.detail}"
+    requirements = resolution.requirements if resolution else []
+    say("package metadata")
+    results = [deps_result, pypi_meta.run(requirements, resolution, env, online=not offline)]
+    if resolution and resolution.lockfiles:
+        say("osv (python)")
+        results.append(osv.run_python(resolution, ws))
+        say("guarddog")
+        results.append(guarddog.run(resolution, ws, jobs=jobs))
+    return results
+
+
 def scan(
     source: str,
     ref: str | None = None,
@@ -49,6 +89,8 @@ def scan(
     keep_workspace: bool = False,
     jobs: int | None = None,
     progress: Callable[[str], None] | None = None,
+    ha_version: str | None = None,
+    offline: bool = False,
 ) -> ScanResult:
     say = progress or (lambda _msg: None)
     with workspace(keep=keep_workspace) as ws:
@@ -56,6 +98,7 @@ def scan(
         target = fetch(source, ws, ref=ref, kind=kind)
         say("semgrep")
         results: list[AnalyzerResult] = [semgrep.run(target, ws, jobs=jobs)]
+        results += _dependency_analyzers(target, ws, ha_version, offline, jobs, say)
 
         findings = list(target.notes)
         for r in results:
