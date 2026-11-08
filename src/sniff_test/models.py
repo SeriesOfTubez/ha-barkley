@@ -64,6 +64,9 @@ class Finding:
     tags: frozenset[Tag] = frozenset()
     analyzer: str = ""
     base_severity: Severity | None = None  # set when exposure weighting changed severity
+    # Rule ids this finding replaces when both hit the same line (a more specific,
+    # better-explained match wins, even if it is less severe).
+    supersedes: frozenset[str] = frozenset()
 
     @property
     def id(self) -> str:

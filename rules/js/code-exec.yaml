@@ -58,6 +58,33 @@ rules:
       - pattern: setInterval($Y + "...", ...)
       - pattern: setInterval(`...${$Y}...`, ...)
 
+  - id: card-eval-config
+    mode: taint
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Evaluates a string built from the card's own dashboard configuration (e.g. to
+      support ${...} templates). Only dashboard editors (HA admins) control that input,
+      so this is mostly a risk if you paste card YAML from untrusted sources. Still
+      eval: worth knowing about.
+    metadata:
+      sniff:
+        title: Card evaluates templates from its own config
+        severity: medium
+        category: code_exec
+        supersedes: [card-eval]
+    pattern-sources:
+      - pattern: $O.config
+      - pattern: $O._config
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: eval($ARG)
+              - pattern: window.eval($ARG)
+              - pattern: new Function(..., $ARG)
+              - pattern: Function(..., $ARG)
+          - focus-metavariable: $ARG
+
   - id: card-remote-script
     languages: [javascript, typescript]
     severity: WARNING

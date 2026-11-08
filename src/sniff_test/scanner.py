@@ -13,7 +13,7 @@ from sniff_test.workspace import workspace
 
 
 def _dedupe(findings: list[Finding]) -> list[Finding]:
-    """Drop exact duplicates, then collapse same-line same-category overlaps.
+    """Drop exact duplicates, apply `supersedes`, then collapse same-line overlaps.
 
     e.g. `exec(b64decode(x))` hits both py-b64-exec (critical) and py-eval-exec (high);
     reporting both is noise. Keep the most severe finding(s) for each line+category.
@@ -22,6 +22,13 @@ def _dedupe(findings: list[Finding]) -> list[Finding]:
     unique: dict[str, Finding] = {}
     for f in findings:
         unique.setdefault(f.id, f)
+    superseded = {
+        (f.file, f.line, rule)
+        for f in unique.values()
+        if f.file and f.line
+        for rule in f.supersedes
+    }
+    unique = {k: f for k, f in unique.items() if (f.file, f.line, f.rule_id) not in superseded}
     best: dict[tuple[str, int, str], int] = {}
     for f in unique.values():
         if f.file and f.line:

@@ -69,3 +69,18 @@ def test_exposure_never_lowers_exfil():
     exfil = f(rule="ha-exfil-taint", sev=Severity.CRITICAL, tags=[Tag.EXFIL], cat=Category.EXFIL)
     for exposure in Exposure:
         assert apply_exposure([exfil], exposure)[0].severity == Severity.CRITICAL
+
+
+def test_supersedes_replaces_generic_rule_on_same_line():
+    from dataclasses import replace
+
+    from sniff_test.scanner import _dedupe
+
+    generic = f(rule="card-eval", sev=Severity.HIGH, line=5)
+    specific = replace(
+        f(rule="card-eval-config", sev=Severity.MEDIUM, line=5),
+        supersedes=frozenset({"card-eval"}),
+    )
+    elsewhere = f(rule="card-eval", sev=Severity.HIGH, line=9)
+    kept = {(x.rule_id, x.line) for x in _dedupe([generic, specific, elsewhere])}
+    assert kept == {("card-eval-config", 5), ("card-eval", 9)}

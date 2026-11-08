@@ -117,6 +117,7 @@ def to_finding(result: dict[str, Any], root: Path) -> Finding:
         evidence=evidence,
         tags=frozenset(Tag(t) for t in meta.get("tags", [])),
         analyzer=NAME,
+        supersedes=frozenset(meta.get("supersedes", [])),
     )
 
 
