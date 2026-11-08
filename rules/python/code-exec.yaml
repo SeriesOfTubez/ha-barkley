@@ -1,0 +1,139 @@
+rules:
+  - id: py-b64-exec
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Decodes an encoded blob and executes or deserializes it. Hiding code from
+      reviewers this way is a classic malware loader pattern.
+    metadata:
+      sniff: {title: Decodes and executes hidden code, severity: critical, category: code_exec, tags: [malware]}
+    pattern-sources:
+      - pattern-either:
+          - pattern: base64.$F(...)
+          - pattern: binascii.$F(...)
+          - pattern: zlib.decompress(...)
+          - pattern: lzma.decompress(...)
+          - pattern: bz2.decompress(...)
+          - pattern: gzip.decompress(...)
+          - pattern: codecs.decode(...)
+          - pattern: bytes.fromhex(...)
+          - pattern: $S.decode("=~/(?i)^(rot13|rot_13|hex|base64|zlib|bz2)$/")
+          - pattern: '"".join(chr($C) for $C in $XS)'
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec($ARG, ...)
+              - pattern: eval($ARG, ...)
+              - pattern: compile($ARG, ...)
+              - pattern: marshal.loads($ARG)
+              - pattern: pickle.loads($ARG, ...)
+              - pattern: types.FunctionType($ARG, ...)
+              - pattern: __import__($ARG, ...)
+              - pattern: importlib.import_module($ARG, ...)
+          - focus-metavariable: $ARG
+
+  - id: py-eval-exec
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Evaluates dynamically built code with eval/exec/compile. Whatever ends up in
+      that string runs with full access to Home Assistant.
+    metadata:
+      sniff: {title: eval/exec of dynamic code, severity: high, category: code_exec}
+    patterns:
+      - pattern-either:
+          - pattern: exec($X, ...)
+          - pattern: eval($X, ...)
+          - pattern: compile($X, $FN, "exec", ...)
+          - pattern: builtins.exec($X, ...)
+          - pattern: builtins.eval($X, ...)
+      - pattern-not: exec("...", ...)
+      - pattern-not: eval("...", ...)
+      - pattern-not: compile("...", ...)
+
+  - id: py-dynamic-import
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Imports a module whose name is computed at runtime, or loads code from a file
+      path. Static review can't tell what actually gets loaded.
+    metadata:
+      sniff: {title: Dynamic import of computed module, severity: medium, category: code_exec}
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: __import__($X, ...)
+              - pattern: importlib.import_module($X)
+          - pattern-not: __import__("...", ...)
+          - pattern-not: importlib.import_module("...")
+          # Importing from its own package is normal.
+          - pattern-not: importlib.import_module(f"{__package__}...")
+          - pattern-not: importlib.import_module(f"{__name__}...")
+          # HA's own platform loading idiom: import_module(f".{platform}", __name__)
+      - pattern: importlib.util.spec_from_file_location(...)
+      - pattern: $SPEC.loader.exec_module(...)
+      - pattern: importlib.machinery.SourceFileLoader(...)
+
+  - id: py-runtime-pip
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Installs Python packages at runtime, bypassing manifest.json requirements and
+      any review of them. All integrations share one Python environment.
+    metadata:
+      sniff: {title: Installs packages at runtime, severity: high, category: code_exec}
+    pattern-either:
+      - pattern: subprocess.$F([..., "pip", ..., "install", ...], ...)
+      - pattern: asyncio.create_subprocess_exec(..., "pip", ..., "install", ...)
+      - pattern: subprocess.$F([..., "pip3", ..., "install", ...], ...)
+      - pattern: asyncio.create_subprocess_exec(..., "pip3", ..., "install", ...)
+      - pattern: subprocess.$F([..., "uv", ..., "install", ...], ...)
+      - pattern: asyncio.create_subprocess_exec(..., "uv", ..., "install", ...)
+      - pattern: $F(..., "=~/(^|[^A-Za-z0-9_])(pip3?|uv pip)\s+install(\s|$)/", ...)
+      - pattern: pip.main(...)
+      - pattern: pip._internal.$X(...)
+      - pattern: pip._internal.$M.$X(...)
+      - pattern: ensurepip.bootstrap(...)
+      - pattern: homeassistant.util.package.install_package(...)
+      - pattern: homeassistant.requirements.async_process_requirements(...)
+
+  - id: py-shell-exec
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Runs shell commands. Check what is executed and whether any part of the
+      command comes from outside the integration.
+    metadata:
+      sniff: {title: Runs shell commands, severity: medium, category: code_exec}
+    pattern-either:
+      - pattern: subprocess.$F(..., shell=True, ...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+      - pattern: asyncio.create_subprocess_shell(...)
+      - pattern: pty.spawn(...)
+      - patterns:
+          - pattern: os.$EXEC(...)
+          - metavariable-regex:
+              metavariable: $EXEC
+              regex: ^(exec[lv]p?e?|spawn[lv]p?e?|posix_spawnp?)$
+
+  - id: py-obfuscation
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Uses code-obfuscation tricks (large encoded blobs being decoded, chr()
+      string building, reflective access to builtins). Legit code rarely needs these.
+    metadata:
+      sniff: {title: Obfuscated code, severity: medium, category: code_exec}
+    pattern-either:
+      - pattern: base64.$F("=~/^[A-Za-z0-9+\/=_-]{300,}$/", ...)
+      - pattern: bytes.fromhex("=~/^[0-9a-fA-F\s]{300,}$/")
+      - pattern: '"".join(chr($C) for $C in $XS)'
+      - pattern: '"".join(map(chr, $XS))'
+      - pattern: chr($A) + chr($B) + chr($C)
+      - pattern: getattr(__builtins__, $X)
+      - pattern: getattr(builtins, $X)
+      - pattern: __builtins__.__dict__[$X]
+      - pattern: globals()["=~/^(exec|eval|__import__|compile)$/"]
+      - pattern: codecs.decode($X, "=~/(?i)^rot_?13$/")

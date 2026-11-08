@@ -1,0 +1,78 @@
+rules:
+  - id: card-b64-eval
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Decodes an encoded string and executes it. Hiding code this way only makes
+      sense if someone doesn't want it read.
+    metadata:
+      sniff: {title: Card decodes and executes hidden code, severity: critical, category: code_exec, tags: [malware]}
+    pattern-sources:
+      - pattern: atob(...)
+      - pattern: window.atob(...)
+      - pattern: Buffer.from($S, "base64")
+      - pattern: String.fromCharCode(...)
+      - pattern: unescape(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: eval($ARG)
+              - pattern: window.eval($ARG)
+              - pattern: new Function(..., $ARG)
+              - pattern: Function(..., $ARG)
+              - pattern: setTimeout($ARG, ...)
+              - pattern: setInterval($ARG, ...)
+              - pattern: document.write($ARG)
+              - pattern: $EL.innerHTML = $ARG
+          - focus-metavariable: $ARG
+
+  - id: card-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Evaluates a dynamically built string as code. Whatever reaches it runs
+      with the logged-in user's full HA access.
+    metadata:
+      sniff: {title: Card evaluates dynamic code, severity: high, category: code_exec}
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: eval($X)
+              - pattern: window.eval($X)
+              - pattern: new Function(..., $X)
+              - pattern: Function(..., $X)
+          # Literal code (bundler globalThis shims like Function("return this")) is fine.
+          - pattern-not: eval("...")
+          - pattern-not: window.eval("...")
+          - pattern-not: new Function(..., "...")
+          - pattern-not: Function(..., "...")
+          # Bundler shim: Function('return require("' + name + '")')
+          - pattern-not: Function("=~/^return require\(/" + $M + "...")
+          - pattern-not: new Function("=~/^return require\(/" + $M + "...")
+      # setTimeout/setInterval only count when handed a *string* to evaluate.
+      - pattern: setTimeout("..." + $Y, ...)
+      - pattern: setTimeout($Y + "...", ...)
+      - pattern: setTimeout(`...${$Y}...`, ...)
+      - pattern: setInterval("..." + $Y, ...)
+      - pattern: setInterval($Y + "...", ...)
+      - pattern: setInterval(`...${$Y}...`, ...)
+
+  - id: card-remote-script
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Loads JavaScript from a remote URL at runtime. That code runs in your HA
+      origin with your tokens, and it was never part of what got scanned.
+    metadata:
+      sniff: {title: Card loads remote code at runtime, severity: medium, category: code_exec}
+    pattern-either:
+      - pattern: import("=~/^(https?:)?\/\//")
+      - pattern: importScripts("=~/^(https?:)?\/\//")
+      - patterns:
+          - pattern-inside: |
+              $S = document.createElement("script");
+              ...
+          - pattern-either:
+              - pattern: $S.src = "=~/^(https?:)?\/\//"
+              - pattern: $S.setAttribute("src", "=~/^(https?:)?\/\//")

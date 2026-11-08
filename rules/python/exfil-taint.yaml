@@ -1,0 +1,79 @@
+# Sensitive Home Assistant data flowing to an outbound channel.
+#
+# NOTE: Semgrep OSS taint tracking is intraprocedural (within one function). Flows that
+# hop through helper functions or instance attributes are caught by the source-only
+# backstops in sensitive-access.yaml and by cross-file correlation in the scanner.
+rules:
+  - id: ha-exfil-taint
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Sensitive Home Assistant data flows into an outbound channel (network, DNS,
+      subprocess). Integrations run unsandboxed inside HA; this is the shape of
+      credential or personal-data exfiltration.
+    metadata:
+      sniff:
+        title: Sensitive HA data sent off-box
+        severity: critical
+        category: exfil
+        tags: [exfil]
+    pattern-sources:
+      # Paths to secrets / auth / raw config-entry storage (taint flows through open().read()).
+      - pattern: '"=~/(secrets\.yaml|\.storage[\\/](auth|core\.config_entries|onboarding)|auth_provider\.homeassistant)/"'
+      - pattern: $HASS.config.path(..., ".storage", ...)
+      # Auth subsystem: users, refresh/access tokens, credential store.
+      - patterns:
+          - pattern: $HASS.auth.$ATTR
+          - metavariable-regex:
+              metavariable: $HASS
+              regex: (?i)(.*\.)?_?hass$
+      # Other integrations' config entries (credentials live in entry.data).
+      - patterns:
+          - pattern-either:
+              - pattern: $HASS.config_entries.async_entries()
+              - pattern: $HASS.config_entries.async_entries($D)
+          - pattern-not: $HASS.config_entries.async_entries(DOMAIN)
+          - pattern-not: $HASS.config_entries.async_entries(self.domain)
+      # Location of people and devices.
+      - pattern: $HASS.states.get("=~/^(person|device_tracker)\./")
+      - pattern: $HASS.states.async_all("=~/^(person|device_tracker)$/")
+      - pattern: $HASS.states.async_entity_ids("=~/^(person|device_tracker)$/")
+      # Process environment (SUPERVISOR_TOKEN lives here on HA OS / Supervised).
+      - pattern: os.environ
+      - pattern: os.getenv(...)
+    pattern-sinks:
+      # HTTP / websocket clients (receiver name heuristics; arguments only).
+      - patterns:
+          - pattern-either:
+              - pattern: $OBJ.$METHOD(..., $ARG, ...)
+              - pattern: $OBJ.$METHOD(..., $KW=$ARG, ...)
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(get|post|put|patch|delete|head|request|ws_connect|send|sendall|sendto|send_str|send_json|send_bytes|sendmail|send_message|publish|async_publish|urlopen)$
+          - metavariable-regex:
+              metavariable: $OBJ
+              regex: (?i)(session|requests|httpx|aiohttp|urllib|client|_ws|websocket|sock|smtp|mqtt)
+          - focus-metavariable: $ARG
+      - patterns:
+          - pattern-either:
+              - pattern: urllib.request.urlopen($ARG, ...)
+              - pattern: urllib.request.Request($ARG, ...)
+              - pattern: http.client.HTTPConnection($ARG, ...)
+              - pattern: http.client.HTTPSConnection($ARG, ...)
+              - pattern: aiohttp.request($M, $ARG, ...)
+              - pattern: websockets.connect($ARG, ...)
+              - pattern: asyncio.open_connection($ARG, ...)
+              # DNS: a tainted hostname leaks data via the lookup itself.
+              - pattern: socket.getaddrinfo($ARG, ...)
+              - pattern: socket.gethostbyname($ARG)
+              - pattern: $LOOP.getaddrinfo($ARG, ...)
+              - pattern: dns.resolver.resolve($ARG, ...)
+              - pattern: dns.resolver.query($ARG, ...)
+              # Subprocess: curl/wget/nc exfil.
+              - pattern: subprocess.$F($ARG, ...)
+              - pattern: os.system($ARG)
+              - pattern: os.popen($ARG, ...)
+              - pattern: asyncio.create_subprocess_exec(..., $ARG, ...)
+              - pattern: asyncio.create_subprocess_shell($ARG, ...)
+          - focus-metavariable: $ARG

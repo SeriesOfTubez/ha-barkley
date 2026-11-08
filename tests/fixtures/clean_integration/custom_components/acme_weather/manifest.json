@@ -1,0 +1,10 @@
+{
+  "domain": "acme_weather",
+  "name": "Acme Weather",
+  "codeowners": ["@acme"],
+  "config_flow": true,
+  "documentation": "https://github.com/acme/acme-weather",
+  "iot_class": "cloud_polling",
+  "requirements": ["aiohttp>=3.9"],
+  "version": "2.1.0"
+}

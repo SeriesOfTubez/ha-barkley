@@ -1,0 +1,53 @@
+# Inbound attack surface. Severity is raised by the scanner under --exposure public.
+rules:
+  - id: ha-unauth-view
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Registers an HTTP endpoint on Home Assistant with requires_auth = False.
+      Anyone who can reach your HA URL can call it without logging in. Common and
+      legitimate for OAuth callbacks and signed media URLs; matters most when HA is
+      reachable from the internet.
+    metadata:
+      sniff: {title: Unauthenticated HTTP endpoint, severity: low, category: inbound, tags: [inbound]}
+    patterns:
+      - pattern: |
+          class $C(..., $BASE, ...):
+            ...
+            requires_auth = False
+            ...
+      - metavariable-regex:
+          metavariable: $BASE
+          regex: (^|\.)HomeAssistantView$
+      - focus-metavariable: $C
+
+  - id: ha-cors-allowed
+    languages: [python]
+    severity: INFO
+    message: >-
+      HTTP view enables CORS, so web pages on other origins can call it from a
+      user's browser.
+    metadata:
+      sniff: {title: CORS-enabled HTTP endpoint, severity: low, category: inbound, tags: [inbound]}
+    patterns:
+      - pattern: |
+          class $C(..., $BASE, ...):
+            ...
+            cors_allowed = True
+            ...
+      - metavariable-regex:
+          metavariable: $BASE
+          regex: (^|\.)HomeAssistantView$
+      - focus-metavariable: $C
+
+  - id: ha-webhook-remote
+    languages: [python]
+    severity: INFO
+    message: >-
+      Registers a webhook reachable from the internet (local_only=False). Webhook
+      IDs act as the only credential, so they need to be unguessable.
+    metadata:
+      sniff: {title: Internet-reachable webhook, severity: low, category: inbound, tags: [inbound]}
+    pattern-either:
+      - pattern: homeassistant.components.webhook.async_register(..., local_only=False, ...)
+      - pattern: $W.async_register($H, $D, $N, $ID, $HANDLER, ..., local_only=False, ...)

@@ -1,0 +1,76 @@
+# Frontend cards run in the Home Assistant origin and can read the user's tokens.
+rules:
+  - id: card-token-exfil
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      A Home Assistant auth token flows into a network request that is not
+      provably same-origin. A card holding your refresh token can act as you
+      from anywhere, indefinitely.
+    metadata:
+      sniff:
+        title: Card sends HA auth token off-box
+        severity: critical
+        category: exfil
+        tags: [exfil]
+    pattern-sources:
+      - pattern: localStorage.getItem("hassTokens")
+      - pattern: window.localStorage.getItem("hassTokens")
+      - pattern: localStorage["hassTokens"]
+      - pattern: localStorage.hassTokens
+      - pattern: window.localStorage.hassTokens
+      - pattern: $H.auth.data
+      - pattern: $H.auth.accessToken
+      - pattern: $H.connection.options.auth
+      - pattern: $X.access_token
+      - pattern: $X.refresh_token
+      - pattern: document.cookie
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: fetch($URL, ...)
+              - pattern: navigator.sendBeacon($URL, ...)
+              - pattern: new WebSocket($URL, ...)
+              - pattern: new EventSource($URL, ...)
+              - pattern: window.open($URL, ...)
+              - pattern: $XHR.open($M, $URL, ...)
+              - pattern: $IMG.src = $URL
+          # Relative URLs and hass-built URLs stay on the HA origin.
+          - pattern-not: fetch("=~/^\/[^\/]/", ...)
+          - pattern-not: fetch($H.hassUrl(...), ...)
+          - pattern-not: $XHR.open($M, "=~/^\/[^\/]/", ...)
+          - pattern-not: new WebSocket($H.hassUrl(...), ...)
+      - patterns:
+          # Anything sent over an already-open XHR / socket.
+          - pattern-either:
+              - pattern: $XHR.send($BODY)
+              - pattern: $WS.send($BODY)
+          - focus-metavariable: $BODY
+
+  - id: card-read-tokens
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Reads the raw HA token store (hassTokens) from localStorage. Cards talk to
+      HA through the hass object and never need the stored refresh token.
+    metadata:
+      sniff: {title: Card reads stored HA tokens, severity: high, category: sensitive_access}
+    pattern-either:
+      - pattern: '"hassTokens"'
+      - pattern: localStorage.hassTokens
+      - pattern: window.localStorage.hassTokens
+
+  - id: card-access-token-use
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Reads the user's access token from the hass object. Some cards do this for
+      authenticated same-origin requests; check where the token is sent.
+    metadata:
+      sniff: {title: Card handles the user's access token, severity: medium, category: sensitive_access}
+    pattern-either:
+      - pattern: $H.auth.data.access_token
+      - pattern: $H.auth.data.refresh_token
+      - pattern: $H.auth.accessToken
+      - pattern: $H.connection.options.auth

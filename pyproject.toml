@@ -1,0 +1,53 @@
+[project]
+name = "ha-sniff-test"
+version = "0.1.0"
+description = "🐕 Sniffs Home Assistant Marketplace (HACS) integrations and cards before they get into the house."
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+dependencies = [
+    "rich>=13.7",
+]
+
+[project.scripts]
+sniff-test = "sniff_test.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sniff_test"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"rules" = "sniff_test/rules"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+# Rule test targets and fixtures are deliberately "malicious" sample code.
+extend-exclude = ["tests/rules", "tests/fixtures"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "PTH"]
+ignore = [
+    "S603",  # subprocess without shell: we invoke fixed scanner binaries with list args
+    "S607",  # partial executable path: tool binaries are resolved via shutil.which
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S108"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "network: hits GitHub/PyPI (deselect with -m 'not network')",
+    "tools: requires external scanners (semgrep, osv-scanner, guarddog)",
+]
+addopts = "-m 'not network'"

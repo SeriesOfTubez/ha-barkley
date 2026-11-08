@@ -1,0 +1,41 @@
+rules:
+  - id: py-write-outside-own-dir
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Writes or deletes files in sensitive locations: HA configuration, auth
+      storage, other integrations' code, Python source files, or system paths.
+      That can mean persistence, tampering with other integrations, or a backdoor.
+    metadata:
+      sniff: {title: Writes outside its own directory, severity: high, category: tamper}
+    patterns:
+      - pattern-either:
+          - pattern: open($P, "=~/[wax+]/", ...)
+          - pattern: open($P, mode="=~/[wax+]/", ...)
+          - pattern: aiofiles.open($P, "=~/[wax+]/", ...)
+          - pattern: aiofiles.open($P, mode="=~/[wax+]/", ...)
+          - pattern: $P.write_text(...)
+          - pattern: $P.write_bytes(...)
+          - pattern: $P.unlink(...)
+          - pattern: shutil.copy($S, $P, ...)
+          - pattern: shutil.copy2($S, $P, ...)
+          - pattern: shutil.copyfile($S, $P, ...)
+          - pattern: shutil.copytree($S, $P, ...)
+          - pattern: shutil.move($S, $P, ...)
+          - pattern: shutil.rmtree($P, ...)
+          - pattern: os.remove($P)
+          - pattern: os.unlink($P)
+          - pattern: os.rename($S, $P)
+          - pattern: os.replace($S, $P)
+      - metavariable-pattern:
+          metavariable: $P
+          patterns:
+            - pattern-either:
+                - pattern: '"=~/(configuration|automations|scripts|scenes|secrets|customize|known_devices)\.yaml/"'
+                - pattern: '"=~/(^|[\\/])\.storage([\\/]|$)/"'
+                - pattern: '"=~/(^|[\\/])custom_components([\\/]|$)/"'
+                - pattern: '"=~/\.(py|pth|pyc|so)$/"'
+                - pattern: '"=~/^(\/etc|\/usr|\/root|\/bin|\/sbin|\/lib|\/var\/spool|~\/\.ssh|\/home\/[^\/]+\/\.ssh)/"'
+                - pattern: '"=~/(\.bashrc|\.profile|authorized_keys|crontab|sitecustomize)/"'
+                - pattern: '"=~/site-packages/"'
+                - pattern: site.getsitepackages(...)

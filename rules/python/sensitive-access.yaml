@@ -1,0 +1,111 @@
+# Source-only backstops: reaching for data an integration has no business touching.
+# These fire even when the outbound half lives in another function/file.
+rules:
+  - id: ha-read-secrets
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Reads secrets.yaml directly. Integrations get their config through config
+      entries; touching secrets.yaml means access to every secret on the system.
+    metadata:
+      sniff: {title: Reads secrets.yaml, severity: high, category: sensitive_access}
+    pattern-either:
+      - pattern: $F(..., "=~/secrets\.yaml/", ...)
+      - pattern: $X = "=~/secrets\.yaml/"
+      - pattern: $P / "=~/secrets\.yaml/"
+
+  - id: ha-read-auth-storage
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Accesses Home Assistant's auth or config-entry storage files directly. These
+      hold password hashes, refresh tokens, and every integration's credentials.
+    metadata:
+      sniff: {title: Reads HA auth/credential storage, severity: high, category: sensitive_access}
+    pattern-either:
+      - pattern: '"=~/\.storage[\\/](auth|core\.config_entries|onboarding)/"'
+      - pattern: '"=~/^auth_provider\.homeassistant$/"'
+      - pattern: $F(..., ".storage", "=~/^(auth|core\.config_entries|onboarding)/", ...)
+
+  - id: ha-raw-storage-access
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Builds a path into HA's .storage directory by hand instead of using the
+      homeassistant.helpers.storage.Store helper. Worth checking what it reads.
+    metadata:
+      sniff: {title: Raw access to .storage, severity: medium, category: sensitive_access}
+    patterns:
+      - pattern-either:
+          - pattern: $F(..., ".storage", ...)
+          - pattern: '"=~/^(/config/)?\.storage[\\/]/"'
+      - pattern-not: $F(..., ".storage", "=~/^(auth|core\.config_entries|onboarding)/", ...)
+      - pattern-not: '"=~/\.storage[\\/](auth|core\.config_entries|onboarding)/"'
+
+  - id: ha-auth-internals
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Uses Home Assistant auth internals to list users, read or mint tokens, or
+      create accounts. Normal integrations at most look up the calling user.
+    metadata:
+      sniff: {title: Touches auth tokens / users, severity: high, category: sensitive_access}
+    patterns:
+      - pattern: $HASS.auth.$ATTR
+      - metavariable-regex:
+          metavariable: $HASS
+          regex: (?i)(.*\.)?_?hass$
+      - metavariable-regex:
+          metavariable: $ATTR
+          regex: ^(_store|_providers|auth_providers|async_get_users|async_get_refresh_tokens?|async_get_refresh_token_by_token|async_create_refresh_token|async_create_access_token|async_validate_access_token|async_create_user|async_create_system_user|async_get_or_create_user|async_link_user|async_update_user|async_remove_refresh_token|async_enable_user|async_activate_user)$
+
+  - id: ha-foreign-entry-data
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Reads credential data (entry.data / entry.options) from config entries that
+      are not this integration's own. That is where other integrations keep their
+      passwords and API tokens.
+    metadata:
+      sniff: {title: Reads other integrations' credentials, severity: high, category: sensitive_access}
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              for $E in $HASS.config_entries.async_entries(...):
+                ...
+          - pattern-inside: '[... for $E in $HASS.config_entries.async_entries(...)]'
+          - pattern-inside: '{... for $E in $HASS.config_entries.async_entries(...)}'
+      - pattern-not-inside: |
+          for $E in $HASS.config_entries.async_entries(DOMAIN):
+            ...
+      - pattern-not-inside: '[... for $E in $HASS.config_entries.async_entries(DOMAIN)]'
+      - pattern-either:
+          - pattern: $E.data
+          - pattern: $E.options
+
+  - id: ha-bulk-location-read
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Reads person / device_tracker state, i.e. where household members are.
+      Expected only for location-focused integrations.
+    metadata:
+      sniff: {title: Reads household location, severity: medium, category: sensitive_access}
+    pattern-either:
+      - pattern: $HASS.states.get("=~/^(person|device_tracker)\./")
+      - pattern: $HASS.states.async_all("=~/^(person|device_tracker)$/")
+      - pattern: $HASS.states.async_all([..., "=~/^(person|device_tracker)$/", ...])
+      - pattern: $HASS.states.async_entity_ids("=~/^(person|device_tracker)$/")
+
+  - id: ha-supervisor-token
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Reads the Supervisor API token from the environment. It grants control of
+      add-ons, backups and the host; custom integrations should not need it.
+    metadata:
+      sniff: {title: Reads Supervisor token, severity: high, category: sensitive_access}
+    pattern-either:
+      - pattern: os.environ["=~/^(SUPERVISOR_TOKEN|HASSIO_TOKEN)$/"]
+      - pattern: os.environ.get("=~/^(SUPERVISOR_TOKEN|HASSIO_TOKEN)$/", ...)
+      - pattern: os.getenv("=~/^(SUPERVISOR_TOKEN|HASSIO_TOKEN)$/", ...)
