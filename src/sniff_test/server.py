@@ -17,6 +17,7 @@ import os
 import queue
 import re
 import secrets
+import sys
 import threading
 import urllib.parse
 import urllib.request
@@ -27,7 +28,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from sniff_test import __version__
+from sniff_test import __version__, doctor
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
 from sniff_test.report.json_report import sanitize_untrusted
@@ -106,6 +107,22 @@ class Worker:
                 return hit.id
         return self.store.save(self.scan_fn(repo, ref))
 
+    def _log_incomplete(self, job: Job) -> None:
+        """Analyzers that didn't finish go to the add-on's log as well as the page."""
+        for sid in job.scan_ids:
+            try:
+                rep = self.store.report(sid)
+            except StoreError:
+                continue
+            for a in rep.get("analyzers", []):
+                if a.get("state") not in ("ok", "not_applicable"):
+                    print(
+                        f"scan @{sid} {job.repo}: {a.get('name')} {a.get('state')}: "
+                        f"{a.get('detail')}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+
     def _run(self) -> None:
         while True:
             job = self._q.get()
@@ -122,9 +139,11 @@ class Worker:
                     job.scan_ids = [old, new]
                     job.message = f"{job.ref} → {row.ref}"
                 job.state = "done"
+                self._log_incomplete(job)
             except Exception as ex:
                 job.state = "failed"
                 job.message = f"{type(ex).__name__}: {ex}"
+                print(f"job {job.id} {job.repo} failed: {job.message}", file=sys.stderr)
             finally:
                 self._q.task_done()
 
@@ -179,7 +198,9 @@ def render_index(base: str, store: Store, jobs: list[Job], token: str) -> bytes:
         f'<input type=hidden name=token value="{token}">'
         '<input name=repo placeholder="owner/repo" required>'
         '<input name=ref placeholder="installed tag" required>'
-        "<button>What would updating change?</button></form></div>",
+        "<button>What would updating change?</button></form>"
+        f'<p class="muted"><a href="{base}/doctor">Diagnostics</a>: can each tool run '
+        "on this box?</p></div>",
     ]
     if jobs:
         out.append("<h2>Jobs</h2><table>")
@@ -267,6 +288,25 @@ def render_scan(base: str, sid: int, report: dict[str, Any], store: Store) -> by
         out.append('<p class="ok">Nothing smelled off. 🦴</p>')
     out.append(f'<p><a href="{base}/scan/{sid}.json">raw JSON report</a></p>')
     return _page(f"Sniff Test @{sid}", "".join(out))
+
+
+def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
+    out = [f'<p><a href="{base}/">← all scans</a></p>', "<h1>Diagnostics</h1>",
+           f'<p class="muted">Sniff Test {e(__version__)}. Each tool runs on a one-line '
+           "sample written here, never on scanned code.</p><table>"]  # fmt: skip
+    for c in checks:
+        cls = "ok" if c.ok else "crit"
+        out.append(
+            f'<tr><td class="{cls}">{"ok" if c.ok else "FAIL"}</td><td><b>{e(c.name)}</b> '
+            f"{e(c.summary, 1000)}"
+            + (f"<br><code>{e(c.command, 500)}</code>" if c.command else "")
+            + (f" <span class=muted>{c.seconds}s</span>" if c.seconds is not None else "")
+            + (f"<br>stderr: <code>{e(c.stderr, 1600)}</code>" if c.stderr else "")
+            + (f"<br>stdout: <code>{e(c.stdout, 600)}</code>" if c.stdout and not c.ok else "")
+            + "</td></tr>"
+        )
+    out.append("</table>")
+    return _page("Sniff Test diagnostics", "".join(out))
 
 
 def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
@@ -371,6 +411,8 @@ class Panel:
                             body = json.dumps(report, indent=2).encode()
                             return self._send(200, body, "application/json")
                         return self._send(200, render_scan(base, sid, report, panel.store))
+                    if url.path == "/doctor":
+                        return self._send(200, render_doctor(base, doctor.run_checks()))
                     if url.path == "/diff":
                         q = urllib.parse.parse_qs(url.query)
                         old, new = int(q["old"][0]), int(q["new"][0])

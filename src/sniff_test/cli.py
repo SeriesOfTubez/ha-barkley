@@ -130,6 +130,9 @@ def build_parser() -> argparse.ArgumentParser:
         "Supervisor; else the latest stable)",
     )
 
+    dr = sub.add_parser("doctor", help="check that every scanner tool runs on this machine")
+    dr.add_argument("--json", action="store_true")
+
     r = sub.add_parser("releases", help="list a repo's releases and who published them")
     r.add_argument("source", help="GitHub URL or owner/repo")
     r.add_argument("--all", action="store_true", help="list every release (default: newest 20)")
@@ -294,6 +297,23 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     return EXIT_OK
 
 
+def _doctor(args: argparse.Namespace, out: Console) -> int:
+    from sniff_test import doctor
+
+    checks = doctor.run_checks()
+    if args.json:
+        sys.stdout.write(json.dumps(doctor.to_dicts(checks), indent=2) + "\n")
+    else:
+        for c in checks:
+            mark = "[green]ok[/]  " if c.ok else "[red]FAIL[/]"
+            out.print(f"{mark} [bold]{escape(c.name)}[/] {escape(c.summary)}", soft_wrap=True)
+            if not c.ok:
+                for label, text in (("stderr", c.stderr), ("stdout", c.stdout)):
+                    if text:
+                        out.print(f"      {label}: {escape(text)}", soft_wrap=True)
+    return EXIT_OK if all(c.ok for c in checks) else EXIT_ERROR
+
+
 def _releases(args: argparse.Namespace, out: Console, err: Console) -> int:
     try:
         t = releases.build(args.source)
@@ -322,6 +342,8 @@ def main(argv: list[str] | None = None) -> int:
         return _history(args, out, err)
     if args.command == "serve":
         return _serve(args, out, err)
+    if args.command == "doctor":
+        return _doctor(args, out)
     store = _open_store(args.store, err)
     if not args.json:
         human.sniffing(out, args.source)

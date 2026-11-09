@@ -198,3 +198,20 @@ def test_scan_page_names_analyzers_that_did_not_finish(panel):
     assert "Didn't finish" in page
     assert "osv-npm" in page and "&lt;b&gt;network&lt;/b&gt; unreachable" in page
     assert "python-deps" not in page
+
+
+def test_doctor_page_shows_failures_escaped(panel, monkeypatch):
+    _, _, base, _ = panel
+    checks = [
+        server.doctor.Check("environment", True, "uid=0; apparmor=hassio-addons (enforce)"),
+        server.doctor.Check(
+            "semgrep scan", False, "exit 2", "semgrep scan ...", 2, 0.4, "", "<boom>"
+        ),
+    ]
+    monkeypatch.setattr(server.doctor, "run_checks", lambda: checks)
+    status, _, page = get(base + "/doctor")
+    assert status == 200
+    assert "FAIL" in page and "&lt;boom&gt;" in page
+    assert "hassio-addons (enforce)" in page
+    _, _, index = get(base + "/")
+    assert 'href="/doctor"' in index

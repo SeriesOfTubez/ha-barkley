@@ -89,6 +89,20 @@ def _tool_env() -> dict[str, str]:
     return env
 
 
+def failure_detail(proc: subprocess.CompletedProcess[str]) -> str:
+    """Why semgrep produced no JSON: exit code or signal, then the most telling output."""
+    rc = proc.returncode
+    head = f"semgrep exit {rc}" if rc >= 0 else f"semgrep killed by signal {-rc}"
+    if rc == -9:
+        head += " (out of memory?)"
+    err, out = (proc.stderr or "").strip(), (proc.stdout or "").strip()
+    if err:
+        return f"{head}: {err[-500:]}"
+    if out:
+        return f"{head}; stdout: {out[:300]}"
+    return f"{head}, no output (run `sniff-test doctor` or open /doctor in the panel)"
+
+
 def _version(exe: str) -> str | None:
     try:
         out = subprocess.run(
@@ -326,10 +340,7 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
         data = json.loads(proc.stdout)
     except ValueError:
         return AnalyzerResult(
-            NAME,
-            AnalyzerState.ERROR,
-            detail=f"semgrep exit {proc.returncode}: {proc.stderr.strip()[-500:]}",
-            tool_version=version,
+            NAME, AnalyzerState.ERROR, detail=failure_detail(proc), tool_version=version
         )
     findings: list[Finding] = []
     facts: list[Fact] = []
