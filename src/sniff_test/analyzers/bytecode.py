@@ -1,5 +1,8 @@
 """Compiled Python that HA's interpreter would run instead of, or without, readable source.
 
+Covers bytecode (.pyc) and native extension modules (.so) next to a .py; see
+`native_suffixes` for the .so side.
+
 Checked against CPython 3.14.10 (HA 2026.11's Python) on 2026-11-08 with test modules:
 
 - `pkg/__pycache__/mod.cpython-314.pyc` next to `pkg/mod.py` (PEP 3147/552):
@@ -154,6 +157,81 @@ def why_loaded(pyc: Path, versions: dict[int, str], unknown_tag: str | None) -> 
     return "sourceless bytecode: there is no .py, so Python imports the .pyc directly"
 
 
+# HA's platforms (musl). Checked in HA 2026.11.0's image (Python 3.14.10) on 2026-11-09:
+# importlib.machinery.EXTENSION_SUFFIXES is ['.cpython-314-<arch>-linux-musl.so',
+# '.abi3.so', '.so'] on x86_64 and aarch64, and FileFinder tries the extension loader
+# before the source loader, so `mod.abi3.so` next to `mod.py` is what `import mod` loads
+# (a non-ELF stand-in failed with "Error loading shared library", the .py never ran).
+# The same holds for a package's `__init__.abi3.so`. Other arches, other Pythons and glibc
+# tags are ignored, and a package directory wins over a sibling `pkg.so`.
+_ARCHES = ("x86_64", "aarch64")
+_LOADER_SUFFIXES = (".py", ".pyc")
+
+
+def native_suffixes(python_version: str | None) -> dict[str, tuple[str, ...]]:
+    """Extension suffix -> the HA architectures whose Python loads it."""
+    out: dict[str, tuple[str, ...]] = {".abi3.so": _ARCHES, ".so": _ARCHES}
+    minors = [".".join(python_version.split(".")[:2])] if python_version else list(_FALLBACK)
+    for minor in minors:
+        tag = minor.replace(".", "")
+        for arch in _ARCHES:
+            out[f".cpython-{tag}-{arch}-linux-musl.so"] = (arch,)
+    return out
+
+
+def shadowed_source(
+    so: Path, suffixes: dict[str, tuple[str, ...]]
+) -> tuple[str, tuple[str, ...]] | None:
+    """(the .py it replaces, arches) when HA's Python would load this .so instead of it."""
+    for suffix in sorted(suffixes, key=len, reverse=True):  # longest first: .abi3.so > .so
+        if so.name.endswith(suffix):
+            stem = so.name[: -len(suffix)]
+            break
+    else:
+        return None
+    if not stem or "." in stem:
+        return None  # no module name can map to this file
+    pkg = so.parent / stem
+    every = (*suffixes, *_LOADER_SUFFIXES)
+    if pkg.is_dir() and any((pkg / f"__init__{s}").is_file() for s in every):
+        return None  # the package directory wins
+    source = so.parent / f"{stem}.py"
+    if not source.is_file():
+        return None
+    return source.name, suffixes[suffix]
+
+
+def _native_findings(root: Path, python_version: str | None) -> tuple[int, list[Finding]]:
+    suffixes = native_suffixes(python_version)
+    sos = sorted(p for p in root.rglob("*.so") if p.is_file() and not p.is_symlink())
+    out = []
+    for so in sos:
+        if (hit := shadowed_source(so, suffixes)) is None:
+            continue
+        source, arches = hit
+        rel = so.relative_to(root).as_posix()
+        where = "every HA box" if arches == _ARCHES else f"{', '.join(arches)} HA boxes"
+        out.append(
+            Finding(
+                rule_id="py-native-module-shadows-source",
+                title="Native module that HA would load instead of the readable source",
+                severity=Severity.HIGH,
+                category=Category.CODE_EXEC,
+                message=(
+                    f"{rel} is a compiled extension module next to {source}. Python tries "
+                    f"extension modules before source, so on {where} the import loads this "
+                    f"binary and {source} never runs. Reviewing the .py reviews nothing, and "
+                    "no rule can read machine code. Legitimate integrations ship .py files "
+                    "and get native code from PyPI wheels."
+                ),
+                file=rel,
+                evidence=f"{so.name} shadows {source}",
+                analyzer=NAME,
+            )
+        )
+    return len(sos), out
+
+
 def run(target: Target, python_version: str | None) -> AnalyzerResult:
     if target.kind is not TargetKind.INTEGRATION:
         return AnalyzerResult(NAME, AnalyzerState.NOT_APPLICABLE, detail="not an integration")
@@ -184,6 +262,8 @@ def run(target: Target, python_version: str | None) -> AnalyzerResult:
                 analyzer=NAME,
             )
         )
+    n_so, native = _native_findings(root, python_version)
+    findings += native
     py = python_version or f"{_FALLBACK[0]} to {_FALLBACK[-1]} (HA version unknown)"
-    detail = f"{len(pycs)} .pyc file(s), checked against Python {py}"
+    detail = f"{len(pycs)} .pyc and {n_so} .so file(s), checked against Python {py}"
     return AnalyzerResult(NAME, AnalyzerState.OK, findings=findings, detail=detail)

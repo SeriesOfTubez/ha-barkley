@@ -135,3 +135,83 @@ def test_planted_pyc_in_integration_scan(tmp_path, fixtures):
     r = scan(str(repo), offline=True)
     assert [f.rule_id for f in r.findings] == [RULE]
     assert r.score.score <= 89
+
+
+# --- native extension modules (.so) ---------------------------------------------------
+
+NATIVE = "py-native-module-shadows-source"
+ELF = b"\x7fELF not-a-real-library"  # never loaded; only the file name matters
+
+
+def _native(root, python="3.14.10"):
+    return {
+        f.file: f.message
+        for f in bytecode.run(_target(root), python).findings
+        if f.rule_id == NATIVE
+    }
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "mod.cpython-314-x86_64-linux-musl.so",
+        "mod.cpython-314-aarch64-linux-musl.so",
+        "mod.abi3.so",
+        "mod.so",
+    ],
+)
+def test_native_module_next_to_source_is_flagged(pkg, name):
+    (pkg / name).write_bytes(ELF)
+    hits = _native(pkg)
+    assert list(hits) == [name]
+    assert "mod.py never runs" in hits[name]
+
+
+def test_arch_specific_native_module_names_its_arch(pkg):
+    (pkg / "mod.cpython-314-aarch64-linux-musl.so").write_bytes(ELF)
+    (pkg / "__init__.abi3.so").write_bytes(ELF)  # a package's __init__ too
+    hits = _native(pkg)
+    assert "on aarch64 HA boxes" in hits["mod.cpython-314-aarch64-linux-musl.so"]
+    assert "on every HA box" in hits["__init__.abi3.so"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "mod.cpython-313-x86_64-linux-musl.so",  # another Python
+        "mod.cpython-314-x86_64-linux-gnu.so",  # glibc: HA's image is musl
+        "mod.cpython-314-armv7-linux-musleabihf.so",  # not an HA arch any more
+        "other.abi3.so",  # no other.py: not shadowing (sourceless)
+        "mod.so.1",  # not an import suffix
+        ".so",
+    ],
+)
+def test_native_files_python_would_not_pick_over_source_are_quiet(pkg, name):
+    (pkg / name).write_bytes(ELF)
+    assert _native(pkg) == {}
+
+
+def test_package_directory_wins_over_a_sibling_native_module(pkg):
+    (pkg / "sub").mkdir()
+    (pkg / "sub" / "__init__.py").write_text("")
+    (pkg / "sub.py").write_text("")
+    (pkg / "sub.abi3.so").write_bytes(ELF)
+    assert _native(pkg) == {}
+
+
+def test_native_suffixes_follow_ha_python_and_fall_back_offline(pkg):
+    (pkg / "mod.cpython-315-x86_64-linux-musl.so").write_bytes(ELF)
+    assert _native(pkg, "3.14.10") == {}
+    assert list(_native(pkg, "3.15.0")) == ["mod.cpython-315-x86_64-linux-musl.so"]
+    assert list(_native(pkg, None)) == ["mod.cpython-315-x86_64-linux-musl.so"]
+
+
+@requires_semgrep
+def test_planted_native_module_in_integration_scan(tmp_path, fixtures):
+    repo = tmp_path / "repo"
+    shutil.copytree(fixtures / "clean_integration", repo)
+    comp = repo / "custom_components" / "acme_weather"
+    (comp / "sensor.abi3.so").write_bytes(ELF)
+    r = scan(str(repo), offline=True)
+    assert [f.rule_id for f in r.findings] == [NATIVE]
+    assert r.score.score <= 89
