@@ -41,17 +41,18 @@ Supervisor role, no folder access.
 ## Installing as a local add-on
 
 1. In the repository: `uv run python scripts/stage_addon.py` (writes
-   `dist/addon/sniff_test/`, the add-on plus the scanner's source).
-2. Copy that `sniff_test` folder into Home Assistant's local add-on folder. In the
-   Terminal & SSH add-on it's `/local_apps` (older installs: `/addons`); over Samba it's
-   the `addons` share. Over SSH, from the repository:
-   `tar -C dist/addon -cf - sniff_test | ssh root@homeassistant.local 'tar -C /local_apps -xf -'`
+   `dist/addon/sniff_test/`, the add-on plus the scanner's source, and
+   `dist/addon/sniff_test.tar`, a plain archive of it).
+2. Stream the archive into Home Assistant's local add-on folder, `/local_apps` in the
+   Terminal & SSH add-on (older installs: `/addons`):
+   `ssh root@homeassistant.local 'rm -rf /local_apps/sniff_test && tar -C /local_apps -xf -' < dist/addon/sniff_test.tar`
+   Don't pipe macOS `tar` instead: it adds pax headers that the HA side extracts as
+   stray files.
 3. Settings → Apps → the app store → ⋮ → Check for updates (older HA: Settings →
    Add-ons → Add-on store). Sniff Test appears in the local section. Install it (your box builds the image: a few minutes, about
    1 GB of disk), then start it and open it from the sidebar.
 
-To update, stage again, replace the folder, bump `version` in `config.yaml` (or use
-Rebuild on the add-on page).
+To update, stage again, stream the archive again, then use Rebuild on the app's page.
 
 ## Building the image elsewhere
 

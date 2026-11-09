@@ -1,0 +1,5 @@
+# Copy debris that must never reach the image (Semgrep loads every file in rules/).
+**/PaxHeader
+**/PaxHeader/**
+**/._*
+**/.DS_Store

@@ -118,14 +118,15 @@ def run_checks() -> list[Check]:
         env = _proc.tool_env()
         checks.append(_run("osv-scanner --version", ["osv-scanner", "--version"], run_dir, env))
         checks.append(_run("guarddog --version", ["guarddog", "--version"], run_dir, env))
-        checks.append(
-            _run(
-                "guarddog scan (one-line sample)",
-                ["guarddog", "pypi", "scan", str(sample), "--output-format", "json"],
-                run_dir,
-                env,
-            )
-        )
+        gd_cmd = ["guarddog", "pypi", "scan", str(sample), "--output-format", "json"]
+        gd = _run("guarddog scan (one-line sample)", gd_cmd, run_dir, env)
+        if not gd.ok and "sandbox" in gd.stderr.lower():
+            # What the analyzer does too: GuardDog only parses; the container is the
+            # outer sandbox. Reported, not hidden.
+            retry = _run("guarddog scan (one-line sample)", [*gd_cmd, "--no-sandbox"], run_dir, env)
+            retry.summary += "; kernel sandbox unavailable here, ran with --no-sandbox"
+            gd = retry
+        checks.append(gd)
         checks.append(_run("uv --version", ["uv", "--version"], run_dir, env))
     return checks
 

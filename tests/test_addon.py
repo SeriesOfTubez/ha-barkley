@@ -88,3 +88,25 @@ def test_staged_folder_is_self_contained_and_has_no_tests(tmp_path):
     assert not any("tests" in p.split("/") or "fixtures" in p.split("/") for p in staged)
     assert not any(p.endswith(".pyc") or "__pycache__" in p for p in staged)
     assert stage_addon.stage(tmp_path) == dest  # re-staging replaces the folder
+
+
+def test_archive_has_no_pax_headers_or_xattrs(tmp_path):
+    import tarfile
+
+    dest = stage_addon.stage(tmp_path)
+    out = stage_addon.archive(dest)
+    raw = out.read_bytes()
+    for marker in (b"SCHILY.xattr", b"LIBARCHIVE.xattr", b"com.apple."):  # attribute records
+        assert marker not in raw
+    with tarfile.open(out) as tar:
+        names = tar.getnames()
+        assert all(m.isfile() or m.isdir() for m in tar.getmembers())
+    assert "sniff_test/config.yaml" in names
+    assert "sniff_test/scanner/rules/python/inventory.yaml" in names
+    assert not any("/._" in n or "PaxHeader" in n for n in names)
+
+
+def test_dockerignore_drops_copy_debris():
+    ignore = (ADDON / ".dockerignore").read_text()
+    for pat in ("**/PaxHeader", "**/._*", "**/.DS_Store"):
+        assert pat in ignore
