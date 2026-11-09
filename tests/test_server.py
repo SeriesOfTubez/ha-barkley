@@ -347,4 +347,4 @@ def test_memory_guard_warns_and_refuses(addon):
 def test_no_installed_section_outside_an_addon(panel):
     _, _, base, _ = panel
     _, _, page = get(base + "/")
-    assert "Installed through HACS" not in page
+    assert "Installed from the Marketplace" not in page

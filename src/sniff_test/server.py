@@ -340,10 +340,11 @@ def render_installed(base: str, state: InstalledState, rows: list[Row], token: s
     refresh = f'<a href="{base}/?refresh=1">refresh</a>'
     if state.error:
         return (
-            "<h2>Installed through HACS</h2><p class=muted>Can't list installed items: "
+            "<h2>Installed from the Marketplace (HACS)</h2>"
+            "<p class=muted>Can't list installed items: "
             f"{e(state.error, 300)} ({refresh}). Typed checks above still work.</p>"
         )
-    out = ["<h2>Installed through HACS</h2>"]
+    out = ["<h2>Installed from the Marketplace (HACS)</h2>"]
     for g, title in GROUPS.items():
         group = [r for r in rows if r.group == g]
         if group:
@@ -364,11 +365,11 @@ def render_installed(base: str, state: InstalledState, rows: list[Row], token: s
                 f"<button>Sniff the {never} never sniffed</button></form>"
             )
     if not rows:
-        out.append("<p class=muted>HACS lists no installed integrations or cards.</p>")
+        out.append("<p class=muted>The Marketplace lists no installed integrations or cards.</p>")
     skipped = ", ".join(f"{n} {e(c)}" for c, n in sorted(state.other.items()))
     age = int(time.time() - state.fetched) // 60 if state.fetched else 0
     out.append(
-        f'<p class="muted">From HACS {age} min ago ({refresh})'
+        f'<p class="muted">From the Marketplace {age} min ago ({refresh})'
         + (f". Not scanned (not an integration or card): {skipped}" if skipped else "")
         + ".</p>"
     )

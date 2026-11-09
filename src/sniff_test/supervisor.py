@@ -3,16 +3,19 @@
 Two reads, both covered by `homeassistant_api: true` in config.yaml, no other permission:
 
 - `GET http://supervisor/core/api/config`: the installed HA version.
-- HACS's `hacs/repositories/list`, over the Supervisor's Core websocket proxy
+- The Marketplace's installed list, over the Supervisor's Core websocket proxy
   (`ws://supervisor/core/websocket`): installed integrations and cards, with the
-  version installed and the version HACS would install now (`available_version`
-  already follows the repo's "show beta" switch).
+  version installed and the version it would install now (`available_version`
+  already follows the repo's "show beta" switch). HA 2026.11 ships the Marketplace in
+  Core (`marketplace/repositories/list`; it took over `custom_components/hacs`).
+  Older HA with the HACS custom integration answers `hacs/repositories/list`, which
+  returns the same fields; it is asked only when Core doesn't know the first command.
 
 The proxy talks to Core as the Supervisor's admin user, so this connection could send
-any non-Supervisor command. The client below sends exactly one command type, fixed in
-code (`_ALLOWED_COMMANDS`); nothing from a request or a report ever becomes a command.
+any non-Supervisor command. The client sends only the two list commands, fixed in code
+(`_ALLOWED_COMMANDS`); nothing from a request or a report ever becomes a command.
 
-Nothing here touches installed code: HACS only reports names and versions.
+Nothing here touches installed code: the Marketplace only reports names and versions.
 """
 
 from __future__ import annotations
@@ -30,8 +33,10 @@ from dataclasses import dataclass
 from typing import Any
 
 SUPERVISOR_HOST = "supervisor"
-HACS_LIST = "hacs/repositories/list"
-_ALLOWED_COMMANDS = frozenset({HACS_LIST})
+MARKETPLACE_LIST = "marketplace/repositories/list"  # HA 2026.11+: built into Core
+HACS_LIST = "hacs/repositories/list"  # older HA: the HACS custom integration
+LIST_COMMANDS = (MARKETPLACE_LIST, HACS_LIST)
+_ALLOWED_COMMANDS = frozenset(LIST_COMMANDS)
 _MAX_MESSAGE = 64 * 1024 * 1024  # what the Supervisor accepts from Core
 _TIMEOUT = 20
 # HACS categories Sniff Test can scan, and what it calls them.
@@ -255,14 +260,19 @@ def parse_installed(result: Any) -> tuple[list[Installed], dict[str, int]]:
 
 
 def installed_hacs(tok: str | None = None, **kw: Any) -> tuple[list[Installed], dict[str, int]]:
-    """Installed HACS integrations and cards (raises SupervisorError with the reason)."""
+    """Installed Marketplace (HACS) integrations and cards; SupervisorError says why not."""
     tok = tok or token()
     if not tok:
         raise SupervisorError("not running as a Home Assistant add-on (no SUPERVISOR_TOKEN)")
-    try:
-        result = core_command(HACS_LIST, tok, **kw)
-    except SupervisorError as ex:
-        if "unknown_command" in str(ex):
-            raise SupervisorError("HACS isn't installed or hasn't finished loading") from ex
-        raise
-    return parse_installed(result)
+    for command in LIST_COMMANDS:
+        try:
+            return parse_installed(core_command(command, tok, **kw))
+        except SupervisorError as ex:
+            if "unknown_command" in str(ex):
+                continue  # not this HA's Marketplace; try the next one
+            if "not_loaded" in str(ex):
+                raise SupervisorError("the Marketplace hasn't finished loading yet") from ex
+            raise
+    raise SupervisorError(
+        "neither the Marketplace (HA 2026.11+) nor HACS answered; is either set up?"
+    )

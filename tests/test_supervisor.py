@@ -67,17 +67,27 @@ def _frame(opcode: int, payload: bytes, fin: bool = True) -> bytes:
 class FakeSupervisor:
     """Answers one websocket connection the way the Supervisor's Core proxy does."""
 
-    def __init__(self, result=None, *, accept_token="tok", error=None, fragment=False):
+    def __init__(self, result=None, *, accept_token="tok", error=None, fragment=False,
+                 known=("marketplace/repositories/list",)):  # fmt: skip
         self.result = HACS_ROWS if result is None else result
+        self.known = known
         self.accept_token = accept_token
         self.error = error
         self.fragment = fragment
         self.sent: list[dict] = []
         self.sock = socket.socket()
         self.sock.bind(("127.0.0.1", 0))
-        self.sock.listen(1)
+        self.sock.listen(4)
         self.port = self.sock.getsockname()[1]
-        threading.Thread(target=self._serve, daemon=True).start()
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self):
+        while True:
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            self._serve(conn)
 
     def _send_json(self, conn, obj):
         data = json.dumps(obj).encode()
@@ -87,8 +97,7 @@ class FakeSupervisor:
         else:
             conn.sendall(_frame(0x1, data))
 
-    def _serve(self):
-        conn, _ = self.sock.accept()
+    def _serve(self, conn):
         with conn:
             req = b""
             while b"\r\n\r\n" not in req:
@@ -114,9 +123,11 @@ class FakeSupervisor:
                         self._send_json(conn, {"type": "auth_ok" if ok else "auth_invalid"})
                         if not ok:
                             return
-                    elif self.error:
+                    elif self.error or msg["type"] not in self.known:
+                        err = self.error or {"code": "unknown_command",
+                                             "message": "Unknown command."}  # fmt: skip
                         self._send_json(conn, {"id": msg["id"], "type": "result",
-                                               "success": False, "error": self.error})  # fmt: skip
+                                               "success": False, "error": err})  # fmt: skip
                     else:
                         self._send_json(conn, {"id": 99, "type": "event", "event": {}})
                         self._send_json(conn, {"id": msg["id"], "type": "result",
@@ -142,7 +153,7 @@ def test_lists_installed_integrations_and_cards():
     assert other == {"theme": 1}
     # The only command sent was the HACS list, and the ping got a pong.
     cmds = [m for m in fake.sent if "type" in m]
-    assert [m["type"] for m in cmds] == ["auth", "hacs/repositories/list"]
+    assert [m["type"] for m in cmds] == ["auth", "marketplace/repositories/list"]
     assert {"pong": "ping"} in fake.sent
 
 
@@ -158,11 +169,21 @@ def test_only_the_hacs_list_can_be_sent():
         supervisor.core_command("call_service", "tok", host="127.0.0.1", port=1)
 
 
-def test_refused_token_and_missing_hacs_say_why():
+def test_older_ha_falls_back_to_the_hacs_custom_integration():
+    fake = FakeSupervisor(known=("hacs/repositories/list",))
+    items, _ = _list(fake)
+    assert len(items) == 3
+    cmds = [m["type"] for m in fake.sent if "type" in m and m["type"] != "auth"]
+    assert cmds == ["marketplace/repositories/list", "hacs/repositories/list"]
+
+
+def test_refused_token_and_missing_marketplace_say_why():
     with pytest.raises(SupervisorError, match="refused the add-on token"):
         _list(FakeSupervisor(accept_token="other"))
-    fake = FakeSupervisor(error={"code": "unknown_command", "message": "Unknown command."})
-    with pytest.raises(SupervisorError, match="HACS isn't installed"):
+    with pytest.raises(SupervisorError, match="neither the Marketplace"):
+        _list(FakeSupervisor(known=()))
+    fake = FakeSupervisor(error={"code": "not_loaded", "message": "x"})
+    with pytest.raises(SupervisorError, match="hasn't finished loading"):
         _list(fake)
     with pytest.raises(SupervisorError, match="no SUPERVISOR_TOKEN"):
         supervisor.installed_hacs(None)

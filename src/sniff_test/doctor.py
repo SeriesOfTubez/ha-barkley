@@ -117,15 +117,15 @@ def supervisor_checks(
         updates = sum(1 for i in items if i.update)
         skipped = sum(other.values())
         out.append(Check(
-            "HACS installed list", True,
+            "Marketplace (HACS) installed list", True,
             f"{len(items)} integration(s)/card(s) installed, {updates} with an update"
             + (f"; {skipped} other installed item(s) not scanned" if skipped else ""),
-            command=f"websocket {supervisor.HACS_LIST}",
+            command="websocket " + " | ".join(supervisor.LIST_COMMANDS),
             seconds=round(time.monotonic() - t0, 1),
         ))  # fmt: skip
     except supervisor.SupervisorError as ex:
-        out.append(Check("HACS installed list", False, str(ex),
-                         command=f"websocket {supervisor.HACS_LIST}"))  # fmt: skip
+        out.append(Check("Marketplace (HACS) installed list", False, str(ex),
+                         command="websocket " + " | ".join(supervisor.LIST_COMMANDS)))  # fmt: skip
     return out
 
 
