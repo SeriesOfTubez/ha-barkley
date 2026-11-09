@@ -12,7 +12,7 @@ FROM ghcr.io/home-assistant/base-debian:trixie
 # TARGETARCH comes from BuildKit (amd64/arm64); the Supervisor passes BUILD_ARCH
 # (amd64/aarch64). Either is enough.
 ARG TARGETARCH
-ARG BUILD_VERSION=0.1.0
+ARG BUILD_VERSION=0.2.0
 ARG BUILD_ARCH
 
 ARG SEMGREP_VERSION=1.181.0

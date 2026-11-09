@@ -3,6 +3,9 @@ rules:
   - id: card-token-exfil
     mode: taint
     languages: [javascript, typescript]
+    # A URL held in a variable is judged by the value it was last assigned.
+    options:
+      symbolic_propagation: true
     severity: ERROR
     message: >-
       A Home Assistant auth token flows into a network request that is not
@@ -36,10 +39,16 @@ rules:
               - pattern: window.open($URL, ...)
               - pattern: $XHR.open($M, $URL, ...)
               - pattern: $IMG.src = $URL
-          # Relative URLs and hass-built URLs stay on the HA origin.
-          - pattern-not: fetch("=~/^\/[^\/]/", ...)
+          # Relative URLs and hass-built URLs stay on the HA origin. A relative URL
+          # starts with "/" and then neither "/" nor "\\" (browsers read "/\\h" as
+          # "//h"); anything appended after such a prefix can't change the origin.
+          - pattern-not: fetch("=~/^\/[^\/\\]/", ...)
+          - pattern-not: fetch("=~/^\/[^\/\\]/".concat(...), ...)
+          - pattern-not: fetch("=~/^\/[^\/\\]/" + $Y, ...)
           - pattern-not: fetch($H.hassUrl(...), ...)
-          - pattern-not: $XHR.open($M, "=~/^\/[^\/]/", ...)
+          - pattern-not: $XHR.open($M, "=~/^\/[^\/\\]/", ...)
+          - pattern-not: $XHR.open($M, "=~/^\/[^\/\\]/".concat(...), ...)
+          - pattern-not: $XHR.open($M, "=~/^\/[^\/\\]/" + $Y, ...)
           - pattern-not: new WebSocket($H.hassUrl(...), ...)
       - patterns:
           # Anything sent over an already-open XHR / socket.

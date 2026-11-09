@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -253,6 +254,47 @@ def _is_own_storage(f: Finding, domain: str | None) -> bool:
     return any(marker in ev for marker in own)
 
 
+def _only_rebinds_names(f: Finding, root: Path, trees: dict[str, Any]) -> bool:
+    """`ha-monkeypatch` matched an assignment that only binds local names.
+
+    After `from homeassistant import config_entries`, Semgrep resolves a later local
+    `config_entries = hass.config_entries.async_entries(DOMAIN)` to
+    `homeassistant.config_entries` and matches `$OBJ.$ATTR = $V` (Bambu Lab v2.3.0).
+    Rebinding a name changes nothing outside the function. We parse the file (never
+    run it) and drop the hit only when every assignment starting on that line targets
+    bare names; chained `x = homeassistant.y = v` keeps it, as does a parse failure.
+    """
+    if f.rule_id != "ha-monkeypatch" or not f.file or not f.line:
+        return False
+    if f.file not in trees:
+        try:
+            trees[f.file] = ast.parse((root / f.file).read_bytes())
+        except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
+            trees[f.file] = None
+    tree = trees[f.file]
+    if tree is None:
+        return False
+
+    def names_only(t: ast.expr) -> bool:
+        if isinstance(t, ast.Name):
+            return True
+        if isinstance(t, (ast.Tuple, ast.List)):
+            return all(names_only(e) for e in t.elts)
+        if isinstance(t, ast.Starred):
+            return names_only(t.value)
+        return False
+
+    stmts = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and n.lineno == f.line
+    ]
+    if not stmts:
+        return False  # setattr(...) or something we don't recognise: keep it
+    targets = [t for n in stmts for t in (n.targets if isinstance(n, ast.Assign) else [n.target])]
+    return all(names_only(t) for t in targets)
+
+
 def _is_parse_error(err: dict[str, Any]) -> bool:
     # Full failures are "Syntax error"; recovered ones are ["PartialParsing", spans].
     kind = err.get("type")
@@ -349,7 +391,12 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
             facts.append(fact)
         else:
             findings.append(to_finding(r, root))
-    findings = [f for f in findings if not _is_own_storage(f, target.domain)]
+    trees: dict[str, Any] = {}
+    findings = [
+        f
+        for f in findings
+        if not _is_own_storage(f, target.domain) and not _only_rebinds_names(f, root, trees)
+    ]
     errors = data.get("errors", [])
     findings += _parse_error_findings(errors, root)
     timeouts = [e for e in errors if "Timeout" in str(e.get("type"))]
