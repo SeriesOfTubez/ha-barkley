@@ -50,3 +50,15 @@ class TemplateCard {
     eval("`" + remote + "`");
   }
 }
+
+function htmlComment(a, b, n) {
+  // Our copy is scanned after normalize_js turns `a<!--b` into `a< !--b`.
+  // ruleid: card-html-comment-token
+  var x = a< !--b;
+  // ok: card-html-comment-token
+  var y = a < !b;
+  // ok: card-html-comment-token
+  while (n-- > 0) {}
+  // ok: card-html-comment-token
+  var s = "<!-- lit -->";
+}

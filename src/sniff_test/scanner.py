@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from sniff_test.analyzers import (
+    bytecode,
     correlate,
     endpoints,
     guarddog,
@@ -60,12 +61,12 @@ def _dependency_analyzers(
     offline: bool,
     jobs: int | None,
     say: Callable[[str], None],
-) -> tuple[list[AnalyzerResult], python_deps.Resolution | None]:
+) -> tuple[list[AnalyzerResult], python_deps.Resolution | None, ha_env.HAEnv | None]:
     if target.kind is TargetKind.PLUGIN:
         say("osv (npm)")
         if offline:
-            return [AnalyzerResult("osv-npm", AnalyzerState.SKIPPED, detail="offline")], None
-        return [osv.run_npm(target, ws)], None
+            return [AnalyzerResult("osv-npm", AnalyzerState.SKIPPED, detail="offline")], None, None
+        return [osv.run_npm(target, ws)], None, None
 
     env, env_error = None, "offline"
     if not offline:
@@ -88,7 +89,7 @@ def _dependency_analyzers(
         results.append(osv.run_python(resolution, ws))
         say("guarddog")
         results.append(guarddog.run(resolution, ws, jobs=jobs))
-    return results, resolution
+    return results, resolution, env
 
 
 def scan(
@@ -113,8 +114,13 @@ def scan(
         say("repo signals")
         repo_result, provenance = repo_signals.run(target)
         results.append(repo_result)
-        dep_results, resolution = _dependency_analyzers(target, ws, ha_version, offline, jobs, say)
+        dep_results, resolution, env = _dependency_analyzers(
+            target, ws, ha_version, offline, jobs, say
+        )
         results += dep_results
+        if target.kind is TargetKind.INTEGRATION:
+            say("bytecode")
+            results.append(bytecode.run(target, env.python_version if env else None))
 
         findings = list(target.notes)
         facts: list[Fact] = []

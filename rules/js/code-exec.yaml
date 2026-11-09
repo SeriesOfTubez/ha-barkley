@@ -103,3 +103,18 @@ rules:
           - pattern-either:
               - pattern: $S.src = "=~/^(https?:)?\/\//"
               - pattern: $S.setAttribute("src", "=~/^(https?:)?\/\//")
+
+  # `a<!--b` is rewritten to `a< !--b` in our copy before scanning (see normalize_js), so
+  # this matches what was `<!--` in the original. Minifiers (terser, esbuild) never emit
+  # it because classic scripts treat it as a comment; scanners do too, which is the trick.
+  - id: card-html-comment-token
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Uses the HTML comment token `<!--` inside code. Many scanners treat it as a
+      comment and skip the rest of the line, but HA loads cards as modules, where it is
+      ordinary code (`a < !--b`). Sniff Test scanned the hidden part anyway; no normal
+      code or minifier writes this.
+    metadata:
+      sniff: {title: Card hides code behind an HTML comment token, severity: medium, category: code_exec}
+    pattern: $A < !--$B
