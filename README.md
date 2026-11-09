@@ -23,6 +23,7 @@ uv run sniff-test scan ./path/to/repo --offline                 # no PyPI/OSV lo
 uv run sniff-test diff old.json new.json                        # what an update changes (reports from scan -o)
 uv run sniff-test diff owner/repo --from v1.2.3                 # scan v1.2.3 and what HACS installs now, compare
 uv run sniff-test diff owner/repo --from v1.2.3 --to v1.3.0 -v  # two tags; -v lists every change
+uv run sniff-test diff owner/repo --from v1.2.3 --ha-version auto  # old side: the HA of its time
 uv run sniff-test releases owner/repo                           # release timeline: HACS default, publishers, handovers
 
 uv run sniff-test scan owner/repo --store scans.db              # also keep the scan in a SQLite scan store
@@ -59,14 +60,16 @@ rest in one line. It compares; it never changes how either scan is scored.
   when the read and the send are in different files.
 - **Code you can't read**: compiled `.pyc` files that HA's Python would run instead of
   (or without) the `.py` next to them (unchecked-hash, checked-hash matching the source,
-  or sourceless bytecode for HA's Python version).
+  or sourceless bytecode for HA's Python version), and native `.so` extension modules
+  HA's Python would load, either in place of a same-named `.py` or with no source at all.
 - **Scanner evasion**: `<!--` and `-->` hide the rest of a line from Semgrep in JS but are
   ordinary code in the ES modules HA loads. Sniff Test rewrites them (with the same
   meaning) in its copy before scanning, and flags a real `<!--` in code.
 - **Repo signals**: ownership transfers (proven from GitHub's redirect, or from the
   repo's own old links resolving to the same repository), scored by whether the people
-  publishing releases changed; a first release by a new publisher; very new repos; and
-  release zips whose code differs from the tagged source.
+  publishing releases changed; a first release by a new publisher; very new repos;
+  release tags whose commit isn't on the default branch; and release zips whose code
+  differs from the tagged source.
 
 The JSON report also carries a `graph` section (what the item hooks into: HA
 services, views and events, the user's data, hosts, packages, publishers, with an
