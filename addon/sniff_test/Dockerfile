@@ -19,31 +19,43 @@ ARG SEMGREP_VERSION=1.181.0
 ARG GUARDDOG_VERSION=3.2.0
 ARG OSV_SCANNER_VERSION=2.7.0
 ARG UV_VERSION=0.13.7
+# Bumping UV_VERSION or OSV_SCANNER_VERSION: update the sha256 and asset ids in the RUN below.
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# uv and osv-scanner: release binaries, sha256-pinned.
+# uv and osv-scanner: release binaries, sha256-pinned. GitHub's release download URL
+# can fail on its own (2026-11-09: 504 for the uv asset, every try, while the API's
+# asset endpoint served the same bytes), so each download retries and then falls back
+# to the API endpoint by asset id. The sha256 check decides either way.
 RUN set -eu; \
     arch="${TARGETARCH:-$(echo "${BUILD_ARCH:-}" | sed 's/^aarch64$/arm64/')}"; \
     case "${arch}" in \
       amd64) a=x86_64; \
-        uv_sha=287491da03f2a785c70fa75b13e1f849918c2f2b5415fe84876b8214eeb792f9; \
-        osv_sha=160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b ;; \
+        uv_sha=287491da03f2a785c70fa75b13e1f849918c2f2b5415fe84876b8214eeb792f9; uv_id=704009859; \
+        osv_sha=160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b; osv_id=632251666 ;; \
       arm64) a=aarch64; \
-        uv_sha=2d3ec076a0c4c0e8250bb6418c44080828b544f1a3be0b6e46adf9fb6923de45; \
-        osv_sha=4061ef4c021ed3c47f203b818f337e351336cc5cd67c0274fc36bd1dfc728dd7 ;; \
+        uv_sha=2d3ec076a0c4c0e8250bb6418c44080828b544f1a3be0b6e46adf9fb6923de45; uv_id=704009487; \
+        osv_sha=4061ef4c021ed3c47f203b818f337e351336cc5cd67c0274fc36bd1dfc728dd7; osv_id=632251568 ;; \
       *) echo "unsupported architecture '${arch}' (TARGETARCH/BUILD_ARCH)"; exit 1 ;; \
     esac; \
-    curl -fsSLo /tmp/uv.tgz \
-      "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${a}-unknown-linux-musl.tar.gz"; \
-    echo "${uv_sha}  /tmp/uv.tgz" | sha256sum -c -; \
+    get() { \
+      out="$1" url="$2" api="$3" sha="$4"; \
+      curl -fsSL --retry 3 --retry-all-errors --retry-delay 3 -o "${out}" "${url}" \
+        || { echo "download failed, trying the GitHub API asset endpoint"; \
+             curl -fsSL --retry 3 --retry-all-errors --retry-delay 3 \
+               -H "Accept: application/octet-stream" -o "${out}" "${api}"; }; \
+      echo "${sha}  ${out}" | sha256sum -c -; \
+    }; \
+    get /tmp/uv.tgz \
+      "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${a}-unknown-linux-musl.tar.gz" \
+      "https://api.github.com/repos/astral-sh/uv/releases/assets/${uv_id}" "${uv_sha}"; \
     tar -xzf /tmp/uv.tgz -C /usr/local/bin --strip-components=1; \
     rm /tmp/uv.tgz; \
-    curl -fsSLo /usr/local/bin/osv-scanner \
-      "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_${arch}"; \
-    echo "${osv_sha}  /usr/local/bin/osv-scanner" | sha256sum -c -; \
+    get /usr/local/bin/osv-scanner \
+      "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_${arch}" \
+      "https://api.github.com/repos/google/osv-scanner/releases/assets/${osv_id}" "${osv_sha}"; \
     chmod +x /usr/local/bin/osv-scanner
 
 # Semgrep and GuardDog, each in its own venv, wheels only.
