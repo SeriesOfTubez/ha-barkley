@@ -238,6 +238,7 @@ class Row:
     installed_scan: ScanRow | None
     available_scan: ScanRow | None
     reasons: list[str] = field(default_factory=list)
+    busy: str = ""  # "queued" or "running" while a job for this repo is in the worker
 
 
 GROUPS = {
@@ -313,6 +314,8 @@ def _version_cell(base: str, r: Row) -> str:
 
 def _action(base: str, r: Row, token: str) -> str:
     it = r.item
+    if r.busy:  # one click is enough: no second button while the job is in the worker
+        return f'<span class="muted">{"checking…" if r.busy == "running" else "queued…"}</span>'
     hidden = (f'<input type=hidden name=token value="{token}">'
               f'<input type=hidden name=repo value="{e(it.repo)}">'
               f'<input type=hidden name=ref value="{e(it.installed)}">')  # fmt: skip
@@ -608,6 +611,13 @@ class Panel:
             return ""
         st = self.installed(refresh)
         rows = classify(st.items, self.store, self.diff) if not st.error else []
+        busy = {
+            j.repo.lower(): j.state
+            for j in reversed(list(self.worker.jobs))
+            if j.state in ("queued", "running")
+        }
+        for r in rows:
+            r.busy = busy.get(r.item.repo.lower(), "")
         return render_installed(base, st, rows, self.token)
 
     def handler(self) -> type[BaseHTTPRequestHandler]:

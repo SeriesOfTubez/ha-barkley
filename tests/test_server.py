@@ -348,3 +348,18 @@ def test_no_installed_section_outside_an_addon(panel):
     _, _, base, _ = panel
     _, _, page = get(base + "/")
     assert "Installed from the Marketplace" not in page
+
+
+def test_a_row_shows_its_running_check_instead_of_a_second_button(addon):
+    _, _, base, httpd, _ = addon
+    panel = httpd.panel
+    job = server.Job(99, "update", "acme/new", "v1", "v2", state="running")
+    panel.worker.jobs.insert(0, job)
+    _, _, page = get(base + "/")
+    row = page[page.index("acme/new") :]
+    row = row[: row.index("</tr>")]
+    assert "checking…" in row and "Check update" not in row
+    job.state = "done"
+    _, _, page = get(base + "/")
+    row = page[page.index("acme/new") :]
+    assert "Check update" in row[: row.index("</tr>")]
