@@ -1,0 +1,69 @@
+# Inventory for frontend cards: neutral facts, never findings (see python/inventory.yaml).
+# Receivers are minified in bundles, so patterns match on method names.
+rules:
+  - id: inv-card-call-service
+    languages: [javascript, typescript]
+    severity: INFO
+    message: $D|$S
+    metadata: {sniff: {inventory: {ring: ha, kind: service, relation: calls}}}
+    pattern: $H.callService($D, $S, ...)
+
+  - id: inv-card-call-ws
+    languages: [javascript, typescript]
+    severity: INFO
+    message: $T
+    metadata: {sniff: {inventory: {ring: ha, kind: ws_command, relation: calls}}}
+    pattern-either:
+      - pattern: '$H.callWS({type: $T, ...})'
+      - pattern: '$H.sendMessagePromise({type: $T, ...})'
+
+  - id: inv-card-call-api
+    languages: [javascript, typescript]
+    severity: INFO
+    message: REST API
+    metadata: {sniff: {inventory: {ring: ha, kind: rest_api, relation: calls}}}
+    pattern: $H.callApi(...)
+
+  - id: inv-card-subscribe
+    languages: [javascript, typescript]
+    severity: INFO
+    message: HA events
+    metadata: {sniff: {inventory: {ring: ha, kind: event, relation: listens}}}
+    pattern-either:
+      - pattern: $C.subscribeEvents(...)
+      - pattern: $C.subscribeMessage(...)
+
+  - id: inv-card-states
+    languages: [javascript, typescript]
+    severity: INFO
+    message: entity states
+    metadata: {sniff: {inventory: {ring: ha, kind: states, relation: reads}}}
+    pattern: $H.states[$E]
+
+  - id: inv-card-network
+    languages: [javascript, typescript]
+    severity: INFO
+    message: network requests
+    metadata: {sniff: {inventory: {ring: network, kind: capability, relation: uses, outbound: true}}}
+    pattern-either:
+      - pattern: fetch(...)
+      - pattern: new XMLHttpRequest(...)
+      - pattern: new WebSocket(...)
+      - pattern: new EventSource(...)
+      - pattern: navigator.sendBeacon(...)
+
+  - id: inv-card-localstorage
+    languages: [javascript, typescript]
+    severity: INFO
+    message: browser localStorage
+    metadata: {sniff: {inventory: {ring: data, kind: data, relation: reads}}}
+    pattern-either:
+      - pattern: localStorage.getItem(...)
+      - pattern: window.localStorage.getItem(...)
+
+  - id: inv-card-element
+    languages: [javascript, typescript]
+    severity: INFO
+    message: $N
+    metadata: {sniff: {inventory: {ring: ha, kind: custom_element, relation: registers, key: custom elements}}}
+    pattern: customElements.define($N, ...)

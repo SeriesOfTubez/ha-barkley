@@ -6,6 +6,7 @@ import hashlib
 from dataclasses import dataclass, field, replace
 from enum import IntEnum, StrEnum
 from pathlib import Path
+from typing import Any
 
 
 class Severity(IntEnum):
@@ -86,6 +87,48 @@ class Finding:
         return replace(self, severity=severity, base_severity=self.base_severity or self.severity)
 
 
+class Evidence(IntEnum):
+    """How sure we are that an inventory edge is real. Ordered: higher wins on merge."""
+
+    DECLARED = 1  # stated by the item itself (manifest, package.json, release metadata)
+    POSSIBLE = 2  # the capability is present in the code
+    PROVEN = 3  # a taint path or an API response shows it
+    OBSERVED = 4  # seen at runtime (future: egress logging)
+
+    def __str__(self) -> str:
+        return self.name.lower()
+
+
+class Ring(StrEnum):
+    """Rings of the hooks graph around the scanned item."""
+
+    HA = "ha"  # HA internals: services, views, webhooks, events, registries
+    DATA = "data"  # the user's data: secrets, auth, locations, env, other entries
+    NETWORK = "network"  # hosts and IPs
+    PACKAGES = "packages"  # resolved dependencies
+    REPO = "repo"  # provenance: publishers, former names
+
+
+@dataclass(frozen=True, slots=True)
+class Fact:
+    """A neutral observation for the inventory / hooks graph. Never scored.
+
+    `kind` + `key` name the node (e.g. host / api.vendor.com); `relation` is the edge
+    from the scanned item to it. `key` and `attrs` values can come from the scanned
+    code and are untrusted.
+    """
+
+    ring: Ring
+    kind: str
+    key: str
+    relation: str
+    evidence: Evidence
+    file: str | None = None
+    line: int | None = None
+    attrs: dict[str, Any] = field(default_factory=dict, hash=False, compare=False)
+    analyzer: str = ""
+
+
 @dataclass(slots=True)
 class AnalyzerResult:
     name: str
@@ -93,6 +136,7 @@ class AnalyzerResult:
     findings: list[Finding] = field(default_factory=list)
     detail: str = ""
     tool_version: str | None = None
+    facts: list[Fact] = field(default_factory=list)
 
 
 class TargetKind(StrEnum):

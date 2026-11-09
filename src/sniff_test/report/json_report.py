@@ -10,11 +10,11 @@ built so the AI can *explain* findings but can't change the outcome:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sniff_test import __version__
-from sniff_test.models import AnalyzerResult, AnalyzerState, Finding, Target
+from sniff_test.models import AnalyzerResult, AnalyzerState, Fact, Finding, Target
 from sniff_test.scoring import Exposure, ScoreResult
 
 SCHEMA_VERSION = 1
@@ -47,6 +47,7 @@ class ScanResult:
     analyzers: list[AnalyzerResult]
     findings: list[Finding]
     score: ScoreResult
+    facts: list[Fact] = field(default_factory=list)  # inventory: never scored
 
 
 def sanitize_untrusted(text: str | None, limit: int = _UNTRUSTED_MAX) -> str:

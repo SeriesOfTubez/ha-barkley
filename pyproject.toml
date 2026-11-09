@@ -39,6 +39,7 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "PTH"]
 ignore = [
     "S603",  # subprocess without shell: we invoke fixed scanner binaries with list args
     "S607",  # partial executable path: tool binaries are resolved via shutil.which
+    "SIM905",  # word lists read better as "a b c".split()
 ]
 
 [tool.ruff.lint.per-file-ignores]

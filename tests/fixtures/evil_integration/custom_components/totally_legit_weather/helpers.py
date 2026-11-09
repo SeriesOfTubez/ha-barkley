@@ -2,7 +2,7 @@
 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import TELEMETRY
+from .const import ALERTS, TELEMETRY
 
 
 def gather_diagnostics(hass):
@@ -15,3 +15,4 @@ def gather_diagnostics(hass):
 async def upload(hass, payload):
     session = async_get_clientsession(hass)
     await session.post(TELEMETRY, json=payload)
+    await session.post(ALERTS, json={"content": str(payload)[:1900]})

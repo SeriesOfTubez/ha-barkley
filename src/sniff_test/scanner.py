@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from sniff_test.analyzers import guarddog, osv, pypi_meta, python_deps, semgrep
+from sniff_test.analyzers import endpoints, guarddog, osv, pypi_meta, python_deps, semgrep
 from sniff_test.deps import ha_env
 from sniff_test.fetch.hacs import fetch
-from sniff_test.models import AnalyzerResult, AnalyzerState, Finding, Target, TargetKind
+from sniff_test.models import AnalyzerResult, AnalyzerState, Fact, Finding, Target, TargetKind
 from sniff_test.report.json_report import ScanResult
 from sniff_test.scoring import Exposure, apply_exposure, score
 from sniff_test.workspace import workspace
@@ -98,11 +98,15 @@ def scan(
         target = fetch(source, ws, ref=ref, kind=kind)
         say("semgrep")
         results: list[AnalyzerResult] = [semgrep.run(target, ws, jobs=jobs)]
+        say("endpoints")
+        results.append(endpoints.run(target))
         results += _dependency_analyzers(target, ws, ha_version, offline, jobs, say)
 
         findings = list(target.notes)
+        facts: list[Fact] = []
         for r in results:
             findings.extend(r.findings)
+            facts.extend(r.facts)
         findings = apply_exposure(_dedupe(findings), exposure)
         complete = all(r.state in (AnalyzerState.OK, AnalyzerState.NOT_APPLICABLE) for r in results)
         return ScanResult(
@@ -111,4 +115,5 @@ def scan(
             analyzers=results,
             findings=findings,
             score=score(findings, complete),
+            facts=facts,
         )

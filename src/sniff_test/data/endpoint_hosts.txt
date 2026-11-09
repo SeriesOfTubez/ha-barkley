@@ -1,0 +1,121 @@
+# Host classes for the endpoint analyzer. Format: <class> <host-suffix>
+# A host matches an entry when it equals it or ends with "." + it.
+#
+# exfil_service: places that only make sense in shipped code as a drop box or a tunnel
+# (paste sites, request catchers, OOB interaction servers, tunnels). Always a finding.
+exfil_service pastebin.com
+exfil_service paste.ee
+exfil_service hastebin.com
+exfil_service ghostbin.co
+exfil_service termbin.com
+exfil_service ix.io
+exfil_service 0x0.st
+exfil_service transfer.sh
+exfil_service file.io
+exfil_service dpaste.com
+exfil_service dpaste.org
+exfil_service rentry.co
+exfil_service privatebin.net
+exfil_service webhook.site
+exfil_service requestbin.com
+exfil_service requestbin.net
+exfil_service pipedream.net
+exfil_service beeceptor.com
+exfil_service hookbin.com
+exfil_service requestcatcher.com
+exfil_service postb.in
+exfil_service interact.sh
+exfil_service oast.pro
+exfil_service oast.live
+exfil_service oast.site
+exfil_service oast.online
+exfil_service oast.fun
+exfil_service oast.me
+exfil_service oastify.com
+exfil_service burpcollaborator.net
+exfil_service canarytokens.com
+exfil_service ngrok.io
+exfil_service ngrok.app
+exfil_service ngrok.dev
+exfil_service ngrok-free.app
+exfil_service ngrok-free.dev
+exfil_service trycloudflare.com
+exfil_service loca.lt
+exfil_service localtunnel.me
+exfil_service serveo.net
+exfil_service localhost.run
+exfil_service lhr.life
+exfil_service pinggy.link
+exfil_service pinggy.io
+exfil_service bore.pub
+#
+# developer_hosted: serverless / free app hosting. Legitimate uses exist (iCloud3's opt-in
+# analytics runs on workers.dev), so these are graph context only, but they count as
+# undeclared destinations for the possible-exfil correlation.
+developer_hosted workers.dev
+developer_hosted pages.dev
+developer_hosted vercel.app
+developer_hosted netlify.app
+developer_hosted herokuapp.com
+developer_hosted glitch.me
+developer_hosted repl.co
+developer_hosted replit.dev
+developer_hosted deno.dev
+developer_hosted onrender.com
+developer_hosted fly.dev
+developer_hosted firebaseio.com
+developer_hosted supabase.co
+developer_hosted azurewebsites.net
+developer_hosted web.app
+#
+# messaging: chat APIs that accept webhooks. Only a finding when the URL carries a
+# credential (webhook id/token, bot token); otherwise it's a user-configured notifier.
+messaging discord.com
+messaging discordapp.com
+messaging api.telegram.org
+messaging hooks.slack.com
+#
+# infrastructure: the HA ecosystem, GitHub and package registries.
+infrastructure home-assistant.io
+infrastructure nabucasa.com
+infrastructure hacs.xyz
+infrastructure github.com
+infrastructure githubusercontent.com
+infrastructure pypi.org
+infrastructure pythonhosted.org
+infrastructure npmjs.org
+infrastructure npmjs.com
+#
+# link: donation, social and badge links shown in a UI. Never a data destination worth
+# reasoning about.
+link patreon.com
+link buymeacoffee.com
+link ko-fi.com
+link paypal.com
+link paypal.me
+link liberapay.com
+link reddit.com
+link youtube.com
+link youtu.be
+link twitter.com
+link x.com
+link discord.gg
+link img.shields.io
+link shields.io
+link creativecommons.org
+link opensource.org
+link developer.mozilla.org
+link wikipedia.org
+#
+# namespace: XML/JSON namespace and schema identifiers. Never fetched; dropped entirely.
+namespace w3.org
+namespace schema.org
+namespace json-schema.org
+namespace schemas.xmlsoap.org
+namespace schemas.microsoft.com
+namespace purl.org
+namespace xmlns.com
+namespace ns.adobe.com
+namespace example.com
+namespace example.org
+namespace example.net

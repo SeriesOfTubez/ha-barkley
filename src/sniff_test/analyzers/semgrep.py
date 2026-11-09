@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from importlib import resources
@@ -14,7 +15,10 @@ from sniff_test.models import (
     AnalyzerResult,
     AnalyzerState,
     Category,
+    Evidence,
+    Fact,
     Finding,
+    Ring,
     Severity,
     Tag,
     Target,
@@ -25,6 +29,12 @@ _EVIDENCE_MAX = 300
 _PROCESS_TIMEOUT = 900
 # Files whose presence in the scanned tree could make Semgrep skip targets.
 _IGNORE_FILES = (".semgrepignore", ".gitignore")
+_JS_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx"}
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+# Rewrites applied to OUR extracted copy so Semgrep can parse real-world bundles. Each
+# one is semantically identical; none can hide code. Found on the M3 baseline: lit-html's
+# `/-->/g` regex made Semgrep 1.181 drop all of mushroom.js (0 matches, scan said ok).
+_JS_PARSE_FIXES = ((re.compile(r"(?<=[=(,:])/-->/"), "/--[>]/"),)
 
 
 def rules_dir() -> Path:
@@ -45,6 +55,25 @@ def neutralize_ignores(root: Path) -> None:
             if p.is_file() and not p.is_symlink():
                 p.unlink()
     (root / ".semgrepignore").write_text("")
+
+
+def normalize_js(root: Path) -> int:
+    """Apply _JS_PARSE_FIXES to every JS file under root. Returns files changed."""
+    changed = 0
+    for p in root.rglob("*"):
+        if p.suffix not in _JS_SUFFIXES or not p.is_file() or p.is_symlink():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="surrogateescape")
+        except OSError:
+            continue
+        new = text
+        for rx, repl in _JS_PARSE_FIXES:
+            new = rx.sub(repl, new)
+        if new != text:
+            p.write_text(new, encoding="utf-8", errors="surrogateescape")
+            changed += 1
+    return changed
 
 
 def _tool_env() -> dict[str, str]:
@@ -121,6 +150,74 @@ def to_finding(result: dict[str, Any], root: Path) -> Finding:
     )
 
 
+_KEY_MAX = 120
+_PY_LITERAL = re.compile(r"""^[rRbBuU]?(["'])(.*)\1$""", re.S)
+_PY_FSTRING = re.compile(r"""^[fF][rR]?(["'])(.*)\1$""", re.S)
+_JS_LITERAL = re.compile(r"""^(["'])(.*)\1$|^`([^`$]*)`$""", re.S)
+_DOTTED = re.compile(r"^[A-Za-z_][\w.]*$")
+
+
+def _clean_part(part: str, domain: str | None, js: bool) -> str:
+    """One interpolated metavariable -> a readable key part.
+
+    String literals keep their value; Python constants (EVENT_HOMEASSISTANT_STOP,
+    DOMAIN) keep their name; anything computed (or any JS identifier, which is
+    minified in bundles) becomes `*`.
+    """
+    part = part.strip()
+    if js:
+        m = _JS_LITERAL.match(part)
+        return (m[2] if m[2] is not None else m[3]) if m else "*"
+    if m := _PY_LITERAL.match(part):
+        return m[2]
+    if m := _PY_FSTRING.match(part):
+        return m[2]
+    if part in ("DOMAIN", "self.domain") and domain:
+        return domain
+    return part if _DOTTED.match(part) else "*"
+
+
+def _clean_key(text: str, domain: str | None, js: bool) -> str:
+    """Interpolated message (`DOMAIN|"refresh"`) -> node key (`acme.refresh`)."""
+    parts = [_clean_part(p, domain, js) for p in text.split("|")]
+    key = ".".join(parts)
+    return _CONTROL.sub("", key)[:_KEY_MAX] or "*"
+
+
+def to_fact(result: dict[str, Any], root: Path, domain: str | None) -> Fact | None:
+    """An inventory rule hit -> a neutral Fact (None if it isn't an inventory rule)."""
+    extra = result.get("extra", {})
+    inv = ((extra.get("metadata") or {}).get("sniff") or {}).get("inventory")
+    if not isinstance(inv, dict):
+        return None
+    try:
+        rel = Path(result["path"]).resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        rel = Path(result["path"]).name
+    js = Path(result["path"]).suffix in _JS_SUFFIXES
+    # DOMAIN is only safely "our" domain when registering; calls often use another
+    # component's imported DOMAIN constant.
+    own = domain if inv.get("relation") == "registers" else None
+    value = _clean_key(str(extra.get("message", "")), own, js)
+    attrs: dict[str, Any] = {}
+    if inv.get("outbound"):
+        attrs["outbound"] = True
+    if fixed := inv.get("key"):
+        attrs["values"] = [value]
+        value = str(fixed)
+    return Fact(
+        ring=Ring(inv["ring"]),
+        kind=str(inv["kind"]),
+        key=value,
+        relation=str(inv["relation"]),
+        evidence=Evidence.POSSIBLE,
+        file=rel,
+        line=result["start"]["line"],
+        attrs=attrs,
+        analyzer=NAME,
+    )
+
+
 def _is_own_storage(f: Finding, domain: str | None) -> bool:
     """An integration reading .storage/<its own domain>... is not interesting."""
     if f.rule_id != "ha-raw-storage-access" or not f.evidence:
@@ -132,13 +229,21 @@ def _is_own_storage(f: Finding, domain: str | None) -> bool:
     return any(marker in ev for marker in own)
 
 
+def _is_parse_error(err: dict[str, Any]) -> bool:
+    # Full failures are "Syntax error"; recovered ones are ["PartialParsing", spans].
+    kind = err.get("type")
+    name = kind[0] if isinstance(kind, list) and kind else str(kind)
+    return "Syntax" in str(name) or name == "PartialParsing"
+
+
 def _parse_error_findings(errors: list[dict[str, Any]], root: Path) -> list[Finding]:
     """Python that Semgrep can't parse can't be checked by it either; surface that."""
     out: list[Finding] = []
     seen: set[str] = set()
     for err in errors:
         path = err.get("path")
-        if not path or not str(path).endswith(".py") or "Syntax" not in str(err.get("type")):
+        suffix = Path(str(path)).suffix if path else ""
+        if not path or suffix not in {".py"} | _JS_SUFFIXES or not _is_parse_error(err):
             continue
         try:
             rel = Path(path).resolve().relative_to(root.resolve()).as_posix()
@@ -150,7 +255,8 @@ def _parse_error_findings(errors: list[dict[str, Any]], root: Path) -> list[Find
         out.append(
             Finding(
                 rule_id="scan-parse-error",
-                title="Python file could not be fully parsed",
+                title=f"{'Python' if suffix == '.py' else 'JavaScript'} file could not be "
+                "fully parsed",
                 severity=Severity.LOW,
                 category=Category.CODE_EXEC,
                 message=(
@@ -171,6 +277,7 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
     version = _version(exe)
     root = target.root.resolve()
     neutralize_ignores(root)
+    normalize_js(root)
     run_dir = work / "semgrep-run"
     run_dir.mkdir(exist_ok=True)
     cmd = [
@@ -214,7 +321,13 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
             detail=f"semgrep exit {proc.returncode}: {proc.stderr.strip()[-500:]}",
             tool_version=version,
         )
-    findings = [to_finding(r, root) for r in data.get("results", [])]
+    findings: list[Finding] = []
+    facts: list[Fact] = []
+    for r in data.get("results", []):
+        if (fact := to_fact(r, root, target.domain)) is not None:
+            facts.append(fact)
+        else:
+            findings.append(to_finding(r, root))
     findings = [f for f in findings if not _is_own_storage(f, target.domain)]
     errors = data.get("errors", [])
     findings += _parse_error_findings(errors, root)
@@ -224,4 +337,6 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
     if timeouts:
         state = AnalyzerState.ERROR
         detail += f"; {len(timeouts)} rule timeouts (scan incomplete)"
-    return AnalyzerResult(NAME, state, findings=findings, detail=detail, tool_version=version)
+    return AnalyzerResult(
+        NAME, state, findings=findings, detail=detail, tool_version=version, facts=facts
+    )
