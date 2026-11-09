@@ -13,9 +13,10 @@ attributes, no pax headers) to stream into HA's local add-on folder over SSH:
         < dist/addon/sniff_test.tar
 
 macOS `tar` (from a user's Terminal) adds AppleDouble `._*` files for extended
-attributes; HA's busybox `tar` extracted them as real files (`rules/python/._code-exec.yaml`)
-and Semgrep crashed loading them as rules (UnicodeDecodeError on byte 0xa3). Tests and fixtures (deliberately malicious samples)
-are never staged.
+attributes; HA's busybox `tar` extracted them as real files
+(`rules/python/._code-exec.yaml`) and Semgrep crashed loading them as rules
+(UnicodeDecodeError on byte 0xa3). Tests and fixtures (deliberately malicious
+samples) are never staged.
 """
 
 from __future__ import annotations
