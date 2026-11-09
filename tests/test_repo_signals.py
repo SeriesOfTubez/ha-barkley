@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from sniff_test.analyzers import repo_signals
+from sniff_test.analyzers.semgrep import normalize_js
 from sniff_test.fetch.github import NotFoundError
 from sniff_test.models import Severity, Target, TargetKind
 
@@ -181,6 +182,33 @@ def test_card_bundle_compared_only_when_committed(tmp_path):
     )
     r, _ = repo_signals.run(t, FakeGitHub(LONG_HISTORY))
     assert _by_rule(r)["repo-release-source-mismatch"].severity is Severity.MEDIUM
+
+
+def _card_pair(tmp_path, released: str, committed: str):
+    asset, src = tmp_path / "install", tmp_path / "src" / "dist"
+    asset.mkdir(parents=True)
+    src.mkdir(parents=True)
+    (asset / "card.js").write_text(released)
+    (src / "card.js").write_text(committed)
+    pristine: dict[str, str] = {}
+    assert normalize_js(asset, pristine) == (1 if "-->" in released else 0)
+    return repo_signals.compare_card_asset(asset, tmp_path / "src", pristine)
+
+
+def test_our_html_comment_rewrite_is_not_a_release_mismatch(tmp_path):
+    """power-flow-card-plus v0.4.0 and Helios 2026.9.6 ship the committed bundle byte
+    for byte, but semgrep rewrites `-->` in our copy before repo signals ran."""
+    js = "for(;n-->0;)x();const t=/-->/g;"
+    assert _card_pair(tmp_path, js, js) == []
+
+
+def test_a_real_bundle_change_is_still_a_mismatch_after_the_rewrite(tmp_path):
+    js = "for(;n-->0;)x();"
+    found = _card_pair(tmp_path, js + "fetch('https://e.invalid')", js)
+    assert [f.rule_id for f in found] == ["repo-release-source-mismatch"]
+    # The release ships exactly what our rewrite would produce from the committed copy.
+    found = _card_pair(tmp_path / "b", "for(;n-- >0;)x();", js)
+    assert [f.rule_id for f in found] == ["repo-release-source-mismatch"]
 
 
 def test_local_scan_is_not_applicable(tmp_path):

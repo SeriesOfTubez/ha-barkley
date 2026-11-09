@@ -339,12 +339,20 @@ def compare_integration_asset(asset: Path, tree: Path) -> list[Finding]:
     return out
 
 
-def compare_card_asset(asset: Path, source_root: Path) -> list[Finding]:
+def compare_card_asset(
+    asset: Path, source_root: Path, pristine: dict[str, str] | None = None
+) -> list[Finding]:
+    """Release bundle vs the committed copy, on the bytes as installed.
+
+    `pristine` holds the original sha256 of asset files we rewrote in place before this
+    runs (Target.pristine_sha256, from semgrep.normalize_js).
+    """
+    pristine = pristine or {}
     out = []
     for rel, p in _files(asset).items():
         for loc in (source_root / "dist" / rel, source_root / rel):
             if loc.is_file():
-                if _sha(loc) != _sha(p):
+                if _sha(loc) != pristine.get(rel, _sha(p)):
                     out.append(
                         _finding(
                             "repo-release-source-mismatch",
@@ -451,7 +459,7 @@ def run(target: Target, gh: GitHub | None = None) -> tuple[AnalyzerResult, Prove
             if (tree := _integration_tree(target)) is not None:
                 findings += compare_integration_asset(target.root, tree)
         else:
-            findings += compare_card_asset(target.root, target.source_root)
+            findings += compare_card_asset(target.root, target.source_root, target.pristine_sha256)
 
     facts += _facts(prov)
     detail = f"{len(releases)} releases, {len(prov.publishers)} publishers"

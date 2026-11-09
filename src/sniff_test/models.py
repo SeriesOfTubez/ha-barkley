@@ -161,3 +161,6 @@ class Target:
     notes: list[Finding] = field(default_factory=list)  # findings produced while fetching
     requested_repo: str | None = None  # owner/name as given (may redirect to `repo`)
     repo_meta: dict[str, Any] = field(default_factory=dict)  # GitHub repo API response
+    # root-relative path -> sha256 of the bytes as installed, for files our analyzers
+    # rewrote in place (semgrep.normalize_js). Byte comparisons must use these.
+    pristine_sha256: dict[str, str] = field(default_factory=dict)

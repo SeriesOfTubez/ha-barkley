@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -12,6 +13,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from sniff_test.analyzers import py_tamper
 from sniff_test.models import (
     AnalyzerResult,
     AnalyzerState,
@@ -63,20 +65,30 @@ def neutralize_ignores(root: Path) -> None:
     (root / ".semgrepignore").write_text("")
 
 
-def normalize_js(root: Path) -> int:
-    """Apply _JS_PARSE_FIXES to every JS file under root. Returns files changed."""
+def normalize_js(root: Path, pristine: dict[str, str] | None = None) -> int:
+    """Apply _JS_PARSE_FIXES to every JS file under root. Returns files changed.
+
+    The rewrite is in place, so the sha256 of each changed file's original bytes goes
+    into `pristine` (root-relative path). Anything comparing bytes with what HACS
+    installs (repo_signals.compare_card_asset) must use those: comparing our rewritten
+    copy made identical bundles look different (power-flow-card-plus v0.4.0, Helios).
+    """
     changed = 0
     for p in root.rglob("*"):
         if p.suffix not in _JS_SUFFIXES or not p.is_file() or p.is_symlink():
             continue
         try:
-            text = p.read_text(encoding="utf-8", errors="surrogateescape")
+            data = p.read_bytes()
         except OSError:
             continue
+        text = data.decode("utf-8", errors="surrogateescape")
         new = text
         for rx, repl in _JS_PARSE_FIXES:
             new = rx.sub(repl, new)
         if new != text:
+            if pristine is not None:
+                rel = p.relative_to(root).as_posix()
+                pristine.setdefault(rel, hashlib.sha256(data).hexdigest())
             p.write_text(new, encoding="utf-8", errors="surrogateescape")
             changed += 1
     return changed
@@ -343,7 +355,7 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
     version = _version(exe)
     root = target.root.resolve()
     neutralize_ignores(root)
-    normalize_js(root)
+    normalize_js(root, target.pristine_sha256)
     run_dir = work / "semgrep-run"
     run_dir.mkdir(exist_ok=True)
     cmd = [
@@ -397,6 +409,10 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
         for f in findings
         if not _is_own_storage(f, target.domain) and not _only_rebinds_names(f, root, trees)
     ]
+    # The assignment forms the ha-monkeypatch rule can't see (chained, `+=`, aliased
+    # from-imports, ...), from the same parsed trees. Skips lines Semgrep kept.
+    flagged = {(f.file, f.line) for f in findings if f.rule_id == py_tamper.RULE_ID and f.file}
+    findings += py_tamper.find(root, flagged, trees)
     errors = data.get("errors", [])
     findings += _parse_error_findings(errors, root)
     timeouts = [e for e in errors if "Timeout" in str(e.get("type"))]
