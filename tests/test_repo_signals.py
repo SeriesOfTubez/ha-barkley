@@ -234,3 +234,30 @@ def test_alexa_media_player_is_flagged_as_transferred(source, how):
     f = _by_rule(r)["repo-transferred"]
     assert f"custom-components/alexa_media_player ({how})" in f.evidence
     assert f.severity is Severity.LOW  # alandtse has published every release since 2019
+
+
+def _tag_check(tmp_path, status, **kw):
+    meta = {"id": 42, "full_name": "newowner/widget", "created_at": "2019-01-01T00:00:00Z",
+            "default_branch": "main"}  # fmt: skip
+    t = _target(tmp_path, repo_meta=meta, commit_sha="abc123", **kw)
+    repos = {}
+    if status:
+        repos["newowner/widget/compare/main...abc123"] = {"status": status, "ahead_by": 3}
+    r, _ = repo_signals.run(t, FakeGitHub(LONG_HISTORY, repos))
+    return _by_rule(r).get("repo-tag-off-default-branch")
+
+
+@pytest.mark.parametrize("status", ["ahead", "diverged"])
+def test_tag_off_the_default_branch_is_medium(tmp_path, status):
+    f = _tag_check(tmp_path, status)
+    assert f.severity is Severity.MEDIUM
+    assert f.evidence == "v2.0: 3 commit(s) not on main"
+
+
+@pytest.mark.parametrize("status", ["behind", "identical", None])  # None: API error
+def test_tag_on_the_default_branch_or_unknown_is_quiet(tmp_path, status):
+    assert _tag_check(tmp_path, status) is None
+
+
+def test_default_branch_installs_are_never_off_it(tmp_path):
+    assert _tag_check(tmp_path, "ahead", install_source="default_branch") is None

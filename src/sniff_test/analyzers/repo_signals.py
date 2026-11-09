@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import urllib.parse
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -368,6 +369,47 @@ def compare_card_asset(
     return out
 
 
+# --- tag vs default branch -------------------------------------------------------------
+
+
+def tag_off_default_branch(target: Target, gh: GitHub, owner: str, name: str) -> Finding | None:
+    """The installed tag's commit isn't in the default branch's history.
+
+    GitHub's compare (default...commit) says `ahead`/`diverged` when the commit has
+    changes the default branch doesn't contain: code that reached users by tag without
+    landing where the repo's history and reviews are. Maintenance branches (a 1.x patch
+    release) do this legitimately, hence medium. 0 of 25 real installed tags (2026-11-09).
+    Default-branch installs are pinned to that branch's head and never apply. An API
+    failure is no finding, never a guess.
+    """
+    if target.install_source not in ("tag_source", "release_asset") or not target.ref:
+        return None
+    default = target.repo_meta.get("default_branch")
+    if not default:
+        return None
+    head = target.commit_sha or target.ref
+    try:
+        cmp = gh.get_json(
+            f"/repos/{owner}/{name}/compare/{urllib.parse.quote(str(default), safe='')}..."
+            f"{urllib.parse.quote(head, safe='')}"
+        )
+    except GitHubError:
+        return None
+    if not isinstance(cmp, dict) or cmp.get("status") not in ("ahead", "diverged"):
+        return None
+    ahead = int(cmp.get("ahead_by") or 0)
+    return _finding(
+        "repo-tag-off-default-branch",
+        "Release tag isn't on the default branch",
+        Severity.MEDIUM,
+        f"The commit behind {target.ref} has {ahead} commit(s) that {default} doesn't "
+        "contain, so what you install never landed on the branch people review. Release "
+        "branches for older versions do this legitimately; otherwise it's how code gets "
+        "shipped around review.",
+        f"{target.ref}: {ahead} commit(s) not on {default}",
+    )
+
+
 # --- entry point -----------------------------------------------------------------------
 
 
@@ -452,6 +494,11 @@ def run(target: Target, gh: GitHub | None = None) -> tuple[AnalyzerResult, Prove
                     str(meta.get("created_at")),
                 )
             )
+
+    # Tag off the default branch
+    off = tag_off_default_branch(target, gh, owner, name)
+    if off is not None:
+        findings.append(off)
 
     # Release asset vs tag source
     if target.install_source == "release_asset" and target.source_root is not None:
