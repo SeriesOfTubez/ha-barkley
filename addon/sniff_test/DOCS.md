@@ -46,8 +46,8 @@ Supervisor role, no folder access.
    Terminal & SSH add-on it's `/local_apps` (older installs: `/addons`); over Samba it's
    the `addons` share. Over SSH, from the repository:
    `tar -C dist/addon -cf - sniff_test | ssh root@homeassistant.local 'tar -C /local_apps -xf -'`
-3. Settings → Add-ons → Add-on store → ⋮ → Check for updates. Sniff Test appears
-   under *Local add-ons*. Install it (your box builds the image: a few minutes, about
+3. Settings → Apps → the app store → ⋮ → Check for updates (older HA: Settings →
+   Add-ons → Add-on store). Sniff Test appears in the local section. Install it (your box builds the image: a few minutes, about
    1 GB of disk), then start it and open it from the sidebar.
 
 To update, stage again, replace the folder, bump `version` in `config.yaml` (or use
