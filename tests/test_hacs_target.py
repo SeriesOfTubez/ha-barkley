@@ -40,8 +40,8 @@ class FakeGitHub:
     def repo(self, owner, name):
         return {"full_name": f"{owner}/{name}", "default_branch": self.default_branch}
 
-    def latest_release(self, owner, name):
-        return next(iter(self.releases.values()), None)
+    def hacs_releases(self, owner, name):
+        return list(self.releases.values())
 
     def release_by_tag(self, owner, name, tag):
         return self.releases.get(tag)
@@ -123,3 +123,27 @@ def test_plugin_prefers_release_asset_then_dist(tmp_path):
 def test_rejects_non_github(tmp_path):
     with pytest.raises(hacs.FetchError):
         hacs.fetch_remote("https://gitlab.com/a/b", tmp_path, gh=FakeGitHub({}))
+
+
+def test_hacs_choice_follows_list_order_not_latest_flag():
+    rels = [
+        {"tag_name": "v3.0.0-beta.2", "prerelease": True},
+        {"tag_name": "v9-draft", "draft": True},
+        {"tag_name": "v2.1.1"},  # e.g. a backport published after v2.2.0
+        {"tag_name": "v2.2.0"},
+    ]
+    default, beta = hacs.hacs_choice(rels)
+    assert (default["tag_name"], beta["tag_name"]) == ("v2.1.1", "v3.0.0-beta.2")
+    assert hacs.hacs_choice([{"tag_name": "b", "prerelease": True}]) == (
+        None,
+        {"tag_name": "b", "prerelease": True},
+    )
+    # Only the first page HACS reads counts: a stable release beyond it doesn't.
+    many = [{"tag_name": f"b{i}", "prerelease": True} for i in range(30)] + [{"tag_name": "v1"}]
+    assert hacs.hacs_choice(many)[0] is None
+
+
+def test_only_prereleases_installs_default_branch(tmp_path):
+    gh = FakeGitHub(INTEGRATION_TREE, releases={"b1": {"tag_name": "b1", "prerelease": True}})
+    t = hacs.fetch_remote("owner/repo", tmp_path, gh=gh)
+    assert t.install_source == "default_branch"

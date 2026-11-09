@@ -138,6 +138,11 @@ class GitHub:
         except NotFoundError:
             return None
 
+    def hacs_releases(self, owner: str, name: str) -> list[dict[str, Any]]:
+        """The one page HACS 2.0 reads (`releases.list`, 30 per page, newest first)."""
+        batch = self.get_json(f"/repos/{owner}/{name}/releases?per_page=30")
+        return [r for r in batch if isinstance(r, dict)] if isinstance(batch, list) else []
+
     def releases(self, owner: str, name: str, max_pages: int = 5) -> list[dict[str, Any]]:
         """Newest first, drafts excluded (drafts are only visible with push access)."""
         out: list[dict[str, Any]] = []

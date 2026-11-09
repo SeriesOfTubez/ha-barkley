@@ -19,7 +19,16 @@ uv run sniff-test scan owner/repo --exposure public             # HA reachable f
 uv run sniff-test scan owner/repo --json -o report.json         # machine-readable report
 uv run sniff-test scan owner/repo --ha-version 2026.10.2        # resolve deps for a specific HA release
 uv run sniff-test scan ./path/to/repo --offline                 # no PyPI/OSV lookups (marked incomplete)
+
+uv run sniff-test diff old.json new.json                        # what an update changes (reports from scan -o)
+uv run sniff-test diff owner/repo --from v1.2.3                 # scan v1.2.3 and what HACS installs now, compare
+uv run sniff-test diff owner/repo --from v1.2.3 --to v1.3.0 -v  # two tags; -v lists every change
+uv run sniff-test releases owner/repo                           # release timeline: HACS default, publishers, handovers
 ```
+
+`diff` puts the few changes that matter first (new findings, new data flows, evidence
+going from possible to proven, new publishers, new undeclared hosts) and summarizes the
+rest in one line. It compares; it never changes how either scan is scored.
 
 ## What gets checked
 
@@ -42,6 +51,12 @@ uv run sniff-test scan ./path/to/repo --offline                 # no PyPI/OSV lo
 - **Possible exfiltration**: reading secrets, auth data or other integrations'
   credentials *and* being able to send data to an undeclared host is flagged high, even
   when the read and the send are in different files.
+- **Code you can't read**: compiled `.pyc` files that HA's Python would run instead of
+  (or without) the `.py` next to them (unchecked-hash, checked-hash matching the source,
+  or sourceless bytecode for HA's Python version).
+- **Scanner evasion**: `<!--` and `-->` hide the rest of a line from Semgrep in JS but are
+  ordinary code in the ES modules HA loads. Sniff Test rewrites them (with the same
+  meaning) in its copy before scanning, and flags a real `<!--` in code.
 - **Repo signals**: ownership transfers (proven from GitHub's redirect, or from the
   repo's own old links resolving to the same repository), scored by whether the people
   publishing releases changed; a first release by a new publisher; very new repos; and

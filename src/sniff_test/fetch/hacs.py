@@ -98,6 +98,32 @@ def _plugin_from_tree(source_root: Path, names: list[str], dest: Path) -> bool:
     return bool(js)
 
 
+HACS_RELEASE_WINDOW = 30
+
+
+def hacs_choice(
+    releases: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """(default, beta): what HACS 2.0 installs, and what it offers with "show beta" on.
+
+    HACS (`repositories/base.py`, `common_update_data`) walks the first page of
+    `releases.list` (30, in API order), skips drafts, and installs the first
+    non-prerelease as `last_version`. A prerelease listed before it is offered only
+    with "show beta". No stable release in that window means the default branch. This
+    is not GitHub's `/releases/latest`, which follows the "make latest" flag.
+    """
+    default = beta = None
+    for r in releases[:HACS_RELEASE_WINDOW]:
+        if r.get("draft"):
+            continue
+        if r.get("prerelease"):
+            beta = beta or r
+            continue
+        default = r
+        break
+    return default, beta
+
+
 def _no_release_note(default_branch: str, sha: str) -> Finding:
     return Finding(
         rule_id="repo-no-releases",
@@ -134,7 +160,7 @@ def fetch_remote(
         release = gh.release_by_tag(owner, name, ref)
         install_source = "tag_source"
     else:
-        release = gh.latest_release(owner, name)
+        release, _beta = hacs_choice(gh.hacs_releases(owner, name))
         if release:
             ref = release["tag_name"]
             install_source = "tag_source"
