@@ -42,8 +42,10 @@ Supervisor role, no folder access.
 
 1. In the repository: `uv run python scripts/stage_addon.py` (writes
    `dist/addon/sniff_test/`, the add-on plus the scanner's source).
-2. Copy that `sniff_test` folder into Home Assistant's `/addons` folder (the Samba
-   share `addons`, or `/addons` in the SSH add-on).
+2. Copy that `sniff_test` folder into Home Assistant's local add-on folder. In the
+   Terminal & SSH add-on it's `/local_apps` (older installs: `/addons`); over Samba it's
+   the `addons` share. Over SSH, from the repository:
+   `tar -C dist/addon -cf - sniff_test | ssh root@homeassistant.local 'tar -C /local_apps -xf -'`
 3. Settings → Add-ons → Add-on store → ⋮ → Check for updates. Sniff Test appears
    under *Local add-ons*. Install it (your box builds the image: a few minutes, about
    1 GB of disk), then start it and open it from the sidebar.
