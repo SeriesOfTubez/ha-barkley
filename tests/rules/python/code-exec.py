@@ -71,3 +71,26 @@ def own_package(module):
 
     # ok: py-dynamic-import
     return import_module(f"{__package__}.{module}")
+
+
+# (M6) Text that mentions pip install can't run it (HomGar v3.1.2, EG4 v3.5.0).
+def needs_paho():
+    # ok: py-runtime-pip
+    raise RuntimeError("paho-mqtt required: pip install paho-mqtt>=1.6.0")
+
+
+def no_pyserial(_LOGGER):
+    # ok: py-runtime-pip
+    _LOGGER.warning("pyserial not installed. Install with: pip install pyserial")
+    # ok: py-runtime-pip
+    print("run: pip install foo")
+
+
+# ...but a command string handed to a wrapper, a shell, or run inside a raise still is.
+def installs(self, run_cmd):
+    # ruleid: py-runtime-pip
+    self._run("pip install evil-pkg")
+    # ruleid: py-runtime-pip
+    subprocess.run(["sh", "-c", "pip install evil-pkg"])
+    # ruleid: py-runtime-pip
+    raise RuntimeError(run_cmd("pip install evil-pkg"))

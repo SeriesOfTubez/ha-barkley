@@ -90,7 +90,24 @@ rules:
       - pattern: asyncio.create_subprocess_exec(..., "pip3", ..., "install", ...)
       - pattern: subprocess.$F([..., "uv", ..., "install", ...], ...)
       - pattern: asyncio.create_subprocess_exec(..., "uv", ..., "install", ...)
-      - pattern: $F(..., "=~/(^|[^A-Za-z0-9_])(pip3?|uv pip)\s+install(\s|$)/", ...)
+      # "sh -c 'pip install x'" and similar: the command string inside an argv list.
+      - pattern: subprocess.$F([..., "=~/(^|[^A-Za-z0-9_])(pip3?|uv pip)\s+install(\s|$)/", ...], ...)
+      - pattern: asyncio.create_subprocess_exec(..., "=~/(^|[^A-Za-z0-9_])(pip3?|uv pip)\s+install(\s|$)/", ...)
+      # A command string passed to anything (os.system, a wrapper like self._run), except
+      # text that can't run: an exception being raised, print, logger calls (HomGar's
+      # `raise RuntimeError("... pip install paho-mqtt")`, EG4's `_LOGGER.warning(...)`).
+      - patterns:
+          - pattern: $F(..., "=~/(^|[^A-Za-z0-9_])(pip3?|uv pip)\s+install(\s|$)/", ...)
+          - pattern-not-inside: raise $E("=~/(^|[^A-Za-z0-9_])(pip3?|uv pip)\s+install(\s|$)/", ...)
+          - pattern-not: print(...)
+          - pattern-not-inside: print(...)
+          - pattern-not: $L.debug(...)
+          - pattern-not: $L.info(...)
+          - pattern-not: $L.warning(...)
+          - pattern-not: $L.warn(...)
+          - pattern-not: $L.error(...)
+          - pattern-not: $L.exception(...)
+          - pattern-not: $L.critical(...)
       - pattern: pip.main(...)
       - pattern: pip._internal.$X(...)
       - pattern: pip._internal.$M.$X(...)
