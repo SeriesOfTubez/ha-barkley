@@ -38,10 +38,22 @@ The app asks for the Home Assistant API only, to read the installed HA version s
 dependencies resolve against the release you run. No host network, no ports, no
 Supervisor role, no folder access.
 
-## Building the image
+## Installing as a local add-on
 
-The image is built from the repository root (it needs the scanner's source):
+1. In the repository: `uv run python scripts/stage_addon.py` (writes
+   `dist/addon/sniff_test/`, the add-on plus the scanner's source).
+2. Copy that `sniff_test` folder into Home Assistant's `/addons` folder (the Samba
+   share `addons`, or `/addons` in the SSH add-on).
+3. Settings → Add-ons → Add-on store → ⋮ → Check for updates. Sniff Test appears
+   under *Local add-ons*. Install it (your box builds the image: a few minutes, about
+   1 GB of disk), then start it and open it from the sidebar.
+
+To update, stage again, replace the folder, bump `version` in `config.yaml` (or use
+Rebuild on the add-on page).
+
+## Building the image elsewhere
 
 ```
-docker buildx build --platform linux/arm64,linux/amd64 -f addon/sniff_test/Dockerfile .
+uv run python scripts/stage_addon.py
+docker buildx build --platform linux/amd64,linux/arm64 dist/addon/sniff_test
 ```

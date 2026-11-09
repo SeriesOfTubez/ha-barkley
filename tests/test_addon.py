@@ -5,11 +5,15 @@ aarch64/amd64 only (armhf/armv7/i386 deprecated), `init: false` for s6-overlay v
 images, ingress requests only from 172.30.32.2, no per-app memory limit keys.
 """
 
+import sys
 from pathlib import Path
 
 import yaml
 
 from sniff_test import __version__, server
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+import stage_addon
 
 ADDON = Path(__file__).parent.parent / "addon" / "sniff_test"
 
@@ -63,5 +67,24 @@ def test_image_installs_tools_from_wheels_and_pinned_binaries():
     assert df.count("--no-build") >= 3  # semgrep, guarddog, the scanner's deps
     assert df.count("sha256sum -c") == 2  # uv, osv-scanner
     assert "--require-hashes" in df
-    dockerignore = (ADDON.parent.parent / ".dockerignore").read_text()
-    assert "!tests" not in dockerignore  # malicious fixtures never enter the image
+    assert "COPY scanner /src" in df
+    assert "BUILD_ARCH" in df  # the Supervisor's builder may not set TARGETARCH
+
+
+def test_staged_folder_is_self_contained_and_has_no_tests(tmp_path):
+    dest = stage_addon.stage(tmp_path)
+    for rel in (
+        "config.yaml",
+        "Dockerfile",
+        "rootfs/etc/s6-overlay/s6-rc.d/sniff-test/run",
+        "scanner/pyproject.toml",
+        "scanner/uv.lock",
+        "scanner/README.md",
+        "scanner/src/sniff_test/cli.py",
+        "scanner/rules/python",
+    ):
+        assert (dest / rel).exists(), rel
+    staged = {p.relative_to(dest).as_posix() for p in dest.rglob("*")}
+    assert not any("tests" in p.split("/") or "fixtures" in p.split("/") for p in staged)
+    assert not any(p.endswith(".pyc") or "__pycache__" in p for p in staged)
+    assert stage_addon.stage(tmp_path) == dest  # re-staging replaces the folder
