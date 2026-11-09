@@ -56,5 +56,6 @@ def test_semgrep_still_matches_the_shape_we_filter(tmp_path):
     )  # fmt: skip
     lines = sorted(r["start"]["line"] for r in json.loads(out.stdout)["results"])
     assert 6 in lines and 10 in lines
-    # Known gap (Semgrep 1.181): chained `x = homeassistant.helpers = v` isn't matched.
+    # Semgrep 1.181 doesn't match chained `x = homeassistant.helpers = v`; py_tamper
+    # (ast) covers it and the other missed forms (tests/test_py_tamper.py).
     assert 8 not in lines
