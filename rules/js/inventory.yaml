@@ -12,7 +12,7 @@ rules:
     languages: [javascript, typescript]
     severity: INFO
     message: $T
-    metadata: {sniff: {inventory: {ring: ha, kind: ws_command, relation: calls}}}
+    metadata: {sniff: {inventory: {ring: ha, kind: ws_command, relation: calls, key: websocket API calls}}}
     pattern-either:
       - pattern: '$H.callWS({type: $T, ...})'
       - pattern: '$H.sendMessagePromise({type: $T, ...})'

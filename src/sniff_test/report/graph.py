@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 GRAPH_VERSION = 1
 _KEY_MAX = 200
 _SAMPLES = 3
-_VALUES_MAX = 25
+_VALUES_MAX = 100
 _CONTROL = re.compile(r"[\x00-\x1f\x7f​-‏‪-‮⁦-⁩]")
 _DEP_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:==|@| )")
 OFF_BOX = ("network", "off-box (destination not visible statically)")

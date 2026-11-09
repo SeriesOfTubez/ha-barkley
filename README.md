@@ -35,6 +35,23 @@ uv run sniff-test scan ./path/to/repo --offline                 # no PyPI/OSV lo
   malware is reported for every package; CVEs only for packages bundled into the card,
   not for build-only tools.
 
+- **Endpoints**: every host and IP literal in the shipped code, classified as declared
+  (the manifest's documentation/issue tracker, or the integration's own name), local,
+  infrastructure or undeclared. Paste sites, request catchers, tunnels, chat webhooks
+  with a baked-in token, and URLs with a hardcoded public IP are findings.
+- **Possible exfiltration**: reading secrets, auth data or other integrations'
+  credentials *and* being able to send data to an undeclared host is flagged high, even
+  when the read and the send are in different files.
+- **Repo signals**: ownership transfers (proven from GitHub's redirect, or from the
+  repo's own old links resolving to the same repository), scored by whether the people
+  publishing releases changed; a first release by a new publisher; very new repos; and
+  release zips whose code differs from the tagged source.
+
+The JSON report also carries a `graph` section (what the item hooks into: HA
+services, views and events, the user's data, hosts, packages, publishers, with an
+evidence level on every edge) and a `provenance` section (release timeline,
+publishers, former names). Neither affects the score.
+
 | Score | Verdict |
 |---|---|
 | 90–100 | 🦴 Good Boy (passed the sniff test) |
