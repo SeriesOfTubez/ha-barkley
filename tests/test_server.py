@@ -183,3 +183,18 @@ def test_missing_scan_is_404(panel):
     assert get(f"{base}/scan/999")[0] == 404
     assert get(f"{base}/diff?old=x&new=1")[0] == 400
     assert get(f"{base}/nope")[0] == 404
+
+
+def test_scan_page_names_analyzers_that_did_not_finish(panel):
+    store, _, base, _ = panel
+    rep = report()
+    rep["complete"] = False
+    rep["analyzers"] = [
+        {"name": "semgrep", "state": "ok", "detail": "2 files"},
+        {"name": "osv-npm", "state": "error", "detail": "<b>network</b> unreachable"},
+        {"name": "python-deps", "state": "not_applicable", "detail": ""},
+    ]
+    _, _, page = get(f"{base}/scan/{store.save(rep)}")
+    assert "Didn't finish" in page
+    assert "osv-npm" in page and "&lt;b&gt;network&lt;/b&gt; unreachable" in page
+    assert "python-deps" not in page

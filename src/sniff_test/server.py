@@ -227,6 +227,16 @@ def render_scan(base: str, sid: int, report: dict[str, Any], store: Store) -> by
         f"commit {e((t.get('commit_sha') or '')[:12])}"
         f"{' · HA ' + e(report['ha_version']) if report.get('ha_version') else ''}</span></p>",
     ]
+    missing = [
+        a for a in report.get("analyzers", []) if a.get("state") not in ("ok", "not_applicable")
+    ]
+    if missing:
+        out.append('<p class="med">Didn\'t finish:</p><ul>')
+        out.extend(
+            f"<li><b>{e(a.get('name'))}</b> {e(a.get('state'))}: {e(a.get('detail'), 400)}</li>"
+            for a in missing
+        )
+        out.append("</ul>")
     older = [r for r in store.history(t.get("repo")) if r.id != sid] if t.get("repo") else []
     if older:
         out.append("<p>Compare with: ")
