@@ -16,6 +16,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from sniff_test import memory, supervisor
 from sniff_test.analyzers import _proc
 from sniff_test.analyzers.semgrep import _tool_env as semgrep_env
 from sniff_test.analyzers.semgrep import rules_dir
@@ -88,8 +89,51 @@ def _facts() -> Check:
     return Check("environment", True, "; ".join(lines))
 
 
-def run_checks() -> list[Check]:
-    checks = [_facts()]
+def memory_check(mem: memory.Memory | None = None) -> Check:
+    """The scan guard: warn under ~2 GB available, refuse under ~1 GB."""
+    mem = mem or memory.check()
+    label = {"ok": "ok", "warn": "LOW", "refuse": "TOO LOW", "unknown": "unknown"}[mem.level]
+    return Check(f"memory guard ({label})", not mem.refuse, mem.message())
+
+
+def supervisor_checks(
+    ha_fn=supervisor.ha_version,
+    installed_fn=supervisor.installed_hacs,
+) -> list[Check]:
+    """What the add-on reads from HA: the HA version (and where it came from) and HACS."""
+    if not supervisor.token():
+        return [Check("Home Assistant", True, "not running as an add-on (no SUPERVISOR_TOKEN)")]
+    out = []
+    t0 = time.monotonic()
+    ha = ha_fn()
+    if ha:
+        out.append(Check("Home Assistant version", True, f"{ha} (from the Supervisor)"))
+    else:
+        out.append(Check("Home Assistant version", False,
+                         "the Supervisor didn't answer /core/api/config; scans fall back to "
+                         "the latest stable HA release"))  # fmt: skip
+    try:
+        items, other = installed_fn()
+        updates = sum(1 for i in items if i.update)
+        skipped = sum(other.values())
+        out.append(Check(
+            "HACS installed list", True,
+            f"{len(items)} integration(s)/card(s) installed, {updates} with an update"
+            + (f"; {skipped} other installed item(s) not scanned" if skipped else ""),
+            command=f"websocket {supervisor.HACS_LIST}",
+            seconds=round(time.monotonic() - t0, 1),
+        ))  # fmt: skip
+    except supervisor.SupervisorError as ex:
+        out.append(Check("HACS installed list", False, str(ex),
+                         command=f"websocket {supervisor.HACS_LIST}"))  # fmt: skip
+    return out
+
+
+def run_checks(addon: bool = False) -> list[Check]:
+    """`addon`: also ask HA (through the Supervisor) for its version and HACS's list."""
+    checks = [_facts(), memory_check()]
+    if addon or supervisor.token():
+        checks += supervisor_checks()
     with tempfile.TemporaryDirectory(prefix="sniff-doctor-") as tmp:
         work = Path(tmp)
         sample = work / "sample"

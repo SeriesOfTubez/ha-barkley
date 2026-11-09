@@ -12,6 +12,12 @@ code you can read, risky dependencies, and repos that changed hands.
   release HACS would install now, reuses the stored scan of your installed tag (or
   scans it), and shows what the update changes, most important first: new publishers,
   new data flows, new hosts, new findings. The diff never changes a score.
+- **Installed through HACS:** the panel asks HACS what you have installed, with the
+  version you run and the one HACS would install now (it follows your "show beta"
+  switch). It leads with what needs a look (a checked update that brings a new
+  publisher or new findings, or a scan that isn't Good Boy), then updates you haven't
+  checked yet. **Check update** runs the update diff, reusing stored scans. Items that
+  are up to date fold into one line. The list is refreshed at most every 5 minutes.
 - Every scan is stored in `/data/sniff-test.db` (SQLite), which is part of the app's
   backups. Downloaded HA constraints are cached in `/data/cache` and left out of
   backups.
@@ -30,13 +36,18 @@ installed. Scores are computed by fixed rules; no AI decides anything.
 ## Resources
 
 Semgrep is the heavy part: plan for 0.5–1 GB of RAM while a large card bundle is
-scanned. Scans run one at a time.
+scanned. Scans run one at a time. Home Assistant sets no memory limit for apps, so
+Sniff Test guards itself: with under 2 GB available on the box the panel warns, and
+under 1 GB it refuses to start a scan, so a scan can't push Home Assistant out of
+memory. Diagnostics shows the current figure.
 
 ## Permissions
 
-The app asks for the Home Assistant API only, to read the installed HA version so
-dependencies resolve against the release you run. No host network, no ports, no
-Supervisor role, no folder access.
+The app asks for the Home Assistant API only. It reads the installed HA version (so
+dependencies resolve against the release you run) and asks HACS for its installed list
+(`hacs/repositories/list`, the only websocket command the app sends). No host network,
+no ports, no Supervisor role, no folder access: the app never reads your config folder
+and never opens the installed copies.
 
 ## Installing as a local add-on
 

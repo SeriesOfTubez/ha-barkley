@@ -17,11 +17,14 @@ ingress: true
 ingress_port: 8099
 panel_icon: mdi:dog-side
 panel_title: Sniff Test
-# Reads the installed HA version (GET /core/api/config) so dependencies resolve
-# against the release the user actually runs. Nothing else is requested: no host
-# network, no ports, no Supervisor role, no folders. Read-only access to the HA
-# config folder (to scan installed custom_components/ and www/) comes with that
-# feature, not before.
+# Two reads, nothing else:
+# - GET /core/api/config: the installed HA version, so dependencies resolve against
+#   the release the user actually runs.
+# - HACS's `hacs/repositories/list` over the Core websocket proxy: installed
+#   integrations/cards and their installed and available versions. The client sends
+#   only that one command (fixed in code).
+# No host network, no ports, no Supervisor role, no folder access: the installed list
+# comes from HACS, so the HA config folder (secrets.yaml, .storage/auth) stays unmapped.
 homeassistant_api: true
 # HA constraints and package caches are re-downloadable: keep them out of backups.
 backup_exclude:

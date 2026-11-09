@@ -13,14 +13,13 @@ from __future__ import annotations
 
 import html
 import json
-import os
 import queue
 import re
 import secrets
 import sys
 import threading
+import time
 import urllib.parse
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -28,12 +27,12 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from sniff_test import __version__, doctor
+from sniff_test import __version__, doctor, memory, supervisor
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
 from sniff_test.report.json_report import sanitize_untrusted
 from sniff_test.scoring import VERDICTS
-from sniff_test.store import Store, StoreError
+from sniff_test.store import ScanRow, Store, StoreError
 
 SUPERVISOR_IP = "172.30.32.2"
 _INGRESS_PATH = re.compile(r"^/api/hassio_ingress/[A-Za-z0-9_-]+$")
@@ -62,7 +61,8 @@ class Job:
     kind: str  # scan | update
     repo: str
     ref: str | None
-    state: str = "queued"  # queued | running | done | failed
+    to: str | None = None  # update: the version HACS would install now (None: work it out)
+    state: str = "queued"  # queued | running | done | failed | refused
     message: str = ""
     scan_ids: list[int] = field(default_factory=list)
     created: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
@@ -71,13 +71,29 @@ class Job:
 ScanFn = Callable[[str, str | None], dict[str, Any]]
 
 
+class MemoryRefused(Exception):
+    """The memory guard stopped a scan before it started."""
+
+
 class Worker:
     """Runs scans one at a time (Semgrep is the memory hog; never run two at once)."""
 
-    def __init__(self, store: Store, scan_fn: ScanFn, tool_version: str = __version__):
+    def __init__(
+        self,
+        store: Store,
+        scan_fn: ScanFn,
+        tool_version: str = __version__,
+        *,
+        exposure: str = "local",
+        ha_fn: Callable[[], str | None] = lambda: None,
+        memory_fn: Callable[[], memory.Memory] = memory.check,
+    ):
         self.store = store
         self.scan_fn = scan_fn
         self.tool_version = tool_version
+        self.exposure = exposure
+        self.ha_fn = ha_fn
+        self.memory_fn = memory_fn
         self.jobs: list[Job] = []
         self._q: queue.Queue[Job] = queue.Queue()
         self._lock = threading.Lock()
@@ -85,9 +101,9 @@ class Worker:
         self._thread = threading.Thread(target=self._run, name="sniff-worker", daemon=True)
         self._thread.start()
 
-    def submit(self, kind: str, repo: str, ref: str | None) -> Job:
+    def submit(self, kind: str, repo: str, ref: str | None, to: str | None = None) -> Job:
         with self._lock:
-            job = Job(self._next, kind, repo, ref)
+            job = Job(self._next, kind, repo, ref, to)
             self._next += 1
             self.jobs.insert(0, job)
             del self.jobs[_JOBS_KEPT:]
@@ -98,6 +114,12 @@ class Worker:
         """Block until the queue is empty (tests)."""
         self._q.join()
 
+    def _scan(self, repo: str, ref: str | None) -> int:
+        mem = self.memory_fn()
+        if mem.refuse:
+            raise MemoryRefused(mem.message())
+        return self.store.save(self.scan_fn(repo, ref))
+
     def _stored_or_scan(self, repo: str, ref: str | None, exposure: str, ha: str | None) -> int:
         if ref:
             hit = self.store.find(
@@ -105,7 +127,7 @@ class Worker:
             )
             if hit:
                 return hit.id
-        return self.store.save(self.scan_fn(repo, ref))
+        return self._scan(repo, ref)
 
     def _log_incomplete(self, job: Job) -> None:
         """Analyzers that didn't finish go to the add-on's log as well as the page."""
@@ -129,10 +151,18 @@ class Worker:
             job.state = "running"
             try:
                 if job.kind == "scan":
-                    job.scan_ids = [self.store.save(self.scan_fn(job.repo, job.ref))]
+                    job.scan_ids = [self._scan(job.repo, job.ref)]
                     job.message = "scanned"
+                elif job.kind == "installed":  # an installed version: reuse a stored scan
+                    job.scan_ids = [
+                        self._stored_or_scan(job.repo, job.ref, self.exposure, self.ha_fn())
+                    ]
+                    job.message = "sniffed"
                 else:  # update: stored scan of the installed ref vs what HACS installs now
-                    new = self.store.save(self.scan_fn(job.repo, None))
+                    if job.to:  # HACS told us (installed list): reuse a stored scan of it
+                        new = self._stored_or_scan(job.repo, job.to, self.exposure, self.ha_fn())
+                    else:
+                        new = self._scan(job.repo, None)
                     row = self.store.get(new)
                     assert row is not None  # noqa: S101 - just saved
                     old = self._stored_or_scan(job.repo, job.ref, row.exposure, row.ha_version)
@@ -140,6 +170,10 @@ class Worker:
                     job.message = f"{job.ref} → {row.ref}"
                 job.state = "done"
                 self._log_incomplete(job)
+            except MemoryRefused as ex:
+                job.state = "refused"
+                job.message = str(ex)
+                print(f"job {job.id} {job.repo} refused: {job.message}", file=sys.stderr)
             except Exception as ex:
                 job.state = "failed"
                 job.message = f"{type(ex).__name__}: {ex}"
@@ -184,11 +218,184 @@ def _verdict(score: int, key: str) -> str:
     return f'<span class="{cls}">{score} {_EMOJI.get(key, "")}</span>'
 
 
-def render_index(base: str, store: Store, jobs: list[Job], token: str) -> bytes:
+# --- installed HACS items --------------------------------------------------------------
+
+
+@dataclass
+class InstalledState:
+    """What HACS reported, cached; `error` says why there's no list."""
+
+    items: list[supervisor.Installed] = field(default_factory=list)
+    other: dict[str, int] = field(default_factory=dict)
+    error: str | None = None
+    fetched: float = 0.0
+
+
+@dataclass
+class Row:
+    item: supervisor.Installed
+    group: str  # attention | unchecked | checked | current
+    installed_scan: ScanRow | None
+    available_scan: ScanRow | None
+    reasons: list[str] = field(default_factory=list)
+
+
+GROUPS = {
+    "attention": "Needs a look",
+    "unchecked": "Updates not checked yet",
+    "checked": "Updates checked: nothing important changed",
+}
+_GOOD = 90
+
+
+def _latest(rows: list[ScanRow], ref: str) -> ScanRow | None:
+    hits = [r for r in rows if r.ref == ref]
+    return next((r for r in hits if r.complete), hits[0] if hits else None)
+
+
+def _score_reason(r: ScanRow) -> str | None:
+    if not r.complete:
+        return f"@{r.id} {r.ref}: incomplete scan (scored {r.score})"
+    if r.score < _GOOD:
+        return f"@{r.id} {r.ref}: scored {r.score}"
+    return None
+
+
+def classify(
+    items: list[supervisor.Installed],
+    store: Store,
+    diff_fn: Callable[[int, int], dict[str, Any]],
+) -> list[Row]:
+    """Signal first: what needs attention, then unchecked updates, checked ones, the rest.
+
+    Attention means a checked update whose diff has headline changes (a new publisher,
+    new findings, new flows), or a scan of the version you'd run that isn't Good Boy or
+    didn't finish. The diff and the scores are read, never recomputed or changed.
+    """
+    out: list[Row] = []
+    for it in items:
+        rows = store.history(it.repo, limit=200)
+        inst = _latest(rows, it.installed)
+        avail = _latest(rows, it.available) if it.update else inst
+        row = Row(it, "current", inst, avail)
+        if it.update and inst and avail:
+            d = diff_fn(inst.id, avail.id)
+            head = [c for c in d.get("changes", []) if c["rank"] >= HEADLINE_RANK]
+            row.reasons = [c["text"] for c in head[:HEADLINE_MAX]]
+            row.group = "attention" if head else "checked"
+        elif it.update:
+            row.group = "unchecked"
+        for scan in dict.fromkeys(x for x in (inst, avail) if x):  # running, and next
+            if why := _score_reason(scan):
+                row.reasons.append(why)
+                row.group = "attention"
+        out.append(row)
+    order = {g: i for i, g in enumerate([*GROUPS, "current"])}
+    return sorted(out, key=lambda r: order[r.group])
+
+
+def _version_cell(base: str, r: Row) -> str:
+    it = r.item
+
+    def ver(v: str, s: ScanRow | None) -> str:
+        if s:
+            return f'<a href="{base}/scan/{s.id}">{e(v, 60)}</a> {_verdict(s.score, s.verdict)}'
+        return e(v, 60)
+
+    if not it.update:
+        return ver(it.installed, r.installed_scan)
+    link = ""
+    if r.installed_scan and r.available_scan:
+        link = (f' · <a href="{base}/diff?old={r.installed_scan.id}&amp;new='
+                f'{r.available_scan.id}">diff</a>')  # fmt: skip
+    return f"{ver(it.installed, r.installed_scan)} → {ver(it.available, r.available_scan)}{link}"
+
+
+def _action(base: str, r: Row, token: str) -> str:
+    it = r.item
+    hidden = (f'<input type=hidden name=token value="{token}">'
+              f'<input type=hidden name=repo value="{e(it.repo)}">'
+              f'<input type=hidden name=ref value="{e(it.installed)}">')  # fmt: skip
+    if it.update and not (r.installed_scan and r.available_scan):
+        return (f'<form method=post action="{base}/update">{hidden}'
+                f'<input type=hidden name=to value="{e(it.available)}">'
+                "<button>Check update</button></form>")  # fmt: skip
+    if not r.installed_scan:
+        return (f'<form method=post action="{base}/installed">{hidden}'
+                "<button>Sniff installed</button></form>")  # fmt: skip
+    return ""
+
+
+def _installed_row(base: str, r: Row, token: str) -> str:
+    it = r.item
+    why = "".join(f'<br><span class="high">{e(t, 300)}</span>' for t in r.reasons)
+    tag = it.kind + (" · custom repo" if it.custom else "")
+    return (
+        f"<tr><td><b>{e(it.name, 80)}</b> <span class=muted>{e(it.repo, 100)} · {e(tag)}</span>"
+        f"{why}</td><td>{_version_cell(base, r)}</td><td>{_action(base, r, token)}</td></tr>"
+    )
+
+
+def render_installed(base: str, state: InstalledState, rows: list[Row], token: str) -> str:
+    refresh = f'<a href="{base}/?refresh=1">refresh</a>'
+    if state.error:
+        return (
+            "<h2>Installed through HACS</h2><p class=muted>Can't list installed items: "
+            f"{e(state.error, 300)} ({refresh}). Typed checks above still work.</p>"
+        )
+    out = ["<h2>Installed through HACS</h2>"]
+    for g, title in GROUPS.items():
+        group = [r for r in rows if r.group == g]
+        if group:
+            out.append(f"<h3>{e(title)} ({len(group)})</h3><table>")
+            out.extend(_installed_row(base, r, token) for r in group)
+            out.append("</table>")
+    current = [r for r in rows if r.group == "current"]
+    if current:
+        never = sum(1 for r in current if not r.installed_scan)
+        note = f", {never} never sniffed" if never else ""
+        out.append(f"<details><summary>{len(current)} up to date{e(note)}</summary><table>")
+        out.extend(_installed_row(base, r, token) for r in current)
+        out.append("</table></details>")
+        if never:
+            out.append(
+                f'<form method=post action="{base}/installed-all">'
+                f'<input type=hidden name=token value="{token}">'
+                f"<button>Sniff the {never} never sniffed</button></form>"
+            )
+    if not rows:
+        out.append("<p class=muted>HACS lists no installed integrations or cards.</p>")
+    skipped = ", ".join(f"{n} {e(c)}" for c, n in sorted(state.other.items()))
+    age = int(time.time() - state.fetched) // 60 if state.fetched else 0
+    out.append(
+        f'<p class="muted">From HACS {age} min ago ({refresh})'
+        + (f". Not scanned (not an integration or card): {skipped}" if skipped else "")
+        + ".</p>"
+    )
+    return "".join(out)
+
+
+def _memory_banner(mem: memory.Memory) -> str:
+    if mem.level == "refuse":
+        return f'<p class="card crit">⚠ Memory: {e(mem.message(), 300)}</p>'
+    if mem.level == "warn":
+        return f'<p class="card med">⚠ Memory: {e(mem.message(), 300)}</p>'
+    return ""
+
+
+def render_index(
+    base: str,
+    store: Store,
+    jobs: list[Job],
+    token: str,
+    installed: str = "",
+    mem: memory.Memory | None = None,
+) -> bytes:
     rows = store.history(limit=100)
     out = [
         "<h1>🐕 Sniff Test</h1>",
         '<p class="muted">Scans run one at a time. Scores never come from an AI.</p>',
+        _memory_banner(mem) if mem else "",
         f'<div class="card"><form method=post action="{base}/scan">'
         f'<input type=hidden name=token value="{token}">'
         '<input name=repo placeholder="owner/repo" required>'
@@ -201,6 +408,7 @@ def render_index(base: str, store: Store, jobs: list[Job], token: str) -> bytes:
         "<button>What would updating change?</button></form>"
         f'<p class="muted"><a href="{base}/doctor">Diagnostics</a>: can each tool run '
         "on this box?</p></div>",
+        installed,
     ]
     if jobs:
         out.append("<h2>Jobs</h2><table>")
@@ -211,6 +419,7 @@ def render_index(base: str, store: Store, jobs: list[Job], token: str) -> bytes:
                 links += f' · <a href="{base}/diff?old={old}&amp;new={new}">diff</a>'
             out.append(
                 f"<tr><td>{e(j.kind)}</td><td>{e(j.repo)}{'@' + e(j.ref) if j.ref else ''}"
+                f"{' → ' + e(j.to) if j.to else ''}"
                 f"</td><td>{e(j.state)}</td><td>{e(j.message)} {links}</td></tr>"
             )
         out.append("</table>")
@@ -348,12 +557,57 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
 # --- HTTP ------------------------------------------------------------------------------
 
 
+InstalledFn = Callable[[], tuple[list[supervisor.Installed], dict[str, int]]]
+_INSTALLED_TTL = 300  # seconds; HACS itself refreshes far less often
+
+
 class Panel:
-    def __init__(self, store: Store, worker: Worker, allow: set[str]):
+    def __init__(
+        self,
+        store: Store,
+        worker: Worker,
+        allow: set[str],
+        installed_fn: InstalledFn | None = None,
+        memory_fn: Callable[[], memory.Memory] = memory.check,
+    ):
         self.store = store
         self.worker = worker
         self.allow = allow
         self.token = secrets.token_urlsafe(24)
+        self.installed_fn = installed_fn
+        self.memory_fn = memory_fn
+        self._installed = InstalledState()
+        self._installed_lock = threading.Lock()
+        self._diffs: dict[tuple[int, int], dict[str, Any]] = {}
+
+    def installed(self, refresh: bool = False) -> InstalledState:
+        """HACS's installed list, cached; one websocket round trip at most every 5 minutes."""
+        if self.installed_fn is None:
+            return InstalledState(error="not running as a Home Assistant add-on")
+        with self._installed_lock:
+            st = self._installed
+            if refresh or not st.fetched or time.time() - st.fetched > _INSTALLED_TTL:
+                try:
+                    items, other = self.installed_fn()
+                    st = InstalledState(items, other, None, time.time())
+                except supervisor.SupervisorError as ex:
+                    st = InstalledState(error=str(ex), fetched=time.time())
+                self._installed = st
+            return st
+
+    def diff(self, old: int, new: int) -> dict[str, Any]:
+        """Stored reports never change, so a diff of two of them is computed once."""
+        key = (old, new)
+        if key not in self._diffs:
+            self._diffs[key] = diff_reports(self.store.report(old), self.store.report(new))
+        return self._diffs[key]
+
+    def installed_html(self, base: str, refresh: bool = False) -> str:
+        if self.installed_fn is None:
+            return ""
+        st = self.installed(refresh)
+        rows = classify(st.items, self.store, self.diff) if not st.error else []
+        return render_installed(base, st, rows, self.token)
 
     def handler(self) -> type[BaseHTTPRequestHandler]:
         panel = self
@@ -403,7 +657,12 @@ class Panel:
                 try:
                     if url.path in ("", "/"):
                         jobs = list(panel.worker.jobs)
-                        return self._send(200, render_index(base, panel.store, jobs, panel.token))
+                        refresh = "refresh=1" in url.query
+                        body = render_index(
+                            base, panel.store, jobs, panel.token,
+                            panel.installed_html(base, refresh), panel.memory_fn(),
+                        )  # fmt: skip
+                        return self._send(200, body)
                     if m := re.fullmatch(r"/scan/(\d+)(\.json)?", url.path):
                         sid = int(m[1])
                         report = panel.store.report(sid)
@@ -412,11 +671,11 @@ class Panel:
                             return self._send(200, body, "application/json")
                         return self._send(200, render_scan(base, sid, report, panel.store))
                     if url.path == "/doctor":
-                        return self._send(200, render_doctor(base, doctor.run_checks()))
+                        return self._send(200, render_doctor(base, doctor.run_checks(addon=True)))
                     if url.path == "/diff":
                         q = urllib.parse.parse_qs(url.query)
                         old, new = int(q["old"][0]), int(q["new"][0])
-                        d = diff_reports(panel.store.report(old), panel.store.report(new))
+                        d = panel.diff(old, new)
                         return self._send(200, render_diff(base, old, new, d))
                 except StoreError as ex:
                     return self._text(HTTPStatus.NOT_FOUND, str(ex))
@@ -435,31 +694,33 @@ class Panel:
                 if not secrets.compare_digest(get("token"), panel.token):
                     return self._text(HTTPStatus.FORBIDDEN, "stale form; reload the page")
                 path = urllib.parse.urlsplit(self.path).path
-                if path not in ("/scan", "/update"):
+                if path == "/installed-all":
+                    st = panel.installed()
+                    stored = {(r.repo or "").lower() + "@" + (r.ref or "")
+                              for r in panel.store.history(limit=10000)}  # fmt: skip
+                    for it in st.items:
+                        if f"{it.repo.lower()}@{it.installed}" not in stored:
+                            panel.worker.submit("installed", it.repo, it.installed)
+                    return self._redirect(f"{self._base()}/")
+                if path not in ("/scan", "/update", "/installed"):
                     return self._text(HTTPStatus.NOT_FOUND, "nothing to sniff here")
                 m = _REPO.match(get("repo"))
                 ref = get("ref") or None
-                if not m or (ref and not _REF.match(ref)) or (path == "/update" and not ref):
+                to = get("to") or None
+                if (
+                    not m
+                    or (ref and not _REF.match(ref))
+                    or (to and not _REF.match(to))
+                    or (path in ("/update", "/installed") and not ref)
+                ):
                     return self._text(HTTPStatus.BAD_REQUEST, "want owner/repo and a tag")
-                panel.worker.submit(path.lstrip("/"), m[1], ref)
+                panel.worker.submit(path.lstrip("/"), m[1], ref, to if path == "/update" else None)
                 self._redirect(f"{self._base()}/")
 
         return Handler
 
 
-def supervisor_ha_version(token: str | None = None) -> str | None:
-    """The installed HA version, via the Supervisor's Core API proxy (add-on only)."""
-    token = token or os.environ.get("SUPERVISOR_TOKEN")
-    if not token:
-        return None
-    req = urllib.request.Request("http://supervisor/core/api/config")
-    req.add_header("Authorization", f"Bearer {token}")
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 - fixed URL
-            version = json.load(r).get("version")
-    except (OSError, ValueError):
-        return None
-    return version if isinstance(version, str) else None
+supervisor_ha_version = supervisor.ha_version  # kept for callers of the M5 name
 
 
 class PanelServer(ThreadingHTTPServer):
@@ -467,9 +728,21 @@ class PanelServer(ThreadingHTTPServer):
     panel: Panel
 
 
-def serve(store: Store, scan_fn: ScanFn, host: str, port: int, allow: set[str]) -> PanelServer:
+def serve(
+    store: Store,
+    scan_fn: ScanFn,
+    host: str,
+    port: int,
+    allow: set[str],
+    *,
+    exposure: str = "local",
+    ha_fn: Callable[[], str | None] = lambda: None,
+    installed_fn: InstalledFn | None = None,
+    memory_fn: Callable[[], memory.Memory] = memory.check,
+) -> PanelServer:
     """Build the server (caller runs `serve_forever`); `.panel.worker` runs the scans."""
-    panel = Panel(store, Worker(store, scan_fn), allow)
+    worker = Worker(store, scan_fn, exposure=exposure, ha_fn=ha_fn, memory_fn=memory_fn)
+    panel = Panel(store, worker, allow, installed_fn, memory_fn)
     httpd = PanelServer((host, port), panel.handler())
     httpd.panel = panel
     return httpd

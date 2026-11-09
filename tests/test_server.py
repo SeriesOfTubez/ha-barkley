@@ -208,10 +208,143 @@ def test_doctor_page_shows_failures_escaped(panel, monkeypatch):
             "semgrep scan", False, "exit 2", "semgrep scan ...", 2, 0.4, "", "<boom>"
         ),
     ]
-    monkeypatch.setattr(server.doctor, "run_checks", lambda: checks)
+    monkeypatch.setattr(server.doctor, "run_checks", lambda **kw: checks)
     status, _, page = get(base + "/doctor")
     assert status == 200
     assert "FAIL" in page and "&lt;boom&gt;" in page
     assert "hassio-addons (enforce)" in page
     _, _, index = get(base + "/")
     assert 'href="/doctor"' in index
+
+
+# --- installed HACS items (M6) -------------------------------------------------------------
+
+from sniff_test import memory  # noqa: E402
+from sniff_test.supervisor import Installed, SupervisorError  # noqa: E402
+
+INSTALLED = [
+    Installed("acme/moved", "card", "Moved", "v1", "v2", False),  # update, checked: new publisher
+    Installed("acme/quiet", "integration", "Quiet", "v1", "v2", False),  # update, checked: quiet
+    Installed("acme/new", "integration", "Unchecked", "v1", "v2", False),  # update, unchecked
+    Installed("acme/fine", "integration", "Fine", "v1", "v1", False),  # current, sniffed, 100
+    Installed("acme/never", "card", "Never", "v3", "v3", True),  # current, never sniffed
+]
+
+
+def _mem(gb):
+    return lambda: memory.parse(f"MemTotal: 16777216 kB\nMemAvailable: {int(gb * 1048576)} kB\n")
+
+
+@pytest.fixture
+def addon(tmp_path):
+    store = Store(tmp_path / "s.db")
+    scan_fn = Calls()
+    state = {"fn": lambda: (list(INSTALLED), {"theme": 2}), "mem": _mem(8)}
+    httpd = server.serve(
+        store, scan_fn, "127.0.0.1", 0, {"127.0.0.1"},
+        ha_fn=lambda: "2026.11.0",
+        installed_fn=lambda: state["fn"](),
+        memory_fn=lambda: state["mem"](),
+    )  # fmt: skip
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield store, scan_fn, f"http://127.0.0.1:{httpd.server_address[1]}", httpd, state
+    httpd.shutdown()
+
+
+def _seed(store):
+    moved_old = report(repo="acme/moved", ref="v1", kind="plugin")
+    moved_old["provenance"] = {"publishers": {"v1": ["alice"]}}
+    store.save(moved_old)
+    store.save(report(repo="acme/moved", ref="v2", kind="plugin", findings=[FINDING], score=75))
+    store.save(report(repo="acme/quiet", ref="v1"))
+    store.save(report(repo="acme/quiet", ref="v2"))
+    store.save(report(repo="acme/fine", ref="v1"))
+
+
+def test_installed_list_leads_with_what_needs_attention(addon):
+    store, _, base, _, _ = addon
+    _seed(store)
+    _, _, page = get(base + "/")
+    heads = ("Needs a look", "Updates not checked", "Updates checked: nothing", "up to date")
+    order = [page.index(h) for h in heads]
+    assert order == sorted(order)
+    attention = page[order[0] : order[1]]
+    assert "acme/moved" in attention and "scored 75" in attention
+    assert "acme/quiet" not in attention
+    unchecked = page[order[1] : order[2]]
+    assert "acme/new" in unchecked and "Check update" in unchecked
+    assert 'name=to value="v2"' in unchecked
+    assert "2 up to date, 1 never sniffed" in page  # current rows fold into one line
+    assert "Sniff the 1 never sniffed" in page
+    assert "Not scanned (not an integration or card): 2 theme" in page
+    assert "diff?old=" in attention
+
+
+def test_check_runs_the_update_diff_reusing_stored_scans(addon):
+    store, scan_fn, base, httpd, _ = addon
+    installed = store.save(report(repo="acme/new", ref="v1"))
+    tok = token(base)
+    data = {"repo": "acme/new", "ref": "v1", "to": "v2", "token": tok}
+    assert post(base + "/update", data)[0] == 303
+    _worker(httpd).wait()
+    assert scan_fn.calls == [("acme/new", "v2")]  # exactly what HACS offers, not re-derived
+    job = _worker(httpd).jobs[0]
+    assert job.state == "done" and job.scan_ids[0] == installed
+    # A second click reuses both stored scans: nothing is scanned again.
+    assert post(base + "/update", data)[0] == 303
+    _worker(httpd).wait()
+    assert len(scan_fn.calls) == 1
+    _, _, page = get(base + "/")
+    assert f"diff?old={installed}&amp;new={job.scan_ids[1]}" in page
+
+
+def test_sniff_all_never_sniffed_queues_installed_versions(addon):
+    store, scan_fn, base, httpd, _ = addon
+    _seed(store)
+    assert post(base + "/installed-all", {"token": token(base)})[0] == 303
+    _worker(httpd).wait()
+    assert sorted(scan_fn.calls) == [("acme/never", "v3"), ("acme/new", "v1")]
+
+
+def test_installed_list_error_is_shown_and_typed_checks_remain(addon):
+    _, _, base, _, state = addon
+
+    def broken():
+        raise SupervisorError("HACS isn't <b>installed</b>")
+
+    state["fn"] = broken
+    _, _, page = get(base + "/?refresh=1")
+    assert "Can't list installed items: HACS isn&#x27;t &lt;b&gt;installed&lt;/b&gt;" in page
+    assert "What would updating change?" in page
+
+
+def test_installed_list_is_cached(addon):
+    _, _, base, _, state = addon
+    calls = []
+    state["fn"] = lambda: calls.append(1) or (list(INSTALLED), {})
+    get(base + "/")
+    get(base + "/")
+    assert len(calls) == 1
+    get(base + "/?refresh=1")
+    assert len(calls) == 2
+
+
+def test_memory_guard_warns_and_refuses(addon):
+    _, scan_fn, base, httpd, state = addon
+    state["mem"] = _mem(1.5)
+    _, _, page = get(base + "/")
+    assert "⚠ Memory: 1.5 GB available" in page and "may be slow" in page
+    state["mem"] = _mem(0.5)
+    _, _, page = get(base + "/")
+    assert "scans are refused" in page
+    post(base + "/scan", {"repo": "acme/acme", "ref": "v1", "token": token(base)})
+    _worker(httpd).wait()
+    job = _worker(httpd).jobs[0]
+    assert job.state == "refused" and "0.5 GB available" in job.message
+    assert scan_fn.calls == []
+
+
+def test_no_installed_section_outside_an_addon(panel):
+    _, _, base, _ = panel
+    _, _, page = get(base + "/")
+    assert "Installed through HACS" not in page

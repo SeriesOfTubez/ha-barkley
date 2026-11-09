@@ -280,14 +280,23 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         err.print(f"[red]🐕 serve needs --store (or ${STORE_ENV})[/]")
         return EXIT_ERROR
 
+    from sniff_test import supervisor
+
+    def ha_fn() -> str | None:
+        return args.ha_version or supervisor.ha_version()
+
     def scan_fn(repo: str, ref: str | None) -> dict:
-        ha = args.ha_version or server.supervisor_ha_version()
         result = scan(repo, ref=ref, exposure=Exposure(args.exposure), jobs=args.jobs,
-                      ha_version=ha)  # fmt: skip
+                      ha_version=ha_fn())  # fmt: skip
         return to_dict(result)
 
     allow = set(args.allow or [server.SUPERVISOR_IP])
-    httpd = server.serve(store, scan_fn, args.host, args.port, allow)
+    # The installed list needs HA (through the Supervisor); outside an add-on there's none.
+    installed_fn = supervisor.installed_hacs if supervisor.token() else None
+    httpd = server.serve(
+        store, scan_fn, args.host, args.port, allow,
+        exposure=args.exposure, ha_fn=ha_fn, installed_fn=installed_fn,
+    )  # fmt: skip
     out.print(
         f"🐕 Sniff Test {__version__} panel on {args.host}:{args.port} "
         f"(clients: {', '.join(sorted(allow))}; store: {store.path})"
