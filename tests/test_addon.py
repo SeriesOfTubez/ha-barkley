@@ -68,7 +68,7 @@ def test_image_installs_tools_from_wheels_and_pinned_binaries():
     # uv and osv-scanner both go through get(), which always checks the sha256 pin,
     # whichever URL (release download, or the API asset fallback) served the bytes.
     assert df.count("sha256sum -c") == 1
-    assert 'get /tmp/uv.tgz' in df and 'get /usr/local/bin/osv-scanner' in df
+    assert "get /tmp/uv.tgz" in df and "get /usr/local/bin/osv-scanner" in df
     assert '"${uv_sha}";' in df and '"${osv_sha}";' in df
     assert "Accept: application/octet-stream" in df
     assert "--require-hashes" in df

@@ -266,6 +266,7 @@ def classify(
     items: list[supervisor.Installed],
     store: Store,
     diff_fn: Callable[[int, int], dict[str, Any]],
+    tool_version: str | None = None,
 ) -> list[Row]:
     """Signal first: what needs attention, then unchecked updates, checked ones, the rest.
 
@@ -276,6 +277,8 @@ def classify(
     out: list[Row] = []
     for it in items:
         rows = store.history(it.repo, limit=200)
+        if tool_version:  # scans made with other rules don't count (they'd be rescanned)
+            rows = [r for r in rows if r.tool_version == tool_version]
         inst = _latest(rows, it.installed)
         avail = _latest(rows, it.available) if it.update else inst
         row = Row(it, "current", inst, avail)
@@ -357,7 +360,7 @@ def render_installed(base: str, state: InstalledState, rows: list[Row], token: s
     current = [r for r in rows if r.group == "current"]
     if current:
         never = sum(1 for r in current if not r.installed_scan)
-        note = f", {never} never sniffed" if never else ""
+        note = f", {never} not yet sniffed by Sniff Test {__version__}" if never else ""
         out.append(f"<details><summary>{len(current)} up to date{e(note)}</summary><table>")
         out.extend(_installed_row(base, r, token) for r in current)
         out.append("</table></details>")
@@ -365,7 +368,7 @@ def render_installed(base: str, state: InstalledState, rows: list[Row], token: s
             out.append(
                 f'<form method=post action="{base}/installed-all">'
                 f'<input type=hidden name=token value="{token}">'
-                f"<button>Sniff the {never} never sniffed</button></form>"
+                f"<button>Sniff the {never} not yet sniffed</button></form>"
             )
     if not rows:
         out.append("<p class=muted>The Marketplace lists no installed integrations or cards.</p>")
@@ -610,7 +613,8 @@ class Panel:
         if self.installed_fn is None:
             return ""
         st = self.installed(refresh)
-        rows = classify(st.items, self.store, self.diff) if not st.error else []
+        tv = self.worker.tool_version
+        rows = classify(st.items, self.store, self.diff, tv) if not st.error else []
         busy = {
             j.repo.lower(): j.state
             for j in reversed(list(self.worker.jobs))
@@ -707,8 +711,10 @@ class Panel:
                 path = urllib.parse.urlsplit(self.path).path
                 if path == "/installed-all":
                     st = panel.installed()
+                    tv = panel.worker.tool_version
                     stored = {(r.repo or "").lower() + "@" + (r.ref or "")
-                              for r in panel.store.history(limit=10000)}  # fmt: skip
+                              for r in panel.store.history(limit=10000)
+                              if r.tool_version == tv}  # fmt: skip
                     for it in st.items:
                         if f"{it.repo.lower()}@{it.installed}" not in stored:
                             panel.worker.submit("installed", it.repo, it.installed)

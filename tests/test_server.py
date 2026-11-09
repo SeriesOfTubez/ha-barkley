@@ -274,8 +274,9 @@ def test_installed_list_leads_with_what_needs_attention(addon):
     unchecked = page[order[1] : order[2]]
     assert "acme/new" in unchecked and "Check update" in unchecked
     assert 'name=to value="v2"' in unchecked
-    assert "2 up to date, 1 never sniffed" in page  # current rows fold into one line
-    assert "Sniff the 1 never sniffed" in page
+    # current rows fold into one line
+    assert f"2 up to date, 1 not yet sniffed by Sniff Test {server.__version__}" in page
+    assert "Sniff the 1 not yet sniffed" in page
     assert "Not scanned (not an integration or card): 2 theme" in page
     assert "diff?old=" in attention
 
@@ -363,3 +364,15 @@ def test_a_row_shows_its_running_check_instead_of_a_second_button(addon):
     _, _, page = get(base + "/")
     row = page[page.index("acme/new") :]
     assert "Check update" in row[: row.index("</tr>")]
+
+
+def test_scans_from_older_rules_dont_count(addon):
+    """After a rule change (tool version bump) the list offers to sniff again."""
+    store, scan_fn, base, httpd, _ = addon
+    store.save(report(repo="acme/fine", ref="v1", tool="0.0.1", score=75))
+    _, _, page = get(base + "/")
+    assert "Needs a look" not in page  # the old 75 isn't shown as today's verdict
+    assert "Sniff the 2 not yet sniffed" in page
+    assert post(base + "/installed-all", {"token": token(base)})[0] == 303
+    _worker(httpd).wait()
+    assert ("acme/fine", "v1") in scan_fn.calls
