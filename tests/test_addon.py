@@ -65,7 +65,12 @@ def test_image_installs_tools_from_wheels_and_pinned_binaries():
     df = (ADDON / "Dockerfile").read_text()
     assert "FROM ghcr.io/home-assistant/base-debian:trixie" in df
     assert df.count("--no-build") >= 3  # semgrep, guarddog, the scanner's deps
-    assert df.count("sha256sum -c") == 2  # uv, osv-scanner
+    # uv and osv-scanner both go through get(), which always checks the sha256 pin,
+    # whichever URL (release download, or the API asset fallback) served the bytes.
+    assert df.count("sha256sum -c") == 1
+    assert 'get /tmp/uv.tgz' in df and 'get /usr/local/bin/osv-scanner' in df
+    assert '"${uv_sha}";' in df and '"${osv_sha}";' in df
+    assert "Accept: application/octet-stream" in df
     assert "--require-hashes" in df
     assert "COPY scanner /src" in df
     assert "BUILD_ARCH" in df  # the Supervisor's builder may not set TARGETARCH
