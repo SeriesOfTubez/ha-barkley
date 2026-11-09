@@ -1,0 +1,19 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# Starts the Sniff Test panel behind HA ingress. Options come from /data/options.json.
+set -e
+
+token="$(bashio::config 'github_token' '')"
+if [ -n "${token}" ]; then
+    export GITHUB_TOKEN="${token}"
+fi
+# Downloaded HA constraints and package caches: persistent, but excluded from backups.
+export SNIFF_TEST_CACHE=/data/cache
+mkdir -p "${SNIFF_TEST_CACHE}"
+
+bashio::log.info "Starting Sniff Test (exposure: $(bashio::config 'exposure'))"
+exec sniff-test serve \
+    --store /data/sniff-test.db \
+    --port 8099 \
+    --exposure "$(bashio::config 'exposure')" \
+    --jobs "$(bashio::config 'jobs')"

@@ -13,9 +13,11 @@ from rich.text import Text
 from sniff_test.diff import HEADLINE_MAX
 from sniff_test.models import AnalyzerState, Finding, Severity, Tag
 from sniff_test.report.json_report import ScanResult, ordered, sanitize_untrusted
+from sniff_test.scoring import VERDICTS
 
 if TYPE_CHECKING:
     from sniff_test.releases import Timeline
+    from sniff_test.store import ScanRow
 
 _INDENT = (0, 0, 0, 11)
 _SEV_STYLE = {
@@ -179,6 +181,31 @@ def render(scan: ScanResult, console: Console, verbose: bool = False) -> None:
         body.append("\nScan incomplete: some analyzers did not run.", style="yellow")
     console.print(Panel(body, expand=False, border_style=style))
     console.print(_VERDICT_QUIP[s.verdict.key])
+
+
+# --- history -------------------------------------------------------------------------
+
+
+def render_history(rows: list[ScanRow], console: Console) -> None:
+    """Stored scans, newest first. Repo names and refs come from the scanned repos."""
+    if not rows:
+        console.print("🐕 No stored scans yet.")
+        return
+    emoji = {v.key: v.emoji for _, v in VERDICTS}
+    for r in rows:
+        style = _VERDICT_STYLE.get(r.verdict, "")
+        name = sanitize_untrusted(r.repo or r.source, 80)
+        ref = sanitize_untrusted(r.ref or "?", 60)
+        extra = [r.kind, r.scanned_at[:16].replace("T", " ")]
+        if r.ha_version:
+            extra.append(f"HA {r.ha_version}")
+        if not r.complete:
+            extra.append("incomplete")
+        console.print(
+            f"[bold]@{r.id}[/]  [{style}]{r.score:>3} {emoji.get(r.verdict, '')}[/]  "
+            f"{escape(name)}@{escape(ref)}  [dim]{escape(' · '.join(extra))}[/]",
+            soft_wrap=True,
+        )
 
 
 # --- releases ------------------------------------------------------------------------

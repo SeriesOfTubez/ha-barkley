@@ -24,6 +24,12 @@ uv run sniff-test diff old.json new.json                        # what an update
 uv run sniff-test diff owner/repo --from v1.2.3                 # scan v1.2.3 and what HACS installs now, compare
 uv run sniff-test diff owner/repo --from v1.2.3 --to v1.3.0 -v  # two tags; -v lists every change
 uv run sniff-test releases owner/repo                           # release timeline: HACS default, publishers, handovers
+
+uv run sniff-test scan owner/repo --store scans.db              # also keep the scan in a SQLite scan store
+uv run sniff-test diff owner/repo --from v1.2.3 --store scans.db  # reuse a matching stored scan, store new ones
+uv run sniff-test diff @3 @7 --store scans.db                   # compare two stored scans
+uv run sniff-test history --store scans.db                      # list stored scans (or set SNIFF_TEST_STORE)
+uv run sniff-test serve --store scans.db --allow 127.0.0.1      # the add-on's web panel (HA ingress)
 ```
 
 `diff` puts the few changes that matter first (new findings, new data flows, evidence
@@ -91,6 +97,15 @@ downloaded and extracted, never built. Manifest requirements are validated befor
 them, so a manifest can't smuggle in installer options like `-e` or `--index-url`.
 Lockfiles are scanned in isolation with Sniff Test's own osv-scanner config, so a planted
 `osv-scanner.toml` can't hide a malicious package.
+
+## Home Assistant add-on (app)
+
+`addon/sniff_test/` is the add-on: a Debian-based image with Semgrep, GuardDog,
+osv-scanner and uv pinned, an ingress panel (`sniff-test serve`), and the scan store in
+`/data/sniff-test.db`. "What would updating change?" scans the release HACS would
+install now and diffs it against the stored scan of the installed tag. Build from the
+repository root: `docker buildx build -f addon/sniff_test/Dockerfile .`. See
+[`addon/sniff_test/DOCS.md`](addon/sniff_test/DOCS.md).
 
 ## Requirements
 

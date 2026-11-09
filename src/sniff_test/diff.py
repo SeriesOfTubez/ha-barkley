@@ -586,6 +586,7 @@ def _side(r: dict[str, Any]) -> dict[str, Any]:
         "verdict": r["verdict"],
         "complete": r["complete"],
         "exposure": r.get("exposure"),
+        "ha_version": r.get("ha_version"),
     }
 
 
@@ -608,6 +609,11 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     if old.get("exposure") != new.get("exposure"):
         warnings.append("the scans used different --exposure settings")
     a, b = _side(old), _side(new)
+    if a["ha_version"] and b["ha_version"] and a["ha_version"] != b["ha_version"]:
+        warnings.append(
+            f"dependencies were resolved against different HA releases "
+            f"({a['ha_version']} and {b['ha_version']})"
+        )
     if not same_item(old, new):
         warnings.append(f"comparing two different items: {a['repo']} and {b['repo']}")
 

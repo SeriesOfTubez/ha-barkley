@@ -1,0 +1,11 @@
+# Only what the add-on image needs. Fixtures and rule tests are deliberately
+# malicious samples and never go into the image.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!rules/
+!addon/sniff_test/rootfs/
+**/__pycache__
+**/*.pyc

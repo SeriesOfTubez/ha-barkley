@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from rich.console import Console
 from rich.markup import escape
 
 from sniff_test import __version__, releases
+from sniff_test.deps import ha_env
 from sniff_test.deps.ha_env import valid_version
 from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import GitHubError
@@ -20,11 +24,22 @@ from sniff_test.report import human
 from sniff_test.report.json_report import to_dict
 from sniff_test.scanner import scan
 from sniff_test.scoring import Exposure
+from sniff_test.store import Store, StoreError
 from sniff_test.workspace import UnsafeArchiveError
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_BELOW_THRESHOLD = 3
+STORE_ENV = "SNIFF_TEST_STORE"
+
+
+def _add_store(p: argparse.ArgumentParser, help_text: str) -> None:
+    p.add_argument(
+        "--store",
+        metavar="DB",
+        default=os.environ.get(STORE_ENV) or None,
+        help=f"{help_text} (default: ${STORE_ENV} if set)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,12 +79,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip checks that need PyPI/OSV (local scans only; the scan is marked incomplete)",
     )
+    _add_store(s, "also save the scan in this SQLite scan store")
     d = sub.add_parser(
         "diff",
         help="what an update changes: compare two reports, two sources, or two refs",
         description="Compare two scans. OLD and NEW are each a JSON report from "
-        "`scan -o`, or anything `scan` accepts. With --from, OLD is one repo scanned at "
-        "two refs. Shows the changes that matter first; never changes a score.",
+        "`scan -o`, a stored scan (@ID, with --store), or anything `scan` accepts. With "
+        "--from, OLD is one repo scanned at two refs; with --store, a matching stored scan "
+        "is reused and new scans are saved. Shows the changes that matter first; never "
+        "changes a score.",
     )
     d.add_argument("old", help="old report (.json), source, or the repo for --from/--to")
     d.add_argument("new", nargs="?", help="new report (.json) or source")
@@ -85,6 +103,32 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--json", action="store_true", help="print the diff as JSON")
     d.add_argument("-o", "--output", help="also write the diff JSON to this file")
     d.add_argument("-v", "--verbose", action="store_true", help="list every change")
+    _add_store(d, "reuse and save scans in this SQLite scan store")
+
+    h = sub.add_parser("history", help="list scans in the scan store")
+    h.add_argument("repo", nargs="?", help="only this repo (owner/name)")
+    h.add_argument("--limit", type=int, default=50)
+    h.add_argument("--json", action="store_true")
+    _add_store(h, "the SQLite scan store")
+
+    v = sub.add_parser(
+        "serve",
+        help="run the add-on's web panel (HA ingress)",
+        description="Serve the scan store and run scans one at a time. Only clients in "
+        "--allow may connect (default: the Supervisor's ingress proxy, 172.30.32.2).",
+    )
+    _add_store(v, "the SQLite scan store")
+    v.add_argument("--host", default="0.0.0.0")  # noqa: S104 - in the add-on container
+    v.add_argument("--port", type=int, default=8099)
+    v.add_argument("--allow", action="append", metavar="IP", help="client address to accept")
+    v.add_argument("--exposure", choices=[e.value for e in Exposure], default=Exposure.LOCAL.value)
+    v.add_argument("--jobs", type=int, default=1)
+    v.add_argument(
+        "--ha-version",
+        metavar="YYYY.M.P",
+        help="resolve against this HA release (default: the installed one, via the "
+        "Supervisor; else the latest stable)",
+    )
 
     r = sub.add_parser("releases", help="list a repo's releases and who published them")
     r.add_argument("source", help="GitHub URL or owner/repo")
@@ -93,9 +137,45 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _open_store(path: str | None, err: Console) -> Store | None:
+    try:
+        return Store(Path(path).expanduser()) if path else None
+    except (StoreError, OSError) as e:
+        err.print(f"[red]🐕 can't open the scan store {escape(str(path))}:[/] {e}")
+        raise SystemExit(EXIT_ERROR) from e
+
+
+def _requested_ha(args: argparse.Namespace) -> str | None:
+    """The HA release a fresh scan would resolve against (for reusing stored scans)."""
+    if args.ha_version or args.offline:
+        return args.ha_version
+    if not hasattr(args, "_latest_ha"):
+        try:
+            args._latest_ha = ha_env.load(None).version
+        except ha_env.HAEnvError:
+            args._latest_ha = None
+    return args._latest_ha
+
+
+def _repo_name(spec: str) -> str | None:
+    s = spec.strip().removesuffix(".git").rstrip("/")
+    s = s.removeprefix("https://").removeprefix("http://").removeprefix("github.com/")
+    parts = s.split("/")
+    return s if len(parts) == 2 and all(parts) and not Path(spec).exists() else None
+
+
 def _load_or_scan(
-    spec: str, ref: str | None, args: argparse.Namespace, err: Console
+    spec: str, ref: str | None, args: argparse.Namespace, err: Console, store: Store | None
 ) -> dict | None:
+    if spec.startswith("@") and spec[1:].isdigit():
+        if store is None:
+            err.print(f"[red]🐕 {escape(spec)} is a stored scan: pass --store[/]")
+            return None
+        try:
+            return store.report(int(spec[1:]))
+        except StoreError as e:
+            err.print(f"[red]🐕 {e}[/]")
+            return None
     path = Path(spec).expanduser()
     if path.suffix == ".json" and not path.is_file():
         err.print(f"[red]🐕 no such report: {escape(spec)}[/]")
@@ -110,6 +190,19 @@ def _load_or_scan(
             err.print(f"[red]🐕 {escape(spec)} isn't a sniff-test report[/]")
             return None
         return data
+    repo = _repo_name(spec)
+    if store is not None and repo and ref:
+        hit = store.find(
+            repo,
+            ref,
+            exposure=args.exposure,
+            tool_version=__version__,
+            ha_version=_requested_ha(args),
+        )
+        if hit is not None:
+            if not args.json:
+                err.print(f"🐕 using stored scan {escape(hit.label())} from {hit.scanned_at}")
+            return store.report(hit.id)
     if not args.json:
         err.print(f"🐕 sniff sniff... {escape(spec)}{'@' + escape(ref) if ref else ''}")
     try:
@@ -125,7 +218,12 @@ def _load_or_scan(
     except (FetchError, GitHubError, UnsafeArchiveError) as e:
         err.print(f"[red]🐕 couldn't get a sniff of {escape(spec)}:[/] {e}")
         return None
-    return to_dict(result)
+    report = to_dict(result)
+    if store is not None:
+        sid = store.save(report)
+        if not args.json:
+            err.print(f"🐕 stored as scan #{sid}")
+    return report
 
 
 def _diff(args: argparse.Namespace, out: Console, err: Console) -> int:
@@ -142,9 +240,10 @@ def _diff(args: argparse.Namespace, out: Console, err: Console) -> int:
     else:
         err.print("[red]🐕 diff needs OLD and NEW, or a repo with --from[/]")
         return EXIT_ERROR
+    store = _open_store(args.store, err)
     reports = []
     for spec, ref in sides:
-        if (rep := _load_or_scan(spec, ref, args, err)) is None:
+        if (rep := _load_or_scan(spec, ref, args, err, store)) is None:
             return EXIT_ERROR
         reports.append(rep)
     d = diff_reports(*reports)
@@ -154,6 +253,44 @@ def _diff(args: argparse.Namespace, out: Console, err: Console) -> int:
         sys.stdout.write(json.dumps(d, indent=2) + "\n")
     else:
         human.render_diff(d, out, verbose=args.verbose)
+    return EXIT_OK
+
+
+def _history(args: argparse.Namespace, out: Console, err: Console) -> int:
+    store = _open_store(args.store, err)
+    if store is None:
+        err.print(f"[red]🐕 history needs --store (or ${STORE_ENV})[/]")
+        return EXIT_ERROR
+    rows = store.history(args.repo, limit=args.limit)
+    if args.json:
+        sys.stdout.write(json.dumps([asdict(r) for r in rows], indent=2) + "\n")
+    else:
+        human.render_history(rows, out)
+    return EXIT_OK
+
+
+def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
+    from sniff_test import server
+
+    store = _open_store(args.store, err)
+    if store is None:
+        err.print(f"[red]🐕 serve needs --store (or ${STORE_ENV})[/]")
+        return EXIT_ERROR
+
+    def scan_fn(repo: str, ref: str | None) -> dict:
+        ha = args.ha_version or server.supervisor_ha_version()
+        result = scan(repo, ref=ref, exposure=Exposure(args.exposure), jobs=args.jobs,
+                      ha_version=ha)  # fmt: skip
+        return to_dict(result)
+
+    allow = set(args.allow or [server.SUPERVISOR_IP])
+    httpd = server.serve(store, scan_fn, args.host, args.port, allow)
+    out.print(
+        f"🐕 Sniff Test {__version__} panel on {args.host}:{args.port} "
+        f"(clients: {', '.join(sorted(allow))}; store: {store.path})"
+    )
+    with contextlib.suppress(KeyboardInterrupt):
+        httpd.serve_forever()
     return EXIT_OK
 
 
@@ -181,6 +318,11 @@ def main(argv: list[str] | None = None) -> int:
         return _releases(args, out, err)
     if args.command == "diff":
         return _diff(args, out, err)
+    if args.command == "history":
+        return _history(args, out, err)
+    if args.command == "serve":
+        return _serve(args, out, err)
+    store = _open_store(args.store, err)
     if not args.json:
         human.sniffing(out, args.source)
     try:
@@ -199,6 +341,10 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_ERROR
 
     report = to_dict(result)
+    if store is not None:
+        sid = store.save(report)
+        if not args.json:
+            err.print(f"🐕 stored as scan #{sid} in {escape(str(store.path))}")
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fh:  # noqa: PTH123
             json.dump(report, fh, indent=2)

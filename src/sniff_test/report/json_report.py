@@ -54,6 +54,7 @@ class ScanResult:
     provenance: Provenance | None = None
     resolution: Resolution | None = None  # resolved Python dependencies (integrations)
     graph: dict[str, Any] | None = None  # built by the scanner (see report.graph)
+    ha_version: str | None = None  # HA release dependencies were resolved against
 
 
 def sanitize_untrusted(text: str | None, limit: int = _UNTRUSTED_MAX) -> str:
@@ -105,6 +106,7 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
             "domain": t.domain,
         },
         "exposure": str(scan.exposure),
+        "ha_version": scan.ha_version,
         "complete": s.complete,
         "score": s.score,
         "raw_score": s.raw_score,

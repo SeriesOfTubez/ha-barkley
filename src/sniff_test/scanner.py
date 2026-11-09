@@ -139,6 +139,7 @@ def scan(
             facts=facts,
             provenance=provenance,
             resolution=resolution,
+            ha_version=env.version if env else None,
         )
         # Built while the workspace still exists: it reads manifests and parses files.
         result.graph = graph.build(result)
