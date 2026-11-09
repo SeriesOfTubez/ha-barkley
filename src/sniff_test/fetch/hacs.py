@@ -205,6 +205,8 @@ def fetch_remote(
         artifact_sha256=artifact_sha,
         domain=_manifest_domain(root) if kind is TargetKind.INTEGRATION else None,
         notes=notes,
+        requested_repo=f"{parsed[0]}/{parsed[1]}",
+        repo_meta=repo,
     )
 
 

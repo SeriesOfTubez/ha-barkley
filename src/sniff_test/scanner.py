@@ -5,7 +5,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from sniff_test.analyzers import endpoints, guarddog, osv, pypi_meta, python_deps, semgrep
+from sniff_test.analyzers import (
+    endpoints,
+    guarddog,
+    osv,
+    pypi_meta,
+    python_deps,
+    repo_signals,
+    semgrep,
+)
 from sniff_test.deps import ha_env
 from sniff_test.fetch.hacs import fetch
 from sniff_test.models import AnalyzerResult, AnalyzerState, Fact, Finding, Target, TargetKind
@@ -100,6 +108,9 @@ def scan(
         results: list[AnalyzerResult] = [semgrep.run(target, ws, jobs=jobs)]
         say("endpoints")
         results.append(endpoints.run(target))
+        say("repo signals")
+        repo_result, provenance = repo_signals.run(target)
+        results.append(repo_result)
         results += _dependency_analyzers(target, ws, ha_version, offline, jobs, say)
 
         findings = list(target.notes)
@@ -116,4 +127,5 @@ def scan(
             findings=findings,
             score=score(findings, complete),
             facts=facts,
+            provenance=provenance,
         )

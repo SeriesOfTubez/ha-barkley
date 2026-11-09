@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sniff_test import __version__
+from sniff_test.analyzers.repo_signals import Provenance
 from sniff_test.models import AnalyzerResult, AnalyzerState, Fact, Finding, Target
 from sniff_test.scoring import Exposure, ScoreResult
 
@@ -48,6 +49,7 @@ class ScanResult:
     findings: list[Finding]
     score: ScoreResult
     facts: list[Fact] = field(default_factory=list)  # inventory: never scored
+    provenance: Provenance | None = None
 
 
 def sanitize_untrusted(text: str | None, limit: int = _UNTRUSTED_MAX) -> str:

@@ -159,3 +159,5 @@ class Target:
     artifact_sha256: str | None = None
     domain: str | None = None
     notes: list[Finding] = field(default_factory=list)  # findings produced while fetching
+    requested_repo: str | None = None  # owner/name as given (may redirect to `repo`)
+    repo_meta: dict[str, Any] = field(default_factory=dict)  # GitHub repo API response

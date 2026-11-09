@@ -138,6 +138,18 @@ class GitHub:
         except NotFoundError:
             return None
 
+    def releases(self, owner: str, name: str, max_pages: int = 5) -> list[dict[str, Any]]:
+        """Newest first, drafts excluded (drafts are only visible with push access)."""
+        out: list[dict[str, Any]] = []
+        for page in range(1, max_pages + 1):
+            batch = self.get_json(f"/repos/{owner}/{name}/releases?per_page=100&page={page}")
+            if not isinstance(batch, list):
+                break
+            out.extend(r for r in batch if isinstance(r, dict) and not r.get("draft"))
+            if len(batch) < 100:
+                break
+        return out
+
     def commit_sha(self, owner: str, name: str, ref: str) -> str:
         data = self.get_json(f"/repos/{owner}/{name}/commits/{urllib.parse.quote(ref, safe='')}")
         return data["sha"]
