@@ -179,26 +179,28 @@ def native_suffixes(python_version: str | None) -> dict[str, tuple[str, ...]]:
     return out
 
 
-def shadowed_source(
+def loadable_native(
     so: Path, suffixes: dict[str, tuple[str, ...]]
-) -> tuple[str, tuple[str, ...]] | None:
-    """(the .py it replaces, arches) when HA's Python would load this .so instead of it."""
+) -> tuple[str | None, tuple[str, ...]] | None:
+    """(the .py it replaces or None if sourceless, arches) when HA's Python would load it.
+
+    None when no import can reach it: no module name maps to the file, another Python,
+    arch or libc tag, or a package directory of that name wins.
+    """
     for suffix in sorted(suffixes, key=len, reverse=True):  # longest first: .abi3.so > .so
         if so.name.endswith(suffix):
             stem = so.name[: -len(suffix)]
             break
     else:
         return None
-    if not stem or "." in stem:
+    if not stem or "." in stem or not stem.isidentifier():
         return None  # no module name can map to this file
     pkg = so.parent / stem
     every = (*suffixes, *_LOADER_SUFFIXES)
     if pkg.is_dir() and any((pkg / f"__init__{s}").is_file() for s in every):
         return None  # the package directory wins
     source = so.parent / f"{stem}.py"
-    if not source.is_file():
-        return None
-    return source.name, suffixes[suffix]
+    return (source.name if source.is_file() else None), suffixes[suffix]
 
 
 def _native_findings(root: Path, python_version: str | None) -> tuple[int, list[Finding]]:
@@ -206,26 +208,45 @@ def _native_findings(root: Path, python_version: str | None) -> tuple[int, list[
     sos = sorted(p for p in root.rglob("*.so") if p.is_file() and not p.is_symlink())
     out = []
     for so in sos:
-        if (hit := shadowed_source(so, suffixes)) is None:
+        if (hit := loadable_native(so, suffixes)) is None:
             continue
         source, arches = hit
         rel = so.relative_to(root).as_posix()
         where = "every HA box" if arches == _ARCHES else f"{', '.join(arches)} HA boxes"
+        if source:
+            rule, title, evidence = (
+                "py-native-module-shadows-source",
+                "Native module that HA would load instead of the readable source",
+                f"{so.name} shadows {source}",
+            )
+            message = (
+                f"{rel} is a compiled extension module next to {source}. Python tries "
+                f"extension modules before source, so on {where} the import loads this "
+                f"binary and {source} never runs. Reviewing the .py reviews nothing, and "
+                "no rule can read machine code."
+            )
+        else:
+            # User decision 2026-11-09: high, like sourceless bytecode (M4).
+            rule, title, evidence = (
+                "py-native-module-without-source",
+                "Native module with no readable source",
+                f"{so.name} (no .py)",
+            )
+            message = (
+                f"{rel} is a compiled extension module with no .py beside it. On {where} "
+                "any import of that name loads this binary, and no rule (ours or a human "
+                "reviewer's) can read machine code."
+            )
         out.append(
             Finding(
-                rule_id="py-native-module-shadows-source",
-                title="Native module that HA would load instead of the readable source",
+                rule_id=rule,
+                title=title,
                 severity=Severity.HIGH,
                 category=Category.CODE_EXEC,
-                message=(
-                    f"{rel} is a compiled extension module next to {source}. Python tries "
-                    f"extension modules before source, so on {where} the import loads this "
-                    f"binary and {source} never runs. Reviewing the .py reviews nothing, and "
-                    "no rule can read machine code. Legitimate integrations ship .py files "
-                    "and get native code from PyPI wheels."
-                ),
+                message=message + " Legitimate integrations ship .py files and get native "
+                "code from PyPI wheels.",
                 file=rel,
-                evidence=f"{so.name} shadows {source}",
+                evidence=evidence,
                 analyzer=NAME,
             )
         )

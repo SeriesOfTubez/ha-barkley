@@ -181,9 +181,9 @@ def test_arch_specific_native_module_names_its_arch(pkg):
         "mod.cpython-313-x86_64-linux-musl.so",  # another Python
         "mod.cpython-314-x86_64-linux-gnu.so",  # glibc: HA's image is musl
         "mod.cpython-314-armv7-linux-musleabihf.so",  # not an HA arch any more
-        "other.abi3.so",  # no other.py: not shadowing (sourceless)
         "mod.so.1",  # not an import suffix
         ".so",
+        "my-lib.abi3.so",  # no import statement can name it
     ],
 )
 def test_native_files_python_would_not_pick_over_source_are_quiet(pkg, name):
@@ -215,3 +215,13 @@ def test_planted_native_module_in_integration_scan(tmp_path, fixtures):
     r = scan(str(repo), offline=True)
     assert [f.rule_id for f in r.findings] == [NATIVE]
     assert r.score.score <= 89
+
+
+def test_sourceless_native_module_is_high(pkg):
+    (pkg / "helper.abi3.so").write_bytes(ELF)
+    (pkg / "helper.cpython-313-x86_64-linux-musl.so").write_bytes(ELF)  # other Python: quiet
+    findings = bytecode.run(_target(pkg), "3.14.10").findings
+    assert [(f.rule_id, f.file, str(f.severity)) for f in findings] == [
+        ("py-native-module-without-source", "helper.abi3.so", "high")
+    ]
+    assert "no .py beside it" in findings[0].message
