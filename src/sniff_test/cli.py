@@ -334,6 +334,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     httpd = server.serve(
         store, scan_fn, args.host, args.port, allow,
         exposure=args.exposure, ha_fn=ha_fn, installed_fn=installed_fn,
+        budget_fn=lambda: GitHub.from_env().rate_limit(),
     )  # fmt: skip
     out.print(
         f"🐕 Sniff Test {__version__} panel on {args.host}:{args.port} "

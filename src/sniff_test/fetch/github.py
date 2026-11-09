@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -34,6 +35,40 @@ class NotFoundError(GitHubError):
     pass
 
 
+class RateLimitError(GitHubError):
+    """GitHub's API budget is used up until `reset_at` (epoch seconds).
+
+    Without a token GitHub allows 60 API requests an hour per IP address (304 answers to
+    conditional requests count too, checked 2026-11-09), and a scan makes 6-7; with a
+    token it's 5,000. Seen on the user's box without a token (2026-11-09): every job
+    after the budget ran out failed with a 403. Callers that can wait (the add-on's
+    worker) wait for `reset_at` and retry; the CLI says when it resets.
+    """
+
+    def __init__(self, url: str, reset_at: float, authenticated: bool):
+        self.reset_at = reset_at
+        self.authenticated = authenticated
+        when = time.strftime("%H:%M UTC", time.gmtime(reset_at))
+        budget = (
+            "5,000 requests/hour with a token"
+            if authenticated
+            else ("60 requests/hour without a token")
+        )
+        super().__init__(
+            f"GitHub's API limit is used up ({budget}); it resets at {when}"
+            + ("" if authenticated else ". A GitHub token raises it to 5,000/hour")
+            + f" [{url}]"
+        )
+
+
+@dataclass(frozen=True)
+class RateLimit:
+    remaining: int
+    limit: int
+    reset_at: float
+    authenticated: bool
+
+
 def parse_repo(source: str) -> tuple[str, str] | None:
     """Return (owner, name) for a GitHub URL or 'owner/name', else None."""
     for rx in (_REPO_URL, _OWNER_REPO):
@@ -57,6 +92,19 @@ def _token() -> str | None:
         return None
     tok = out.stdout.strip()
     return tok or None
+
+
+def _rate_limit_reset(e: urllib.error.HTTPError) -> float | None:
+    """When a 403/429 is GitHub's rate limit: the epoch second it lifts, else None."""
+    h = e.headers
+    if h is None:
+        return None
+    if (after := h.get("Retry-After")) and after.strip().isdigit():  # secondary limit
+        return time.time() + int(after)
+    if h.get("X-RateLimit-Remaining") == "0":
+        reset = h.get("X-RateLimit-Reset", "")
+        return float(reset) if reset.strip().isdigit() else time.time() + 60
+    return None
 
 
 class _NoCrossHostAuth(urllib.request.HTTPRedirectHandler):
@@ -94,6 +142,8 @@ class GitHub:
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 raise NotFoundError(url) from e
+            if e.code in (403, 429) and (reset := _rate_limit_reset(e)) is not None:
+                raise RateLimitError(url, reset, bool(self.token)) from e
             raise GitHubError(f"GitHub {e.code} for {url}: {e.reason}") from e
         except urllib.error.URLError as e:
             raise GitHubError(f"network error for {url}: {e.reason}") from e
@@ -105,6 +155,17 @@ class GitHub:
     def get_text(self, path: str) -> str:
         with self._request(f"{API}{path}", accept="application/vnd.github.raw+json") as resp:
             return resp.read(5 * 1024 * 1024).decode("utf-8", "replace")
+
+    def rate_limit(self) -> RateLimit | None:
+        """The core API budget. GitHub doesn't count this request; None if unknown."""
+        try:
+            with self._request(f"{API}/rate_limit") as resp:
+                core = json.load(resp)["resources"]["core"]
+            return RateLimit(
+                int(core["remaining"]), int(core["limit"]), float(core["reset"]), bool(self.token)
+            )
+        except (GitHubError, ValueError, KeyError, TypeError):
+            return None
 
     def download(self, url: str, dest: Path, accept: str = "application/octet-stream") -> str:
         """Stream to dest with a size cap. Returns sha256 hex."""

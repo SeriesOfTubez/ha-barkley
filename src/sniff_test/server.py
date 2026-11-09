@@ -30,6 +30,7 @@ from typing import Any
 from sniff_test import __version__, doctor, memory, supervisor
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
+from sniff_test.fetch.github import RateLimit, RateLimitError
 from sniff_test.report.json_report import sanitize_untrusted
 from sniff_test.scoring import VERDICTS
 from sniff_test.store import ScanRow, Store, StoreError
@@ -41,6 +42,13 @@ _REF = re.compile(r"^[A-Za-z0-9_.+/-]{1,100}$")
 _EMOJI = {v.key: v.emoji for _, v in VERDICTS}
 _SEV_CLASS = {"critical": "crit", "high": "high", "medium": "med", "low": "low", "info": "low"}
 _JOBS_KEPT = 20
+# GitHub API requests a job may need, measured 2026-11-09: 6-7 per scan (repo, release,
+# commit, tarball, asset, release list, compare); an update check is two scans. Every
+# GitHub request in the add-on is made by a job on the one worker thread (the panel's
+# own requests go to HA through the Supervisor), so checking the budget before each job
+# and waiting out a rate limit inside one covers them all. Without a token GitHub allows
+# 60/hour and counts even 304 answers, so nothing can be served from a cache instead.
+_GITHUB_NEED = {"scan": 8, "installed": 8, "update": 15}
 _CSP = (
     "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; "
     "form-action 'self'; base-uri 'none'; frame-ancestors 'self'"
@@ -62,7 +70,7 @@ class Job:
     repo: str
     ref: str | None
     to: str | None = None  # update: the version HACS would install now (None: work it out)
-    state: str = "queued"  # queued | running | done | failed | refused
+    state: str = "queued"  # queued | running | waiting | done | failed | refused
     message: str = ""
     scan_ids: list[int] = field(default_factory=list)
     created: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
@@ -87,6 +95,8 @@ class Worker:
         exposure: str = "local",
         ha_fn: Callable[[], str | None] = lambda: None,
         memory_fn: Callable[[], memory.Memory] = memory.check,
+        budget_fn: Callable[[], RateLimit | None] = lambda: None,
+        sleep_fn: Callable[[float], None] = time.sleep,
     ):
         self.store = store
         self.scan_fn = scan_fn
@@ -94,6 +104,9 @@ class Worker:
         self.exposure = exposure
         self.ha_fn = ha_fn
         self.memory_fn = memory_fn
+        self.budget_fn = budget_fn
+        self.sleep_fn = sleep_fn
+        self.github_wait: str = ""  # why queued work is paused (shown on the panel)
         self.jobs: list[Job] = []
         self._q: queue.Queue[Job] = queue.Queue()
         self._lock = threading.Lock()
@@ -145,29 +158,64 @@ class Worker:
                         flush=True,
                     )
 
+    def _park(self, job: Job, reset_at: float, why: str) -> None:
+        """Wait until GitHub's budget resets; the job then runs (again) from the start.
+
+        Scans a job already stored are reused on the retry (update checks look them up),
+        so nothing finished is lost. Never fails the job: the limit always resets.
+        """
+        when = time.strftime("%H:%M UTC", time.gmtime(reset_at))
+        job.state = "waiting"
+        job.message = f"waiting for GitHub's rate limit; resumes at {when}"
+        self.github_wait = f"{why} Queued scans resume automatically at {when}."
+        print(f"job {job.id} {job.repo} waiting until {when}: {why}", file=sys.stderr, flush=True)
+        try:
+            self.sleep_fn(min(max(reset_at - time.time(), 0) + 5, 3700))
+        finally:
+            self.github_wait = ""
+
+    def _budget_ok(self, job: Job) -> bool:
+        b = self.budget_fn()
+        if b is None or b.remaining >= _GITHUB_NEED.get(job.kind, 15):
+            return True
+        tip = " A GitHub token in the app's options raises it to 5,000."
+        token = "" if b.authenticated else tip
+        left = f"{b.remaining} of {b.limit} requests left this hour"
+        why = f"GitHub's API budget is low ({left}).{token}"
+        self._park(job, b.reset_at, why)
+        return False
+
+    def _do(self, job: Job) -> None:
+        if job.kind == "scan":
+            job.scan_ids = [self._scan(job.repo, job.ref)]
+            job.message = "scanned"
+        elif job.kind == "installed":  # an installed version: reuse a stored scan
+            job.scan_ids = [self._stored_or_scan(job.repo, job.ref, self.exposure, self.ha_fn())]
+            job.message = "sniffed"
+        else:  # update: stored scan of the installed ref vs what HACS installs now
+            if job.to:  # HACS told us (installed list): reuse a stored scan of it
+                new = self._stored_or_scan(job.repo, job.to, self.exposure, self.ha_fn())
+            else:
+                new = self._scan(job.repo, None)
+            row = self.store.get(new)
+            assert row is not None  # noqa: S101 - just saved
+            old = self._stored_or_scan(job.repo, job.ref, row.exposure, row.ha_version)
+            job.scan_ids = [old, new]
+            job.message = f"{job.ref} → {row.ref}"
+
     def _run(self) -> None:
         while True:
             job = self._q.get()
-            job.state = "running"
             try:
-                if job.kind == "scan":
-                    job.scan_ids = [self._scan(job.repo, job.ref)]
-                    job.message = "scanned"
-                elif job.kind == "installed":  # an installed version: reuse a stored scan
-                    job.scan_ids = [
-                        self._stored_or_scan(job.repo, job.ref, self.exposure, self.ha_fn())
-                    ]
-                    job.message = "sniffed"
-                else:  # update: stored scan of the installed ref vs what HACS installs now
-                    if job.to:  # HACS told us (installed list): reuse a stored scan of it
-                        new = self._stored_or_scan(job.repo, job.to, self.exposure, self.ha_fn())
-                    else:
-                        new = self._scan(job.repo, None)
-                    row = self.store.get(new)
-                    assert row is not None  # noqa: S101 - just saved
-                    old = self._stored_or_scan(job.repo, job.ref, row.exposure, row.ha_version)
-                    job.scan_ids = [old, new]
-                    job.message = f"{job.ref} → {row.ref}"
+                while True:
+                    while not self._budget_ok(job):
+                        pass
+                    job.state = "running"
+                    try:
+                        self._do(job)
+                        break
+                    except RateLimitError as ex:  # ran out mid-job: wait, run it again
+                        self._park(job, ex.reset_at, str(ex).split(" [", 1)[0] + ".")
                 job.state = "done"
                 self._log_incomplete(job)
             except MemoryRefused as ex:
@@ -318,7 +366,8 @@ def _version_cell(base: str, r: Row) -> str:
 def _action(base: str, r: Row, token: str) -> str:
     it = r.item
     if r.busy:  # one click is enough: no second button while the job is in the worker
-        return f'<span class="muted">{"checking…" if r.busy == "running" else "queued…"}</span>'
+        label = {"running": "checking…", "waiting": "waiting for GitHub…"}.get(r.busy, "queued…")
+        return f'<span class="muted">{label}</span>'
     hidden = (f'<input type=hidden name=token value="{token}">'
               f'<input type=hidden name=repo value="{e(it.repo)}">'
               f'<input type=hidden name=ref value="{e(it.installed)}">')  # fmt: skip
@@ -390,6 +439,10 @@ def _memory_banner(mem: memory.Memory) -> str:
     return ""
 
 
+def _github_banner(wait: str) -> str:
+    return f'<p class="card med">⏳ {e(wait, 400)}</p>' if wait else ""
+
+
 def render_index(
     base: str,
     store: Store,
@@ -397,12 +450,14 @@ def render_index(
     token: str,
     installed: str = "",
     mem: memory.Memory | None = None,
+    github_wait: str = "",
 ) -> bytes:
     rows = store.history(limit=100)
     out = [
         "<h1>🐕 Sniff Test</h1>",
         '<p class="muted">Scans run one at a time. Scores never come from an AI.</p>',
         _memory_banner(mem) if mem else "",
+        _github_banner(github_wait),
         f'<div class="card"><form method=post action="{base}/scan">'
         f'<input type=hidden name=token value="{token}">'
         '<input name=repo placeholder="owner/repo" required>'
@@ -618,7 +673,7 @@ class Panel:
         busy = {
             j.repo.lower(): j.state
             for j in reversed(list(self.worker.jobs))
-            if j.state in ("queued", "running")
+            if j.state in ("queued", "running", "waiting")
         }
         for r in rows:
             r.busy = busy.get(r.item.repo.lower(), "")
@@ -676,6 +731,7 @@ class Panel:
                         body = render_index(
                             base, panel.store, jobs, panel.token,
                             panel.installed_html(base, refresh), panel.memory_fn(),
+                            panel.worker.github_wait,
                         )  # fmt: skip
                         return self._send(200, body)
                     if m := re.fullmatch(r"/scan/(\d+)(\.json)?", url.path):
@@ -756,9 +812,12 @@ def serve(
     ha_fn: Callable[[], str | None] = lambda: None,
     installed_fn: InstalledFn | None = None,
     memory_fn: Callable[[], memory.Memory] = memory.check,
+    budget_fn: Callable[[], RateLimit | None] = lambda: None,
 ) -> PanelServer:
     """Build the server (caller runs `serve_forever`); `.panel.worker` runs the scans."""
-    worker = Worker(store, scan_fn, exposure=exposure, ha_fn=ha_fn, memory_fn=memory_fn)
+    worker = Worker(
+        store, scan_fn, exposure=exposure, ha_fn=ha_fn, memory_fn=memory_fn, budget_fn=budget_fn
+    )
     panel = Panel(store, worker, allow, installed_fn, memory_fn)
     httpd = PanelServer((host, port), panel.handler())
     httpd.panel = panel

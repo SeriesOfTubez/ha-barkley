@@ -15,7 +15,6 @@ Everything is cached per version under the user cache dir; a release never chang
 from __future__ import annotations
 
 import json
-import os
 import re
 import tempfile
 import time
@@ -25,6 +24,7 @@ from pathlib import Path
 from sniff_test.deps import uv
 from sniff_test.deps.reqs import ReqKind, constraint_names, normalize, parse
 from sniff_test.fetch.github import GitHub, GitHubError
+from sniff_test.paths import cache_root
 
 HA_REPO = ("home-assistant", "core")
 HA_WHEELS_INDEX = uv.HA_WHEELS_INDEX
@@ -86,13 +86,6 @@ class HAEnv:
             elif (name, version) not in shipped:
                 return False
         return True
-
-
-def cache_root() -> Path:
-    if override := os.environ.get("SNIFF_TEST_CACHE"):
-        return Path(override)
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / "sniff-test"
 
 
 def valid_version(version: str) -> bool:

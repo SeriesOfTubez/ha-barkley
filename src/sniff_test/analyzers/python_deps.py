@@ -25,7 +25,7 @@ from pathlib import Path
 
 from sniff_test.analyzers import _proc
 from sniff_test.deps import reqs, uv
-from sniff_test.deps.ha_env import HAEnv, cache_root
+from sniff_test.deps.ha_env import HAEnv
 from sniff_test.deps.uv import Artifact, parse_pylock
 from sniff_test.fetch import http
 from sniff_test.models import (
@@ -37,6 +37,7 @@ from sniff_test.models import (
     Target,
     TargetKind,
 )
+from sniff_test.paths import cache_root
 from sniff_test.workspace import UnsafeArchiveError, extract, single_top_dir
 
 NAME = "python-deps"

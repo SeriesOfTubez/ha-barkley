@@ -20,6 +20,7 @@ from sniff_test import memory, supervisor
 from sniff_test.analyzers import _proc
 from sniff_test.analyzers.semgrep import _tool_env as semgrep_env
 from sniff_test.analyzers.semgrep import rules_dir
+from sniff_test.fetch.github import GitHub, RateLimit
 
 _TAIL = 1500
 
@@ -96,6 +97,21 @@ def memory_check(mem: memory.Memory | None = None) -> Check:
     return Check(f"memory guard ({label})", not mem.refuse, mem.message())
 
 
+def github_check(budget: RateLimit | None = None, fetch: bool = True) -> Check:
+    """GitHub's API budget (this request isn't counted) and whether a token is set."""
+    if budget is None and fetch:
+        budget = GitHub.from_env().rate_limit()
+    if budget is None:
+        return Check("GitHub API", True, "budget unknown (GitHub unreachable?)")
+    when = time.strftime("%H:%M UTC", time.gmtime(budget.reset_at))
+    token = "with a token" if budget.authenticated else "no token: 60/hour, ~8 scans"
+    return Check(
+        "GitHub API",
+        budget.remaining > 0,
+        f"{budget.remaining} of {budget.limit} requests left ({token}); resets {when}",
+    )
+
+
 def supervisor_checks(
     ha_fn=supervisor.ha_version,
     installed_fn=supervisor.installed_hacs,
@@ -131,7 +147,7 @@ def supervisor_checks(
 
 def run_checks(addon: bool = False) -> list[Check]:
     """`addon`: also ask HA (through the Supervisor) for its version and HACS's list."""
-    checks = [_facts(), memory_check()]
+    checks = [_facts(), memory_check(), github_check()]
     if addon or supervisor.token():
         checks += supervisor_checks()
     with tempfile.TemporaryDirectory(prefix="sniff-doctor-") as tmp:
