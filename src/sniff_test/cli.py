@@ -17,7 +17,7 @@ from sniff_test import __version__, releases
 from sniff_test.deps import ha_env
 from sniff_test.deps.ha_env import valid_version
 from sniff_test.diff import diff as diff_reports
-from sniff_test.fetch.github import GitHubError
+from sniff_test.fetch.github import GitHub, GitHubError
 from sniff_test.fetch.hacs import FetchError
 from sniff_test.models import TargetKind
 from sniff_test.report import human
@@ -97,7 +97,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     d.add_argument("--exposure", choices=[e.value for e in Exposure], default=Exposure.LOCAL.value)
     d.add_argument("--category", choices=[k.value for k in TargetKind])
-    d.add_argument("--ha-version", metavar="YYYY.M.P")
+    d.add_argument(
+        "--ha-version",
+        metavar="YYYY.M.P|auto",
+        help="resolve both sides against this HA release (default: the latest stable). "
+        "With --from, 'auto' resolves the old side against the HA release that was current "
+        "when the old tag came out, so its old pins resolve as they did then",
+    )
     d.add_argument("--offline", action="store_true")
     d.add_argument("--jobs", type=int)
     d.add_argument("--json", action="store_true", help="print the diff as JSON")
@@ -168,8 +174,14 @@ def _repo_name(spec: str) -> str | None:
 
 
 def _load_or_scan(
-    spec: str, ref: str | None, args: argparse.Namespace, err: Console, store: Store | None
+    spec: str,
+    ref: str | None,
+    args: argparse.Namespace,
+    err: Console,
+    store: Store | None,
+    ha: str | None = None,
 ) -> dict | None:
+    """A report for one side: stored, from a file, or scanned. `ha` overrides the HA release."""
     if spec.startswith("@") and spec[1:].isdigit():
         if store is None:
             err.print(f"[red]🐕 {escape(spec)} is a stored scan: pass --store[/]")
@@ -200,7 +212,7 @@ def _load_or_scan(
             ref,
             exposure=args.exposure,
             tool_version=__version__,
-            ha_version=_requested_ha(args),
+            ha_version=ha or _requested_ha(args),
         )
         if hit is not None:
             if not args.json:
@@ -215,7 +227,7 @@ def _load_or_scan(
             exposure=Exposure(args.exposure),
             kind=TargetKind(args.category) if args.category else None,
             jobs=args.jobs,
-            ha_version=args.ha_version,
+            ha_version=ha or args.ha_version,
             offline=args.offline,
         )
     except (FetchError, GitHubError, UnsafeArchiveError) as e:
@@ -227,6 +239,21 @@ def _load_or_scan(
         if not args.json:
             err.print(f"🐕 stored as scan #{sid}")
     return report
+
+
+def _ha_when_released(spec: str, ref: str, err: Console) -> str | None:
+    """The HA stable release that was current when `ref` of repo `spec` came out."""
+    repo = _repo_name(spec)
+    if not repo:
+        err.print("[red]🐕 --ha-version auto needs a GitHub repo (owner/name) with --from[/]")
+        return None
+    owner, name = repo.split("/", 1)
+    try:
+        when = GitHub.from_env().ref_date(owner, name, ref)
+        return ha_env.version_at(when)
+    except (GitHubError, ha_env.HAEnvError, KeyError, TypeError) as e:
+        err.print(f"[red]🐕 couldn't date {escape(repo)}@{escape(ref)} to an HA release:[/] {e}")
+        return None
 
 
 def _diff(args: argparse.Namespace, out: Console, err: Console) -> int:
@@ -243,10 +270,21 @@ def _diff(args: argparse.Namespace, out: Console, err: Console) -> int:
     else:
         err.print("[red]🐕 diff needs OLD and NEW, or a repo with --from[/]")
         return EXIT_ERROR
+    side_ha: list[str | None] = [None, None]
+    if args.ha_version == "auto":
+        if (old_ha := _ha_when_released(args.old, args.from_ref, err)) is None:
+            return EXIT_ERROR
+        side_ha[0] = old_ha
+        args.ha_version = None  # the new side: the latest stable, as without the flag
+        if not args.json:
+            err.print(
+                f"🐕 old side: HA {escape(old_ha)}, current when {escape(args.from_ref)} came "
+                "out; new side: the latest stable HA"
+            )
     store = _open_store(args.store, err)
     reports = []
-    for spec, ref in sides:
-        if (rep := _load_or_scan(spec, ref, args, err, store)) is None:
+    for (spec, ref), ha in zip(sides, side_ha, strict=True):
+        if (rep := _load_or_scan(spec, ref, args, err, store, ha)) is None:
             return EXIT_ERROR
         reports.append(rep)
     d = diff_reports(*reports)
@@ -339,8 +377,14 @@ def _releases(args: argparse.Namespace, out: Console, err: Console) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if getattr(args, "ha_version", None) and not valid_version(args.ha_version):
-        parser.error(f"--ha-version: expected YYYY.M.P, got {args.ha_version!r}")
+    ha = getattr(args, "ha_version", None)
+    if ha == "auto" and args.command == "diff":
+        if not args.from_ref:
+            parser.error("--ha-version auto needs --from (it dates the old side)")
+        if args.offline:
+            parser.error("--ha-version auto needs the network (GitHub release dates)")
+    elif ha and not valid_version(ha):
+        parser.error(f"--ha-version: expected YYYY.M.P, got {ha!r}")
     out = Console()
     err = Console(stderr=True)
     if args.command == "releases":

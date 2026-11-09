@@ -155,6 +155,13 @@ class GitHub:
                 break
         return out
 
+    def ref_date(self, owner: str, name: str, ref: str) -> str:
+        """When `ref` came out: its release's publish date, else its commit date (UTC)."""
+        if (release := self.release_by_tag(owner, name, ref)) and release.get("published_at"):
+            return str(release["published_at"])
+        data = self.get_json(f"/repos/{owner}/{name}/commits/{urllib.parse.quote(ref, safe='')}")
+        return str(data["commit"]["committer"]["date"])
+
     def commit_sha(self, owner: str, name: str, ref: str) -> str:
         data = self.get_json(f"/repos/{owner}/{name}/commits/{urllib.parse.quote(ref, safe='')}")
         return data["sha"]

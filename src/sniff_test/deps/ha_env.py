@@ -14,9 +14,11 @@ Everything is cached per version under the user cache dir; a release never chang
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,6 +35,7 @@ _FILES = {
     "python-version": ".python-version",
     "requirements.txt": "requirements.txt",
     "requirements_all.txt": "requirements_all.txt",
+    "pyproject.toml": "pyproject.toml",  # Python version before .python-version existed
 }
 
 
@@ -96,9 +99,25 @@ def valid_version(version: str) -> bool:
     return bool(_VERSION_RX.match(version))
 
 
-def _python_version(text: str | None) -> str:
+_CLASSIFIER = re.compile(r"Programming Language :: Python :: (3\.\d+)\b")
+
+
+def _python_version(text: str | None, pyproject: str | None = None) -> str:
+    """HA's Python: `.python-version`, else the newest Python classifier, else 3.13.
+
+    `.python-version` appeared between HA 2025.6 and 2026.1. Checked on 2026-11-09
+    against HA's own images: 2025.1.0 lists 3.12 and 3.13 and runs 3.13.1 (the newest
+    classifier); 2026.1.0 lists 3.13 and 3.14 but runs 3.13.11, as its .python-version
+    says, so that file wins whenever it exists. Matters for diffs of old releases
+    (`--ha-version auto`): wheels and bytecode depend on the Python minor.
+    """
     v = (text or "").strip()
-    return v if re.fullmatch(r"3\.\d+(?:\.\d+)?", v) else "3.13"
+    if re.fullmatch(r"3\.\d+(?:\.\d+)?", v):
+        return v
+    found = _CLASSIFIER.findall(pyproject or "")
+    if found:
+        return max(found, key=lambda x: int(x.split(".")[1]))
+    return "3.13"
 
 
 def _plain_lines(text: str) -> list[str]:
@@ -162,7 +181,10 @@ def _from_dir(version: str, d: Path) -> HAEnv:
     req_all = (d / "requirements_all.txt").read_text(encoding="utf-8")
     return HAEnv(
         version=version,
-        python_version=_python_version((d / "python-version").read_text(encoding="utf-8")),
+        python_version=_python_version(
+            (d / "python-version").read_text(encoding="utf-8"),
+            (d / "pyproject.toml").read_text(encoding="utf-8"),
+        ),
         dir=d,
         constraints=constraint_names((d / "package_constraints.txt").read_text("utf-8")),
         core_names=frozenset(constraint_names(core)) | frozenset(constraint_names(req_all)),
@@ -193,3 +215,54 @@ def load(version: str | None = None, gh: GitHub | None = None) -> HAEnv:
         tmp.write_text(text or "", encoding="utf-8")
         tmp.replace(d / name)
     return _from_dir(version, d)
+
+
+_RELEASES_TTL = 24 * 3600
+
+
+def _stable_releases(gh: GitHub) -> list[tuple[str, str]]:
+    """(published_at, version) of HA's stable releases, newest first, cached a day."""
+    path = cache_root() / "ha" / "releases.json"
+    try:
+        if time.time() - path.stat().st_mtime < _RELEASES_TTL:
+            return [tuple(x) for x in json.loads(path.read_text(encoding="utf-8"))]
+    except (OSError, ValueError):
+        pass
+    try:
+        rels = gh.releases(*HA_REPO, max_pages=10)
+    except GitHubError as e:
+        raise HAEnvError(f"could not list Home Assistant releases: {e}") from e
+    out = sorted(
+        (
+            (str(r["published_at"]), str(r["tag_name"]))
+            for r in rels
+            if not r.get("prerelease")
+            and r.get("published_at")
+            and valid_version(str(r.get("tag_name", "")))
+        ),
+        reverse=True,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(out), encoding="utf-8")
+    tmp.replace(path)
+    return out
+
+
+def version_at(when: str, gh: GitHub | None = None) -> str:
+    """The newest stable HA release published at or before `when` (ISO 8601, UTC).
+
+    For the old side of `diff --from ... --ha-version auto`: the HA a user was most
+    likely running when that release came out, so its pins resolve as they did then.
+    """
+    releases = _stable_releases(gh or GitHub.from_env())
+    if not releases:
+        raise HAEnvError("no Home Assistant releases found")
+    for published, version in releases:  # newest first; ISO 8601 UTC sorts as text
+        if published <= when:
+            return version
+    oldest = releases[-1]
+    raise HAEnvError(
+        f"{when[:10]} is older than the oldest Home Assistant release we list "
+        f"({oldest[1]}, {oldest[0][:10]}); pass --ha-version YYYY.M.P"
+    )
