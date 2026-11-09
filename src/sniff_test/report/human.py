@@ -39,6 +39,9 @@ _QUIPS = {
     "py-runtime-pip": "🐕 Brings its own snacks at runtime. Nobody checked the snacks.",
     "repo-no-releases": "🐕 No releases, just vibes.",
     "ha-unauth-view": "🐕 Left a doggy door open with no lock on it.",
+    "possible-exfil": "🐕 Sniffed secrets near an open window. Can't prove it jumped out.",
+    "endpoint-exfil-host": "🐕 Knows a guy who knows a guy. The guy collects data.",
+    "repo-transferred": "🐕 This house changed owners. Checking the new collar.",
 }
 _VERDICT_QUIP = {
     "good_boy": "🦴 Tail wagging. Nothing smelled off.",
@@ -76,6 +79,44 @@ def _finding_block(console: Console, f: Finding) -> None:
     console.print()
 
 
+def hooks_line(graph: dict | None) -> str:
+    """One plain line summarizing the graph (the dog stays out of it)."""
+    if not graph:
+        return ""
+    subject = graph["subject"]
+    out = [e for e in graph["edges"] if e["source"] == subject]
+    nodes = {n["id"]: n for n in graph["nodes"]}
+
+    def n(rel: str, kinds: tuple[str, ...]) -> int:
+        return sum(1 for e in out if e["relation"] == rel and nodes[e["target"]]["kind"] in kinds)
+
+    parts = []
+    reg = n(
+        "registers", ("service", "entity_service", "http_view", "webhook", "panel", "ws_command")
+    )
+    if reg:
+        parts.append(f"registers {reg} service/endpoint group(s)")
+    hosts = [e for e in out if e["relation"] == "connects_to"]
+    undeclared = sum(
+        1
+        for e in hosts
+        if e["attrs"].get("class") in ("undeclared", "developer_hosted", "public_ip")
+    )
+    if hosts:
+        parts.append(
+            f"mentions {len(hosts)} host(s)" + (f", {undeclared} undeclared" if undeclared else "")
+        )
+    sensitive = sorted(
+        nodes[e["target"]]["label"] for e in out if e["relation"] == "reads" and e["finding_ids"]
+    )
+    if sensitive:
+        parts.append("reads " + ", ".join(sensitive))
+    pkgs = n("depends_on", ("package",)) + n("bundles", ("package",))
+    if pkgs:
+        parts.append(f"{pkgs} package(s)")
+    return "Hooks: " + "; ".join(parts) if parts else ""
+
+
 def render(scan: ScanResult, console: Console, verbose: bool = False) -> None:
     t, s = scan.target, scan.score
     where = t.repo or t.source
@@ -109,6 +150,10 @@ def render(scan: ScanResult, console: Console, verbose: bool = False) -> None:
         infos = sum(1 for f in hidden if f.severity == Severity.INFO)
         parts = [p for p in (f"{lows} low" if lows else "", f"{infos} info" if infos else "") if p]
         console.print(f"[dim]+ {', '.join(parts)} not shown (use --verbose)[/]")
+        console.print()
+
+    if line := hooks_line(scan.graph):
+        console.print(Text(sanitize_untrusted(line, 400), style="dim"))
         console.print()
 
     for a in scan.analyzers:

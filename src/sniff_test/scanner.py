@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from sniff_test.analyzers import (
+    correlate,
     endpoints,
     guarddog,
     osv,
@@ -17,6 +18,7 @@ from sniff_test.analyzers import (
 from sniff_test.deps import ha_env
 from sniff_test.fetch.hacs import fetch
 from sniff_test.models import AnalyzerResult, AnalyzerState, Fact, Finding, Target, TargetKind
+from sniff_test.report import graph
 from sniff_test.report.json_report import ScanResult
 from sniff_test.scoring import Exposure, apply_exposure, score
 from sniff_test.workspace import workspace
@@ -58,12 +60,12 @@ def _dependency_analyzers(
     offline: bool,
     jobs: int | None,
     say: Callable[[str], None],
-) -> list[AnalyzerResult]:
+) -> tuple[list[AnalyzerResult], python_deps.Resolution | None]:
     if target.kind is TargetKind.PLUGIN:
         say("osv (npm)")
         if offline:
-            return [AnalyzerResult("osv-npm", AnalyzerState.SKIPPED, detail="offline")]
-        return [osv.run_npm(target, ws)]
+            return [AnalyzerResult("osv-npm", AnalyzerState.SKIPPED, detail="offline")], None
+        return [osv.run_npm(target, ws)], None
 
     env, env_error = None, "offline"
     if not offline:
@@ -86,7 +88,7 @@ def _dependency_analyzers(
         results.append(osv.run_python(resolution, ws))
         say("guarddog")
         results.append(guarddog.run(resolution, ws, jobs=jobs))
-    return results
+    return results, resolution
 
 
 def scan(
@@ -111,16 +113,18 @@ def scan(
         say("repo signals")
         repo_result, provenance = repo_signals.run(target)
         results.append(repo_result)
-        results += _dependency_analyzers(target, ws, ha_version, offline, jobs, say)
+        dep_results, resolution = _dependency_analyzers(target, ws, ha_version, offline, jobs, say)
+        results += dep_results
 
         findings = list(target.notes)
         facts: list[Fact] = []
         for r in results:
             findings.extend(r.findings)
             facts.extend(r.facts)
+        findings += correlate.correlate(findings, facts, target.root)
         findings = apply_exposure(_dedupe(findings), exposure)
         complete = all(r.state in (AnalyzerState.OK, AnalyzerState.NOT_APPLICABLE) for r in results)
-        return ScanResult(
+        result = ScanResult(
             target=target,
             exposure=exposure,
             analyzers=results,
@@ -128,4 +132,8 @@ def scan(
             score=score(findings, complete),
             facts=facts,
             provenance=provenance,
+            resolution=resolution,
         )
+        # Built while the workspace still exists: it reads manifests and parses files.
+        result.graph = graph.build(result)
+        return result

@@ -14,8 +14,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sniff_test import __version__
+from sniff_test.analyzers.python_deps import Resolution
 from sniff_test.analyzers.repo_signals import Provenance
 from sniff_test.models import AnalyzerResult, AnalyzerState, Fact, Finding, Target
+from sniff_test.report import graph
 from sniff_test.scoring import Exposure, ScoreResult
 
 SCHEMA_VERSION = 1
@@ -50,6 +52,8 @@ class ScanResult:
     score: ScoreResult
     facts: list[Fact] = field(default_factory=list)  # inventory: never scored
     provenance: Provenance | None = None
+    resolution: Resolution | None = None  # resolved Python dependencies (integrations)
+    graph: dict[str, Any] | None = None  # built by the scanner (see report.graph)
 
 
 def sanitize_untrusted(text: str | None, limit: int = _UNTRUSTED_MAX) -> str:
@@ -128,7 +132,37 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
             for a in scan.analyzers
         ],
         "findings": [_finding_json(f) for f in findings],
+        "graph": scan.graph if scan.graph is not None else graph.build(scan),
+        "provenance": _provenance_json(scan.provenance),
         "ai_brief": ai_brief(scan, findings),
+    }
+
+
+def _provenance_json(p: Provenance | None) -> dict[str, Any] | None:
+    """Repo identity and release history (for a release-timeline view). None if local."""
+    if p is None:
+        return None
+    return {
+        "repo_id": p.repo_id,
+        "full_name": p.full_name,
+        "requested_as": p.requested_as,
+        "created_at": p.created_at,
+        "owner_type": p.owner_type,
+        "former_names": p.former_names,
+        "installed_tag": p.installed_tag,
+        "publishers": p.publishers,
+        "releases": [
+            {
+                "tag": sanitize_untrusted(r.tag, 100),
+                "published_at": r.published_at,
+                "publisher": r.publisher,
+                "bot": r.bot,
+                "prerelease": r.prerelease,
+                "asset_uploaders": r.asset_uploaders,
+                "installed": r.tag == p.installed_tag,
+            }
+            for r in p.releases
+        ],
     }
 
 

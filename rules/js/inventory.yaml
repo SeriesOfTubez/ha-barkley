@@ -21,14 +21,14 @@ rules:
     languages: [javascript, typescript]
     severity: INFO
     message: REST API
-    metadata: {sniff: {inventory: {ring: ha, kind: rest_api, relation: calls}}}
+    metadata: {sniff: {inventory: {ring: ha, kind: rest_api, relation: calls, key: REST API}}}
     pattern: $H.callApi(...)
 
   - id: inv-card-subscribe
     languages: [javascript, typescript]
     severity: INFO
     message: HA events
-    metadata: {sniff: {inventory: {ring: ha, kind: event, relation: listens}}}
+    metadata: {sniff: {inventory: {ring: ha, kind: event, relation: listens, key: HA events}}}
     pattern-either:
       - pattern: $C.subscribeEvents(...)
       - pattern: $C.subscribeMessage(...)
@@ -37,14 +37,14 @@ rules:
     languages: [javascript, typescript]
     severity: INFO
     message: entity states
-    metadata: {sniff: {inventory: {ring: ha, kind: states, relation: reads}}}
+    metadata: {sniff: {inventory: {ring: ha, kind: states, relation: reads, key: entity states}}}
     pattern: $H.states[$E]
 
   - id: inv-card-network
     languages: [javascript, typescript]
     severity: INFO
     message: network requests
-    metadata: {sniff: {inventory: {ring: network, kind: capability, relation: uses, outbound: true}}}
+    metadata: {sniff: {inventory: {ring: network, kind: capability, relation: uses, outbound: true, key: network requests}}}
     pattern-either:
       - pattern: fetch(...)
       - pattern: new XMLHttpRequest(...)
@@ -56,7 +56,7 @@ rules:
     languages: [javascript, typescript]
     severity: INFO
     message: browser localStorage
-    metadata: {sniff: {inventory: {ring: data, kind: data, relation: reads}}}
+    metadata: {sniff: {inventory: {ring: data, kind: data, relation: reads, key: browser localStorage}}}
     pattern-either:
       - pattern: localStorage.getItem(...)
       - pattern: window.localStorage.getItem(...)

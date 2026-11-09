@@ -155,6 +155,7 @@ _PY_LITERAL = re.compile(r"""^[rRbBuU]?(["'])(.*)\1$""", re.S)
 _PY_FSTRING = re.compile(r"""^[fF][rR]?(["'])(.*)\1$""", re.S)
 _JS_LITERAL = re.compile(r"""^(["'])(.*)\1$|^`([^`$]*)`$""", re.S)
 _DOTTED = re.compile(r"^[A-Za-z_][\w.]*$")
+_CTOR = re.compile(r"^([A-Za-z_][\w.]*)\(.*\)$", re.S)
 
 
 def _clean_part(part: str, domain: str | None, js: bool) -> str:
@@ -174,6 +175,8 @@ def _clean_part(part: str, domain: str | None, js: bool) -> str:
         return m[2]
     if part in ("DOMAIN", "self.domain") and domain:
         return domain
+    if m := _CTOR.match(part):  # register_view(AcmeView()) -> AcmeView
+        part = m[1]
     return part if _DOTTED.match(part) else "*"
 
 
@@ -203,7 +206,9 @@ def to_fact(result: dict[str, Any], root: Path, domain: str | None) -> Fact | No
     if inv.get("outbound"):
         attrs["outbound"] = True
     if fixed := inv.get("key"):
-        attrs["values"] = [value]
+        raw = " ".join(str(extra.get("message", "")).split())
+        if raw != str(fixed):  # the message interpolated something: keep it as a value
+            attrs["values"] = [value]
         value = str(fixed)
     return Fact(
         ring=Ring(inv["ring"]),

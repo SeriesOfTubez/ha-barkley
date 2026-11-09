@@ -45,7 +45,7 @@ rules:
     languages: [python]
     severity: INFO
     message: static files
-    metadata: {sniff: {inventory: {ring: ha, kind: http_static, relation: registers}}}
+    metadata: {sniff: {inventory: {ring: ha, kind: http_static, relation: registers, key: static files}}}
     pattern-either:
       - pattern: $H.http.register_static_path(...)
       - pattern: $H.http.async_register_static_paths(...)
@@ -63,7 +63,7 @@ rules:
     languages: [python]
     severity: INFO
     message: sidebar panel
-    metadata: {sniff: {inventory: {ring: ha, kind: panel, relation: registers}}}
+    metadata: {sniff: {inventory: {ring: ha, kind: panel, relation: registers, key: sidebar panel}}}
     pattern-either:
       - pattern: homeassistant.components.frontend.async_register_built_in_panel(...)
       - pattern: async_register_built_in_panel(...)
@@ -82,7 +82,7 @@ rules:
     languages: [python]
     severity: INFO
     message: webhook
-    metadata: {sniff: {inventory: {ring: ha, kind: webhook, relation: registers}}}
+    metadata: {sniff: {inventory: {ring: ha, kind: webhook, relation: registers, key: webhook}}}
     pattern: homeassistant.components.webhook.async_register(...)
 
   - id: inv-event-listen
@@ -109,7 +109,7 @@ rules:
     languages: [python]
     severity: INFO
     message: state changes
-    metadata: {sniff: {inventory: {ring: ha, kind: states, relation: tracks}}}
+    metadata: {sniff: {inventory: {ring: ha, kind: states, relation: tracks, key: state changes}}}
     pattern-either:
       - pattern: homeassistant.helpers.event.async_track_state_change_event(...)
       - pattern: homeassistant.helpers.event.async_track_state_change(...)
@@ -121,7 +121,7 @@ rules:
     languages: [python]
     severity: INFO
     message: entity states
-    metadata: {sniff: {inventory: {ring: ha, kind: states, relation: reads}}}
+    metadata: {sniff: {inventory: {ring: ha, kind: states, relation: reads, key: entity states}}}
     pattern-either:
       - pattern: $H.states.get(...)
       - pattern: $H.states.async_entity_ids(...)
@@ -131,7 +131,7 @@ rules:
     languages: [python]
     severity: INFO
     message: all entity states
-    metadata: {sniff: {inventory: {ring: data, kind: data, relation: reads}}}
+    metadata: {sniff: {inventory: {ring: data, kind: data, relation: reads, key: all entity states}}}
     pattern-either:
       - pattern: $H.states.async_all()
       - pattern: $H.states.all()
@@ -140,21 +140,21 @@ rules:
     languages: [python]
     severity: INFO
     message: entity registry
-    metadata: {sniff: {inventory: {ring: ha, kind: registry, relation: reads}}}
+    metadata: {sniff: {inventory: {ring: ha, kind: registry, relation: reads, key: entity registry}}}
     pattern: homeassistant.helpers.entity_registry.async_get(...)
 
   - id: inv-device-registry
     languages: [python]
     severity: INFO
     message: device registry
-    metadata: {sniff: {inventory: {ring: ha, kind: registry, relation: reads}}}
+    metadata: {sniff: {inventory: {ring: ha, kind: registry, relation: reads, key: device registry}}}
     pattern: homeassistant.helpers.device_registry.async_get(...)
 
   - id: inv-recorder
     languages: [python]
     severity: INFO
     message: recorder history
-    metadata: {sniff: {inventory: {ring: data, kind: data, relation: reads}}}
+    metadata: {sniff: {inventory: {ring: data, kind: data, relation: reads, key: recorder history}}}
     pattern-either:
       - pattern: homeassistant.components.recorder.get_instance(...)
       - pattern: homeassistant.components.recorder.history.$F(...)
@@ -163,7 +163,7 @@ rules:
     languages: [python]
     severity: INFO
     message: config entries of other integrations
-    metadata: {sniff: {inventory: {ring: data, kind: data, relation: reads}}}
+    metadata: {sniff: {inventory: {ring: data, kind: data, relation: reads, key: config entries of other integrations}}}
     patterns:
       - pattern-either:
           - pattern: $H.config_entries.async_entries()
@@ -175,14 +175,14 @@ rules:
     languages: [python]
     severity: INFO
     message: calling user lookup
-    metadata: {sniff: {inventory: {ring: data, kind: auth, relation: reads}}}
+    metadata: {sniff: {inventory: {ring: data, kind: auth, relation: reads, key: calling user lookup}}}
     pattern: $H.auth.async_get_user(...)
 
   - id: inv-env-read
     languages: [python]
     severity: INFO
     message: environment variables
-    metadata: {sniff: {inventory: {ring: data, kind: data, relation: reads}}}
+    metadata: {sniff: {inventory: {ring: data, kind: data, relation: reads, key: environment variables}}}
     pattern-either:
       - pattern: os.environ
       - pattern: os.getenv(...)
@@ -191,7 +191,7 @@ rules:
     languages: [python]
     severity: INFO
     message: HTTP client
-    metadata: {sniff: {inventory: {ring: network, kind: capability, relation: uses, outbound: true}}}
+    metadata: {sniff: {inventory: {ring: network, kind: capability, relation: uses, outbound: true, key: HTTP client}}}
     pattern-either:
       - pattern: homeassistant.helpers.aiohttp_client.async_get_clientsession(...)
       - pattern: homeassistant.helpers.aiohttp_client.async_create_clientsession(...)
@@ -217,7 +217,7 @@ rules:
     languages: [python]
     severity: INFO
     message: raw sockets
-    metadata: {sniff: {inventory: {ring: network, kind: capability, relation: uses, outbound: true}}}
+    metadata: {sniff: {inventory: {ring: network, kind: capability, relation: uses, outbound: true, key: raw sockets}}}
     pattern-either:
       - pattern: socket.socket(...)
       - pattern: socket.create_connection(...)
@@ -229,7 +229,7 @@ rules:
     languages: [python]
     severity: INFO
     message: websocket client
-    metadata: {sniff: {inventory: {ring: network, kind: capability, relation: uses, outbound: true}}}
+    metadata: {sniff: {inventory: {ring: network, kind: capability, relation: uses, outbound: true, key: websocket client}}}
     pattern-either:
       - pattern: websockets.connect(...)
       - pattern: $S.ws_connect(...)
@@ -238,7 +238,7 @@ rules:
     languages: [python]
     severity: INFO
     message: MQTT publish
-    metadata: {sniff: {inventory: {ring: network, kind: capability, relation: uses}}}
+    metadata: {sniff: {inventory: {ring: network, kind: capability, relation: uses, key: MQTT publish}}}
     pattern-either:
       - pattern: homeassistant.components.mqtt.async_publish(...)
       - pattern: homeassistant.components.mqtt.publish(...)
@@ -247,7 +247,7 @@ rules:
     languages: [python]
     severity: INFO
     message: subprocesses
-    metadata: {sniff: {inventory: {ring: ha, kind: capability, relation: uses}}}
+    metadata: {sniff: {inventory: {ring: ha, kind: capability, relation: uses, key: subprocesses}}}
     pattern-either:
       - pattern: subprocess.$F(...)
       - pattern: asyncio.create_subprocess_exec(...)
