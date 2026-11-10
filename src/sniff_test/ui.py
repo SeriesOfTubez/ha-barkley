@@ -698,26 +698,37 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
             ("home", "Your own network", f"{len(home)} address{'es' * (len(home) != 1)}", "")
         )
     if pts:
-        right.append(("ports", "Devices it's set up with", port_phrase(pts), ""))
+        if len(pts) == 1:
+            known = WELL_KNOWN_PORTS.get(pts[0].port)
+            title = f"Connects on port {pts[0].port}"
+            sub = (f"{known[0]} · " if known else "") + "address comes from setup"
+        else:
+            title = f"Connects on {len(pts)} ports"
+            nums = ", ".join(str(p.port) for p in pts[:5]) + (" …" if len(pts) > 5 else "")
+            sub = f"{nums} · details below"
+        right.append(("ports", title, sub, ""))
     flowing = {nodes.get(t, {}).get("label") for t in flow_targets}
     net = [h for h in internet(hs) if h.name not in flowing]
     dev = [h for h in net if h.cls in ("developer_hosted", "analytics")]
     if dev:
-        right.append(
-            (
-                "dev",
-                "Developer or analytics server"
-                if len(dev) == 1
-                else f"{len(dev)} developer or analytics servers",
-                _clip(dev[0].name, 30),
-                "priv",
+        kinds = {h.cls for h in dev}
+        if len(dev) == 1:
+            title = (
+                "Server the developer runs" if "developer_hosted" in kinds else "Analytics service"
             )
-        )
+        elif kinds == {"developer_hosted"}:
+            title = f"{len(dev)} servers the developer runs"
+        elif kinds == {"analytics"}:
+            title = f"{len(dev)} analytics services"
+        else:
+            title = f"{len(dev)} developer or analytics servers"
+        right.append(("dev", title, _clip(dev[0].name, 30), "priv"))
     rest = [h for h in net if h not in dev]
     if rest:
         own = sum(1 for h in rest if h.cls == "declared")
-        sub = f"{own} the app's own" if own else "none named in its docs"
-        right.append(("net", f"Internet: {len(rest)} site{'s' * (len(rest) != 1)}", sub, ""))
+        sub = f"{own} named in the app's docs" if own else "none named in the app's docs"
+        label = "Other internet sites" if dev else "Internet sites"
+        right.append(("net", f"{label}: {len(rest)}", sub, ""))
     if not rd and not right:
         return '<p class="muted">It reads none of your private data, and its code names no network addresses.</p>'
 
@@ -754,7 +765,7 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
             f'<text class="sm" x="18" y="{y + 35:.0f}">{e(_clip(label, 30))}</text>'
         )
         parts.append(
-            f'<line x1="182" y1="{y + 22:.0f}" x2="270" y2="{cy:.0f}" '
+            f'<line x1="182" y1="{y + 22:.0f}" x2="260" y2="{cy:.0f}" '
             'stroke="var(--muted)" stroke-dasharray="3 3"/>'
         )
         lpos[nid] = y + 22
@@ -762,11 +773,13 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
         parts.append(
             f'<text class="sm" x="6" y="{cy + 4:.0f}">Reads none of your private data</text>'
         )
+    # bold system-ui is ~0.62em per character; the box has ~154px for text
+    name_px = 12 if len(name) <= 19 else max(9.5, round(154 / (0.62 * min(len(name), 26)), 1))
     center_at = len(parts)
     parts.append(
-        f'<rect x="270" y="{cy - 28:.0f}" width="150" height="56" rx="10" fill="var(--card)" '
+        f'<rect x="260" y="{cy - 28:.0f}" width="170" height="56" rx="10" fill="var(--card)" '
         'stroke="var(--fg)" stroke-width="1.5"/>'
-        f'<text x="345" y="{cy - 3:.0f}" text-anchor="middle" style="font-weight:650">{e(_clip(name, 22))}</text>'
+        f'<text x="345" y="{cy - 3:.0f}" text-anchor="middle" style="font-weight:650;font-size:{name_px}px">{e(_clip(name, 26))}</text>'
         f'<text class="sm" x="345" y="{cy + 13:.0f}" text-anchor="middle">'
         f"{e(KIND.get(str(report.get('target', {}).get('kind')), ''))}</text>"
     )
@@ -782,7 +795,7 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
             f'<text class="sm" x="{w - 188}" y="{y + 35:.0f}">{e(_clip(sub, 32))}</text>'
         )
         parts.append(
-            f'<line x1="420" y1="{cy:.0f}" x2="{w - 200}" y2="{y + 22:.0f}" stroke="var(--line)"/>'
+            f'<line x1="430" y1="{cy:.0f}" x2="{w - 200}" y2="{y + 22:.0f}" stroke="var(--line)"/>'
         )
         rpos[key] = y + 22
     lines: list[str] = []
@@ -892,7 +905,7 @@ def zones_html(report: dict[str, Any]) -> str:
                 f'<span class="u">{names} · {where}</span></li>'
             )
         out.append(
-            '<div class="zone"><h3>🔌 Ports in the code</h3><div class="zs">Port numbers the '
+            '<div class="zone"><h3>🔌 Ports it connects on</h3><div class="zs">Port numbers the '
             "code sets. The address comes from setup or a cloud service.</div><ul>"
             + "".join(items)
             + "</ul></div>"
