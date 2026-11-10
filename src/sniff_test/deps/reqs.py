@@ -77,3 +77,24 @@ def constraint_names(text: str) -> dict[str, str | None]:
         if req.kind is ReqKind.PLAIN and req.name:
             out[req.name] = req.pinned
     return out
+
+
+_FINAL_RX = re.compile(
+    r"^v?(?:(\d+)!)?(\d+(?:\.\d+)*)(?:[-_.]?(?:post|rev|r)[-_.]?(\d*)|-(\d+))?$", re.I
+)
+
+
+def final_version_key(version: str) -> tuple[int, tuple[int, ...], int] | None:
+    """Sort key for a final PEP 440 release (epoch, release, post); None for anything else.
+
+    Pre-releases, dev releases and local versions return None: callers that compare
+    versions here only ever want final releases.
+    """
+    m = _FINAL_RX.match(version.strip())
+    if not m:
+        return None
+    release = tuple(int(x) for x in m.group(2).split("."))
+    while len(release) > 1 and release[-1] == 0:
+        release = release[:-1]
+    post = m.group(3) if m.group(3) is not None else m.group(4)
+    return (int(m.group(1) or 0), release, -1 if post is None else int(post or 0))

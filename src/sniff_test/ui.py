@@ -62,8 +62,9 @@ a.sum.on { border-bottom-color:currentColor; font-weight:600; }
   justify-content:space-between; }
 .bar > :last-child { margin-left:auto; }
 .tablebox { padding:4px 8px; overflow-x:auto; }
-table.apps td { vertical-align:middle; } table.apps .badge { display:inline-block; }
-table.apps .act form { margin:0; }
+table.apps td { vertical-align:middle; }
+table.apps .badge { display:inline-block; white-space:nowrap; overflow-wrap:normal; }
+table.apps td.actcell { width:1%; }
 .again { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; }
 .again form { margin:0; }
 .status { display:flex; flex-direction:column; gap:4px; border-color:var(--accent); }
@@ -560,11 +561,13 @@ def card_row(base: str, c: Card) -> str:
     act = f'<span class="muted">{_busy_text(c)}</span>' if c.busy else c.action
     if c.diff_link:
         act += f' <a href="{base}/diff?{c.diff_link}">what the update changes</a>'
+    act = f'<div class="act">{act}</div>' if act else ""
     return (
         f'<tr><td><span class="badge {b}">{score}<small>{label}</small></span></td>'
         f'<td>{name}<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}'
         f'</div><div class="small">{e(card_sentence(c), 400)}</div></td>'
-        f'<td><div class="chips">{chips}</div></td><td class="act">{act}</td></tr>'
+        f'<td><div class="chips">{chips}</div></td>'
+        f'<td class="actcell">{act}</td></tr>'
     )
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from sniff_test.analyzers import guarddog, osv, pypi_meta, python_deps
-from sniff_test.deps import reqs
+from sniff_test.deps import ha_env, reqs
 from sniff_test.deps.ha_env import HAEnv
 from sniff_test.deps.uv import Artifact, parse_pylock
 from sniff_test.models import AnalyzerState, Severity, Tag, Target, TargetKind
@@ -481,3 +481,108 @@ def test_guarddog_medium_heuristics_drop_to_low_in_popular_packages():
     obscure = python_deps.ResolvedPackage("zzz-obscure-lib", "1.0", {"x86_64"})
     sev = {f.rule_id: f.severity for f in guarddog.to_findings(data, obscure, art)}
     assert sev["dep-guarddog-filesystem-autostart"] is Severity.MEDIUM
+
+
+# --- HA's shipped set as of its release ---------------------------------------------------
+
+
+def _pypi(*releases):
+    """PyPI JSON with (version, first upload) pairs."""
+    return {"releases": {v: [{"upload_time_iso_8601": t}] for v, t in releases}}
+
+
+def test_newest_at_picks_the_version_current_at_ha_release():
+    meta = _pypi(
+        ("2026.9.29", "2026-09-29T00:45:50Z"),
+        ("2026.11.7", "2026-11-06T19:53:28Z"),
+        ("2026.11.9", "2026-11-09T00:39:39Z"),
+        ("2026.12.0rc1", "2026-10-01T00:00:00Z"),  # pre-release: never
+    )
+    assert ha_env.newest_at(meta, "2026-11-04T17:32:55Z", "2026.11.9") == "2026.9.29"
+    # graphql-core is capped `<3.3`: the bound is below what resolved, never a 3.3.x
+    meta = _pypi(("3.2.13", "2026-10-01T00:00:00Z"), ("3.3.1", "2026-10-02T00:00:00Z"))
+    assert ha_env.newest_at(meta, "2026-11-04T00:00:00Z", "3.2.14") == "3.2.13"
+    assert ha_env.newest_at(meta, "2020-01-01T00:00:00Z", "3.2.14") is None
+
+
+def test_yanked_files_dont_date_a_release():
+    meta = {"releases": {"1.1": [{"upload_time_iso_8601": "2026-01-01T00:00:00Z", "yanked": True}]}}
+    assert ha_env.newest_at(meta, "2026-11-04T00:00:00Z", "1.1") is None
+
+
+def test_final_version_key():
+    from sniff_test.deps.reqs import final_version_key as k
+
+    assert k("1.0") == k("1.0.0") < k("1.0.post1") < k("1.0.1")
+    assert k("2026.11.9") > k("2026.9.29") and k("4.1") > k("4.0.1")
+    assert k("1!0.1") > k("99.0")
+    assert k("1.0rc1") is None and k("1.0.dev0") is None and k("1.0+local") is None
+
+
+def _dated_env(tmp_path, released_at="2026-11-04T17:32:55Z"):
+    env = _env(tmp_path)
+    for f in ("requirements.txt", "requirements_all.txt"):
+        (tmp_path / f).write_text("aiohttp==3.14.5\nsome-lib==1.0\n")
+    env.released_at = released_at
+    return env
+
+
+def test_dated_bounds_only_lower_unpinned_packages(tmp_path, monkeypatch):
+    env = _dated_env(tmp_path)
+    asked = []
+
+    def get_json(url):
+        asked.append(url)
+        if "/regex/" in url:
+            return _pypi(
+                ("2026.9.29", "2026-09-29T00:00:00Z"), ("2026.11.9", "2026-11-09T00:00:00Z")
+            )
+        if "/idna/" in url:
+            return _pypi(("3.20", "2026-01-01T00:00:00Z"))
+        raise ha_env.http.NotFoundError(url)  # only on HA's wheel index
+
+    monkeypatch.setattr(ha_env.http, "get_json", get_json)
+    resolved = {"aiohttp": "3.14.5", "some-lib": "1.0", "regex": "2026.11.9", "idna": "3.20"}
+    resolved["x"] = "1"
+    assert ha_env._dated_bounds(env, resolved) == ["regex<=2026.9.29"]
+    assert not any("aiohttp" in u or "some-lib" in u for u in asked)  # pinned: never dated
+    # cached: no second round of lookups
+    asked.clear()
+    assert ha_env._dated_bounds(env, resolved) == ["regex<=2026.9.29"] and not asked
+
+
+def test_dated_bounds_are_not_cached_when_a_lookup_fails(tmp_path, monkeypatch):
+    env = _dated_env(tmp_path)
+
+    def get_json(url):
+        raise ha_env.http.HttpError("boom")
+
+    monkeypatch.setattr(ha_env.http, "get_json", get_json)
+    assert ha_env._dated_bounds(env, {"regex": "2026.11.9"}) is None
+    assert not (tmp_path / "dated-bounds.txt").exists()
+    env.released_at = ""  # release date unknown: undated, nothing asked
+    assert ha_env._dated_bounds(env, {"regex": "2026.11.9"}) is None
+
+
+def test_load_records_the_release_date_and_skips_it_on_error(tmp_path, monkeypatch):
+    from sniff_test.fetch.github import GitHubError
+
+    monkeypatch.setenv("SNIFF_TEST_CACHE", str(tmp_path))
+
+    class G:
+        fail = False
+
+        def file_at(self, *a):
+            return "x==1\n"
+
+        def release_by_tag(self, *a):
+            if self.fail:
+                raise GitHubError("down")
+            return {"published_at": "2026-11-04T17:32:55Z"}
+
+    g = G()
+    g.fail = True
+    assert ha_env.load("2026.11.0", g).released_at == ""
+    assert not (tmp_path / "ha" / "2026.11.0" / "released_at").exists()  # asks again next time
+    g.fail = False
+    assert ha_env.load("2026.11.0", g).released_at == "2026-11-04T17:32:55Z"
