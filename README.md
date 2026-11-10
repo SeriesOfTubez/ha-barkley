@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/barkley-banner.png" alt="Barkley" width="500"></p>
+
 # 🐕 Barkley
 
 Every integration gets a sniff test before it gets into the house.
