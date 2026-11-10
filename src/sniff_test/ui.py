@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import html
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from sniff_test import __version__
@@ -55,6 +55,17 @@ main { display:flex; flex-direction:column; gap:16px; }
 .head { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:baseline; }
 .summary { display:flex; flex-wrap:wrap; gap:8px 22px; font-size:0.9rem; }
 .summary b { font-variant-numeric:tabular-nums; }
+a.sum { color:var(--fg); text-decoration:none; border-bottom:2px solid transparent; }
+a.sum:hover { border-bottom-color:var(--line); }
+a.sum.on { border-bottom-color:currentColor; font-weight:600; }
+.bar { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center;
+  justify-content:space-between; }
+.bar > :last-child { margin-left:auto; }
+.tablebox { padding:4px 8px; overflow-x:auto; }
+table.apps td { vertical-align:middle; } table.apps .badge { display:inline-block; }
+table.apps .act form { margin:0; }
+.status { display:flex; flex-direction:column; gap:4px; border-color:var(--accent); }
+.status .row { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; }
 .filters { display:flex; flex-wrap:wrap; gap:6px; }
 .pill { font-size:0.8rem; padding:4px 10px; border-radius:999px; border:1px solid var(--line);
   background:var(--card); color:var(--fg); white-space:nowrap; text-decoration:none; }
@@ -453,8 +464,7 @@ def card_html(base: str, c: Card) -> str:
         else f'<span class="app-name">{e(c.name, 80)}</span>'
     )
     chips = "".join(f'<span class="chip {cls}">{e(t, 60)}</span>' for cls, t in card_chips(c))
-    busy = {"running": "checking…", "waiting": "waiting for GitHub…"}.get(c.busy, "queued…")
-    act = f'<span class="muted">{busy}</span>' if c.busy else c.action
+    act = f'<span class="muted">{_busy_text(c)}</span>' if c.busy else c.action
     links = ""
     if c.diff_link:
         links = f'<a href="{base}/diff?{c.diff_link}">what the update changes</a>'
@@ -471,56 +481,158 @@ def card_html(base: str, c: Card) -> str:
 FILTERS = {
     "all": "All",
     "look": "Worth a look",
+    "fine": "No concerns found",
     "privacy": "Privacy notes",
     "updates": "Updates",
     "unchecked": "Not checked",
 }
+VIEWS = ("cards", "table")
+PER_PAGE = {"cards": 12, "table": 25}
+
+
+@dataclass(frozen=True)
+class View:
+    """What the installed list shows: a filter, cards or a table, and a page. All in the URL."""
+
+    f: str = "all"
+    view: str = "cards"
+    pg: int = 1
+
+    @classmethod
+    def parse(cls, q: dict[str, list[str]], default_view: str = "cards") -> View:
+        f = (q.get("f") or ["all"])[0]
+        view = (q.get("view") or [default_view])[0]
+        try:
+            pg = int((q.get("page") or ["1"])[0])
+        except ValueError:
+            pg = 1
+        return cls(
+            f if f in FILTERS else "all",
+            view if view in VIEWS else "cards",
+            max(1, min(pg, 10_000)),
+        )
+
+    def qs(self, sep: str = "&amp;", **kw: Any) -> str:
+        """The query string for this view with some parts changed (only known values).
+        `sep` is "&amp;" inside HTML, "&" in a Location header."""
+        v = replace(self, **kw)
+        parts = []
+        if v.f != "all":
+            parts.append(f"f={v.f}")
+        parts.append(f"view={v.view}")
+        if v.pg > 1:
+            parts.append(f"page={v.pg}")
+        return sep.join(parts)
 
 
 def _keep(c: Card, f: str) -> bool:
     return {
         "all": True,
         "look": c.worth_a_look,
+        "fine": c.band == "green" and not c.worth_a_look,
         "privacy": bool(c.notes()),
         "updates": bool(c.available),
         "unchecked": c.band == "grey",
     }.get(f, True)
 
 
-def render_grid(base: str, cards: list[Card], f: str = "all") -> str:
-    f = f if f in FILTERS else "all"
+def _sort_key(c: Card) -> tuple[Any, ...]:
+    return (c.band != "grey", not c.worth_a_look, c.scan.score if c.scan else -1, c.name.lower())
+
+
+def _busy_text(c: Card) -> str:
+    return {"running": "checking…", "waiting": "waiting for GitHub…"}.get(c.busy, "queued…")
+
+
+def card_row(base: str, c: Card) -> str:
+    """One app as a table row: the same facts as its card, in less space."""
+    b = c.band
+    label = "Unfinished" if c.scan and not c.scan.complete else BANDS[b][0]
+    score = str(c.scan.score) if c.scan else "–"
+    name = (
+        f'<a href="{base}/scan/{c.scan.id}"><b>{e(c.name, 80)}</b></a>'
+        if c.scan
+        else f"<b>{e(c.name, 80)}</b>"
+    )
+    chips = "".join(f'<span class="chip {cls}">{e(t, 60)}</span>' for cls, t in card_chips(c))
+    act = f'<span class="muted">{_busy_text(c)}</span>' if c.busy else c.action
+    if c.diff_link:
+        act += f' <a href="{base}/diff?{c.diff_link}">what the update changes</a>'
+    return (
+        f'<tr><td><span class="badge {b}">{score}<small>{label}</small></span></td>'
+        f'<td>{name}<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}'
+        f'</div><div class="small">{e(card_sentence(c), 400)}</div></td>'
+        f'<td><div class="chips">{chips}</div></td><td class="act">{act}</td></tr>'
+    )
+
+
+def _pager(base: str, v: View, pages: int) -> str:
+    if pages <= 1:
+        return ""
+    links = []
+    if v.pg > 1:
+        links.append(f'<a class="pill" href="{base}/?{v.qs(pg=v.pg - 1)}">‹ Previous</a>')
+    for n in range(1, pages + 1):
+        on = " on" if n == v.pg else ""
+        links.append(f'<a class="pill{on}" href="{base}/?{v.qs(pg=n)}">{n}</a>')
+    if v.pg < pages:
+        links.append(f'<a class="pill" href="{base}/?{v.qs(pg=v.pg + 1)}">Next ›</a>')
+    return f'<nav class="filters pager" aria-label="pages">{"".join(links)}</nav>'
+
+
+def render_grid(base: str, cards: list[Card], v: View | None = None) -> str:
+    v = v or View()
     counts = {k: sum(_keep(c, k) for c in cards) for k in FILTERS}
-    look, priv, ups, unchecked = (
-        counts["look"],
-        counts["privacy"],
-        counts["updates"],
-        counts["unchecked"],
+
+    def item(k: str, text: str, color: str = "") -> str:
+        style = f' style="color:var(--{color})"' if color else ""
+        n = counts[k]
+        inner = f"<b>{n}</b> {text}"
+        if not n and k != "all":
+            return f'<span class="muted">{inner}</span>'
+        on = " on" if v.f == k else ""
+        cur = ' aria-current="true"' if on else ""
+        return f'<a class="sum{on}"{style}{cur} href="{base}/?{v.qs(f=k, pg=1)}">{inner}</a>'
+
+    ups = counts["updates"]
+    summary = [item("all", "apps installed from the Marketplace")]
+    if counts["look"]:
+        summary.append(item("look", "worth a look", "yellow"))
+    summary.append(item("fine", "no concerns found", "green"))
+    if counts["privacy"]:
+        summary.append(item("privacy", "with privacy notes", "priv"))
+    summary.append(item("updates", f"update{'s' * (ups != 1)} waiting"))
+    if counts["unchecked"]:
+        summary.append(item("unchecked", "not checked"))
+    views = "".join(
+        f'<a class="pill{" on" if v.view == k else ""}" href="{base}/?{v.qs(view=k, pg=1)}">'
+        f"{label}</a>"
+        for k, label in (("cards", "▦ Cards"), ("table", "☰ Table"))
     )
-    fine = sum(1 for c in cards if c.band == "green" and not c.worth_a_look)
-    summary = [f"<span><b>{len(cards)}</b> apps installed from the Marketplace</span>"]
-    if look:
-        summary.append(f'<span style="color:var(--yellow)"><b>{look}</b> worth a look</span>')
-    summary.append(f'<span style="color:var(--green)"><b>{fine}</b> no concerns found</span>')
-    if priv:
-        summary.append(f'<span style="color:var(--priv)"><b>{priv}</b> with privacy notes</span>')
-    summary.append(f'<span class="muted">{ups} update{"s" * (ups != 1)} waiting</span>')
-    if unchecked:
-        summary.append(f'<span class="muted">{unchecked} not checked</span>')
-    pills = "".join(
-        f'<a class="pill{" on" if k == f else ""}" href="{base}/?f={k}">{v} ({counts[k]})</a>'
-        for k, v in FILTERS.items()
-        if k == "all" or counts[k]
-    )
-    shown = sorted(
-        (c for c in cards if _keep(c, f)),
-        key=lambda c: (
-            c.band != "grey",
-            not c.worth_a_look,
-            c.scan.score if c.scan else -1,
-            c.name.lower(),
-        ),
-    )
-    grid = "".join(card_html(base, c) for c in shown) or ('<p class="muted">Nothing here.</p>')
+    shown = sorted((c for c in cards if _keep(c, v.f)), key=_sort_key)
+    per = PER_PAGE[v.view]
+    pages = max(1, -(-len(shown) // per))
+    v = replace(v, pg=min(v.pg, pages))
+    window = shown[(v.pg - 1) * per : v.pg * per]
+    showing = ""
+    if v.f != "all":
+        showing = (
+            f'<span class="muted small">Showing {len(shown)}: {e(FILTERS[v.f].lower())} · '
+            f'<a href="{base}/?{v.qs(f="all", pg=1)}">show all</a></span>'
+        )
+    elif pages > 1:
+        showing = f'<span class="muted small">Page {v.pg} of {pages}</span>'
+    if not window:
+        body = '<p class="muted">Nothing here.</p>'
+    elif v.view == "table":
+        body = (
+            '<div class="box tablebox"><table class="apps"><tr><th>Score</th><th>App</th>'
+            "<th>Notes</th><th></th></tr>"
+            + "".join(card_row(base, c) for c in window)
+            + "</table></div>"
+        )
+    else:
+        body = '<div class="grid">' + "".join(card_html(base, c) for c in window) + "</div>"
     legend = (
         '<div class="legend">'
         + "".join(
@@ -537,8 +649,9 @@ def render_grid(base: str, cards: list[Card], f: str = "all") -> str:
         '<span><span class="chip priv">purple</span> privacy note (never scored)</span></div>'
     )
     return (
-        f'<div class="box summary">{"".join(summary)}</div>'
-        f'<div class="filters">{pills}</div><div class="grid">{grid}</div>{legend}'
+        f'<nav class="box summary" aria-label="filters">{"".join(summary)}</nav>'
+        f'<div class="bar">{showing}<span class="filters">{views}</span></div>'
+        f"{body}{_pager(base, v, pages)}{legend}"
     )
 
 

@@ -75,6 +75,7 @@ class Job:
     message: str = ""
     scan_ids: list[int] = field(default_factory=list)
     created: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
+    finished: float = 0.0  # time.time() when it stopped, for the status strip
 
 
 ScanFn = Callable[[str, str | None], dict[str, Any]]
@@ -291,6 +292,7 @@ class Worker:
                 job.message = f"{type(ex).__name__}: {ex}"
                 print(f"job {job.id} {job.repo} failed: {job.message}", file=sys.stderr)
             finally:
+                job.finished = time.time()
                 self._q.task_done()
 
 
@@ -388,9 +390,10 @@ def classify(
     return sorted(out, key=lambda r: order[r.group])
 
 
-def _action(base: str, r: Row, token: str) -> str:
+def _action(base: str, r: Row, token: str, back: str = "") -> str:
     it = r.item
     hidden = (f'<input type=hidden name=token value="{token}">'
+              f'<input type=hidden name=back value="{back}">'
               f'<input type=hidden name=repo value="{e(it.repo)}">'
               f'<input type=hidden name=ref value="{e(it.installed)}">')  # fmt: skip
     # An incomplete scan is never reused, so the same button scans again. Check update
@@ -420,8 +423,10 @@ def render_installed(
     rows: list[Row],
     token: str,
     report_fn: Callable[[int], dict[str, Any] | None],
-    f: str = "all",
+    v: ui.View | None = None,
 ) -> str:
+    v = v or ui.View()
+    back = v.qs()
     refresh = f'<a href="{base}/?refresh=1">refresh</a>'
     if state.error:
         return (
@@ -442,12 +447,12 @@ def render_installed(
             reasons=r.reasons,
             busy=r.busy,
             diff_link=_diff_link(r),
-            action=_action(base, r, token),
+            action=_action(base, r, token, back),
         )
         for r in rows
     ]
     out = (
-        [ui.render_grid(base, cards, f)]
+        [ui.render_grid(base, cards, v)]
         if rows
         else ['<p class="muted">The Marketplace lists no installed integrations or cards.</p>']
     )
@@ -456,6 +461,7 @@ def render_installed(
         out.append(
             f'<form method=post action="{base}/installed-all">'
             f'<input type=hidden name=token value="{token}">'
+            f'<input type=hidden name=back value="{back}">'
             f'<button class="primary">Sniff the {never} not yet sniffed by Sniff Test '
             f"{e(__version__)}</button></form>"
         )
@@ -481,6 +487,55 @@ def _github_banner(wait: str) -> str:
     return f'<div class="banner warn">⏳ {e(wait, 400)}</div>' if wait else ""
 
 
+STATUS_RECENT = 600  # seconds a finished job stays in the status strip
+
+
+def status_html(
+    base: str, jobs: list[Job], names: dict[str, str], here: str, now: float | None = None
+) -> str:
+    """The strip at the top: what's being sniffed now and what just finished."""
+    now = time.time() if now is None else now
+    active = [j for j in jobs if j.state in ("running", "waiting", "queued")]
+    recent = [j for j in jobs if j.finished and now - j.finished < STATUS_RECENT][-3:]
+    if not active and not recent:
+        return ""
+
+    def name(j: Job) -> str:
+        return e(names.get(j.repo.lower()) or j.repo, 100)
+
+    lines = []
+    for j in active:
+        if j.state == "running":
+            what = "🐕 Sniffing" if j.kind != "update" else "🐕 Checking the update of"
+            lines.append(f"<b>{what} {name(j)}…</b>")
+        elif j.state == "waiting":
+            lines.append(f"⏳ {name(j)}: {e(j.message, 200)}")
+    queued = sum(j.state == "queued" for j in active)
+    if queued:
+        nxt = ", ".join(name(j) for j in active if j.state == "queued")
+        lines.append(f'<span class="muted">{queued} waiting their turn: {nxt}</span>')
+    for j in reversed(recent):
+        sid = j.scan_ids[-1] if j.scan_ids else None
+        if j.state == "done" and sid is not None:
+            link = f'<a href="{base}/scan/{sid}">see the result</a>'
+            if j.kind == "update" and len(j.scan_ids) == 2:
+                old, new = j.scan_ids
+                link = f'<a href="{base}/diff?old={old}&amp;new={new}">what the update changes</a>'
+            lines.append(f'<span class="ok">✓</span> {name(j)} is done: {link}')
+        else:
+            lines.append(f'<span class="bad">✗</span> {name(j)} {e(j.state)}: {e(j.message, 200)}')
+    tail = (
+        '<span class="muted small">This page refreshes by itself while a scan runs.</span>'
+        if active
+        else ""
+    )
+    return (
+        '<div class="box status" role="status">'
+        + "".join(f'<div class="row">{x}</div>' for x in lines)
+        + f'<div class="row">{tail}<a class="small" href="{base}/?{here}">↻ Refresh</a></div></div>'
+    )
+
+
 def render_index(
     base: str,
     store: Store,
@@ -492,6 +547,8 @@ def render_index(
     ha: str | None = None,
     parallel: int = 1,
     search: bool = False,
+    status: str = "",
+    here: str = "",
 ) -> bytes:
     rows = store.history(limit=100)
     against = f" against HA {e(ha)}" if ha else ""
@@ -503,7 +560,9 @@ def render_index(
             if parallel <= 1
             else f"Up to {parallel} scans run at once, as memory allows. "
         )
-        + "Scores never come from an AI.</span></div>",
+        + "Scores never come from an AI. "
+        f'<a href="{base}/?{here}">↻ Refresh</a></span></div>',
+        status,
         _memory_banner(mem) if mem else "",
         _github_banner(github_wait),
         _search_box(base) if search else "",
@@ -563,7 +622,7 @@ def render_index(
         f'<p class="muted small"><a href="{base}/doctor">Diagnostics</a>: can each tool run on '
         "this box?</p>"
     )
-    return _page("Sniff Test", "".join(out))
+    return ui.page("Sniff Test", "".join(out), refresh=5 if active else 0)
 
 
 def _update_box(base: str, row: Row | None, token: str) -> str:
@@ -930,6 +989,13 @@ class Panel:
             if j.state in ("queued", "running", "waiting")
         }
 
+    def names(self) -> dict[str, str]:
+        """Display names by lower-case repo, for the status strip (cached lists only)."""
+        out = {c.repo.lower(): c.name for c in self.catalog()[0]} if self.catalog_fn else {}
+        if self.installed_fn is not None:
+            out.update({it.repo.lower(): it.name for it in self.installed().items})
+        return out
+
     def not_installed_html(self, base: str, installed: set[str]) -> str:
         """Cards for apps sniffed from search (or by name) that aren't installed."""
         names = {c.repo.lower(): c.name for c in self.catalog()[0]} if self.catalog_fn else {}
@@ -1008,11 +1074,11 @@ class Panel:
         _, rows = self.rows()
         return next((r for r in rows if r.item.repo.lower() == repo.lower()), None)
 
-    def installed_html(self, base: str, refresh: bool = False, f: str = "all") -> str:
+    def installed_html(self, base: str, refresh: bool = False, v: ui.View | None = None) -> str:
         if self.installed_fn is None:
             return ""
         st, rows = self.rows(refresh)
-        html = render_installed(base, st, rows, self.token, self.report, f)
+        html = render_installed(base, st, rows, self.token, self.report, v)
         if not st.error:
             html += self.not_installed_html(base, {r.item.repo.lower() for r in rows})
         return html
@@ -1067,12 +1133,15 @@ class Panel:
                         jobs = list(panel.worker.jobs)
                         q = urllib.parse.parse_qs(url.query)
                         refresh = q.get("refresh") == ["1"]
-                        f = (q.get("f") or ["all"])[0]
+                        v = ui.View.parse(q, panel.store.setting("view") or "cards")
+                        if q.get("view") and v.view != panel.store.setting("view"):
+                            panel.store.set_setting("view", v.view)  # remembered for next time
                         body = render_index(
                             base, panel.store, jobs, panel.token,
-                            panel.installed_html(base, refresh, f), panel.memory_fn(),
+                            panel.installed_html(base, refresh, v), panel.memory_fn(),
                             panel.worker.github_wait, panel.worker.ha_fn(),
                             panel.worker.parallel, panel.catalog_fn is not None,
+                            status_html(base, jobs, panel.names(), v.qs()), v.qs(),
                         )  # fmt: skip
                         return self._send(200, body)
                     if m := re.fullmatch(r"/scan/(\d+)(\.json)?", url.path):
@@ -1125,6 +1194,9 @@ class Panel:
                 if not secrets.compare_digest(get("token"), panel.token):
                     return self._text(HTTPStatus.FORBIDDEN, "stale form; reload the page")
                 path = urllib.parse.urlsplit(self.path).path
+                # Back to the same filter, view and page (rebuilt from known values only)
+                v = ui.View.parse(urllib.parse.parse_qs(get("back")[:200]))
+                home = f"{self._base()}/?{v.qs('&')}" if get("back") else f"{self._base()}/"
                 if path == "/ai-entity":
                     value = get("entity")
                     choices, _err = panel.ai_choices(refresh=True)
@@ -1157,7 +1229,7 @@ class Panel:
                     for it in st.items:
                         if f"{it.repo.lower()}@{it.installed}" not in stored:
                             panel.worker.submit("installed", it.repo, it.installed)
-                    return self._redirect(f"{self._base()}/")
+                    return self._redirect(home)
                 if path not in ("/scan", "/update", "/installed"):
                     return self._text(HTTPStatus.NOT_FOUND, "nothing to sniff here")
                 m = _REPO.match(get("repo"))
@@ -1175,7 +1247,7 @@ class Panel:
                     kind = get("kind") if get("kind") in ("integration", "card") else ""
                     back = urllib.parse.urlencode({"q": q, "kind": kind})
                     return self._redirect(f"{self._base()}/search?{back}")
-                self._redirect(f"{self._base()}/")
+                self._redirect(home)
 
         return Handler
 
