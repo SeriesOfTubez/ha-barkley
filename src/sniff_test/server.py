@@ -601,7 +601,8 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
     if not entity:
         return (
             '<div class="banner" style="margin-top:10px"><b>🤖 Explain this app with AI</b> '
-            '<button disabled title="Set up an AI Task entity first">Explain this app</button>'
+            '<button disabled title="Set up an AI Task entity first">'
+            "Explain this app (needs ai_entity)</button>"
             '<p class="small" style="margin-top:6px">Sniff Test can ask your Home Assistant\'s '
             "AI to explain these findings in plain words. It's off until you choose an AI "
             "Task entity: find its id under Settings &gt; Devices &amp; services &gt; Entities "

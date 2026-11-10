@@ -351,6 +351,13 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         parallel=args.parallel,
         catalog_fn=supervisor.catalog if supervisor.token() else None,
     )  # fmt: skip
+    ai = httpd.panel.ai_entity
+    if args.ai_entity.strip() and not ai:
+        out.print(
+            f"🐕 AI explanations: off ({args.ai_entity.strip()!r} is not an ai_task.* entity)"
+        )
+    else:
+        out.print(f"🐕 AI explanations: {'on, via ' + ai if ai else 'off (no ai_entity set)'}")
     out.print(
         f"🐕 Sniff Test {__version__} panel on {args.host}:{args.port} "
         f"(clients: {', '.join(sorted(allow))}; store: {store.path})"
