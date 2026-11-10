@@ -30,7 +30,8 @@ from typing import Any
 from sniff_test import __version__, doctor, memory, supervisor, ui
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
-from sniff_test.fetch.github import RateLimit, RateLimitError
+from sniff_test.fetch.github import GitHubError, RateLimit, RateLimitError
+from sniff_test.releases import ReleasesError
 from sniff_test.report import ai as report_ai
 from sniff_test.report.json_report import sanitize_untrusted
 from sniff_test.scoring import VERDICTS
@@ -735,12 +736,29 @@ def render_scan(
         report,
         rows,
         name=row.item.name if row else None,
-        update=_update_box(base, row, token),
+        update=_update_box(base, row, token) + _again_box(base, report, token),
         ai=have,
         ai_form=_ai_form(
             base, sid, token, ai_entity, ai_state, ai_error, have, ai_choices, ai_choices_err
         ),
         refresh=5 if ai_state == "running" else 0,
+    )
+
+
+def _again_box(base: str, report: dict[str, Any], token: str) -> str:
+    """Sniff this exact version again (a fresh scan, never the stored one), or pick another."""
+    t = report.get("target", {})
+    repo, ref = t.get("repo"), t.get("ref")
+    if not (repo and _REPO.match(str(repo)) and (not ref or _REF.match(str(ref)))):
+        return ""
+    return (
+        f'<div class="box small again"><form method=post action="{base}/scan">'
+        f'<input type=hidden name=token value="{token}">'
+        f'<input type=hidden name=repo value="{e(repo)}">'
+        f'<input type=hidden name=ref value="{e(ref or "")}">'
+        "<button>Sniff this version again</button></form>"
+        '<span class="muted">Runs a fresh scan instead of reusing this one.</span> '
+        f"{_versions_link(base, repo)}</div>"
     )
 
 
@@ -805,13 +823,89 @@ def render_search(
             f'<span class="muted small">{e(ui.KIND.get(it.kind, it.kind))} · '
             f"{e(it.repo, 120)} · ★ {it.stars:,} · {it.downloads:,} downloads</span>"
             f'<br><span class="small">{e(it.description, 300)}</span></td>'
-            f'<td style="width:7em;text-align:right">{act}</td></tr>'
+            f'<td style="width:7em;text-align:right">{act}'
+            f'<div class="small">{_versions_link(base, it.repo)}</div></td></tr>'
         )
     if rows:
         out.append(f'<p class="muted small">{len(results)} best matches of {total} '
                    "integrations and cards.</p>")  # fmt: skip
         out.append('<table class="box">' + "".join(rows) + "</table>")
     return _page("Sniff Test · search", "".join(out))
+
+
+def _versions_link(base: str, repo: str) -> str:
+    q = urllib.parse.urlencode({"repo": repo})
+    return f'<a href="{base}/versions?{e(q)}">Other versions</a>'
+
+
+def render_versions(
+    base: str,
+    repo: str,
+    name: str,
+    releases: list[Any],
+    default: str | None,
+    installed: str | None,
+    scans: dict[str, ScanRow],
+    busy: dict[str, str],
+    token: str,
+    error: str = "",
+) -> bytes:
+    """A repo's newest releases, betas included, each with its score or a Sniff button."""
+    out = [
+        f'<p class="crumb"><a href="{base}/">← All apps</a></p>',
+        f"<h1>Versions of {e(name, 100)}</h1>",
+        f'<p class="muted small">{e(repo, 120)} · the {len(releases) or "newest"} newest '
+        "releases on GitHub, betas included. Sniffing a version checks exactly what the "
+        "Marketplace installs when you pick that version.</p>",
+    ]
+    if error:
+        out.append(f'<div class="banner warn">Can\'t list the releases right now: '
+                   f"{e(error, 300)}</div>")  # fmt: skip
+    rows = []
+
+    def button(ref: str | None, label: str) -> str:
+        return (f'<form method=post action="{base}/scan">'
+                f'<input type=hidden name=token value="{token}">'
+                f'<input type=hidden name=repo value="{e(repo)}">'
+                f'<input type=hidden name=ref value="{e(ref or "")}">'
+                '<input type=hidden name=back_to value="versions">'
+                f'<button class="primary">{label}</button></form>')  # fmt: skip
+
+    def action(ref: str | None) -> str:
+        key = (ref or "").lower()
+        if b := busy.get(key):
+            return '<span class="muted">' + {"running": "sniffing…"}.get(b, "queued…") + "</span>"
+        if scan := scans.get(key):
+            bd = ui.band(scan.score, scan.complete)
+            return (f'<a class="badge {bd}" style="text-decoration:none" '
+                    f'href="{base}/scan/{scan.id}">'
+                    f"{scan.score}<small>{e(ui.BANDS[bd][0])}</small></a>")  # fmt: skip
+        return button(ref, "Sniff it")
+
+    for r in releases:
+        chips = []
+        if r.tag == default:
+            chips.append('<span class="chip">Marketplace default</span>')
+        if r.prerelease:
+            chips.append('<span class="chip warn">beta</span>')
+        if installed and r.tag == installed:
+            chips.append('<span class="chip new">installed</span>')
+        who = f" · published by {e(r.publisher, 60)}" + (" (a bot)" if r.bot else "")
+        when = e((r.published_at or "")[:10])
+        act = action(r.tag) if _REF.match(r.tag) else '<span class="muted">odd tag name</span>'
+        rows.append(
+            f"<tr><td><b><code>{e(r.tag, 100)}</code></b> {''.join(chips)}<br>"
+            f'<span class="muted small">{when}{who if r.publisher else ""}</span></td>'
+            f'<td style="width:7em;text-align:right">{act}</td></tr>'
+        )
+    if rows:
+        out.append('<table class="box">' + "".join(rows) + "</table>")
+    elif not error:
+        out.append('<p class="muted">No releases: the Marketplace installs the newest code on '
+                   "the default branch.</p>")  # fmt: skip
+        out.append(f"<p>{action(None)}</p>")
+    running = any(v in ("running", "queued", "waiting") for v in busy.values())
+    return ui.page(f"Sniff Test · versions of {name}", "".join(out), refresh=5 if running else 0)
 
 
 def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
@@ -876,6 +970,8 @@ InstalledFn = Callable[[], tuple[list[supervisor.Installed], dict[str, int]]]
 AiFn = Callable[[str, str, dict[str, Any], str], Any]
 CatalogFn = Callable[[], list[supervisor.CatalogItem]]
 EntitiesFn = Callable[[], list[tuple[str, str]]]
+ReleasesFn = Callable[[str], tuple[list[Any], str | None]]  # releases.recent
+_RELEASES_TTL = 600
 _REPORTS_KEPT = 64
 _CATALOG_TTL = 600
 _ENTITIES_TTL = 300
@@ -903,6 +999,8 @@ class Panel:
         self._reports: dict[int, dict[str, Any]] = {}
         self.catalog_fn: CatalogFn | None = None
         self._catalog: tuple[float, list[supervisor.CatalogItem], str] = (0.0, [], "")
+        self.releases_fn: ReleasesFn | None = None
+        self._releases: dict[str, tuple[float, list[Any], str | None, str]] = {}
         self.ai_entity = ""
         self.entities_fn: EntitiesFn | None = None
         self._entities: tuple[float, list[tuple[str, str]], str] = (0.0, [], "")
@@ -988,6 +1086,33 @@ class Panel:
             for j in reversed(list(self.worker.jobs))
             if j.state in ("queued", "running", "waiting")
         }
+
+    def releases(self, repo: str) -> tuple[list[Any], str | None, str]:
+        """(newest releases, Marketplace default tag, error), cached 10 minutes per repo.
+        A GitHub limit is shown as "try later", never as anything about the app."""
+        if self.releases_fn is None:
+            return [], None, "listing releases isn't available here"
+        key = repo.lower()
+        hit = self._releases.get(key)
+        if hit and time.time() - hit[0] < _RELEASES_TTL:
+            return hit[1], hit[2], hit[3]
+        try:
+            rel, default = self.releases_fn(repo)
+            err = ""
+        except RateLimitError as ex:
+            when = datetime.fromtimestamp(ex.reset_at).strftime("%H:%M")
+            rel, default, err = (
+                [],
+                None,
+                f"GitHub's hourly limit is used up; try again after {when}.",
+            )
+        except (GitHubError, ReleasesError, ValueError) as ex:
+            rel, default, err = [], None, str(ex)[:300]
+        if not err:
+            if len(self._releases) > 64:
+                self._releases.clear()
+            self._releases[key] = (time.time(), rel, default, err)
+        return rel, default, err
 
     def names(self) -> dict[str, str]:
         """Display names by lower-case repo, for the status strip (cached lists only)."""
@@ -1170,6 +1295,28 @@ class Panel:
                             panel.token, err, len(items),
                         )  # fmt: skip
                         return self._send(200, page)
+                    if url.path == "/versions":
+                        q = urllib.parse.parse_qs(url.query)
+                        m = _REPO.match((q.get("repo") or [""])[0])
+                        if not m:
+                            return self._text(HTTPStatus.BAD_REQUEST, "want owner/repo")
+                        repo = m[1]
+                        rel, default, err = panel.releases(repo)
+                        tv = panel.worker.tool_version
+                        scans: dict[str, ScanRow] = {}
+                        for r in panel.store.history(repo, limit=500):
+                            if r.tool_version == tv and r.complete:
+                                scans.setdefault((r.ref or "").lower(), r)
+                        busy = {(j.ref or "").lower(): j.state for j in panel.worker.jobs
+                                if j.repo.lower() == repo.lower()
+                                and j.state in ("queued", "running", "waiting")}  # fmt: skip
+                        row = panel.row_for(repo)
+                        name = panel.names().get(repo.lower()) or repo.rsplit("/", 1)[-1]
+                        page = render_versions(
+                            base, repo, name, rel, default, row.item.installed if row else None,
+                            scans, busy, panel.token, err,
+                        )  # fmt: skip
+                        return self._send(200, page)
                     if url.path == "/doctor":
                         return self._send(200, render_doctor(base, doctor.run_checks(addon=True)))
                     if url.path == "/diff":
@@ -1243,6 +1390,9 @@ class Panel:
                 ):
                     return self._text(HTTPStatus.BAD_REQUEST, "want owner/repo and a tag")
                 panel.worker.submit(path.lstrip("/"), m[1], ref, to if path == "/update" else None)
+                if path == "/scan" and get("back_to") == "versions":
+                    back = urllib.parse.urlencode({"repo": m[1]})
+                    return self._redirect(f"{self._base()}/versions?{back}")
                 if path == "/scan" and (q := get("q")[:100]):
                     kind = get("kind") if get("kind") in ("integration", "card") else ""
                     back = urllib.parse.urlencode({"q": q, "kind": kind})
@@ -1277,6 +1427,7 @@ def serve(
     parallel: int = 1,
     catalog_fn: CatalogFn | None = None,
     entities_fn: EntitiesFn | None = None,
+    releases_fn: ReleasesFn | None = None,
 ) -> PanelServer:
     """Build the server (caller runs `serve_forever`); `.panel.worker` runs the scans."""
     worker = Worker(
@@ -1295,6 +1446,7 @@ def serve(
     panel.ai_entity = ai_entity
     panel.catalog_fn = catalog_fn
     panel.entities_fn = entities_fn
+    panel.releases_fn = releases_fn
     if ai_fn is not None:
         panel.ai_fn = ai_fn
     httpd = PanelServer((host, port), panel.handler())

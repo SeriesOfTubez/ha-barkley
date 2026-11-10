@@ -351,6 +351,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         parallel=args.parallel,
         catalog_fn=supervisor.catalog if supervisor.token() else None,
         entities_fn=supervisor.ai_task_entities if supervisor.token() else None,
+        releases_fn=lambda repo: releases.recent(repo),
     )  # fmt: skip
     ai = httpd.panel.ai_entity
     if args.ai_entity.strip() and not ai:

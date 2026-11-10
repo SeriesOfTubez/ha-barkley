@@ -129,3 +129,21 @@ def to_dict(t: Timeline) -> dict[str, Any]:
             for r in t.releases
         ],
     }
+
+
+RECENT = 10  # versions the panel offers to sniff
+
+
+def recent(
+    repo: str, gh: GitHub | None = None, n: int = RECENT
+) -> tuple[list[Release], str | None]:
+    """The newest `n` releases (prereleases included, drafts skipped) and the tag the
+    Marketplace installs by default. One GitHub request: the page HACS itself reads."""
+    parsed = parse_repo(repo)
+    if not parsed:
+        raise ReleasesError(f"not a GitHub repository: {repo}")
+    gh = gh or GitHub.from_env()
+    raw = gh.hacs_releases(*parsed)
+    default, _beta = hacs_choice(raw)
+    out = [to_release(r) for r in raw if not r.get("draft")][:n]
+    return out, (default.get("tag_name") if default else None)

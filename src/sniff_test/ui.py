@@ -64,6 +64,8 @@ a.sum.on { border-bottom-color:currentColor; font-weight:600; }
 .tablebox { padding:4px 8px; overflow-x:auto; }
 table.apps td { vertical-align:middle; } table.apps .badge { display:inline-block; }
 table.apps .act form { margin:0; }
+.again { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; }
+.again form { margin:0; }
 .status { display:flex; flex-direction:column; gap:4px; border-color:var(--accent); }
 .status .row { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; }
 .filters { display:flex; flex-wrap:wrap; gap:6px; }
