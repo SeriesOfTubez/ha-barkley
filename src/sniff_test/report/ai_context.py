@@ -286,14 +286,14 @@ def _shown(text: str) -> str:
     return re.sub(r"[,;:]+([.!?])", r"\1", text).strip()  # "values, (a.py:3)." -> "values."
 
 
-def _dismisses(text: str) -> bool:
+def dismisses(text: str) -> bool:
     """Dismissive words outside backticks (`is_safe` is a name, not a verdict)."""
     return bool(_DISMISS.search(_TICKS.sub(" ", text)))
 
 
 def check_claim(text: str, snip: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
     text = text.strip()[:MAX_CLAIM]
-    if _dismisses(text):
+    if dismisses(text):
         return None, "dismisses something"
     cites, why = _cites(text, snip)
     if why:
@@ -313,7 +313,7 @@ def check_claim(text: str, snip: dict[str, Any]) -> tuple[dict[str, Any] | None,
 
 def check_question(text: str, snip: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
     text = text.strip()[:MAX_QUESTION]
-    if _dismisses(text):
+    if dismisses(text):
         return None, "dismisses something"
     cites, why = _cites(text, snip)
     if why:

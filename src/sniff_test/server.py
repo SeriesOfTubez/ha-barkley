@@ -703,8 +703,10 @@ def _mode_picker(base: str, sid: int, token: str, mode: str) -> str:
 
 def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: str,
              have: dict[str, Any] | None, choices: list[tuple[str, str]] | None = None,
-             choices_err: str = "", mode: str = "summary") -> str:  # fmt: skip
-    """The "Explain this app" control. Nothing is sent until the user clicks."""
+             choices_err: str = "", mode: str = "summary",
+             readings: list[str] | None = None) -> str:  # fmt: skip
+    """The "Explain this app" control. Nothing is sent until the user clicks.
+    `readings`: ids of this scan's "Explain in context" answers with something shown."""
     picker = _ai_picker(base, sid, token, entity, choices, choices_err)
     if entity:
         picker += _mode_picker(base, sid, token, mode)
@@ -732,10 +734,22 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
                 f"{e(error, 400)}</div>" + form.replace("{label}", "Try again") + note
                 + change)  # fmt: skip
     if have:
+        used = list(have.get("readings") or [])
+        newer = [r for r in readings or [] if r not in used]
+        n = len(used)
+        incl = (f" Includes {n} code reading{'s' if n != 1 else ''} from Explain in context."
+                if n else "")  # fmt: skip
+        d = int(have.get("dropped") or 0)
+        left = (f" Left out {d} sentence{'s' if d != 1 else ''} that dismissed something."
+                if d else "")  # fmt: skip
+        label = "Ask again"
+        if newer:
+            k = len(newer)
+            label = f"Ask again to include {k} newer code reading{'s' if k != 1 else ''}"
         return (f'<p class="tech">AI explanation by <code>{e(have.get("entity_id"), 120)}</code>, '
-                f"{e(str(have.get('created', ''))[:16].replace('T', ' '))} UTC. It can be wrong; "
-                "it can't change the score.</p>"
-                + form.replace("{label}", "Ask again") + change)  # fmt: skip
+                f"{e(str(have.get('created', ''))[:16].replace('T', ' '))} UTC.{incl}{left} It "
+                "can be wrong; it can't change the score.</p>"
+                + form.replace("{label}", label) + change)  # fmt: skip
     return form.replace("{label}", "Explain this app") + note + change
 
 
@@ -795,6 +809,11 @@ def render_scan(
             ai_choices,
             ai_choices_err,
             ai_mode,
+            [
+                k
+                for k, v in store.item_explanations(sid).items()
+                if v.get("claims") or v.get("questions")
+            ],
         ),
         refresh=5
         if ai_state == "running" or any(st == "running" for st, _ in item_states.values())
@@ -1103,9 +1122,10 @@ class Panel:
 
         def run() -> None:
             try:
-                instructions, structure, _ids = report_ai.build_request(report)
+                readings = self.store.item_explanations(sid)
+                instructions, structure, _ids = report_ai.build_request(report, readings)
                 data = self.ai_fn(self.ai_entity, instructions, structure, report_ai.TASK_NAME)
-                accepted = report_ai.accept(report, data)
+                accepted = report_ai.accept(report, data, readings)
                 if not accepted["summary"] and not accepted["findings"]:
                     raise supervisor.SupervisorError("the answer had no usable text")
                 self.store.save_explanation(sid, self.ai_entity, accepted)

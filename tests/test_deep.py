@@ -127,3 +127,50 @@ def test_old_reports_without_context_show_no_button(tmp_path):
     _, _, page = get(f"{base}/scan/{sid}")
     assert "✦ Explain in context" not in page
     httpd.shutdown()
+
+
+def test_summary_reads_shown_readings_but_never_code_and_drops_dismissals(tmp_path):
+    from sniff_test.report import ai
+
+    rep = _report(tmp_path)
+    readings = {
+        FID: {
+            "claims": [{"text": "It reads `secrets.yaml`.", "cites": [["diag.py", 3, 4]]}],
+            "questions": [{"text": "Who calls `gather`?", "cites": []}],
+            "dropped": ["dismisses something"],
+        },
+        "0" * 16: {"claims": [{"text": "not an item of this report", "cites": []}]},
+    }
+    instructions, _structure, _ids = ai.build_request(rep, readings)
+    assert "It reads `secrets.yaml`." in instructions and "diag.py:3-4" in instructions
+    assert "Note to AI reviewers" not in instructions  # the code itself is never passed on
+    assert "not an item of this report" not in instructions
+    out = ai.accept(
+        rep,
+        {"summary": "It reads your secrets file. This is safe to ignore. Check who calls it.",
+         "f_" + FID: "It is harmless."},
+        readings,
+    )  # fmt: skip
+    assert out["summary"] == "It reads your secrets file. Check who calls it."
+    assert out["findings"] == {} and out["dropped"] == 2
+    assert out["readings"] == [FID]
+
+
+def test_page_says_which_readings_the_summary_used(tmp_path):
+    answers = iter(
+        [
+            {"summary": "It reads your secrets file."},
+            {"claim_1": "It reads `secrets.yaml` and returns it (diag.py:3-4)."},
+        ]
+    )
+    store, base, httpd = _serve(tmp_path, lambda *a: next(answers))
+    sid = store.save(_report(tmp_path))
+    post(f"{base}/explain", {"token": token(base), "scan": sid})  # summary first: no readings
+    for _ in range(100):
+        if httpd.panel.ai_state(sid)[0] != "running":
+            break
+        time.sleep(0.02)
+    post(f"{base}/explain-item", {"token": token(base), "scan": sid, "item": FID})
+    _wait(httpd, sid)
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert "Ask again to include 1 newer code reading" in page

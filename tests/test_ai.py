@@ -63,7 +63,12 @@ def test_accept_drops_everything_but_known_text():
     assert out["summary"] == "fine overall"
     assert set(out["findings"]) == {"f" * 16}
     assert len(out["findings"]["f" * 16]) == ai.MAX_EXPLANATION
-    assert ai.accept(rep, "not a dict") == {"summary": "", "findings": {}}
+    assert ai.accept(rep, "not a dict") == {
+        "summary": "",
+        "findings": {},
+        "readings": [],
+        "dropped": 0,
+    }
 
 
 def test_entity_id_is_validated():
