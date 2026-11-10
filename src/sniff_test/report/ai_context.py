@@ -282,7 +282,8 @@ def _names_ok(snip: dict[str, Any], cites: list[list[Any]], names: list[str]) ->
 def _shown(text: str) -> str:
     """The text without its (file:line) parentheses; the citations are shown apart."""
     text = _PARENS.sub(" ", text)
-    return re.sub(r"\s+([.,;:!?])", r"\1", re.sub(r"\s+", " ", text)).strip()
+    text = re.sub(r"\s+([.,;:!?])", r"\1", re.sub(r"\s+", " ", text))
+    return re.sub(r"[,;:]+([.!?])", r"\1", text).strip()  # "values, (a.py:3)." -> "values."
 
 
 def _dismisses(text: str) -> bool:

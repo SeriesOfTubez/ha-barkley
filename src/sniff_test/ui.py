@@ -881,8 +881,13 @@ def deep_html(
         f"{'s' if lines != 1 else ''}{parts_txt})</summary>{code_html(snip)}</details>"
     )
     if state == "running":
-        inline = f'<a class="aichip" href="#{mid}">✦ AI is reading the code…</a>'
-        body = '<p class="small">Reading the code… this page refreshes by itself.</p>' + sent
+        inline = f'<a class="aichip" href="#{mid}">✦ AI is reading the code… (can take minutes)</a>'
+        body = (
+            '<p class="small"><b>Reading the code…</b> This can take a few minutes, depending '
+            "on your AI. You don't have to wait here: close this and carry on. The answer is "
+            "saved, and this item's chip on the page changes to the AI's reading when it's "
+            "ready. While it works, this page refreshes by itself.</p>" + sent
+        )
     elif error:
         inline = f'<a class="aichip warn" href="#{mid}">✦ The AI didn\'t answer</a>'
         body = (f'<p class="small">{e(error, 400)}</p>{form.replace("{label}", "✦ Try again")}'

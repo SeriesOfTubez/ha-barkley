@@ -280,3 +280,9 @@ def test_reexports_through_a_package_are_followed(tmp_path):
         },
     )
     assert ("api.py", 5) in _lines(context.snippet(root, "const/brand.py", 1))
+
+
+def test_leftover_punctuation_is_tidied(tmp_path):
+    rep = _report(tmp_path)
+    got = ai_context.accept(rep, "f1", {"claim_1": "It sends `anon_id`, (telemetry.py:9)."})
+    assert got["claims"][0]["text"] == "It sends `anon_id`."

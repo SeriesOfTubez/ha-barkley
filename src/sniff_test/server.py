@@ -1135,19 +1135,22 @@ class Panel:
         entity = self.ai_entity
 
         def run() -> None:
+            started = time.monotonic()
             try:
                 instructions, structure = ai_context.build_request(report, item_id)
                 data = self.ai_fn(entity, instructions, structure, ai_context.TASK_NAME)
                 accepted = ai_context.accept(report, item_id, data)
                 self.store.save_item_explanation(sid, item_id, entity, accepted)
-                print(f"explain @{sid} {item_id}: {len(accepted['claims'])} claim(s), "
+                print(f"explain @{sid} {item_id} ({time.monotonic() - started:.0f} s): "
+                      f"{len(accepted['claims'])} claim(s), "
                       f"{len(accepted['questions'])} question(s), {len(accepted['dropped'])} "
                       f"dropped {sorted(set(accepted['dropped']))}", file=sys.stderr,
                       flush=True)  # fmt: skip
                 with self._ai_lock:
                     self._ai_items.pop(key, None)
             except Exception as ex:  # shown on the page; never affects the scan
-                print(f"explain @{sid} {item_id} failed: {type(ex).__name__}: {ex}",
+                print(f"explain @{sid} {item_id} failed after {time.monotonic() - started:.0f} s: "
+                      f"{type(ex).__name__}: {ex}",
                       file=sys.stderr, flush=True)  # fmt: skip
                 with self._ai_lock:
                     self._ai_items[key] = ("failed", str(ex))
