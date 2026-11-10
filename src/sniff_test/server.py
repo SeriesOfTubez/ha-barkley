@@ -31,6 +31,7 @@ from sniff_test import __version__, doctor, memory, supervisor, ui
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import RateLimit, RateLimitError
+from sniff_test.report import ai as report_ai
 from sniff_test.report.json_report import sanitize_untrusted
 from sniff_test.scoring import VERDICTS
 from sniff_test.store import ScanRow, Store, StoreError
@@ -523,6 +524,33 @@ def _update_box(base: str, row: Row | None, token: str) -> str:
     return "".join(parts)
 
 
+def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: str,
+             have: dict[str, Any] | None) -> str:  # fmt: skip
+    """The "Explain this app" control. Nothing is sent until the user clicks."""
+    if not entity:
+        return ('<p class="tech">Want this explained by AI? Choose an AI Task entity in the '
+                "app's options.</p>")  # fmt: skip
+    form = (f'<form method=post action="{base}/explain" class="act" style="margin-top:8px">'
+            f'<input type=hidden name=token value="{token}">'
+            f'<input type=hidden name=scan value="{sid}">'
+            f'<button class="primary">{{label}}</button></form>')  # fmt: skip
+    note = ('<p class="tech">Sends this scan\'s findings (about a public project, no Home '
+            f"Assistant data) to the AI provider behind <code>{e(entity, 120)}</code>. The AI "
+            "explains only; it can't change the score or the findings.</p>")  # fmt: skip
+    if state == "running":
+        return ('<p class="muted small" style="margin-top:8px">Asking your AI… this page '
+                "refreshes by itself.</p>")  # fmt: skip
+    if error:
+        return (f'<div class="banner warn" style="margin-top:8px">The AI didn\'t answer: '
+                f"{e(error, 400)}</div>" + form.replace("{label}", "Try again") + note)  # fmt: skip
+    if have:
+        return (f'<p class="tech">AI explanation by <code>{e(have.get("entity_id"), 120)}</code>, '
+                f"{e(str(have.get('created', ''))[:16].replace('T', ' '))} UTC. It can be wrong; "
+                "it can't change the score.</p>"
+                + form.replace("{label}", "Ask again"))  # fmt: skip
+    return form.replace("{label}", "Explain this app") + note
+
+
 def render_scan(
     base: str,
     sid: int,
@@ -530,9 +558,13 @@ def render_scan(
     store: Store,
     row: Row | None = None,
     token: str = "",
+    ai_entity: str = "",
+    ai_state: str = "",
+    ai_error: str = "",
 ) -> bytes:
     repo = report.get("target", {}).get("repo")
     rows = store.history(repo, limit=200) if repo else []
+    have = store.explanation(sid)
     return ui.render_app(
         base,
         sid,
@@ -540,6 +572,9 @@ def render_scan(
         rows,
         name=row.item.name if row else None,
         update=_update_box(base, row, token),
+        ai=have,
+        ai_form=_ai_form(base, sid, token, ai_entity, ai_state, ai_error, have),
+        refresh=5 if ai_state == "running" else 0,
     )
 
 
@@ -602,6 +637,7 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
 
 
 InstalledFn = Callable[[], tuple[list[supervisor.Installed], dict[str, int]]]
+AiFn = Callable[[str, str, dict[str, Any], str], Any]
 _REPORTS_KEPT = 64
 _INSTALLED_TTL = 300  # seconds; HACS itself refreshes far less often
 
@@ -625,7 +661,10 @@ class Panel:
         self._installed_lock = threading.Lock()
         self._diffs: dict[tuple[int, int], dict[str, Any]] = {}
         self._reports: dict[int, dict[str, Any]] = {}
-        self.ha_fn: Callable[[], str | None] = lambda: None
+        self.ai_entity = ""
+        self.ai_fn: AiFn = supervisor.ai_generate_data
+        self._ai: dict[int, tuple[str, str]] = {}  # scan id -> (running|failed, error)
+        self._ai_lock = threading.Lock()
 
     def installed(self, refresh: bool = False) -> InstalledState:
         """HACS's installed list, cached; one websocket round trip at most every 5 minutes."""
@@ -648,6 +687,39 @@ class Panel:
         if key not in self._diffs:
             self._diffs[key] = diff_reports(self.store.report(old), self.store.report(new))
         return self._diffs[key]
+
+    def explain(self, sid: int) -> bool:
+        """Ask the AI Task entity about one stored scan, in the background. One request
+        per scan at a time. Only the report's ai_brief is sent (report.ai)."""
+        if not self.ai_entity:
+            return False
+        with self._ai_lock:
+            if self._ai.get(sid, ("", ""))[0] == "running":
+                return True
+            self._ai[sid] = ("running", "")
+        report = self.store.report(sid)
+
+        def run() -> None:
+            try:
+                instructions, structure, _ids = report_ai.build_request(report)
+                data = self.ai_fn(self.ai_entity, instructions, structure, report_ai.TASK_NAME)
+                accepted = report_ai.accept(report, data)
+                if not accepted["summary"] and not accepted["findings"]:
+                    raise supervisor.SupervisorError("the answer had no usable text")
+                self.store.save_explanation(sid, self.ai_entity, accepted)
+                with self._ai_lock:
+                    self._ai.pop(sid, None)
+            except Exception as ex:  # shown on the page; never affects the scan
+                print(f"explain @{sid} failed: {type(ex).__name__}: {ex}", file=sys.stderr)
+                with self._ai_lock:
+                    self._ai[sid] = ("failed", str(ex))
+
+        threading.Thread(target=run, name=f"explain-{sid}", daemon=True).start()
+        return True
+
+    def ai_state(self, sid: int) -> tuple[str, str]:
+        with self._ai_lock:
+            return self._ai.get(sid, ("", ""))
 
     def report(self, sid: int) -> dict[str, Any] | None:
         """Stored reports never change, so parsed ones are kept (bounded)."""
@@ -752,7 +824,11 @@ class Panel:
                             body = json.dumps(report, indent=2).encode()
                             return self._send(200, body, "application/json")
                         row = panel.row_for(report.get("target", {}).get("repo"))
-                        page = render_scan(base, sid, report, panel.store, row, panel.token)
+                        state, err = panel.ai_state(sid)
+                        page = render_scan(
+                            base, sid, report, panel.store, row, panel.token,
+                            panel.ai_entity, state, err,
+                        )  # fmt: skip
                         return self._send(200, page)
                     if url.path == "/doctor":
                         return self._send(200, render_doctor(base, doctor.run_checks(addon=True)))
@@ -778,6 +854,15 @@ class Panel:
                 if not secrets.compare_digest(get("token"), panel.token):
                     return self._text(HTTPStatus.FORBIDDEN, "stale form; reload the page")
                 path = urllib.parse.urlsplit(self.path).path
+                if path == "/explain":
+                    if not get("scan").isdigit() or not panel.ai_entity:
+                        return self._text(HTTPStatus.BAD_REQUEST, "no AI Task entity set")
+                    sid = int(get("scan"))
+                    try:
+                        panel.explain(sid)
+                    except StoreError as ex:
+                        return self._text(HTTPStatus.NOT_FOUND, str(ex))
+                    return self._redirect(f"{self._base()}/scan/{sid}")
                 if path == "/installed-all":
                     st = panel.installed()
                     tv = panel.worker.tool_version
@@ -826,12 +911,20 @@ def serve(
     installed_fn: InstalledFn | None = None,
     memory_fn: Callable[[], memory.Memory] = memory.check,
     budget_fn: Callable[[], RateLimit | None] = lambda: None,
+    ai_entity: str = "",
+    ai_fn: AiFn | None = None,
 ) -> PanelServer:
     """Build the server (caller runs `serve_forever`); `.panel.worker` runs the scans."""
     worker = Worker(
         store, scan_fn, exposure=exposure, ha_fn=ha_fn, memory_fn=memory_fn, budget_fn=budget_fn
     )
     panel = Panel(store, worker, allow, installed_fn, memory_fn)
+    if ai_entity and not supervisor.ai_entity_ok(ai_entity):
+        print(f"ignoring ai_entity {ai_entity!r}: not an ai_task.* entity", file=sys.stderr)
+        ai_entity = ""
+    panel.ai_entity = ai_entity
+    if ai_fn is not None:
+        panel.ai_fn = ai_fn
     httpd = PanelServer((host, port), panel.handler())
     httpd.panel = panel
     return httpd

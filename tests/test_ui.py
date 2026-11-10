@@ -62,7 +62,7 @@ def test_flow_lines_follow_the_graph():
     svg = ui.flow_svg(rep, "acme")
     assert svg.count('marker-end="url(#arr)"') == 1
     assert "Somewhere off your box" in svg and "Your secrets file" in svg
-    assert "stroke-dasharray=\"6 4\"" not in svg  # proven: solid
+    assert 'stroke-dasharray="6 4"' not in svg  # proven: solid
 
 
 def test_ports_alone_never_claim_a_home_network():

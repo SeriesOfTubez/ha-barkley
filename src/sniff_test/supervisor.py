@@ -1,6 +1,6 @@
-"""What the add-on reads from Home Assistant, through the Supervisor (stdlib only).
+"""What the add-on asks Home Assistant, through the Supervisor (stdlib only).
 
-Two reads, both covered by `homeassistant_api: true` in config.yaml, no other permission:
+Three calls, all covered by `homeassistant_api: true` in config.yaml, no other permission:
 
 - `GET http://supervisor/core/api/config`: the installed HA version.
 - The Marketplace's installed list, over the Supervisor's Core websocket proxy
@@ -11,9 +11,15 @@ Two reads, both covered by `homeassistant_api: true` in config.yaml, no other pe
   Older HA with the HACS custom integration answers `hacs/repositories/list`, which
   returns the same fields; it is asked only when Core doesn't know the first command.
 
-The proxy talks to Core as the Supervisor's admin user, so this connection could send
-any non-Supervisor command. The client sends only the two list commands, fixed in code
-(`_ALLOWED_COMMANDS`); nothing from a request or a report ever becomes a command.
+- (M8) `POST http://supervisor/core/api/services/ai_task/generate_data?return_response`,
+  only when the user clicks "Explain this app" and has chosen an AI Task entity in the
+  options. It sends findings about a public repo (the report's `ai_brief`), never HA
+  data, to whatever AI provider that entity uses.
+
+The proxy talks to Core as the Supervisor's admin user, so these connections could reach
+almost anything in Core. The client sends only the two list commands and the one AI Task
+service call, fixed in code (`_ALLOWED_COMMANDS`, `AI_TASK_PATH`); nothing from a request
+or a report ever becomes a command, a service name or a URL.
 
 Nothing here touches installed code: the Marketplace only reports names and versions.
 """
@@ -28,6 +34,7 @@ import re
 import secrets
 import socket
 import struct
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
@@ -47,6 +54,60 @@ _VERSION = re.compile(r"^[A-Za-z0-9_.+/-]{1,100}$")
 
 class SupervisorError(Exception):
     """The Supervisor, Core or HACS didn't answer the way we need."""
+
+
+AI_TASK_PATH = "/core/api/services/ai_task/generate_data?return_response"
+_AI_ENTITY = re.compile(r"^ai_task\.[a-z0-9_]{1,100}$")
+_AI_TIMEOUT = 180
+
+
+def ai_entity_ok(entity_id: str) -> bool:
+    return bool(_AI_ENTITY.match(entity_id))
+
+
+def ai_generate_data(
+    entity_id: str,
+    instructions: str,
+    structure: dict[str, Any],
+    task_name: str,
+    tok: str | None = None,
+    timeout: float = _AI_TIMEOUT,
+) -> Any:
+    """Call ai_task.generate_data and return its `data` (validated by HA against
+    `structure`). Raises SupervisorError with HA's message on any failure."""
+    tok = tok or token()
+    if not tok:
+        raise SupervisorError("not running as a Home Assistant add-on")
+    if not ai_entity_ok(entity_id):
+        raise SupervisorError(f"{entity_id!r} is not an AI Task entity (ai_task.…)")
+    body = json.dumps(
+        {
+            "task_name": task_name,
+            "entity_id": entity_id,
+            "instructions": instructions,
+            "structure": structure,
+        }
+    ).encode()
+    req = urllib.request.Request(
+        f"http://{SUPERVISOR_HOST}{AI_TASK_PATH}", data=body, method="POST"
+    )
+    req.add_header("Authorization", f"Bearer {tok}")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+            answer = json.load(r)
+    except urllib.error.HTTPError as ex:
+        try:
+            msg = json.loads(ex.read() or b"{}").get("message") or ex.reason
+        except ValueError:
+            msg = ex.reason
+        raise SupervisorError(f"Home Assistant answered {ex.code}: {msg}") from ex
+    except (OSError, ValueError) as ex:
+        raise SupervisorError(f"AI Task call failed: {ex}") from ex
+    resp = answer.get("service_response") if isinstance(answer, dict) else None
+    if not isinstance(resp, dict) or "data" not in resp:
+        raise SupervisorError("AI Task returned no data")
+    return resp["data"]
 
 
 def token() -> str | None:

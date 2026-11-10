@@ -154,9 +154,11 @@ td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);
 """
 
 
-def page(title: str, body: str) -> bytes:
+def page(title: str, body: str, refresh: int = 0) -> bytes:
+    """`refresh`: reload after N seconds (a meta tag, not a script: the CSP allows it)."""
+    meta = f'<meta http-equiv="refresh" content="{int(refresh)}">' if refresh else ""
     return (
-        "<!doctype html><html lang=en><head><meta charset=utf-8>"
+        f"<!doctype html><html lang=en><head><meta charset=utf-8>{meta}"
         '<meta name=viewport content="width=device-width,initial-scale=1">'
         f"<title>{e(title)}</title><style>{CSS}</style></head><body><main>"
         f"{body}</main></body></html>"
@@ -964,6 +966,7 @@ def render_app(
     update: str = "",
     ai: dict[str, Any] | None = None,
     ai_form: str = "",
+    refresh: int = 0,
 ) -> bytes:
     """One app's detail page. `update` and `ai_form` are server-built HTML snippets."""
     t = report.get("target", {})
@@ -1057,4 +1060,4 @@ def render_app(
         + f'</section><section class="box"><h2>History</h2>{history_html(base, sid, report, rows)}'
         f'<p class="tech"><a href="{base}/scan/{sid}.json">Technical report (raw JSON)</a></p></section></div>'
     )
-    return page(f"Sniff Test · {title}", "".join(parts))
+    return page(f"Sniff Test · {title}", "".join(parts), refresh)

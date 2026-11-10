@@ -32,6 +32,26 @@ installed. Scores are computed by fixed rules; no AI decides anything.
 | `exposure` | `local` | `public` if your HA is reachable from the internet. Raises inbound findings; never lowers exfiltration findings. |
 | `jobs` | `1` | Parallel Semgrep jobs. More is faster and uses more memory. |
 | `github_token` | empty | A GitHub token (no scopes needed) for the 5,000 requests/hour limit instead of 60. |
+| `ai_entity` | empty | An AI Task entity (for example `ai_task.openrouter_ai_task`) for the "Explain this app" button. Empty turns the button off. |
+
+### AI explanations
+
+With `ai_entity` set, each app's page gets an **Explain this app** button. Nothing is
+sent until you click it. Sniff Test then calls Home Assistant's `ai_task.generate_data`
+with that scan's findings: rule names, severities, file names and short code excerpts
+from the public project that was scanned. No Home Assistant data is sent. The request
+goes to whatever AI provider your AI Task entity uses, which for OpenRouter and similar
+integrations is a cloud service.
+
+The AI only explains. The score, the verdict and the list of findings are computed
+without it, and nothing it says can change them. Its answer is shown as plain text
+labeled "AI explanation", next to the fixed explanation, and it can be wrong. Code
+from the scanned project can contain text aimed at the AI; it is marked as untrusted
+in the request.
+
+The entity needs a model that supports structured output. Home Assistant's OpenRouter
+integration asks for a strict JSON schema, so a model without schema support will fail
+with an error on the page.
 
 ## Resources
 
@@ -44,8 +64,10 @@ memory. Diagnostics shows the current figure.
 ## Permissions
 
 The app asks for the Home Assistant API only. It reads the installed HA version (so
-dependencies resolve against the release you run) and asks HACS for its installed list
-(`hacs/repositories/list`, the only websocket command the app sends). No host network,
+dependencies resolve against the release you run), asks the Marketplace for its
+installed list (`marketplace/repositories/list`, or HACS's `hacs/repositories/list` on
+older HA; the only websocket commands the app sends), and, only when you click
+"Explain this app", calls `ai_task.generate_data` (the only service it calls). No host network,
 no ports, no Supervisor role, no folder access: the app never reads your config folder
 and never opens the installed copies.
 

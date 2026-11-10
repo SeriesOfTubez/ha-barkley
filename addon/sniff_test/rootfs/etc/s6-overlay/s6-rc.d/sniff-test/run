@@ -16,4 +16,5 @@ exec sniff-test serve \
     --store /data/sniff-test.db \
     --port 8099 \
     --exposure "$(bashio::config 'exposure')" \
-    --jobs "$(bashio::config 'jobs')"
+    --jobs "$(bashio::config 'jobs')" \
+    --ai-entity "$(bashio::config 'ai_entity' '')"

@@ -80,6 +80,12 @@ CREATE TABLE IF NOT EXISTS edges (
     PRIMARY KEY (scan_id, id)
 );
 CREATE INDEX IF NOT EXISTS edges_target ON edges (target);
+CREATE TABLE IF NOT EXISTS explanations (  -- AI explanations (M8); never a score input
+    scan_id   INTEGER PRIMARY KEY REFERENCES scans (id) ON DELETE CASCADE,
+    created   TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    data      TEXT NOT NULL  -- {"summary": str, "findings": {finding_id: str}}, filtered
+);
 CREATE TABLE IF NOT EXISTS edge_findings (
     scan_id    INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
     edge_id    TEXT NOT NULL,
@@ -229,6 +235,25 @@ class Store:
                 [(sid, e["id"], fid) for e in edges for fid in e.get("finding_ids", [])],
             )
         return sid
+
+    def save_explanation(self, scan_id: int, entity_id: str, data: dict[str, Any]) -> None:
+        with self._connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO explanations (scan_id, created, entity_id, data) "
+                "VALUES (?, ?, ?, ?)",
+                (scan_id, datetime.now(UTC).isoformat(timespec="seconds"), entity_id,
+                 json.dumps(data)),
+            )  # fmt: skip
+
+    def explanation(self, scan_id: int) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT created, entity_id, data FROM explanations WHERE scan_id = ?",
+                (scan_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"created": row["created"], "entity_id": row["entity_id"], **json.loads(row["data"])}
 
     def delete(self, scan_id: int) -> bool:
         with self._connect() as db:
