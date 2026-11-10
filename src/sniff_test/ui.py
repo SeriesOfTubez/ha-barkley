@@ -838,7 +838,19 @@ def code_html(snip: dict[str, Any]) -> str:
     last = None
     for seg in snip.get("segments", []):
         f = str(seg.get("file"))
-        if f != last:
+        if "line" in seg and f != last:
+            out.append(
+                f'<span class="fn">{e(f, 200)}</span> <span class="nc">line {int(seg["line"])} '
+                "is one long line; shown reformatted (numbers are of the reformatted text)</span>"
+            )
+            last = f
+        elif "col" in seg:
+            out.append(
+                f'<span class="fn">{e(f, 200)}</span> <span class="nc">line {int(seg["start"])}, '
+                f"characters {int(seg['col']):,}–{int(seg['end']):,}</span>"
+            )
+            last = f
+        elif f != last:
             out.append(f'<span class="fn">{e(f, 200)}</span>')
             last = f
         else:
@@ -846,8 +858,7 @@ def code_html(snip: dict[str, Any]) -> str:
         noncode = set(snip.get("noncode", {}).get(f, []))
         for i, line in enumerate(seg.get("code", [])):
             n = int(seg["start"]) + i
-            cut = f"[characters {int(seg['col'])}+ of a long line] " if "col" in seg else ""
-            text = f"{n:>5}  {cut}{e(line, 4000)}"
+            text = f"{n:>5}  {e(line, 4000)}"
             out.append(f'<span class="nc">{text}</span>' if n in noncode else text)
     return '<pre class="code">' + "\n".join(out) + "</pre>"
 

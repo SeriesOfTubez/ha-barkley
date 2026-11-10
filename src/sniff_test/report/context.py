@@ -33,9 +33,11 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+import jsbeautifier
+
 from sniff_test.analyzers.endpoints import UNEXPLAINED
 
-CONTEXT_VERSION = 1
+CONTEXT_VERSION = 2  # 2: windows on long lines are reformatted (0.7.2)
 MAX_LINES = 150  # per snippet
 MAX_CHARS = 12_000  # per snippet
 MAX_ITEMS = 40  # per report
@@ -115,7 +117,9 @@ def build(root: Path, findings: list[dict[str, Any]], graph: dict[str, Any] | No
         snip = snippet(tree, it.file, it.line, it.hints)
         if snip is None:
             continue
-        key = repr([(s["file"], s["start"], s.get("col", 0)) for s in snip["segments"]])
+        key = repr(
+            [(s.get("line"), s["file"], s["start"], s.get("col", 0)) for s in snip["segments"]]
+        )
         sid = by_key.get(key)
         if sid is None:
             size = sum(len(c) for s in snip["segments"] for c in s["code"])
@@ -500,6 +504,51 @@ def _python_noncode(text: str, tree: ast.AST) -> tuple[set[int], dict[int, int]]
 # --- other text (cards) -----------------------------------------------------------------------
 
 
+_JS_OPTS = jsbeautifier.default_options()
+_JS_OPTS.indent_size = 2
+_JS_OPTS.wrap_line_length = 0
+_JS_OPTS.preserve_newlines = False
+# Never set: `editorconfig` (jsbeautifier only reads .editorconfig files from its command
+# line, which we don't use; beautify() formats the string it's given and nothing else).
+PART_RADIUS = 15  # formatted lines each side of an occurrence
+_WS = re.compile(r"\s+")
+_formatted_cache: dict[int, list[str] | None] = {}
+
+
+def reformat(line: str) -> list[str] | None:
+    """A whole minified line laid out one statement per line, or None if formatting
+    changed anything but whitespace (then the raw window is used: the AI must read the
+    shipped code, never our rewrite of it). The whole line is formatted, from its real
+    start, because a window cut at an arbitrary character can begin inside a string, and
+    the formatter then reads strings as code (it turned "/api/bambu_lab/print_history"
+    into " / api / bambu_lab / print_history "). Formatting only: jsbeautifier tokenizes
+    text and runs nothing. Bambu's 209 KB line takes 0.2 s."""
+    key = hash(line)
+    if key in _formatted_cache:
+        return _formatted_cache[key]
+    try:
+        text = jsbeautifier.beautify(line, _JS_OPTS)
+    except Exception:
+        text = None
+    out = None
+    if text is not None and _WS.sub("", text) == _WS.sub("", line):
+        out = [_clean(x.rstrip()) for x in text.splitlines()]
+    if len(_formatted_cache) > 64:
+        _formatted_cache.clear()
+    _formatted_cache[key] = out
+    return out
+
+
+def _formatted_line_of(formatted: list[str], nonspace: int) -> int:
+    """1-based formatted line holding the `nonspace`-th non-whitespace character."""
+    seen = 0
+    for i, text in enumerate(formatted, 1):
+        seen += len(_WS.sub("", text))
+        if seen > nonspace:
+            return i
+    return len(formatted)
+
+
 def find_hint(target: str, hint: str) -> int:
     """Where `hint` is in `target`, -1 if nowhere. Evidence is stored cut, with "…" at
     either end (`…tch("/api/bambu_lab/print_history",…`), so the marks are dropped and,
@@ -521,16 +570,39 @@ def _text(rel: str, lines: list[str], line: int, hints: tuple[str, ...]) -> dict
         cols = sorted({c for c in (find_hint(target, h) for h in hints if h) if c >= 0})
         if not cols:
             cols = [len(target) // 2]
+        formatted = reformat(target)
+        if formatted is not None:
+            part = f"{rel}#L{line}"
+            rows = [_formatted_line_of(formatted, len(_WS.sub("", target[:c]))) for c in cols]
+            spans: list[list[int]] = []
+            for r in rows:
+                a, b = max(1, r - PART_RADIUS), min(len(formatted), r + PART_RADIUS)
+                if spans and a <= spans[-1][1] + 1:
+                    spans[-1][1] = max(spans[-1][1], b)
+                else:
+                    spans.append([a, b])
+            segs = []
+            for a, b in spans:
+                code = [x if len(x) <= LONG_LINE else x[:LONG_LINE] + " …"
+                        for x in formatted[a - 1 : b]]  # fmt: skip
+                segs.append({"file": part, "start": a, "code": code, "line": line})
+            shown = {n for g in segs for n in range(g["start"], g["start"] + len(g["code"]))}
+            noncode = sorted(
+                n for n in shown if formatted[n - 1].strip().startswith(("//", "/*", "*"))
+            )
+            return {"file": rel, "lang": "text", "segments": segs,
+                    "noncode": {part: noncode}, "comment_col": {}}  # fmt: skip
         side = max(MIN_WINDOW, WINDOW // len(cols))
-        spans: list[list[int]] = []
+        raw: list[list[int]] = []
         for c in cols:
             a, b = max(0, c - side), min(len(target), c + side)
-            if spans and a <= spans[-1][1]:
-                spans[-1][1] = max(spans[-1][1], b)
+            if raw and a <= raw[-1][1]:
+                raw[-1][1] = max(raw[-1][1], b)
             else:
-                spans.append([a, b])
+                raw.append([a, b])
         segs = [
-            {"file": rel, "start": line, "col": a, "code": [_clean(target[a:b])]} for a, b in spans
+            {"file": rel, "start": line, "col": a, "end": b, "code": [_clean(target[a:b])]}
+            for a, b in raw
         ]
         return {"file": rel, "lang": "text", "segments": segs, "noncode": {}, "comment_col": {}}
     a, b = max(1, line - TEXT_RADIUS), min(len(lines), line + TEXT_RADIUS)

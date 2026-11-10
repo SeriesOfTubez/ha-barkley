@@ -1,3 +1,3 @@
 """Sniff Test: a security scanner for Home Assistant Marketplace (HACS) items."""
 
-__version__ = "0.7.1"
+__version__ = "0.7.2"
