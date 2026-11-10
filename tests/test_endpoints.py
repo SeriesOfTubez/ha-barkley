@@ -264,3 +264,29 @@ def test_ports_skip_test_doubles_and_cards(tmp_path):
 def test_ports_never_from_comments_or_broken_files(tmp_path):
     _write(tmp_path, "x.py", '# port = 1883\n"""port = 21"""\nbroken = (\n')
     assert _ports(endpoints.run(_target(tmp_path))) == []
+
+
+def test_port_direction_from_the_calls_around_it(tmp_path):
+    _write(
+        tmp_path,
+        "net.py",
+        "import socket\n"
+        "def reachable(ip, port: int = 80):\n"
+        "    with socket.create_connection((ip, port)): return True\n"
+        "def serve():\n"
+        "    port = 8099\n"
+        "    srv = socket.socket(); srv.bind(('', port)); srv.listen()\n"
+        "def odd():\n"
+        "    port = 1234\n"
+        "    return port\n",
+    )
+    (tmp_path / "const.py").write_text("DEFAULT_MODBUS_PORT = 502\n")
+    (tmp_path / "hub.py").write_text(
+        "from .const import DEFAULT_MODBUS_PORT\n"
+        "async def go(h):\n"
+        "    c = AsyncModbusTcpClient(h, port=DEFAULT_MODBUS_PORT)\n"
+        "    await c.connect()\n"
+    )
+    r = endpoints.run(_target(tmp_path))
+    dirs = {int(f.key): f.attrs.get("directions") for f in r.facts if f.kind == "port"}
+    assert dirs == {80: ["out"], 8099: ["in"], 1234: None, 502: ["out"]}

@@ -23,6 +23,7 @@ and docstrings are skipped; JS is matched with regexes.
 
 from __future__ import annotations
 
+import ast
 import io
 import ipaddress
 import json
@@ -440,12 +441,13 @@ WELL_KNOWN_PORTS: dict[int, tuple[str, bool | None]] = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass
 class PortRef:
     port: int
     name: str  # the variable or key it was assigned to (untrusted)
     file: str
     line: int
+    direction: str | None = None  # "out" (connects to it), "in" (listens on it), unknown
 
 
 def _port_value(tok: tokenize.TokenInfo) -> int | None:
@@ -518,8 +520,85 @@ def _skip_for_ports(rel: str) -> bool:
     )
 
 
+# Direction of a port (M8, user decision): read from the calls around it, parse only.
+_CONNECT_CALLS = frozenset(
+    "connect connect_async connect_ex create_connection open_connection ws_connect "
+    "urlopen ftp ftp_tls clientsession".split()
+)
+_LISTEN_CALLS = frozenset(
+    "bind listen start_server create_server serve_forever tcpsite run_app".split()
+)
+
+
+@dataclass
+class _Func:
+    start: int
+    end: int
+    calls: frozenset[str]  # lower-cased call names (`ftp.connect(...)` -> "connect")
+    names: frozenset[str]  # names and attribute names it references
+
+
+def _call_name(node: ast.Call) -> str:
+    f = node.func
+    if isinstance(f, ast.Name):
+        return f.id.lower()
+    if isinstance(f, ast.Attribute):
+        return f.attr.lower()
+    return ""
+
+
+def _functions(text: str) -> list[_Func] | None:
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return None
+    out = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        calls, names = set(), set()
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Call) and (c := _call_name(n)):
+                calls.add(c)
+            elif isinstance(n, ast.Name):
+                names.add(n.id)
+            elif isinstance(n, ast.Attribute):
+                names.add(n.attr)
+        out.append(_Func(fn.lineno, fn.end_lineno or fn.lineno, frozenset(calls), frozenset(names)))
+    return out
+
+
+def _direction(calls: set[str]) -> str | None:
+    """ "out", "in", or None when the calls say neither or both."""
+    out = any(c in _CONNECT_CALLS or c.endswith("client") for c in calls)
+    inn = any(c in _LISTEN_CALLS or c.endswith("server") for c in calls)
+    if out == inn:
+        return None
+    return "out" if out else "in"
+
+
+def port_direction(pr: PortRef, funcs: dict[str, list[_Func]]) -> str | None:
+    """The calls in the function around the port decide. Only if they say nothing, look
+    at functions that use its name: in the same file, or in any file for an UPPER_CASE
+    constant (e.g. DEFAULT_MODBUS_PORT in const.py, used by a Modbus client elsewhere)."""
+    calls: set[str] = set()
+    for f in funcs.get(pr.file, []):
+        if f.start <= pr.line <= f.end:
+            calls |= f.calls
+    if d := _direction(calls):
+        return d
+    files = funcs if pr.name.isupper() else {pr.file: funcs.get(pr.file, [])}
+    calls = set()
+    for fs in files.values():
+        for f in fs:
+            if pr.name in f.names and not (f.start <= pr.line <= f.end):
+                calls |= f.calls
+    return _direction(calls)
+
+
 def extract_ports(root: Path) -> list[PortRef]:
     out: list[PortRef] = []
+    funcs: dict[str, list[_Func]] = {}
     for p in sorted(root.rglob("*.py")):
         if not p.is_file() or p.is_symlink():
             continue
@@ -532,7 +611,12 @@ def extract_ports(root: Path) -> list[PortRef]:
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        out.extend(py_ports(text, rel))
+        found = list(py_ports(text, rel))
+        out.extend(found)
+        if (fs := _functions(text)) is not None:
+            funcs[rel] = fs
+    for pr in out:
+        pr.direction = port_direction(pr, funcs)
     return out
 
 
@@ -650,7 +734,8 @@ def run(target: Target) -> AnalyzerResult:
                 evidence=Evidence.POSSIBLE,
                 file=pr.file,
                 line=pr.line,
-                attrs={"names": [pr.name[:80]]},
+                attrs={"names": [pr.name[:80]]}
+                | ({"directions": [pr.direction]} if pr.direction else {}),
                 analyzer=NAME,
             )
         )

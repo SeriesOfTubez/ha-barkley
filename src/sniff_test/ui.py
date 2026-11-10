@@ -228,6 +228,12 @@ class Port:
     port: int
     names: list[str]  # untrusted
     where: list[str]
+    directions: list[str] = field(default_factory=list)  # "out" / "in" (0.5.1+)
+
+    @property
+    def direction(self) -> str | None:
+        """One clear direction, else None (unknown, mixed, or a pre-0.5.1 scan)."""
+        return self.directions[0] if len(set(self.directions)) == 1 else None
 
 
 def _loc(s: dict[str, Any]) -> str:
@@ -271,6 +277,7 @@ def ports(report: dict[str, Any]) -> list[Port]:
                     int(edge["target"].split(":", 1)[1]),
                     list(edge.get("attrs", {}).get("names", [])),
                     [_loc(s) for s in edge.get("samples", [])],
+                    list(edge.get("attrs", {}).get("directions", [])),
                 )
             )
     return sorted(out, key=lambda p: p.port)
@@ -376,6 +383,18 @@ def port_phrase(pts: list[Port]) -> str:
     return s + (f" and {len(pts) - 3} more" if len(pts) > 3 else "")
 
 
+def ports_sentence(pts: list[Port]) -> str:
+    """'Connects to port 6668 (Tuya local)' / 'Listens on port 8080' / mixed or unknown."""
+    if not pts:
+        return ""
+    dirs = {p.direction for p in pts}
+    if dirs == {"out"}:
+        return f"Connects to {port_phrase(pts)} on a device or server it's set up with."
+    if dirs == {"in"}:
+        return f"Listens on {port_phrase(pts)}."
+    return f"Its code names {port_phrase(pts)}."
+
+
 def connection_sentence(rep: dict[str, Any]) -> str:
     hs = hosts(rep)
     net = internet(hs)
@@ -389,7 +408,7 @@ def connection_sentence(rep: dict[str, Any]) -> str:
     else:
         s = "No internet sites in its code."
     if pts:
-        s += f" Sets {port_phrase(pts)}."
+        s += " " + ports_sentence(pts)
     return s
 
 
@@ -542,8 +561,8 @@ def in_short(report: dict[str, Any]) -> str:
         out.append("Its code names no internet sites.")
     if pts := ports(report):
         out.append(
-            f"It sets {port_phrase(pts)} for its connections; the address comes from "
-            "setup or a cloud service."
+            ports_sentence(pts).removesuffix(".")
+            + "; the address comes from setup or a cloud service."
         )
     groups = scored_findings(report)
     big = [g for g in groups if g[0]["severity"] in ("critical", "high", "medium")]
@@ -698,14 +717,26 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
             ("home", "Your own network", f"{len(home)} address{'es' * (len(home) != 1)}", "")
         )
     if pts:
-        if len(pts) == 1:
+        dirs = {p.direction for p in pts}
+        if dirs == {"in"}:
+            title = (
+                f"Listens on port {pts[0].port}"
+                if len(pts) == 1
+                else f"Listens on {len(pts)} ports"
+            )
+            sub = "others connect to this machine"
+        elif len(pts) == 1:
             known = WELL_KNOWN_PORTS.get(pts[0].port)
-            title = f"Connects on port {pts[0].port}"
-            sub = (f"{known[0]} · " if known else "") + "address comes from setup"
+            title = (
+                f"{known[0]} server, port {pts[0].port}"
+                if known
+                else f"A server on port {pts[0].port}"
+            )
+            sub = "its address isn't in the code"
         else:
-            title = f"Connects on {len(pts)} ports"
-            nums = ", ".join(str(p.port) for p in pts[:5]) + (" …" if len(pts) > 5 else "")
-            sub = f"{nums} · details below"
+            title = f"{len(pts)} servers or devices"
+            nums = ", ".join(str(p.port) for p in pts[:4]) + (" …" if len(pts) > 4 else "")
+            sub = f"ports {nums} · addresses not in code"
         right.append(("ports", title, sub, ""))
     flowing = {nodes.get(t, {}).get("label") for t in flow_targets}
     net = [h for h in internet(hs) if h.name not in flowing]
@@ -861,12 +892,21 @@ def _lock(scheme_or_port: str | int) -> str:
     return ""
 
 
+_DEFAULT_PORT = {"https": 443, "wss": 443, "http": 80, "ws": 80}
+
+
 def _host_li(h: Host) -> str:
+    """Scheme, port (the URL's own, else the scheme's default) and encryption per site,
+    so a port listed under "address not in the code" is never mistaken for this one."""
     bits = []
+    explicit = sorted(set(h.ports))
     for s in sorted(set(h.schemes)):
-        bits.append(e(s) + (_lock(s) if h.cls not in ("link", "infrastructure") else ""))
-    for p in h.ports:
-        bits.append(f"port {p}")
+        nums = explicit or [_DEFAULT_PORT[s]] if s in _DEFAULT_PORT else explicit
+        port = f" · port {', '.join(map(str, nums))}" if nums else ""
+        lock = _lock(s) if h.cls not in ("link", "infrastructure") else ""
+        bits.append(e(s) + port + lock)
+    if not h.schemes and explicit:
+        bits.append("port " + ", ".join(map(str, explicit)))
     urls = "".join(f'<span class="u">{e(u, 200)}</span>' for u in h.urls[:3])
     flag = ' <span class="chip bad">see findings</span>' if h.flagged else ""
     return (
@@ -900,15 +940,19 @@ def zones_html(report: dict[str, Any]) -> str:
             label = f"{known[0]}, port {p.port}" if known else f"Port {p.port}"
             names = ", ".join(f"<code>{e(n, 60)}</code>" for n in p.names[:2])
             where = e(p.where[0], 160) if p.where else ""
+            how = {
+                "out": "connects out to it",
+                "in": "listens on it (others connect in)",
+            }.get(p.direction or "", "direction not clear from the code")
             items.append(
                 f'<li><div><span>{e(label)}</span><span class="p">{_lock(p.port).strip()}</span></div>'
-                f'<span class="u">{names} · {where}</span></li>'
+                f'<span class="u">{e(how)} · {names} · {where}</span></li>'
             )
         out.append(
-            '<div class="zone"><h3>🔌 Ports it connects on</h3><div class="zs">Port numbers the '
-            "code sets. The address comes from setup or a cloud service.</div><ul>"
-            + "".join(items)
-            + "</ul></div>"
+            '<div class="zone"><h3>🔌 Connections whose address isn\'t in the code</h3>'
+            '<div class="zs">The code sets these ports, but the server\'s address comes from '
+            "setup or from another server while the app runs. So we can't tie them to any "
+            "site listed here.</div><ul>" + "".join(items) + "</ul></div>"
         )
     out.append("</div>")
     return "".join(out)
