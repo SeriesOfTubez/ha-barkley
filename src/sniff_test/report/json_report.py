@@ -55,6 +55,7 @@ class ScanResult:
     hygiene: Any = None  # analyzers.repo_hygiene.Hygiene: context only, never scored
     resolution: Resolution | None = None  # resolved Python dependencies (integrations)
     graph: dict[str, Any] | None = None  # built by the scanner (see report.graph)
+    context: dict[str, Any] | None = None  # code around items (report.context), 0.7.0
     ha_version: str | None = None  # HA release dependencies were resolved against
 
 
@@ -65,7 +66,7 @@ def sanitize_untrusted(text: str | None, limit: int = _UNTRUSTED_MAX) -> str:
     return text[:limit] + ("…" if len(text) > limit else "")
 
 
-def _finding_json(f: Finding) -> dict[str, Any]:
+def finding_json(f: Finding) -> dict[str, Any]:
     return {
         "id": f.id,
         "rule_id": f.rule_id,
@@ -134,11 +135,13 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
             }
             for a in scan.analyzers
         ],
-        "findings": [_finding_json(f) for f in findings],
+        "findings": [finding_json(f) for f in findings],
         "graph": scan.graph if scan.graph is not None else graph.build(scan),
         "provenance": _provenance_json(scan.provenance),
         "hygiene": _hygiene_json(scan, findings),
         "ai_brief": ai_brief(scan, findings),
+        # Code from the scanned repo (untrusted), for "Explain in context". Not in ai_brief.
+        "context": scan.context,
     }
 
 

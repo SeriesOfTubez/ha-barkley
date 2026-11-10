@@ -1,7 +1,7 @@
 # Home Assistant app (add-on) manifest.
 # Reference: https://contributors.home-assistant.io/apps/reference/configuration/
 name: Sniff Test
-version: "0.6.0"
+version: "0.7.0"
 slug: sniff_test
 description: >-
   Sniffs Home Assistant Marketplace (HACS) integrations and cards for token theft,
@@ -25,7 +25,9 @@ panel_title: Sniff Test
 #   cards with their installed and available versions.
 # - POST /core/api/services/ai_task/generate_data?return_response: only when the user
 #   clicks "Explain this app" with `ai_entity` set. It sends findings about a public
-#   repo to the AI provider behind that entity; no HA data.
+#   repo to the AI provider behind that entity; no HA data. With `ai_mode: deep`, a click
+#   on "Explain in context" also sends up to 150 lines of that app's own code (public
+#   on GitHub, captured at scan time), never anything from the HA config.
 # - POST /core/api/template with one fixed template that returns only the ids and names
 #   of ai_task entities, for the panel's AI dropdown (nothing else is read).
 # All covered by this one permission, so no new one is asked for.
@@ -41,12 +43,14 @@ options:
   parallel_scans: 2
   github_token: ""
   ai_entity: ""
+  ai_mode: summary
 schema:
   exposure: list(local|public)
   jobs: int(1,4)
   parallel_scans: int(1,4)
   github_token: password?
   ai_entity: "match(^(ai_task\\.[a-z0-9_]+)?$)?"
+  ai_mode: list(summary|deep)?
 # Published multi-arch image (built with the repo root as context, see DOCS.md).
 # Uncomment once the registry exists; without it the Supervisor would try to build
 # from this folder alone, which doesn't contain the scanner's source.

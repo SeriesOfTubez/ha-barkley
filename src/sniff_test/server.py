@@ -33,6 +33,7 @@ from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import GitHubError, RateLimit, RateLimitError
 from sniff_test.releases import ReleasesError
 from sniff_test.report import ai as report_ai
+from sniff_test.report import ai_context
 from sniff_test.report.json_report import sanitize_untrusted
 from sniff_test.scoring import VERDICTS
 from sniff_test.store import ScanRow, Store, StoreError
@@ -679,11 +680,34 @@ def _ai_picker(base: str, sid: int, token: str, entity: str,
             "<button>Save</button></form>")  # fmt: skip
 
 
+AI_MODES = {
+    "summary": "AI summary only",
+    "deep": "AI deep analysis (reads the code around each finding)",
+}
+
+
+def _mode_picker(base: str, sid: int, token: str, mode: str) -> str:
+    opts = "".join(
+        f'<option value="{k}"{" selected" if k == mode else ""}>{e(v)}</option>'
+        for k, v in AI_MODES.items()
+    )
+    return (f'<form method=post action="{base}/ai-mode" class="act tools" style="margin-top:6px">'
+            f'<input type=hidden name=token value="{token}">'
+            f'<input type=hidden name=scan value="{sid}">'
+            f"<select name=mode>{opts}</select><button>Save</button></form>"
+            '<p class="tech">Deep analysis adds an "Explain in context" button to each finding, '
+            "port and unknown address. The AI then reads that part of the app's code, and every "
+            "statement it makes must cite lines that check out. Code is sent only when you "
+            "click.</p>")  # fmt: skip
+
+
 def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: str,
              have: dict[str, Any] | None, choices: list[tuple[str, str]] | None = None,
-             choices_err: str = "") -> str:  # fmt: skip
+             choices_err: str = "", mode: str = "summary") -> str:  # fmt: skip
     """The "Explain this app" control. Nothing is sent until the user clicks."""
     picker = _ai_picker(base, sid, token, entity, choices, choices_err)
+    if entity:
+        picker += _mode_picker(base, sid, token, mode)
     if not entity:
         return (
             '<div class="banner" style="margin-top:10px"><b>🤖 Explain this app with AI</b>'
@@ -698,7 +722,8 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
     note = ('<p class="tech">Sends this scan\'s findings (about a public project, no Home '
             f"Assistant data) to the AI provider behind <code>{e(entity, 120)}</code>. The AI "
             "explains only; it can't change the score or the findings.</p>")  # fmt: skip
-    change = f"<details><summary>Change which AI explains</summary>{picker}</details>"
+    change = (f"<details><summary>Change which AI explains, or how much "
+              f"({e(AI_MODES.get(mode, mode))})</summary>{picker}</details>")  # fmt: skip
     if state == "running":
         return ('<p class="muted small" style="margin-top:8px">Asking your AI… this page '
                 "refreshes by itself.</p>")  # fmt: skip
@@ -726,10 +751,30 @@ def render_scan(
     ai_error: str = "",
     ai_choices: list[tuple[str, str]] | None = None,
     ai_choices_err: str = "",
+    ai_mode: str = "summary",
+    item_states: dict[str, tuple[str, str]] | None = None,
 ) -> bytes:
     repo = report.get("target", {}).get("repo")
     rows = store.history(repo, limit=200) if repo else []
     have = store.explanation(sid)
+    item_states = item_states or {}
+    deep = None
+    if ai_mode == "deep" and ai_entity and report.get("context"):
+        answers = store.item_explanations(sid)
+
+        def deep(item_id: str) -> str:
+            snip = ai_context.snippet_of(report, item_id)
+            if snip is None:
+                return ""
+            state, err = item_states.get(item_id, ("", ""))
+            form = (f'<form method=post action="{base}/explain-item">'
+                    f'<input type=hidden name=token value="{token}">'
+                    f'<input type=hidden name=scan value="{sid}">'
+                    f'<input type=hidden name=item value="{e(item_id, 40)}">'
+                    "<button>{label}</button></form>")  # fmt: skip
+            return ui.deep_html(form, answer=answers.get(item_id), state=state, error=err,
+                                snip=snip, entity=ai_entity)  # fmt: skip
+
     return ui.render_app(
         base,
         sid,
@@ -739,9 +784,21 @@ def render_scan(
         update=_update_box(base, row, token) + _again_box(base, report, token),
         ai=have,
         ai_form=_ai_form(
-            base, sid, token, ai_entity, ai_state, ai_error, have, ai_choices, ai_choices_err
+            base,
+            sid,
+            token,
+            ai_entity,
+            ai_state,
+            ai_error,
+            have,
+            ai_choices,
+            ai_choices_err,
+            ai_mode,
         ),
-        refresh=5 if ai_state == "running" else 0,
+        refresh=5
+        if ai_state == "running" or any(st == "running" for st, _ in item_states.values())
+        else 0,
+        deep=deep,
     )
 
 
@@ -1006,7 +1063,9 @@ class Panel:
         self._entities: tuple[float, list[tuple[str, str]], str] = (0.0, [], "")
         self.ai_fn: AiFn = supervisor.ai_generate_data
         self._ai: dict[int, tuple[str, str]] = {}  # scan id -> (running|failed, error)
+        self._ai_items: dict[tuple[int, str], tuple[str, str]] = {}  # (scan, item) -> same
         self._ai_lock = threading.Lock()
+        self.ai_mode = "summary"
 
     def installed(self, refresh: bool = False) -> InstalledState:
         """HACS's installed list, cached; one websocket round trip at most every 5 minutes."""
@@ -1058,6 +1117,46 @@ class Panel:
 
         threading.Thread(target=run, name=f"explain-{sid}", daemon=True).start()
         return True
+
+    def explain_item(self, sid: int, item_id: str) -> bool:
+        """Deep analysis of one finding, port or address, in the background: the AI reads
+        that item's stored snippet (report.ai_context). One request per item at a time."""
+        if not self.ai_entity or self.ai_mode != "deep":
+            return False
+        report = self.store.report(sid)
+        if ai_context.item_of(report, item_id) is None:
+            return False
+        key = (sid, item_id)
+        with self._ai_lock:
+            if self._ai_items.get(key, ("", ""))[0] == "running":
+                return True
+            self._ai_items[key] = ("running", "")
+        entity = self.ai_entity
+
+        def run() -> None:
+            try:
+                instructions, structure = ai_context.build_request(report, item_id)
+                data = self.ai_fn(entity, instructions, structure, ai_context.TASK_NAME)
+                accepted = ai_context.accept(report, item_id, data)
+                self.store.save_item_explanation(sid, item_id, entity, accepted)
+                print(f"explain @{sid} {item_id}: {len(accepted['claims'])} claim(s), "
+                      f"{len(accepted['questions'])} question(s), {len(accepted['dropped'])} "
+                      f"dropped {sorted(set(accepted['dropped']))}", file=sys.stderr,
+                      flush=True)  # fmt: skip
+                with self._ai_lock:
+                    self._ai_items.pop(key, None)
+            except Exception as ex:  # shown on the page; never affects the scan
+                print(f"explain @{sid} {item_id} failed: {type(ex).__name__}: {ex}",
+                      file=sys.stderr, flush=True)  # fmt: skip
+                with self._ai_lock:
+                    self._ai_items[key] = ("failed", str(ex))
+
+        threading.Thread(target=run, name=f"explain-{sid}-{item_id}", daemon=True).start()
+        return True
+
+    def item_states(self, sid: int) -> dict[str, tuple[str, str]]:
+        with self._ai_lock:
+            return {item: st for (s, item), st in self._ai_items.items() if s == sid}
 
     def catalog(self) -> tuple[list[supervisor.CatalogItem], str]:
         """The Marketplace catalog, cached for 10 minutes (one websocket round trip)."""
@@ -1281,6 +1380,7 @@ class Panel:
                         page = render_scan(
                             base, sid, report, panel.store, row, panel.token,
                             panel.ai_entity, state, err, choices, choices_err,
+                            panel.ai_mode, panel.item_states(sid),
                         )  # fmt: skip
                         return self._send(200, page)
                     if url.path == "/search" and panel.catalog_fn is not None:
@@ -1358,6 +1458,30 @@ class Panel:
                     sid = get("scan")
                     return self._redirect(f"{self._base()}/scan/{sid}" if sid.isdigit()
                                           else f"{self._base()}/")  # fmt: skip
+                if path == "/ai-mode":
+                    mode = get("mode")
+                    if mode not in AI_MODES:
+                        return self._text(HTTPStatus.BAD_REQUEST, "unknown AI mode")
+                    panel.store.set_setting("ai_mode", mode)
+                    panel.ai_mode = mode
+                    print(f"AI mode: {mode} (chosen in the panel)", file=sys.stderr, flush=True)
+                    sid = get("scan")
+                    return self._redirect(f"{self._base()}/scan/{sid}" if sid.isdigit()
+                                          else f"{self._base()}/")  # fmt: skip
+                if path == "/explain-item":
+                    item = get("item")
+                    if not get("scan").isdigit() or not re.fullmatch(r"[0-9a-f]{16}", item):
+                        return self._text(HTTPStatus.BAD_REQUEST, "bad item")
+                    sid = int(get("scan"))
+                    try:
+                        if not panel.explain_item(sid, item):
+                            return self._text(
+                                HTTPStatus.BAD_REQUEST,
+                                "deep analysis is off, or there's no code for it",
+                            )
+                    except StoreError as ex:
+                        return self._text(HTTPStatus.NOT_FOUND, str(ex))
+                    return self._redirect(f"{self._base()}/scan/{sid}")
                 if path == "/explain":
                     if not get("scan").isdigit() or not panel.ai_entity:
                         return self._text(HTTPStatus.BAD_REQUEST, "no AI Task entity set")
@@ -1424,6 +1548,7 @@ def serve(
     budget_fn: Callable[[], RateLimit | None] = lambda: None,
     ai_entity: str = "",
     ai_fn: AiFn | None = None,
+    ai_mode: str = "summary",
     parallel: int = 1,
     catalog_fn: CatalogFn | None = None,
     entities_fn: EntitiesFn | None = None,
@@ -1444,6 +1569,10 @@ def serve(
     elif stored and supervisor.ai_entity_ok(stored):
         ai_entity = stored
     panel.ai_entity = ai_entity
+    stored_mode = store.setting("ai_mode")  # chosen in the panel; wins over the option
+    panel.ai_mode = (
+        stored_mode if stored_mode in AI_MODES else (ai_mode if ai_mode in AI_MODES else "summary")
+    )
     panel.catalog_fn = catalog_fn
     panel.entities_fn = entities_fn
     panel.releases_fn = releases_fn

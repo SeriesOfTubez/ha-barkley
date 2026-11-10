@@ -10,7 +10,9 @@ goes through `e()`. Plain-English text comes from `report.explain` and
 from __future__ import annotations
 
 import html
+import re
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +24,8 @@ from sniff_test.report.json_report import sanitize_untrusted
 
 if TYPE_CHECKING:
     from sniff_test.store import ScanRow
+
+DeepFn = Callable[[str], str]  # item id -> "Explain in context" HTML ("" for none)
 
 
 def e(text: Any, limit: int = 300) -> str:
@@ -131,6 +135,16 @@ button.primary { background:var(--accent); color:var(--card); border-color:var(-
   font-size:0.88rem; }
 .finding dt { color:var(--muted); } .finding dd { margin:0; min-width:0; }
 .ai dd { border-left:3px solid var(--new); padding-left:8px; }
+.deep { border-left:3px solid var(--new); background:var(--new-bg); border-radius:0 8px 8px 0;
+  padding:8px 10px; margin-top:8px; font-size:0.86rem; }
+.deep .dh { font-weight:600; color:var(--new); margin-bottom:4px; }
+.deep ul { margin:2px 0 4px; padding-left:1.1em; display:flex; flex-direction:column; gap:3px; }
+.deep .cite { font-size:0.75rem; color:var(--muted); white-space:nowrap; }
+.deep form { margin-top:6px; }
+pre.code { margin:4px 0 0; padding:6px 8px; background:var(--soft); border-radius:6px;
+  font:0.76rem/1.45 ui-monospace,"SF Mono",Menlo,monospace; white-space:pre-wrap;
+  overflow-wrap:anywhere; max-height:420px; overflow:auto; }
+pre.code .nc { color:var(--muted); } pre.code .fn { color:var(--new); font-weight:600; }
 .tech { font-size:0.8rem; color:var(--muted); margin-top:6px; overflow-wrap:anywhere; }
 details summary { cursor:pointer; color:var(--muted); font-size:0.82rem; }
 .ev { display:block; white-space:pre-wrap; background:var(--soft); padding:6px 8px;
@@ -238,6 +252,7 @@ class Host:
     ports: list[int] = field(default_factory=list)
     where: list[str] = field(default_factory=list)  # untrusted
     flagged: bool = False  # a finding is attached to the edge
+    edge_id: str = ""
 
 
 @dataclass
@@ -246,6 +261,7 @@ class Port:
     names: list[str]  # untrusted
     where: list[str]
     directions: list[str] = field(default_factory=list)  # "out" / "in" (0.5.1+)
+    edge_id: str = ""
 
     @property
     def direction(self) -> str | None:
@@ -279,6 +295,7 @@ def hosts(report: dict[str, Any]) -> list[Host]:
                 list(a.get("ports", [])),
                 [_loc(s) for s in edge.get("samples", [])],
                 bool(edge.get("finding_ids")),
+                str(edge.get("id", "")),
             )
         )
     return sorted(out, key=lambda h: h.name)
@@ -295,6 +312,7 @@ def ports(report: dict[str, Any]) -> list[Port]:
                     list(edge.get("attrs", {}).get("names", [])),
                     [_loc(s) for s in edge.get("samples", [])],
                     list(edge.get("attrs", {}).get("directions", [])),
+                    str(edge.get("id", "")),
                 )
             )
     return sorted(out, key=lambda p: p.port)
@@ -745,7 +763,9 @@ def _where(fs: list[dict[str, Any]]) -> str:
     return shown + more + times
 
 
-def finding_html(f: dict[str, Any], fs: list[dict[str, Any]], points: int, ai: str = "") -> str:
+def finding_html(
+    f: dict[str, Any], fs: list[dict[str, Any]], points: int, ai: str = "", deep: str = ""
+) -> str:
     ex = explain.explain(f["rule_id"])
     where = _where(fs)
     tech = [e(f["rule_id"]), e(f["severity"])]
@@ -772,8 +792,110 @@ def finding_html(f: dict[str, Any], fs: list[dict[str, Any]], points: int, ai: s
         f"<dt>Should you worry?</dt><dd>{e(ex.worry, 600)}</dd>"
         + (f"<dt>Where we saw it</dt><dd>{where}</dd>" if where else "")
         + ai_html
-        + f'</dl><div class="tech">{" · ".join(tech)}</div>{code}</div></div>'
+        + f'</dl>{deep}<div class="tech">{" · ".join(tech)}</div>{code}</div></div>'
     )
+
+
+_TICK = re.compile(r"`([^`<>]{1,80})`")
+
+
+def _ai_text(text: str, limit: int) -> str:
+    """Escaped AI text; `names` become <code> (after escaping, so nothing else can)."""
+    return _TICK.sub(r"<code>\1</code>", e(text, limit))
+
+
+def _cite(cites: list[list[Any]]) -> str:
+    parts = [f"{f}:{a}" if a == b else f"{f}:{a}–{b}" for f, a, b in cites[:4]]
+    return f' <span class="cite">({e(", ".join(parts), 200)})</span>' if parts else ""
+
+
+def code_html(snip: dict[str, Any]) -> str:
+    """The code we sent, as escaped lines with numbers; comment/docstring lines dimmed."""
+    out = []
+    last = None
+    for seg in snip.get("segments", []):
+        f = str(seg.get("file"))
+        if f != last:
+            out.append(f'<span class="fn">{e(f, 200)}</span>')
+            last = f
+        else:
+            out.append('<span class="nc">…</span>')
+        noncode = set(snip.get("noncode", {}).get(f, []))
+        for i, line in enumerate(seg.get("code", [])):
+            n = int(seg["start"]) + i
+            cut = f"[characters {int(seg['col'])}+ of a long line] " if "col" in seg else ""
+            text = f"{n:>5}  {cut}{e(line, 4000)}"
+            out.append(f'<span class="nc">{text}</span>' if n in noncode else text)
+    return '<pre class="code">' + "\n".join(out) + "</pre>"
+
+
+def deep_html(
+    form: str,
+    *,
+    answer: dict[str, Any] | None,
+    state: str,
+    error: str,
+    snip: dict[str, Any],
+    entity: str,
+) -> str:
+    """One item's "Explain in context" block. `form` is the server-built button form with a
+    `{label}` placeholder. Everything from the AI or the repo is escaped."""
+    from sniff_test.report.context import line_count
+
+    lines = line_count(snip)
+    sent = (
+        f"<details><summary>The code it reads ({lines} line{'s' if lines != 1 else ''}"
+        f"{', ' + str(len(snip.get('segments', []))) + ' parts' if len(snip.get('segments', [])) > 1 else ''})"
+        f"</summary>{code_html(snip)}</details>"
+    )
+    if state == "running":
+        return ('<div class="deep"><div class="dh">🔎 Reading the code…</div>'
+                '<p class="muted small">This page refreshes by itself.</p></div>')  # fmt: skip
+    if error:
+        return (f'<div class="deep"><div class="dh">🔎 The AI didn\'t answer</div>'
+                f'<p class="small">{e(error, 400)}</p>{form.replace("{label}", "Try again")}'
+                "</div>")  # fmt: skip
+    if not answer:
+        return (
+            '<div class="deep" style="background:none">'
+            + form.replace("{label}", "🔎 Explain in context")
+            + f'<p class="tech">Sends these {lines} lines of the app\'s own code (public on '
+            f"GitHub, no Home Assistant data) to the AI behind <code>{e(entity, 120)}</code>."
+            f"</p>{sent}</div>"
+        )
+    claims = answer.get("claims") or []
+    questions = answer.get("questions") or []
+    body = ['<div class="deep"><div class="dh">🔎 The AI\'s reading of the code</div>']
+    if claims:
+        body.append(
+            "<ul>"
+            + "".join(f"<li>{_ai_text(c['text'], 400)}{_cite(c['cites'])}</li>" for c in claims)
+            + "</ul>"
+        )
+    else:
+        body.append('<p class="small">It gave no statement we could check against the code.</p>')
+    if questions:
+        body.append(
+            '<div class="small"><b>Worth checking</b></div><ul>'
+            + "".join(f"<li>{_ai_text(q['text'], 300)}{_cite(q['cites'])}</li>" for q in questions)
+            + "</ul>"
+        )
+    dropped = answer.get("dropped") or []
+    if dropped:
+        why = ", ".join(e(w, 60) for w in sorted(set(dropped)))
+        n = len(dropped)
+        body.append(f'<p class="tech">Left out {n} statement{"s" if n != 1 else ""} that '
+                    f"didn't check out ({why}).</p>")  # fmt: skip
+    body.append(
+        f'<p class="tech">By <code>{e(answer.get("entity_id"), 120)}</code>, '
+        f"{e(str(answer.get('created', ''))[:16].replace('T', ' '))} UTC. Each statement cites "
+        "lines we sent, which contain the code it names (comments don't count). It can still "
+        "be wrong, and it can't change the score or clear a finding.</p>"
+        + sent
+        + form.replace("{label}", "Ask again")
+        + "</div>"
+    )
+    return "".join(body)
 
 
 def privacy_html(notes: list[privacy.Note]) -> str:
@@ -1032,7 +1154,7 @@ def _lock(scheme_or_port: str | int) -> str:
 _DEFAULT_PORT = {"https": 443, "wss": 443, "http": 80, "ws": 80}
 
 
-def _host_li(h: Host) -> str:
+def _host_li(h: Host, deep: str = "") -> str:
     """Scheme, port (the URL's own, else the scheme's default) and encryption per site,
     so a port listed under "address not in the code" is never mistaken for this one."""
     bits = []
@@ -1048,11 +1170,13 @@ def _host_li(h: Host) -> str:
     flag = ' <span class="chip bad">see findings</span>' if h.flagged else ""
     return (
         f'<li><div><code>{e(h.name, 120)}</code>{flag}<span class="p">{" · ".join(bits)}</span>'
-        f"</div>{urls}</li>"
+        f"</div>{urls}{deep}</li>"
     )
 
 
-def zones_html(report: dict[str, Any]) -> str:
+def zones_html(report: dict[str, Any], deep: DeepFn | None = None) -> str:
+    """`deep(edge_id)` adds the "Explain in context" block to an address or port."""
+    deep = deep or (lambda _id: "")
     hs = hosts(report)
     pts = ports(report)
     if not hs and not pts:
@@ -1066,7 +1190,7 @@ def zones_html(report: dict[str, Any]) -> str:
         more = f'<li class="muted">and {len(zh) - 12} more</li>' if len(zh) > 12 else ""
         out.append(
             f'<div class="zone {key}"><h3>{title}</h3><div class="zs">{sub}</div><ul>'
-            + "".join(_host_li(h) for h in shown)
+            + "".join(_host_li(h, deep(h.edge_id)) for h in shown)
             + more
             + "</ul></div>"
         )
@@ -1083,7 +1207,7 @@ def zones_html(report: dict[str, Any]) -> str:
             }.get(p.direction or "", "direction not clear from the code")
             items.append(
                 f'<li><div><span>{e(label)}</span><span class="p">{_lock(p.port).strip()}</span></div>'
-                f'<span class="u">{e(how)} · {names} · {where}</span></li>'
+                f'<span class="u">{e(how)} · {names} · {where}</span>{deep(p.edge_id)}</li>'
             )
         out.append(
             '<div class="zone"><h3>🔌 Connections whose address isn\'t in the code</h3>'
@@ -1254,6 +1378,7 @@ def render_app(
     ai: dict[str, Any] | None = None,
     ai_form: str = "",
     refresh: int = 0,
+    deep: DeepFn | None = None,
 ) -> bytes:
     """One app's detail page. `update` and `ai_form` are server-built HTML snippets."""
     t = report.get("target", {})
@@ -1312,10 +1437,18 @@ def render_app(
     groups = scored_findings(report)
     if groups:
         expl = ai.get("findings", {})
+        items = (report.get("context") or {}).get("items") or {}
+        dfn = deep or (lambda _id: "")
         parts.append(
             f'<section class="box"><h2>What we found ({len(groups)})</h2>'
             + "".join(
-                finding_html(f, fs, p, next((expl[x["id"]] for x in fs if x["id"] in expl), ""))
+                finding_html(
+                    f,
+                    fs,
+                    p,
+                    next((expl[x["id"]] for x in fs if x["id"] in expl), ""),
+                    next((dfn(x["id"]) for x in fs if x["id"] in items), ""),
+                )
                 for f, fs, p in groups
             )
             + "</section>"
@@ -1334,7 +1467,7 @@ def render_app(
         '<section class="box"><h2>Where it connects</h2><p class="sub">Every site, IP address '
         "and port in the shipped code, grouped by where it is. A site being here means the code "
         "mentions it, not that it was seen connecting. Web addresses drop anything after "
-        f"<code>?</code>, which can hold keys.</p>{zones_html(report)}</section>"
+        f"<code>?</code>, which can hold keys.</p>{zones_html(report, deep)}</section>"
     )
     parts.append(hygiene_html(report))
     can = explain.can_do(report)

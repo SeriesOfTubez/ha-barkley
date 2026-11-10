@@ -20,8 +20,8 @@ from sniff_test.analyzers import (
 from sniff_test.deps import ha_env
 from sniff_test.fetch.hacs import fetch
 from sniff_test.models import AnalyzerResult, AnalyzerState, Fact, Finding, Target, TargetKind
-from sniff_test.report import graph
-from sniff_test.report.json_report import ScanResult
+from sniff_test.report import context, graph
+from sniff_test.report.json_report import ScanResult, finding_json
 from sniff_test.scoring import Exposure, apply_exposure, score
 from sniff_test.workspace import workspace
 
@@ -147,4 +147,7 @@ def scan(
         )
         # Built while the workspace still exists: it reads manifests and parses files.
         result.graph = graph.build(result)
+        result.context = context.build(
+            target.root, [finding_json(f) for f in findings], result.graph
+        )
         return result

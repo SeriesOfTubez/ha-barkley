@@ -86,6 +86,14 @@ CREATE TABLE IF NOT EXISTS explanations (  -- AI explanations (M8); never a scor
     entity_id TEXT NOT NULL,
     data      TEXT NOT NULL  -- {"summary": str, "findings": {finding_id: str}}, filtered
 );
+CREATE TABLE IF NOT EXISTS item_explanations (  -- AI deep analysis (0.7.0); never scored
+    scan_id   INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
+    item_id   TEXT NOT NULL,  -- a finding id or graph edge id in that scan's report
+    created   TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    data      TEXT NOT NULL,  -- report.ai_context.accept(): checked claims and questions
+    PRIMARY KEY (scan_id, item_id)
+);
 CREATE TABLE IF NOT EXISTS settings (  -- panel settings (M8), e.g. the chosen AI entity
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -267,6 +275,29 @@ class Store:
         if row is None:
             return None
         return {"created": row["created"], "entity_id": row["entity_id"], **json.loads(row["data"])}
+
+    def save_item_explanation(
+        self, scan_id: int, item_id: str, entity_id: str, data: dict[str, Any]
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO item_explanations "
+                "(scan_id, item_id, created, entity_id, data) VALUES (?, ?, ?, ?, ?)",
+                (scan_id, item_id, datetime.now(UTC).isoformat(timespec="seconds"), entity_id,
+                 json.dumps(data)),
+            )  # fmt: skip
+
+    def item_explanations(self, scan_id: int) -> dict[str, dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT item_id, created, entity_id, data FROM item_explanations WHERE scan_id = ?",
+                (scan_id,),
+            ).fetchall()
+        return {
+            r["item_id"]: {"created": r["created"], "entity_id": r["entity_id"],
+                           **json.loads(r["data"])}
+            for r in rows
+        }  # fmt: skip
 
     def delete(self, scan_id: int) -> bool:
         with self._connect() as db:

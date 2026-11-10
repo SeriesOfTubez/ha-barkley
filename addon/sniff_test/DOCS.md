@@ -48,6 +48,7 @@ installed. Scores are computed by fixed rules; no AI decides anything.
 | `parallel_scans` | `2` | How many scans may run at once. A second scan starts only while the box has room for another full scan above the 2 GB warning line (1.5 GB counted for each scan already running); otherwise it waits. Two checks of the same project never run together. |
 | `github_token` | empty | A GitHub token (no scopes needed) for the 5,000 requests/hour limit instead of 60. |
 | `ai_entity` | empty | Optional. Easier: pick your AI in the panel (any app's page, "Explain this app with AI"), which lists your AI Task entities. A choice made in the panel wins over this option. |
+| `ai_mode` | `summary` | `summary`: the AI explains the findings. `deep`: it can also read the code around one finding, port or unknown address when you click **Explain in context**. Also set in the panel (wins over this option). |
 
 ### AI explanations
 
@@ -65,6 +66,23 @@ without it, and nothing it says can change them. Its answer is shown as plain te
 labeled "AI explanation", next to the fixed explanation, and it can be wrong. Code
 from the scanned project can contain text aimed at the AI; it is marked as untrusted
 in the request.
+
+### AI deep analysis (`ai_mode: deep`)
+
+Each finding, each port, and each address the app's docs don't explain gets an
+**Explain in context** button. During the scan, Sniff Test keeps the code around it:
+the function it's in, the functions that use a flagged address, and one step into the
+functions those call (in the same file or a sibling module of the app). That is at most
+150 lines, and you can open it under "The code it reads" before you click. When you
+click, that code and the question go to your AI; nothing is sent before. It is the
+app's own public code, never anything from your Home Assistant.
+
+The AI answers in short statements, and each must cite the lines it rests on.
+Sniff Test shows a statement only if the cited lines are in the code it sent, they are
+code (not comments), and they contain the names the statement mentions. A statement
+that calls a finding a false positive, safe or harmless is dropped: the AI may add
+questions but can't clear anything, and the score never changes. The page says how
+many statements were left out and why.
 
 The entity needs a model that supports structured output. Home Assistant's OpenRouter
 integration asks for a strict JSON schema, so a model without schema support will fail
@@ -85,7 +103,8 @@ The app asks for the Home Assistant API only. It reads the installed HA version 
 dependencies resolve against the release you run), asks the Marketplace for its
 installed list (`marketplace/repositories/list`, or HACS's `hacs/repositories/list` on
 older HA; the only websocket commands the app sends), and, only when you click
-"Explain this app", calls `ai_task.generate_data` (the only service it calls). To
+"Explain this app" or "Explain in context", calls `ai_task.generate_data` (the only
+service it calls). To
 fill the AI dropdown it asks Home Assistant to render one fixed template that returns
 only the ids and names of AI Task entities. No host network,
 no ports, no Supervisor role, no folder access: the app never reads your config folder

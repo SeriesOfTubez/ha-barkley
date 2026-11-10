@@ -142,6 +142,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="AI Task entity for 'Explain this app' (empty: off)",
     )
     v.add_argument(
+        "--ai-mode",
+        choices=("summary", "deep"),
+        default="summary",
+        help="summary: explain the findings; deep: also 'Explain in context' (reads code)",
+    )
+    v.add_argument(
         "--ha-version",
         metavar="YYYY.M.P",
         help="resolve against this HA release (default: the installed one, via the "
@@ -348,6 +354,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         exposure=args.exposure, ha_fn=ha_fn, installed_fn=installed_fn,
         budget_fn=lambda: GitHub.from_env().rate_limit(),
         ai_entity=args.ai_entity.strip() if supervisor.token() else "",
+        ai_mode=args.ai_mode,
         parallel=args.parallel,
         catalog_fn=supervisor.catalog if supervisor.token() else None,
         entities_fn=supervisor.ai_task_entities if supervisor.token() else None,
@@ -359,7 +366,8 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
             f"🐕 AI explanations: off ({args.ai_entity.strip()!r} is not an ai_task.* entity)"
         )
     else:
-        out.print(f"🐕 AI explanations: {'on, via ' + ai if ai else 'off (no ai_entity set)'}")
+        out.print(f"🐕 AI explanations: {'on, via ' + ai if ai else 'off (no ai_entity set)'}"
+                  f"{', mode ' + httpd.panel.ai_mode if ai else ''}")  # fmt: skip
     out.print(
         f"🐕 Sniff Test {__version__} panel on {args.host}:{args.port} "
         f"(clients: {', '.join(sorted(allow))}; store: {store.path})"

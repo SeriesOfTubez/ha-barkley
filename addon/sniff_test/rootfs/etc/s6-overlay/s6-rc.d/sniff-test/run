@@ -18,4 +18,5 @@ exec sniff-test serve \
     --exposure "$(bashio::config 'exposure')" \
     --jobs "$(bashio::config 'jobs')" \
     --parallel "$(bashio::config 'parallel_scans' '1')" \
-    --ai-entity "$(bashio::config 'ai_entity' '')"
+    --ai-entity "$(bashio::config 'ai_entity' '')" \
+    --ai-mode "$(bashio::config 'ai_mode' 'summary')"
