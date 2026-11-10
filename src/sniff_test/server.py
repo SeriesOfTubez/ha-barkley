@@ -27,7 +27,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from sniff_test import __version__, doctor, memory, supervisor
+from sniff_test import __version__, doctor, memory, supervisor, ui
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import RateLimit, RateLimitError
@@ -40,7 +40,7 @@ _INGRESS_PATH = re.compile(r"^/api/hassio_ingress/[A-Za-z0-9_-]+$")
 _REPO = re.compile(r"^(?:https://github\.com/)?([A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100})/?$")
 _REF = re.compile(r"^[A-Za-z0-9_.+/-]{1,100}$")
 _EMOJI = {v.key: v.emoji for _, v in VERDICTS}
-_SEV_CLASS = {"critical": "crit", "high": "high", "medium": "med", "low": "low", "info": "low"}
+_SEV_CLASS = {"critical": "sev-critical", "high": "sev-high", "medium": "sev-medium"}
 _JOBS_KEPT = 20
 # GitHub API requests a job may need, measured 2026-11-09: 6-7 per scan (repo, release,
 # commit, tarball, asset, release list, compare); an update check is two scans. Every
@@ -232,37 +232,15 @@ class Worker:
 
 # --- HTML ------------------------------------------------------------------------------
 
-_STYLE = """
-:root { --bg:#fff; --fg:#1c1c1c; --muted:#666; --line:#e3e3e3; --card:#f7f7f7;
-  --crit:#b3261e; --high:#c4540a; --med:#9a6b00; --low:#4b6b88; --ok:#2e7d32; }
-@media (prefers-color-scheme: dark) { :root { --bg:#111; --fg:#e8e8e8; --muted:#9a9a9a;
-  --line:#2a2a2a; --card:#1a1a1a; --crit:#ff7b72; --high:#ffa657; --med:#e3b341;
-  --low:#8bb4d9; --ok:#7ee787; } }
-body { background:var(--bg); color:var(--fg); font:15px/1.45 system-ui,sans-serif;
-  margin:0 auto; max-width:960px; padding:16px; }
-a { color:inherit; } h1 { font-size:1.4em; } h2 { font-size:1.1em; margin-top:1.6em; }
-table { border-collapse:collapse; width:100%; } td, th { text-align:left; padding:6px 8px;
-  border-bottom:1px solid var(--line); vertical-align:top; overflow-wrap:anywhere; }
-.muted { color:var(--muted); } .card { background:var(--card); padding:12px; border-radius:8px; }
-.crit { color:var(--crit); font-weight:600; } .high { color:var(--high); font-weight:600; }
-.med { color:var(--med); } .low { color:var(--low); } .ok { color:var(--ok); }
-form { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
-input { padding:6px; min-width:0; flex:1 1 180px; } button { padding:6px 12px; }
-code { overflow-wrap:anywhere; }
-"""
-
 
 def _page(title: str, body: str) -> bytes:
-    return (
-        "<!doctype html><html lang=en><head><meta charset=utf-8>"
-        '<meta name=viewport content="width=device-width,initial-scale=1">'
-        f"<title>{e(title)}</title><style>{_STYLE}</style></head><body>"
-        f"{body}</body></html>"
-    ).encode()
+    return ui.page(title, body)
 
 
 def _verdict(score: int, key: str) -> str:
-    cls = {"good_boy": "ok", "kinda_sus": "med", "very_sus": "high", "bork": "crit"}.get(key, "")
+    cls = {"good_boy": "ok", "kinda_sus": "sev-medium", "very_sus": "sev-high", "bork": "bad"}.get(
+        key, ""
+    )
     return f'<span class="{cls}">{score} {_EMOJI.get(key, "")}</span>'
 
 
@@ -346,89 +324,81 @@ def classify(
     return sorted(out, key=lambda r: order[r.group])
 
 
-def _version_cell(base: str, r: Row) -> str:
-    it = r.item
-
-    def ver(v: str, s: ScanRow | None) -> str:
-        if s:
-            return f'<a href="{base}/scan/{s.id}">{e(v, 60)}</a> {_verdict(s.score, s.verdict)}'
-        return e(v, 60)
-
-    if not it.update:
-        return ver(it.installed, r.installed_scan)
-    link = ""
-    if r.installed_scan and r.available_scan:
-        link = (f' · <a href="{base}/diff?old={r.installed_scan.id}&amp;new='
-                f'{r.available_scan.id}">diff</a>')  # fmt: skip
-    return f"{ver(it.installed, r.installed_scan)} → {ver(it.available, r.available_scan)}{link}"
-
-
 def _action(base: str, r: Row, token: str) -> str:
     it = r.item
-    if r.busy:  # one click is enough: no second button while the job is in the worker
-        label = {"running": "checking…", "waiting": "waiting for GitHub…"}.get(r.busy, "queued…")
-        return f'<span class="muted">{label}</span>'
     hidden = (f'<input type=hidden name=token value="{token}">'
               f'<input type=hidden name=repo value="{e(it.repo)}">'
               f'<input type=hidden name=ref value="{e(it.installed)}">')  # fmt: skip
-    # An incomplete scan is never reused, so the same button scans again.
+    # An incomplete scan is never reused, so the same button scans again. Check update
+    # scans the installed version too, so it comes first when an update is offered.
     unfinished = [x for x in (r.installed_scan, r.available_scan) if x and not x.complete]
     if it.update and (unfinished or not (r.installed_scan and r.available_scan)):
         label = "Check again" if unfinished else "Check update"
         return (f'<form method=post action="{base}/update">{hidden}'
                 f'<input type=hidden name=to value="{e(it.available)}">'
-                f"<button>{label}</button></form>")  # fmt: skip
+                f'<button class="primary">{label}</button></form>')  # fmt: skip
     if not r.installed_scan or not r.installed_scan.complete:
-        label = "Sniff again" if r.installed_scan else "Sniff installed"
+        label = "Sniff again" if r.installed_scan else "Sniff it"
         return (f'<form method=post action="{base}/installed">{hidden}'
-                f"<button>{label}</button></form>")  # fmt: skip
+                f'<button class="primary">{label}</button></form>')  # fmt: skip
     return ""
 
 
-def _installed_row(base: str, r: Row, token: str) -> str:
-    it = r.item
-    why = "".join(f'<br><span class="high">{e(t, 300)}</span>' for t in r.reasons)
-    tag = it.kind + (" · custom repo" if it.custom else "")
-    return (
-        f"<tr><td><b>{e(it.name, 80)}</b> <span class=muted>{e(it.repo, 100)} · {e(tag)}</span>"
-        f"{why}</td><td>{_version_cell(base, r)}</td><td>{_action(base, r, token)}</td></tr>"
-    )
+def _diff_link(r: Row) -> str:
+    if r.item.update and r.installed_scan and r.available_scan:
+        return f"old={r.installed_scan.id}&amp;new={r.available_scan.id}"
+    return ""
 
 
-def render_installed(base: str, state: InstalledState, rows: list[Row], token: str) -> str:
+def render_installed(
+    base: str,
+    state: InstalledState,
+    rows: list[Row],
+    token: str,
+    report_fn: Callable[[int], dict[str, Any] | None],
+    f: str = "all",
+) -> str:
     refresh = f'<a href="{base}/?refresh=1">refresh</a>'
     if state.error:
         return (
-            "<h2>Installed from the Marketplace (HACS)</h2>"
-            "<p class=muted>Can't list installed items: "
-            f"{e(state.error, 300)} ({refresh}). Typed checks above still work.</p>"
+            '<div class="banner warn">Can\'t list installed items: '
+            f"{e(state.error, 300)} ({refresh}). Checking a repository by name still works "
+            "(below).</div>"
         )
-    out = ["<h2>Installed from the Marketplace (HACS)</h2>"]
-    for g, title in GROUPS.items():
-        group = [r for r in rows if r.group == g]
-        if group:
-            out.append(f"<h3>{e(title)} ({len(group)})</h3><table>")
-            out.extend(_installed_row(base, r, token) for r in group)
-            out.append("</table>")
-    current = [r for r in rows if r.group == "current"]
-    if current:
-        never = sum(1 for r in current if not r.installed_scan)
-        note = f", {never} not yet sniffed by Sniff Test {__version__}" if never else ""
-        out.append(f"<details><summary>{len(current)} up to date{e(note)}</summary><table>")
-        out.extend(_installed_row(base, r, token) for r in current)
-        out.append("</table></details>")
-        if never:
-            out.append(
-                f'<form method=post action="{base}/installed-all">'
-                f'<input type=hidden name=token value="{token}">'
-                f"<button>Sniff the {never} not yet sniffed</button></form>"
-            )
-    if not rows:
-        out.append("<p class=muted>The Marketplace lists no installed integrations or cards.</p>")
+    cards = [
+        ui.Card(
+            repo=r.item.repo,
+            name=r.item.name,
+            kind=r.item.kind,
+            installed=r.item.installed,
+            available=r.item.available if r.item.update else None,
+            scan=r.installed_scan,
+            report=report_fn(r.installed_scan.id) if r.installed_scan else None,
+            group=r.group,
+            reasons=r.reasons,
+            busy=r.busy,
+            diff_link=_diff_link(r),
+            action=_action(base, r, token),
+        )
+        for r in rows
+    ]
+    out = (
+        [ui.render_grid(base, cards, f)]
+        if rows
+        else ['<p class="muted">The Marketplace lists no installed integrations or cards.</p>']
+    )
+    never = sum(1 for r in rows if not r.installed_scan)
+    if never:
+        out.append(
+            f'<form method=post action="{base}/installed-all">'
+            f'<input type=hidden name=token value="{token}">'
+            f'<button class="primary">Sniff the {never} not yet sniffed by Sniff Test '
+            f"{e(__version__)}</button></form>"
+        )
     skipped = ", ".join(f"{n} {e(c)}" for c, n in sorted(state.other.items()))
     age = int(time.time() - state.fetched) // 60 if state.fetched else 0
     out.append(
-        f'<p class="muted">From the Marketplace {age} min ago ({refresh})'
+        f'<p class="muted small">Installed list from the Marketplace {age} min ago ({refresh})'
         + (f". Not scanned (not an integration or card): {skipped}" if skipped else "")
         + ".</p>"
     )
@@ -437,14 +407,14 @@ def render_installed(base: str, state: InstalledState, rows: list[Row], token: s
 
 def _memory_banner(mem: memory.Memory) -> str:
     if mem.level == "refuse":
-        return f'<p class="card crit">⚠ Memory: {e(mem.message(), 300)}</p>'
+        return f'<div class="banner bad">⚠ Memory: {e(mem.message(), 300)}</div>'
     if mem.level == "warn":
-        return f'<p class="card med">⚠ Memory: {e(mem.message(), 300)}</p>'
+        return f'<div class="banner warn">⚠ Memory: {e(mem.message(), 300)}</div>'
     return ""
 
 
 def _github_banner(wait: str) -> str:
-    return f'<p class="card med">⏳ {e(wait, 400)}</p>' if wait else ""
+    return f'<div class="banner warn">⏳ {e(wait, 400)}</div>' if wait else ""
 
 
 def render_index(
@@ -455,29 +425,25 @@ def render_index(
     installed: str = "",
     mem: memory.Memory | None = None,
     github_wait: str = "",
+    ha: str | None = None,
 ) -> bytes:
     rows = store.history(limit=100)
+    against = f" against HA {e(ha)}" if ha else ""
     out = [
-        "<h1>🐕 Sniff Test</h1>",
-        '<p class="muted">Scans run one at a time. Scores never come from an AI.</p>',
+        '<div class="head"><h1>🐕 Sniff Test</h1>'
+        f'<span class="muted small">Sniff Test {e(__version__)}{against}. Scans run one at a '
+        "time. Scores never come from an AI.</span></div>",
         _memory_banner(mem) if mem else "",
         _github_banner(github_wait),
-        f'<div class="card"><form method=post action="{base}/scan">'
-        f'<input type=hidden name=token value="{token}">'
-        '<input name=repo placeholder="owner/repo" required>'
-        '<input name=ref placeholder="tag (default: what HACS installs)">'
-        "<button>Sniff it</button></form>"
-        f'<form method=post action="{base}/update">'
-        f'<input type=hidden name=token value="{token}">'
-        '<input name=repo placeholder="owner/repo" required>'
-        '<input name=ref placeholder="installed tag" required>'
-        "<button>What would updating change?</button></form>"
-        f'<p class="muted"><a href="{base}/doctor">Diagnostics</a>: can each tool run '
-        "on this box?</p></div>",
         installed,
     ]
+    active = [j for j in jobs if j.state in ("queued", "running", "waiting")]
     if jobs:
-        out.append("<h2>Jobs</h2><table>")
+        out.append(
+            f'<details class="box"{" open" if active else ""}><summary>Jobs '
+            f"({len(active)} running or queued, {len(jobs) - len(active)} finished)</summary>"
+            "<table>"
+        )
         for j in jobs:
             links = " ".join(f'<a href="{base}/scan/{i}">@{i}</a>' for i in j.scan_ids)
             if j.kind == "update" and len(j.scan_ids) == 2:
@@ -488,14 +454,28 @@ def render_index(
                 f"{' → ' + e(j.to) if j.to else ''}"
                 f"</td><td>{e(j.state)}</td><td>{e(j.message)} {links}</td></tr>"
             )
-        out.append("</table>")
-    out.append("<h2>Stored scans</h2>")
+        out.append("</table></details>")
+    out.append(
+        '<details class="box tools"><summary>Check any repository</summary>'
+        f'<form method=post action="{base}/scan">'
+        f'<input type=hidden name=token value="{token}">'
+        '<input name=repo placeholder="owner/repo" required>'
+        '<input name=ref placeholder="tag (default: what the Marketplace installs)">'
+        "<button>Sniff it</button></form>"
+        f'<form method=post action="{base}/update">'
+        f'<input type=hidden name=token value="{token}">'
+        '<input name=repo placeholder="owner/repo" required>'
+        '<input name=ref placeholder="installed tag" required>'
+        "<button>What would updating change?</button></form></details>"
+    )
+    out.append(f'<details class="box"><summary>All stored scans ({len(rows)})</summary>')
     if not rows:
         out.append('<p class="muted">No scans yet.</p>')
     else:
         out.append("<table><tr><th>#</th><th>score</th><th>repo</th><th>when</th></tr>")
         for r in rows:
             extra = r.kind + (f" · HA {r.ha_version}" if r.ha_version else "")
+            extra += f" · rules {r.tool_version}"
             if not r.complete:
                 extra += " · incomplete"
             out.append(
@@ -506,71 +486,69 @@ def render_index(
                 f"<td>{e(r.scanned_at[:16].replace('T', ' '))}</td></tr>"
             )
         out.append("</table>")
+    out.append("</details>")
+    out.append(
+        f'<p class="muted small"><a href="{base}/doctor">Diagnostics</a>: can each tool run on '
+        "this box?</p>"
+    )
     return _page("Sniff Test", "".join(out))
 
 
-def render_scan(base: str, sid: int, report: dict[str, Any], store: Store) -> bytes:
-    t = report["target"]
-    name = f"{t.get('repo') or t.get('input')}@{t.get('ref') or '?'}"
-    findings = report.get("findings", [])
-    out = [
-        f'<p><a href="{base}/">← all scans</a></p>',
-        f"<h1>@{sid} {e(name, 160)}</h1>",
-        f'<p class="card">{_verdict(report["score"], report["verdict"]["key"])} '
-        f"{e(report['verdict']['label'])}"
-        f"{'' if report.get('complete') else ' · <b>incomplete scan</b> (capped at 89)'}"
-        f'<br><span class="muted">{e(t.get("kind"))} · {e(t.get("install_source"))} · '
-        f"commit {e((t.get('commit_sha') or '')[:12])}"
-        f"{' · HA ' + e(report['ha_version']) if report.get('ha_version') else ''}</span></p>",
+def _update_box(base: str, row: Row | None, token: str) -> str:
+    """On an installed app's page: the update it's offered and what checking it found."""
+    if row is None or not row.item.update:
+        return ""
+    it = row.item
+    parts = [
+        f'<section class="box"><h2>Update available: {e(it.installed, 40)} → '
+        f"{e(it.available, 40)}</h2>"
     ]
-    missing = [
-        a for a in report.get("analyzers", []) if a.get("state") not in ("ok", "not_applicable")
-    ]
-    if missing:
-        out.append('<p class="med">Didn\'t finish:</p><ul>')
-        out.extend(
-            f"<li><b>{e(a.get('name'))}</b> {e(a.get('state'))}: {e(a.get('detail'), 400)}</li>"
-            for a in missing
-        )
-        out.append("</ul>")
-    older = [r for r in store.history(t.get("repo")) if r.id != sid] if t.get("repo") else []
-    if older:
-        out.append("<p>Compare with: ")
-        out.append(
-            " ".join(
-                f'<a href="{base}/diff?old={r.id}&amp;new={sid}">@{r.id} {e(r.ref or "?", 40)}</a>'
-                for r in older[:8]
-            )
-        )
-        out.append("</p>")
-    out.append(f"<h2>Findings ({len(findings)})</h2>")
-    if findings:
-        out.append("<table>")
-        for f in findings:
-            loc = f.get("file") or ""
-            if loc and f.get("line"):
-                loc += f":{f['line']}"
-            out.append(
-                f'<tr><td class="{_SEV_CLASS.get(f["severity"], "")}">{e(f["severity"])}</td>'
-                f"<td><b>{e(f['title'])}</b> <span class=muted>{e(f['rule_id'])}</span>"
-                f"<br>{e(f.get('message'), 600)}"
-                f"{'<br><code>' + e(loc, 200) + '</code>' if loc else ''}"
-                f"{'<br><code>' + e(ev, 200) + '</code>' if (ev := f.get('evidence')) else ''}"
-                "</td></tr>"
-            )
-        out.append("</table>")
+    if row.busy:
+        parts.append('<p class="muted">Checking it now…</p>')
+    elif link := _diff_link(row):
+        if row.group == "attention" and row.reasons:
+            parts.append('<p class="sub">Worth a look before you update:</p><ul class="plain">')
+            parts.extend(f"<li>{e(x, 300)}</li>" for x in row.reasons)
+            parts.append("</ul>")
+        else:
+            parts.append('<p class="ok">We checked it: nothing important changes.</p>')
+        parts.append(f'<p class="small"><a href="{base}/diff?{link}">Everything the update '
+                     "changes</a></p>")  # fmt: skip
     else:
-        out.append('<p class="ok">Nothing smelled off. 🦴</p>')
-    out.append(f'<p><a href="{base}/scan/{sid}.json">raw JSON report</a></p>')
-    return _page(f"Sniff Test @{sid}", "".join(out))
+        parts.append('<p class="sub">Not checked yet. Checking scans the new version and '
+                     "compares it with the one you have.</p>")  # fmt: skip
+    if not row.busy and (act := _action(base, row, token)):
+        parts.append(f'<div class="act">{act}</div>')
+    parts.append("</section>")
+    return "".join(parts)
+
+
+def render_scan(
+    base: str,
+    sid: int,
+    report: dict[str, Any],
+    store: Store,
+    row: Row | None = None,
+    token: str = "",
+) -> bytes:
+    repo = report.get("target", {}).get("repo")
+    rows = store.history(repo, limit=200) if repo else []
+    return ui.render_app(
+        base,
+        sid,
+        report,
+        rows,
+        name=row.item.name if row else None,
+        update=_update_box(base, row, token),
+    )
 
 
 def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
-    out = [f'<p><a href="{base}/">← all scans</a></p>', "<h1>Diagnostics</h1>",
+    out = [f'<p class="crumb"><a href="{base}/">← All apps</a></p>', "<h1>Diagnostics</h1>",
            f'<p class="muted">Sniff Test {e(__version__)}. Each tool runs on a one-line '
            "sample written here, never on scanned code.</p><table>"]  # fmt: skip
     for c in checks:
-        cls = "ok" if c.ok else "crit"
+        cls = "ok" if c.ok else "bad"
         out.append(
             f'<tr><td class="{cls}">{"ok" if c.ok else "FAIL"}</td><td><b>{e(c.name)}</b> '
             f"{e(c.summary, 1000)}"
@@ -590,15 +568,15 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
     head = [c for c in changes if c["rank"] >= HEADLINE_RANK][:HEADLINE_MAX]
     rest = [c for c in changes if c not in head]
     out = [
-        f'<p><a href="{base}/">← all scans</a></p>',
+        f'<p class="crumb"><a href="{base}/">← All apps</a></p>',
         f"<h1>What changes: {e(frm.get('repo'), 100)}</h1>",
-        f'<p class="card"><a href="{base}/scan/{old}">@{old}</a> {e(frm.get("ref"), 60)} → '
+        f'<p class="box"><a href="{base}/scan/{old}">@{old}</a> {e(frm.get("ref"), 60)} → '
         f'<a href="{base}/scan/{new}">@{new}</a> {e(to.get("ref"), 60)}<br>'
         f'<span class="muted">score {e(d["score"].get("from"))} → {e(d["score"].get("to"))} '
         "(each side's own score; the diff never scores)</span></p>",
     ]
     for w in d.get("warnings", []):
-        out.append(f'<p class="med">⚠ {e(w, 400)}</p>')
+        out.append(f'<div class="banner warn">⚠ {e(w, 400)}</div>')
     if not head:
         out.append("<p>Nothing important changed. 🦴</p>")
     else:
@@ -624,6 +602,7 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
 
 
 InstalledFn = Callable[[], tuple[list[supervisor.Installed], dict[str, int]]]
+_REPORTS_KEPT = 64
 _INSTALLED_TTL = 300  # seconds; HACS itself refreshes far less often
 
 
@@ -645,6 +624,8 @@ class Panel:
         self._installed = InstalledState()
         self._installed_lock = threading.Lock()
         self._diffs: dict[tuple[int, int], dict[str, Any]] = {}
+        self._reports: dict[int, dict[str, Any]] = {}
+        self.ha_fn: Callable[[], str | None] = lambda: None
 
     def installed(self, refresh: bool = False) -> InstalledState:
         """HACS's installed list, cached; one websocket round trip at most every 5 minutes."""
@@ -668,9 +649,21 @@ class Panel:
             self._diffs[key] = diff_reports(self.store.report(old), self.store.report(new))
         return self._diffs[key]
 
-    def installed_html(self, base: str, refresh: bool = False) -> str:
+    def report(self, sid: int) -> dict[str, Any] | None:
+        """Stored reports never change, so parsed ones are kept (bounded)."""
+        if sid not in self._reports:
+            try:
+                rep = self.store.report(sid)
+            except StoreError:
+                return None
+            if len(self._reports) >= _REPORTS_KEPT:
+                self._reports.pop(next(iter(self._reports)))
+            self._reports[sid] = rep
+        return self._reports[sid]
+
+    def rows(self, refresh: bool = False) -> tuple[InstalledState, list[Row]]:
         if self.installed_fn is None:
-            return ""
+            return InstalledState(error="not running as a Home Assistant add-on"), []
         st = self.installed(refresh)
         tv = self.worker.tool_version
         rows = classify(st.items, self.store, self.diff, tv) if not st.error else []
@@ -681,7 +674,19 @@ class Panel:
         }
         for r in rows:
             r.busy = busy.get(r.item.repo.lower(), "")
-        return render_installed(base, st, rows, self.token)
+        return st, rows
+
+    def row_for(self, repo: str | None) -> Row | None:
+        if not repo or self.installed_fn is None:
+            return None
+        _, rows = self.rows()
+        return next((r for r in rows if r.item.repo.lower() == repo.lower()), None)
+
+    def installed_html(self, base: str, refresh: bool = False, f: str = "all") -> str:
+        if self.installed_fn is None:
+            return ""
+        st, rows = self.rows(refresh)
+        return render_installed(base, st, rows, self.token, self.report, f)
 
     def handler(self) -> type[BaseHTTPRequestHandler]:
         panel = self
@@ -731,11 +736,13 @@ class Panel:
                 try:
                     if url.path in ("", "/"):
                         jobs = list(panel.worker.jobs)
-                        refresh = "refresh=1" in url.query
+                        q = urllib.parse.parse_qs(url.query)
+                        refresh = q.get("refresh") == ["1"]
+                        f = (q.get("f") or ["all"])[0]
                         body = render_index(
                             base, panel.store, jobs, panel.token,
-                            panel.installed_html(base, refresh), panel.memory_fn(),
-                            panel.worker.github_wait,
+                            panel.installed_html(base, refresh, f), panel.memory_fn(),
+                            panel.worker.github_wait, panel.worker.ha_fn(),
                         )  # fmt: skip
                         return self._send(200, body)
                     if m := re.fullmatch(r"/scan/(\d+)(\.json)?", url.path):
@@ -744,7 +751,9 @@ class Panel:
                         if m[2]:
                             body = json.dumps(report, indent=2).encode()
                             return self._send(200, body, "application/json")
-                        return self._send(200, render_scan(base, sid, report, panel.store))
+                        row = panel.row_for(report.get("target", {}).get("repo"))
+                        page = render_scan(base, sid, report, panel.store, row, panel.token)
+                        return self._send(200, page)
                     if url.path == "/doctor":
                         return self._send(200, render_doctor(base, doctor.run_checks(addon=True)))
                     if url.path == "/diff":

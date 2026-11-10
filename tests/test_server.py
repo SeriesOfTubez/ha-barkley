@@ -195,7 +195,7 @@ def test_scan_page_names_analyzers_that_did_not_finish(panel):
         {"name": "python-deps", "state": "not_applicable", "detail": ""},
     ]
     _, _, page = get(f"{base}/scan/{store.save(rep)}")
-    assert "Didn't finish" in page
+    assert "Part of the check didn't finish" in page
     assert "osv-npm" in page and "&lt;b&gt;network&lt;/b&gt; unreachable" in page
     assert "python-deps" not in page
 
@@ -261,24 +261,51 @@ def _seed(store):
     store.save(report(repo="acme/fine", ref="v1"))
 
 
-def test_installed_list_leads_with_what_needs_attention(addon):
+def _card(page, name):
+    """The HTML of one card in the grid, by app name."""
+    i = page.index(f">{name}<")
+    start = page.rindex('<div class="app ', 0, i)
+    nxt = page.find('<div class="app ', i)
+    return page[start : nxt if nxt != -1 else page.index('<div class="legend"', i)]
+
+
+def _card_order(page):
+    return re.findall(r'class="app-name"[^>]*>([^<]+)<', page)
+
+
+def test_installed_grid_leads_with_what_needs_attention(addon):
     store, _, base, _, _ = addon
     _seed(store)
     _, _, page = get(base + "/")
-    heads = ("Needs a look", "Updates not checked", "Updates checked: nothing", "up to date")
-    order = [page.index(h) for h in heads]
-    assert order == sorted(order)
-    attention = page[order[0] : order[1]]
-    assert "acme/moved" in attention and "scored 75" in attention
-    assert "acme/quiet" not in attention
-    unchecked = page[order[1] : order[2]]
-    assert "acme/new" in unchecked and "Check update" in unchecked
-    assert 'name=to value="v2"' in unchecked
-    # current rows fold into one line
-    assert f"2 up to date, 1 not yet sniffed by Sniff Test {server.__version__}" in page
-    assert "Sniff the 1 not yet sniffed" in page
+    # not checked (grey) first, then lowest score first
+    order = _card_order(page)
+    assert order[:2] == ["Never", "Unchecked"] or order[:2] == ["Unchecked", "Never"]
+    assert order.index("Moved") < order.index("Fine")
+    moved = _card(page, "Moved")
+    assert 'class="app grey"' not in moved and "Update v2" in moved
+    assert "Update needs a look" in moved and "diff?old=" in moved
+    unchecked = _card(page, "Unchecked")
+    assert "app grey" in unchecked or 'class="app "' not in unchecked
+    assert "Check update" in unchecked and 'name=to value="v2"' in unchecked
+    assert "Sniff it" in _card(page, "Never")
+    assert "<b>5</b> apps installed" in page
+    assert "Sniff the 2 not yet sniffed" in page
     assert "Not scanned (not an integration or card): 2 theme" in page
-    assert "diff?old=" in attention
+    _, _, look = get(base + "/?f=look")
+    assert _card_order(look) == ["Moved"]
+    _, _, ups = get(base + "/?f=updates")
+    assert sorted(_card_order(ups)) == ["Moved", "Quiet", "Unchecked"]
+
+
+def test_detail_page_of_an_installed_app_shows_its_update(addon):
+    store, _, base, _, _ = addon
+    _seed(store)
+    sid = store.history("acme/moved")[-1].id  # v1, the installed version
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert "<h1>Moved</h1>" in page and "← All apps" in page
+    assert "Update available: v1 → v2" in page
+    assert "Everything the update" in page
+    assert "What we found" in page and "Where it connects" in page
 
 
 def test_check_runs_the_update_diff_reusing_stored_scans(addon):
@@ -348,7 +375,7 @@ def test_memory_guard_warns_and_refuses(addon):
 def test_no_installed_section_outside_an_addon(panel):
     _, _, base, _ = panel
     _, _, page = get(base + "/")
-    assert "Installed from the Marketplace" not in page
+    assert "apps installed from the Marketplace" not in page
 
 
 def test_a_row_shows_its_running_check_instead_of_a_second_button(addon):
@@ -357,13 +384,11 @@ def test_a_row_shows_its_running_check_instead_of_a_second_button(addon):
     job = server.Job(99, "update", "acme/new", "v1", "v2", state="running")
     panel.worker.jobs.insert(0, job)
     _, _, page = get(base + "/")
-    row = page[page.index("acme/new") :]
-    row = row[: row.index("</tr>")]
-    assert "checking…" in row and "Check update" not in row
+    card = _card(page, "Unchecked")
+    assert "checking…" in card and "Check update" not in card
     job.state = "done"
     _, _, page = get(base + "/")
-    row = page[page.index("acme/new") :]
-    assert "Check update" in row[: row.index("</tr>")]
+    assert "Check update" in _card(page, "Unchecked")
 
 
 def test_scans_from_older_rules_dont_count(addon):
@@ -371,8 +396,9 @@ def test_scans_from_older_rules_dont_count(addon):
     store, scan_fn, base, httpd, _ = addon
     store.save(report(repo="acme/fine", ref="v1", tool="0.0.1", score=75))
     _, _, page = get(base + "/")
-    assert "Needs a look" not in page  # the old 75 isn't shown as today's verdict
-    assert "Sniff the 2 not yet sniffed" in page
+    fine = _card(page, "Fine")  # the old 75 isn't shown as today's verdict
+    assert "app grey" in fine and ">75<" not in fine and "Sniff it" in fine
+    assert "Sniff the 5 not yet sniffed" in page
     assert post(base + "/installed-all", {"token": token(base)})[0] == 303
     _worker(httpd).wait()
     assert ("acme/fine", "v1") in scan_fn.calls
