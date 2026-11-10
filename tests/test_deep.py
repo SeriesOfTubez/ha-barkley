@@ -2,6 +2,7 @@
 
 import threading
 import time
+from pathlib import Path
 
 from test_server import HOSTILE, get, post, token
 from test_store import FINDING, report
@@ -174,3 +175,20 @@ def test_page_says_which_readings_the_summary_used(tmp_path):
     _wait(httpd, sid)
     _, _, page = get(f"{base}/scan/{sid}")
     assert "Ask again to include 1 newer code reading" in page
+
+
+def test_unclosed_citations_are_not_left_in_the_text():
+    from sniff_test.report.ai_context import _shown
+
+    t = "a file built from `x.path` (card.js#L87:1505 (card.js#L87:1122-1124, card.js#L87:1505)"
+    assert _shown(t) == "a file built from `x.path`"
+    assert _shown("It reads `y` (a.py:3, b.py:4-5.") == "It reads `y`."
+    assert _shown("It reads `y` (a.py:3-4).") == "It reads `y`."
+
+
+def test_sheet_lists_keep_bullets_inside_zones():
+    from sniff_test import ui
+
+    css = Path(ui.__file__).read_text()
+    assert ".modal .sheet ul { list-style:disc" in css
+    assert css.index(".modal .sheet ul") < css.index(".zone ul")  # wins by specificity, not order

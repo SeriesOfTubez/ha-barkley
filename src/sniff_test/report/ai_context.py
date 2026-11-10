@@ -72,6 +72,8 @@ _DISMISS = re.compile(
 )
 _CITE = re.compile(r"([\w][\w./\-]*\.\w+(?:#L\d+)?):(\d+)(?:\s*[-\u2013]\s*(\d+))?")
 _TICKS = re.compile(r"`([^`\n]{1,80})`")
+_ONE = r"[\w][\w./\-]*\.\w+(?:#L\d+)?:\d+(?:\s*[-\u2013]\s*\d+)?"
+_OPEN_CITES = re.compile(rf"\s*\(\s*{_ONE}(?:\s*,\s*{_ONE})*(?![\w)\-\u2013,])")
 _PARENS = re.compile(r"\s*\((?:[^()]*?\b[\w./\-]+\.\w+(?:#L\d+)?:\d+[^()]*)\)\s*")
 
 
@@ -291,6 +293,7 @@ def _names_ok(snip: dict[str, Any], cites: list[list[Any]], names: list[str]) ->
 def _shown(text: str) -> str:
     """The text without its (file:line) parentheses; the citations are shown apart."""
     text = _PARENS.sub(" ", text)
+    text = _OPEN_CITES.sub(" ", text)  # "(a.py:3" the model never closed
     text = re.sub(r"\s+([.,;:!?])", r"\1", re.sub(r"\s+", " ", text))
     return re.sub(r"[,;:]+([.!?])", r"\1", text).strip()  # "values, (a.py:3)." -> "values."
 

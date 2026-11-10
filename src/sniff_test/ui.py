@@ -160,8 +160,10 @@ div.modal:target { display:block !important; }
 .sheet .sh { display:flex; align-items:center; gap:4px; color:var(--ai); }
 .sheet .sh .x { margin-left:auto; font-size:0.85rem; }
 .sheet .st { color:var(--muted); font-size:0.85rem; margin:2px 0 8px; }
-.sheet h3 { font-size:0.9rem; margin:10px 0 2px; }
-.sheet ul { margin:2px 0 6px; padding-left:1.2em; display:flex; flex-direction:column; gap:4px; }
+.modal .sheet h3 { font-size:0.9rem; margin:14px 0 4px; }
+.modal .sheet ul { list-style:disc; margin:2px 0 6px; padding-left:1.2em; display:flex;
+  flex-direction:column; gap:4px; }
+.modal .sheet li { display:list-item; }
 .sheet .cite { font-size:0.75rem; color:var(--muted); white-space:nowrap; }
 .sheet form { margin-top:10px; }
 pre.code { margin:4px 0 0; padding:6px 8px; background:var(--soft); border-radius:6px;
