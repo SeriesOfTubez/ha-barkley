@@ -45,12 +45,12 @@ _EMOJI = {v.key: v.emoji for _, v in VERDICTS}
 _SEV_CLASS = {"critical": "sev-critical", "high": "sev-high", "medium": "sev-medium"}
 _JOBS_KEPT = 20
 # GitHub API requests a job may need, measured 2026-11-09: 6-7 per scan (repo, release,
-# commit, tarball, asset, release list, compare); an update check is two scans. Every
-# GitHub request in the add-on is made by a job on the one worker thread (the panel's
-# own requests go to HA through the Supervisor), so checking the budget before each job
-# and waiting out a rate limit inside one covers them all. Without a token GitHub allows
-# 60/hour and counts even 304 answers, so nothing can be served from a cache instead.
-_GITHUB_NEED = {"scan": 8, "installed": 8, "update": 15}
+# commit, tarball, asset, release list, compare), plus 2 repo-habit lookups since 0.6.0
+# (open pull requests, open issues); an update check is two scans. Jobs check the budget
+# before they start and wait out a rate limit inside. The one GitHub request outside a
+# job is the versions page's release list (cached 10 min; a limit there says "try later").
+# Without a token GitHub allows 60/hour and counts even 304 answers.
+_GITHUB_NEED = {"scan": 10, "installed": 10, "update": 19}
 _CSP = (
     "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; "
     "form-action 'self'; base-uri 'none'; frame-ancestors 'self'"

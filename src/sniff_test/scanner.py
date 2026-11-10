@@ -13,6 +13,7 @@ from sniff_test.analyzers import (
     osv,
     pypi_meta,
     python_deps,
+    repo_hygiene,
     repo_signals,
     semgrep,
 )
@@ -114,6 +115,8 @@ def scan(
         say("repo signals")
         repo_result, provenance = repo_signals.run(target)
         results.append(repo_result)
+        say("repo habits")
+        hygiene = repo_hygiene.run(target, offline=offline)
         dep_results, resolution, env = _dependency_analyzers(
             target, ws, ha_version, offline, jobs, say
         )
@@ -138,6 +141,7 @@ def scan(
             score=score(findings, complete),
             facts=facts,
             provenance=provenance,
+            hygiene=hygiene,
             resolution=resolution,
             ha_version=env.version if env else None,
         )

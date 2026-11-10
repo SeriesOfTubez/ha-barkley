@@ -1095,6 +1095,99 @@ def zones_html(report: dict[str, Any]) -> str:
 # --- history -----------------------------------------------------------------------------------
 
 
+_SCAN_KIND = {"code": "code", "deps": "dependencies", "secrets": "leaked secrets",
+              "practices": "security practices"}  # fmt: skip
+_ECO = {"pip": "Python packages", "npm": "JavaScript packages", "github-actions": "GitHub "
+        "Actions", "docker": "Docker images"}  # fmt: skip
+
+
+def _ago(days: int | None) -> str:
+    if days is None:
+        return ""
+    if days < 1:
+        return "opened today"
+    if days < 60:
+        return f"{days} day{'s' * (days != 1)} old"
+    return f"{days // 30} months old"
+
+
+def hygiene_html(report: dict[str, Any]) -> str:
+    """The repo's own security habits: context, never scored, inferred from public signs."""
+    h = report.get("hygiene")
+    if not isinstance(h, dict):
+        return ""
+    repo = str(report.get("target", {}).get("repo") or "")
+    yes, no = '<span class="ok">✓</span>', '<span class="muted">–</span>'
+    li = []
+    sc = h.get("scanners") or []
+    if sc:
+        names = ", ".join(
+            f"{e(x.get('name'))} ({_SCAN_KIND.get(x.get('kind'), 'checks')})" for x in sc
+        )
+        li.append(f"{yes} Runs security scans in its GitHub workflows: {names}.")
+    else:
+        li.append(f"{no} No security scanner in its GitHub workflows (CodeQL, Semgrep, Bandit, "
+                  "Trivy, OSV-Scanner, pip-audit, Gitleaks…).")  # fmt: skip
+    dep = h.get("dependabot")
+    if dep is not None:
+        what = ", ".join(_ECO.get(x, x) for x in dep) or "its dependencies"
+        li.append(f"{yes} Dependabot is set up to propose updates for {e(what)}.")
+    if h.get("renovate"):
+        li.append(f"{yes} Renovate is set up to propose dependency updates.")
+    if dep is None and not h.get("renovate"):
+        li.append(f"{no} No Dependabot or Renovate set up for dependency updates.")
+    if h.get("security_policy"):
+        li.append(f"{yes} Has a security policy (<code>{e(h['security_policy'])}</code>): how to "
+                  "report a problem privately.")  # fmt: skip
+    else:
+        li.append(f"{no} No SECURITY.md telling people how to report a problem privately.")
+    prs = h.get("update_prs")
+    if isinstance(prs, dict) and prs.get("off"):
+        li.append(f"{no} Pull requests are turned off on this repository.")
+    elif isinstance(prs, dict):
+        n = int(prs.get("open") or 0)
+        if n:
+            old = _ago(prs.get("oldest_days"))
+            li.append(f"Dependency-update pull requests waiting to be merged: <b>{n}</b>"
+                      + (f", the oldest {old}" if old else "") + ".")  # fmt: skip
+        elif dep is not None or h.get("renovate"):
+            li.append(f"{yes} No dependency-update pull requests left waiting.")
+    iss = h.get("security_issues")
+    if isinstance(iss, dict) and iss.get("off"):
+        li.append(f"{no} Issues are turned off on this repository, so there's no public place "
+                  "to report a problem.")  # fmt: skip
+    elif isinstance(iss, dict):
+        n, of = int(iss.get("open") or 0), int(iss.get("of") or 0)
+        among = " (among the 100 newest open issues)" if of >= 100 else ""
+        if n:
+            items = "".join(
+                f'<li><a href="https://github.com/{e(repo)}/issues/{int(it["number"])}">'
+                f"#{int(it['number'])}</a> {e(it.get('title'), 200)} "
+                f'<span class="muted">{_ago(it.get("age_days"))}</span></li>'
+                for it in iss.get("items") or []
+                if isinstance(it.get("number"), int)
+            )
+            li.append(f"Open issues that look security-related: <b>{n}</b>{among}"
+                      f'<ul class="plain">{items}</ul>')  # fmt: skip
+        else:
+            li.append(f"{yes} No open issue labeled or titled as a security problem "
+                      f"({of} open issue{'s' * (of != 1)} checked).")  # fmt: skip
+    if h.get("dependabot_but_known_vulns"):
+        li.append(
+            '<span class="sev-medium">⚠</span> Dependabot watches these dependencies, yet this '
+            "release ships some with known vulnerabilities (see What we found). Either an alert "
+            "wasn't acted on, or the fix came after this release."
+        )
+    for err in h.get("errors") or []:
+        li.append(f'<span class="muted">Not checked: {e(err, 300)}</span>')
+    return (
+        '<section class="box"><h2>The developer\'s security habits</h2><p class="sub">What the '
+        "app's own repository shows about keeping it safe. This is context and never changes "
+        "the score. GitHub keeps scan alerts private, so it's read from public signs.</p>"
+        '<ul class="plain">' + "".join(f"<li>{x}</li>" for x in li) + "</ul></section>"
+    )
+
+
 def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow]) -> str:
     items = []
     ordered = sorted(rows, key=lambda r: r.id)
@@ -1240,6 +1333,7 @@ def render_app(
         "mentions it, not that it was seen connecting. Web addresses drop anything after "
         f"<code>?</code>, which can hold keys.</p>{zones_html(report)}</section>"
     )
+    parts.append(hygiene_html(report))
     can = explain.can_do(report)
     parts.append(
         '<div class="two"><section class="box"><h2>What it can do inside Home Assistant</h2>'

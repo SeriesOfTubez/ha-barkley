@@ -52,6 +52,7 @@ class ScanResult:
     score: ScoreResult
     facts: list[Fact] = field(default_factory=list)  # inventory: never scored
     provenance: Provenance | None = None
+    hygiene: Any = None  # analyzers.repo_hygiene.Hygiene: context only, never scored
     resolution: Resolution | None = None  # resolved Python dependencies (integrations)
     graph: dict[str, Any] | None = None  # built by the scanner (see report.graph)
     ha_version: str | None = None  # HA release dependencies were resolved against
@@ -136,8 +137,23 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
         "findings": [_finding_json(f) for f in findings],
         "graph": scan.graph if scan.graph is not None else graph.build(scan),
         "provenance": _provenance_json(scan.provenance),
+        "hygiene": _hygiene_json(scan, findings),
         "ai_brief": ai_brief(scan, findings),
     }
+
+
+def _hygiene_json(scan: ScanResult, findings: list[Finding]) -> dict[str, Any] | None:
+    """The repo's own security habits. Not in ai_brief, not scored; titles are untrusted."""
+    from sniff_test.analyzers import repo_hygiene
+
+    d = repo_hygiene.to_dict(scan.hygiene, {f.rule_id for f in findings}, str(scan.target.kind))
+    if d and d.get("security_issues"):
+        for it in d["security_issues"].get("items", []):
+            it["title"] = sanitize_untrusted(it["title"], 200)
+    if d:
+        for sc in d["scanners"]:
+            sc["workflow"] = sanitize_untrusted(sc["workflow"], 100)
+    return d
 
 
 def _provenance_json(p: Provenance | None) -> dict[str, Any] | None:

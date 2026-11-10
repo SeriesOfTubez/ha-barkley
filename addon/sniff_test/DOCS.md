@@ -18,6 +18,20 @@ code you can read, risky dependencies, and repos that changed hands.
   publisher or new findings, or a scan that isn't Good Boy), then updates you haven't
   checked yet. **Check update** runs the update diff, reusing stored scans. Items that
   are up to date fold into one line. The list is refreshed at most every 5 minutes.
+- **The list:** the counts at the top are filters (worth a look, no concerns, privacy
+  notes, updates). Switch between cards and a table; long lists are split into pages. A
+  status box at the top shows what's being sniffed, and the page reloads itself every
+  5 seconds while anything runs.
+- **Find an app to sniff before you install it:** search the Marketplace catalog.
+  **Other versions** lists the 10 newest releases, betas included, so you can sniff the
+  exact version you plan to pick.
+- **Sniff this version again** (on an app's page) runs a fresh scan instead of reusing
+  the stored one.
+- **The developer's security habits** (on an app's page): whether the repository runs
+  security scanners in its workflows, has Dependabot or Renovate and a SECURITY.md, how
+  many dependency-update pull requests wait, and open issues that look security-related.
+  It's context read from public signs (GitHub keeps scan alerts private) and never
+  changes the score. It costs 2 GitHub requests per scan.
 - Every scan is stored in `/data/sniff-test.db` (SQLite), which is part of the app's
   backups. Downloaded HA constraints are cached in `/data/cache` and left out of
   backups.
