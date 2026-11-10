@@ -1,4 +1,4 @@
-"""Where Sniff Test keeps downloaded data (the add-on sets SNIFF_TEST_CACHE=/data/cache)."""
+"""Where Barkley keeps downloaded data (the add-on sets SNIFF_TEST_CACHE=/data/cache)."""
 
 from __future__ import annotations
 

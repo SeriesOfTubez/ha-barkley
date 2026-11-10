@@ -369,7 +369,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         out.print(f"🐕 AI explanations: {'on, via ' + ai if ai else 'off (no ai_entity set)'}"
                   f"{', mode ' + httpd.panel.ai_mode if ai else ''}")  # fmt: skip
     out.print(
-        f"🐕 Sniff Test {__version__} panel on {args.host}:{args.port} "
+        f"🐕 Barkley {__version__} panel on {args.host}:{args.port} "
         f"(clients: {', '.join(sorted(allow))}; store: {store.path})"
     )
     with contextlib.suppress(KeyboardInterrupt):

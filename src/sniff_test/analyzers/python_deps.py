@@ -325,7 +325,7 @@ def run(target: Target, work: Path, env: HAEnv | None) -> tuple[AnalyzerResult, 
                 Severity.LOW,
                 f"{name} {ver} has no prebuilt wheel for "
                 f"{', '.join(sorted(plats))}, so HA would build it from source during "
-                f"install, running its setup code. Sniff Test downloaded the source archive "
+                f"install, running its setup code. Barkley downloaded the source archive "
                 f"without building it; its declared dependencies were resolved as best "
                 f"we can without running setup code.",
                 f"{name}=={ver}",

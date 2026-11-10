@@ -30,7 +30,7 @@ MAX_SUMMARY = 1500
 MAX_FIELDS = 12  # finding groups sent; the rest keep only the fixed plain-English text
 MAX_READINGS = 12  # "Explain in context" readings passed along
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
-TASK_NAME = "Sniff Test: explain a scan"
+TASK_NAME = "Barkley: explain a scan"
 
 _STYLE = (
     "Write for a Home Assistant user who is not a security expert. Use plain words, no "

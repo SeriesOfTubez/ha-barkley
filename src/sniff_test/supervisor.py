@@ -52,7 +52,7 @@ LIST_COMMANDS = (MARKETPLACE_LIST, HACS_LIST)
 _ALLOWED_COMMANDS = frozenset(LIST_COMMANDS)
 _MAX_MESSAGE = 64 * 1024 * 1024  # what the Supervisor accepts from Core
 _TIMEOUT = 20
-# HACS categories Sniff Test can scan, and what it calls them.
+# HACS categories Barkley can scan, and what it calls them.
 SCANNABLE = {"integration": "integration", "plugin": "card"}
 _REPO = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
 _VERSION = re.compile(r"^[A-Za-z0-9_.+/-]{1,100}$")

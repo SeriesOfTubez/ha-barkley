@@ -1,11 +1,11 @@
-# 🐕 Sniff Test
+# 🐕 Barkley
 
-Every integration gets a sniff before it gets into the house.
+Every integration gets a sniff test before it gets into the house.
 
-Sniff Test is a static security scanner for Home Assistant Marketplace (formerly HACS)
-custom integrations and frontend cards. Custom integrations run unsandboxed inside the HA
+Barkley is the dog behind a static security scanner for Home Assistant Marketplace
+(formerly HACS) custom integrations and frontend cards. Custom integrations run unsandboxed inside the HA
 Python process; cards run in the HA frontend origin and can read your tokens. Nobody
-reviews them before you install. Sniff Test does a first pass.
+reviews them before you install. Barkley does a first pass.
 
 > **Status:** early development (step 1: CLI). Not yet a substitute for reading the code.
 
@@ -63,7 +63,7 @@ rest in one line. It compares; it never changes how either scan is scored.
   or sourceless bytecode for HA's Python version), and native `.so` extension modules
   HA's Python would load, either in place of a same-named `.py` or with no source at all.
 - **Scanner evasion**: `<!--` and `-->` hide the rest of a line from Semgrep in JS but are
-  ordinary code in the ES modules HA loads. Sniff Test rewrites them (with the same
+  ordinary code in the ES modules HA loads. Barkley rewrites them (with the same
   meaning) in its copy before scanning, and flags a real `<!--` in code.
 - **Repo signals**: ownership transfers (proven from GitHub's redirect, or from the
   repo's own old links resolving to the same repository), scored by whether the people
@@ -89,7 +89,7 @@ at 89, so a partial scan can never pass as a Good Boy.
 
 ## Safety model
 
-The scanned code is treated as hostile. Sniff Test never executes, imports, builds or
+The scanned code is treated as hostile. Barkley never executes, imports, builds or
 installs it. Archives are extracted into a fresh temp dir outside this repo with
 zip-slip, symlink and size protections, and in-tree `.semgrepignore`/`.gitignore` files
 are removed so a repo can't hide files from the scanner.
@@ -98,7 +98,7 @@ Dependencies are resolved with `uv pip compile --no-build` (wheels only), so no
 `setup.py` or build backend ever runs; packages that only ship source archives are
 downloaded and extracted, never built. Manifest requirements are validated before uv sees
 them, so a manifest can't smuggle in installer options like `-e` or `--index-url`.
-Lockfiles are scanned in isolation with Sniff Test's own osv-scanner config, so a planted
+Lockfiles are scanned in isolation with Barkley's own osv-scanner config, so a planted
 `osv-scanner.toml` can't hide a malicious package.
 
 ## Home Assistant add-on (app)

@@ -410,7 +410,7 @@ class Card:
 
 def card_sentence(c: Card) -> str:
     if c.scan is None:
-        return f"Not sniffed yet with Sniff Test {__version__}."
+        return f"Not sniffed yet with Barkley {__version__}."
     if not c.scan.complete:
         return "The last check didn't finish, so we can't vouch for it yet. Sniff it again."
     rep = c.report or {}
@@ -1469,7 +1469,7 @@ def render_app(
         f'<div><span class="verdict" style="color:var(--{b})">{_VERDICT_EMOJI.get(vkey, "")} '
         f"{e(report.get('verdict', {}).get('label', ''))} · {e(plain)}</span> "
         f'<span class="muted">· {e(kind)} · {e(t.get("ref") or "?", 60)} · {e(t.get("repo") or t.get("input"), 120)}</span></div>'
-        f'<div class="muted small">Checked with Sniff Test {e(report.get("tool", {}).get("version"))}: '
+        f'<div class="muted small">Checked with Barkley {e(report.get("tool", {}).get("version"))}: '
         f"{e(_SOURCE.get(str(t.get('install_source')), t.get('install_source')))}"
         f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}.</div>"
         "</div></section>"
@@ -1548,4 +1548,4 @@ def render_app(
         + f'</section><section class="box"><h2>History</h2>{history_html(base, sid, report, rows)}'
         f'<p class="tech"><a href="{base}/scan/{sid}.json">Technical report (raw JSON)</a></p></section></div>'
     )
-    return page(f"Sniff Test · {title}", "".join(parts), refresh)
+    return page(f"Barkley · {title}", "".join(parts), refresh)

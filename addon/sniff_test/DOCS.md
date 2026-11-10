@@ -1,12 +1,13 @@
-# Sniff Test
+# Barkley
 
-Sniffs Home Assistant Marketplace (HACS) integrations and cards before they get into
-the house: token theft, data sent off-box, obfuscated or compiled code that isn't the
-code you can read, risky dependencies, and repos that changed hands.
+Barkley is the dog who gives Home Assistant Marketplace (HACS) integrations and cards a
+sniff test before they get into the house. It looks for token theft, data sent off-box,
+obfuscated or compiled code that isn't the code you can read, risky dependencies, and
+repos that changed hands.
 
 ## How it works
 
-- Open **Sniff Test** in the sidebar (HA ingress; HA handles the login).
+- Open **Barkley** in the sidebar (HA ingress; HA handles the login).
 - **Sniff it:** scan a repo at the release HACS would install, or at a tag.
 - **What would updating change?** Give the tag you have installed. The app scans the
   release HACS would install now, reuses the stored scan of your installed tag (or
@@ -55,7 +56,7 @@ installed. Scores are computed by fixed rules; no AI decides anything.
 Pick an AI on any app's page (the dropdown lists your AI Task entities; Home Assistant
 renders one fixed template that returns only their ids and names), and each app's page
 gets an **Explain this app** button. Nothing is
-sent until you click it. Sniff Test then calls Home Assistant's `ai_task.generate_data`
+sent until you click it. Barkley then calls Home Assistant's `ai_task.generate_data`
 with that scan's findings: rule names, severities, file names and short code excerpts
 from the public project that was scanned. No Home Assistant data is sent. The request
 goes to whatever AI provider your AI Task entity uses, which for OpenRouter and similar
@@ -70,7 +71,7 @@ in the request.
 ### AI deep analysis (`ai_mode: deep`)
 
 Each finding, each port, and each address the app's docs don't explain gets an
-**Explain in context** button. During the scan, Sniff Test keeps the code around it:
+**Explain in context** button. During the scan, Barkley keeps the code around it:
 the function it's in, the functions that use a flagged address, and one step into the
 functions those call (in the same file or a sibling module of the app). That is at most
 150 lines, and you can open it under "The code it reads" before you click. When you
@@ -78,7 +79,7 @@ click, that code and the question go to your AI; nothing is sent before. It is t
 app's own public code, never anything from your Home Assistant.
 
 The AI answers in short statements, and each must cite the lines it rests on.
-Sniff Test shows a statement only if the cited lines are in the code it sent, they are
+Barkley shows a statement only if the cited lines are in the code it sent, they are
 code (not comments), and they contain the names the statement mentions. A statement
 that calls a finding a false positive, safe or harmless is dropped: the AI may add
 questions but can't clear anything, and the score never changes. The page says how
@@ -93,7 +94,7 @@ with an error on the page.
 Semgrep is the heavy part: plan for 0.5–1 GB of RAM while a large card bundle is
 scanned (an integration scan peaked at about 1.1 GB). Up to `parallel_scans` scans run
 at once, but only while memory allows. Home Assistant sets no memory limit for apps, so
-Sniff Test guards itself: with under 2 GB available on the box the panel warns, and
+Barkley guards itself: with under 2 GB available on the box the panel warns, and
 under 1 GB it refuses to start a scan, so a scan can't push Home Assistant out of
 memory. Diagnostics shows the current figure.
 
@@ -121,7 +122,7 @@ and never opens the installed copies.
    Don't pipe macOS `tar` instead: it adds pax headers that the HA side extracts as
    stray files.
 3. Settings → Apps → the app store → ⋮ → Check for updates (older HA: Settings →
-   Add-ons → Add-on store). Sniff Test appears in the local section. Install it (your box builds the image: a few minutes, about
+   Add-ons → Add-on store). Barkley appears in the local section. Install it (your box builds the image: a few minutes, about
    1 GB of disk), then start it and open it from the sidebar.
 
 To update, stage again, stream the archive again, then use Rebuild on the app's page.

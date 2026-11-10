@@ -1,4 +1,4 @@
-# Sniff Test app image. The build context is the *staged* add-on folder, which also
+# Barkley app image. The build context is the *staged* add-on folder, which also
 # carries the scanner's source in scanner/ (the Supervisor only sees this folder):
 #   uv run python scripts/stage_addon.py && docker build dist/addon/sniff_test
 #
@@ -115,6 +115,6 @@ LABEL \
     io.hass.version="${BUILD_VERSION}" \
     io.hass.arch="${BUILD_ARCH}" \
     io.hass.type="app" \
-    org.opencontainers.image.title="Sniff Test" \
+    org.opencontainers.image.title="Barkley" \
     org.opencontainers.image.description="Static security scanner for HA Marketplace integrations and cards" \
     org.opencontainers.image.licenses="MIT"

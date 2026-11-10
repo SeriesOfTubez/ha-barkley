@@ -362,7 +362,7 @@ def render_diff(d: dict, console: Console, verbose: bool = False) -> None:
     console.print()
     changes = d["changes"]
     if not changes:
-        console.print("Nothing changed that Sniff Test can see. 🦴")
+        console.print("Nothing changed that Barkley can see. 🦴")
         return
     head = [c for c in changes if c["rank"] >= d["headline_rank"]]
     rest = changes if verbose else [c for c in changes if c["rank"] < d["headline_rank"]]

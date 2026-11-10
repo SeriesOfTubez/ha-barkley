@@ -464,7 +464,7 @@ def render_installed(
             f'<form method=post action="{base}/installed-all">'
             f'<input type=hidden name=token value="{token}">'
             f'<input type=hidden name=back value="{back}">'
-            f'<button class="primary">Sniff the {never} not yet sniffed by Sniff Test '
+            f'<button class="primary">Sniff the {never} not yet sniffed by Barkley '
             f"{e(__version__)}</button></form>"
         )
     skipped = ", ".join(f"{n} {e(c)}" for c, n in sorted(state.other.items()))
@@ -555,8 +555,8 @@ def render_index(
     rows = store.history(limit=100)
     against = f" against HA {e(ha)}" if ha else ""
     out = [
-        '<div class="head"><h1>🐕 Sniff Test</h1>'
-        f'<span class="muted small">Sniff Test {e(__version__)}{against}. '
+        '<div class="head"><h1>🐕 Barkley</h1>'
+        f'<span class="muted small">Barkley {e(__version__)}{against}. '
         + (
             "Scans run one at a time. "
             if parallel <= 1
@@ -624,7 +624,7 @@ def render_index(
         f'<p class="muted small"><a href="{base}/doctor">Diagnostics</a>: can each tool run on '
         "this box?</p>"
     )
-    return ui.page("Sniff Test", "".join(out), refresh=5 if active else 0)
+    return ui.page("Barkley", "".join(out), refresh=5 if active else 0)
 
 
 def _update_box(base: str, row: Row | None, token: str) -> str:
@@ -713,7 +713,7 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
     if not entity:
         return (
             '<div class="banner" style="margin-top:10px"><b>🤖 Explain this app with AI</b>'
-            '<p class="small" style="margin-top:6px">Sniff Test can ask your Home Assistant\'s '
+            '<p class="small" style="margin-top:6px">Barkley can ask your Home Assistant\'s '
             "AI to explain these findings in plain words. Choose which AI to use:</p>"
             f"{picker}</div>"
         )
@@ -907,7 +907,7 @@ def render_search(
         out.append(f'<p class="muted small">{len(results)} best matches of {total} '
                    "integrations and cards.</p>")  # fmt: skip
         out.append('<table class="box">' + "".join(rows) + "</table>")
-    return _page("Sniff Test · search", "".join(out))
+    return _page("Barkley · search", "".join(out))
 
 
 def _versions_link(base: str, repo: str) -> str:
@@ -982,12 +982,12 @@ def render_versions(
                    "the default branch.</p>")  # fmt: skip
         out.append(f"<p>{action(None)}</p>")
     running = any(v in ("running", "queued", "waiting") for v in busy.values())
-    return ui.page(f"Sniff Test · versions of {name}", "".join(out), refresh=5 if running else 0)
+    return ui.page(f"Barkley · versions of {name}", "".join(out), refresh=5 if running else 0)
 
 
 def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
     out = [f'<p class="crumb"><a href="{base}/">← All apps</a></p>', "<h1>Diagnostics</h1>",
-           f'<p class="muted">Sniff Test {e(__version__)}. Each tool runs on a one-line '
+           f'<p class="muted">Barkley {e(__version__)}. Each tool runs on a one-line '
            "sample written here, never on scanned code.</p><table>"]  # fmt: skip
     for c in checks:
         cls = "ok" if c.ok else "bad"
@@ -1001,7 +1001,7 @@ def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
             + "</td></tr>"
         )
     out.append("</table>")
-    return _page("Sniff Test diagnostics", "".join(out))
+    return _page("Barkley diagnostics", "".join(out))
 
 
 def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
@@ -1037,7 +1037,7 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
                 "</td></tr>"
             )
         out.append("</table>")
-    return _page("Sniff Test diff", "".join(out))
+    return _page("Barkley diff", "".join(out))
 
 
 # --- HTTP ------------------------------------------------------------------------------
@@ -1357,7 +1357,7 @@ class Panel:
                 self.wfile.write(body)
 
             def _text(self, status: int, msg: str) -> None:
-                self._send(status, _page("Sniff Test", f"<p>🐕 {e(msg)}</p>"))
+                self._send(status, _page("Barkley", f"<p>🐕 {e(msg)}</p>"))
 
             def _redirect(self, to: str) -> None:
                 self.send_response(HTTPStatus.SEE_OTHER)

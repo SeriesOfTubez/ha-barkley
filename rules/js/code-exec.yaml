@@ -113,7 +113,7 @@ rules:
     message: >-
       Uses the HTML comment token `<!--` inside code. Many scanners treat it as a
       comment and skip the rest of the line, but HA loads cards as modules, where it is
-      ordinary code (`a < !--b`). Sniff Test scanned the hidden part anyway; no normal
+      ordinary code (`a < !--b`). Barkley scanned the hidden part anyway; no normal
       code or minifier writes this.
     metadata:
       sniff: {title: Card hides code behind an HTML comment token, severity: medium, category: code_exec}

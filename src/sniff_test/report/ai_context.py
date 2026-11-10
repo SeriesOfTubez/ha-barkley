@@ -31,7 +31,7 @@ from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
 from sniff_test.report import context, explain
 from sniff_test.report.json_report import sanitize_untrusted
 
-TASK_NAME = "Sniff Test: explain in context"
+TASK_NAME = "Barkley: explain in context"
 MAX_CLAIMS = 6
 MAX_QUESTIONS = 3
 MAX_CLAIM = 400

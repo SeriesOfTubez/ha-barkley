@@ -131,7 +131,7 @@ def run(
                     Severity.HIGH,
                     "This requirement installs code straight from a URL or repository instead "
                     "of a package index. What it points at can change at any time without a "
-                    "new release, and it wasn't resolved or checked by Sniff Test.",
+                    "new release, and it wasn't resolved or checked by Barkley.",
                     r.raw,
                 )
             )
