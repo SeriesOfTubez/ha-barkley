@@ -49,6 +49,8 @@ Rules:
 - Say only what the code shows. Put each statement in its own claim field, and end it \
 with the line(s) it rests on, as (file:line) or (file:first-last), using the file names \
 and line numbers shown at the start of each code line.
+- A very long line (bundled JavaScript) is shown as one or more parts, each starting \
+with its file and line number. Cite it the same way, for example (card.js:87).
 - Put every code name you mention in backticks, exactly as written in the code, for \
 example `anon_id` or `session.post`.
 - Cite code lines, not comments or docstrings: what a comment says is not evidence of \
@@ -157,6 +159,19 @@ def describe(report: dict[str, Any], item_id: str) -> tuple[str, dict[str, Any]]
         "does that address come from), and what is sent or received?"
     )
     return q, facts
+
+
+def title(report: dict[str, Any], item_id: str) -> str:
+    """A short label for the item, for the answer sheet (untrusted parts sanitized)."""
+    it = item_of(report, item_id) or {}
+    where = f"{it.get('file')}:{it.get('line')}"
+    if it.get("kind") == "finding":
+        f = next((x for x in report.get("findings", []) if x.get("id") == item_id), {})
+        return f"{explain.explain(str(f.get('rule_id'))).title} · {where}"
+    edge = _edge(report, item_id)
+    if it.get("kind") == "host":
+        return f"Address {_label(report, edge.get('target', ''))} · {where}"
+    return f"Port {str(edge.get('target', '')).split(':', 1)[-1]} · {where}"
 
 
 def code_block(snip: dict[str, Any], nonce: str) -> str:

@@ -40,12 +40,14 @@ CSS = """
   --accent:#2f6b5a; --soft:#edf3f0;
   --green:#2e7d32; --yellow:#9a7800; --orange:#c2560b; --red:#c62828; --grey:#8a938f;
   --green-bg:#e9f4ea; --yellow-bg:#fbf4dc; --orange-bg:#fdeee2; --red-bg:#fbe7e6;
-  --priv:#6a4fb3; --priv-bg:#efeafa; --new:#0b6e99; --new-bg:#e2f1f8; color-scheme:light; }
+  --priv:#6a4fb3; --priv-bg:#efeafa; --new:#0b6e99; --new-bg:#e2f1f8;
+  --ai:#a3267f; --ai-bg:#fbeaf5; color-scheme:light; }
 @media (prefers-color-scheme: dark) { :root { --bg:#121514; --card:#1a1e1c; --fg:#e4e8e6;
   --muted:#95a09b; --line:#2a302d; --accent:#7cc4ad; --soft:#1d2a26;
   --green:#6fcf74; --yellow:#e3c04f; --orange:#ff9f5a; --red:#ff7b72; --grey:#7b8580;
   --green-bg:#18291a; --yellow-bg:#2e2810; --orange-bg:#33210f; --red-bg:#351a19;
-  --priv:#b9a4f0; --priv-bg:#251f38; --new:#6cc4ea; --new-bg:#13293a; color-scheme:dark; } }
+  --priv:#b9a4f0; --priv-bg:#251f38; --new:#6cc4ea; --new-bg:#13293a;
+  --ai:#f07acb; --ai-bg:#33172b; color-scheme:dark; } }
 * { box-sizing:border-box; }
 body { background:var(--bg); color:var(--fg); font:14px/1.5 system-ui,-apple-system,
   "Segoe UI",Roboto,sans-serif; margin:0 auto; max-width:1100px; padding:18px 16px 48px; }
@@ -135,12 +137,33 @@ button.primary { background:var(--accent); color:var(--card); border-color:var(-
   font-size:0.88rem; }
 .finding dt { color:var(--muted); } .finding dd { margin:0; min-width:0; }
 .ai dd { border-left:3px solid var(--new); padding-left:8px; }
-.deep { border-left:3px solid var(--new); background:var(--new-bg); border-radius:0 8px 8px 0;
-  padding:8px 10px; margin-top:8px; font-size:0.86rem; }
-.deep .dh { font-weight:600; color:var(--new); margin-bottom:4px; }
-.deep ul { margin:2px 0 4px; padding-left:1.1em; display:flex; flex-direction:column; gap:3px; }
-.deep .cite { font-size:0.75rem; color:var(--muted); white-space:nowrap; }
-.deep form { margin-top:6px; }
+.aib { display:inline-block; font-size:0.68rem; font-weight:700; letter-spacing:0.04em;
+  color:var(--card); background:var(--ai); border-radius:4px; padding:1px 5px; margin-right:6px;
+  vertical-align:1px; }
+.ai dt { color:var(--ai); font-weight:600; } .ai dd { border-left:3px solid var(--ai); }
+.aibox { border-left:3px solid var(--ai); background:var(--ai-bg); border-radius:0 8px 8px 0;
+  padding:8px 10px; margin-top:8px; }
+button.ai, .deepi button { color:var(--ai); border-color:var(--ai); background:var(--ai-bg);
+  font-weight:600; }
+.deepi { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; }
+.deepi form { margin:0; }
+a.aichip { display:inline-block; font-size:0.8rem; font-weight:600; color:var(--ai);
+  background:var(--ai-bg); border:1px solid var(--ai); border-radius:10px; padding:2px 10px;
+  text-decoration:none; }
+a.aichip.warn { color:var(--orange); border-color:var(--orange); }
+div.modal { display:none !important; position:fixed; inset:0; z-index:50; overflow:auto; padding:24px 12px; }
+div.modal:target { display:block !important; }
+.modal .shade { position:fixed; inset:0; background:rgba(0,0,0,0.55); }
+.modal .sheet { position:relative; max-width:880px; margin:0 auto; background:var(--card);
+  color:var(--fg); border:1px solid var(--line); border-top:4px solid var(--ai);
+  border-radius:12px; padding:14px 18px 18px; font-size:0.9rem; }
+.sheet .sh { display:flex; align-items:center; gap:4px; color:var(--ai); }
+.sheet .sh .x { margin-left:auto; font-size:0.85rem; }
+.sheet .st { color:var(--muted); font-size:0.85rem; margin:2px 0 8px; }
+.sheet h3 { font-size:0.9rem; margin:10px 0 2px; }
+.sheet ul { margin:2px 0 6px; padding-left:1.2em; display:flex; flex-direction:column; gap:4px; }
+.sheet .cite { font-size:0.75rem; color:var(--muted); white-space:nowrap; }
+.sheet form { margin-top:10px; }
 pre.code { margin:4px 0 0; padding:6px 8px; background:var(--soft); border-radius:6px;
   font:0.76rem/1.45 ui-monospace,"SF Mono",Menlo,monospace; white-space:pre-wrap;
   overflow-wrap:anywhere; max-height:420px; overflow:auto; }
@@ -784,7 +807,7 @@ def finding_html(
             )
             + "</details>"
         )
-    ai_html = f"<dt>AI explanation</dt><dd>{e(ai, 1200)}</dd>" if ai else ""
+    ai_html = f"<dt>{AI_BADGE}explanation</dt><dd>{e(ai, 1200)}</dd>" if ai else ""
     return (
         f'<div class="finding"><div class="lvl {e(f["severity"])}">{e(explain.level(f["severity"]))}</div>'
         f"<div><h3>{e(ex.title)}</h3><dl{' class=ai' if ai else ''}>"
@@ -829,73 +852,99 @@ def code_html(snip: dict[str, Any]) -> str:
     return '<pre class="code">' + "\n".join(out) + "</pre>"
 
 
+AI_BADGE = '<span class="aib">✦ AI</span>'
+
+
 def deep_html(
     form: str,
     *,
+    item_id: str,
+    title: str,
     answer: dict[str, Any] | None,
     state: str,
     error: str,
     snip: dict[str, Any],
     entity: str,
 ) -> str:
-    """One item's "Explain in context" block. `form` is the server-built button form with a
-    `{label}` placeholder. Everything from the AI or the repo is escaped."""
+    """One item's "Explain in context": a compact chip or button where the item is, and
+    a full-width sheet (`#ai-<id>`, opened with CSS :target, no script) with the answer
+    and the code. `form` is the server-built button form with a `{label}` placeholder.
+    Everything from the AI or the repo is escaped."""
     from sniff_test.report.context import line_count
 
+    mid = f"ai-{e(item_id, 40)}"
     lines = line_count(snip)
+    nseg = len(snip.get("segments", []))
+    parts_txt = f", {nseg} parts" if nseg > 1 else ""
     sent = (
-        f"<details><summary>The code it reads ({lines} line{'s' if lines != 1 else ''}"
-        f"{', ' + str(len(snip.get('segments', []))) + ' parts' if len(snip.get('segments', [])) > 1 else ''})"
-        f"</summary>{code_html(snip)}</details>"
+        f"<details{'' if answer else ' open'}><summary>The code it reads ({lines} line"
+        f"{'s' if lines != 1 else ''}{parts_txt})</summary>{code_html(snip)}</details>"
     )
     if state == "running":
-        return ('<div class="deep"><div class="dh">🔎 Reading the code…</div>'
-                '<p class="muted small">This page refreshes by itself.</p></div>')  # fmt: skip
-    if error:
-        return (f'<div class="deep"><div class="dh">🔎 The AI didn\'t answer</div>'
-                f'<p class="small">{e(error, 400)}</p>{form.replace("{label}", "Try again")}'
-                "</div>")  # fmt: skip
-    if not answer:
-        return (
-            '<div class="deep" style="background:none">'
-            + form.replace("{label}", "🔎 Explain in context")
-            + f'<p class="tech">Sends these {lines} lines of the app\'s own code (public on '
-            f"GitHub, no Home Assistant data) to the AI behind <code>{e(entity, 120)}</code>."
-            f"</p>{sent}</div>"
+        inline = f'<a class="aichip" href="#{mid}">✦ AI is reading the code…</a>'
+        body = '<p class="small">Reading the code… this page refreshes by itself.</p>' + sent
+    elif error:
+        inline = f'<a class="aichip warn" href="#{mid}">✦ The AI didn\'t answer</a>'
+        body = (f'<p class="small">{e(error, 400)}</p>{form.replace("{label}", "✦ Try again")}'
+                + sent)  # fmt: skip
+    elif not answer:
+        inline = (
+            form.replace("{label}", "✦ Explain in context")
+            + f'<a class="small" href="#{mid}">see the {lines} lines it would send</a>'
         )
-    claims = answer.get("claims") or []
-    questions = answer.get("questions") or []
-    body = ['<div class="deep"><div class="dh">🔎 The AI\'s reading of the code</div>']
-    if claims:
-        body.append(
-            "<ul>"
-            + "".join(f"<li>{_ai_text(c['text'], 400)}{_cite(c['cites'])}</li>" for c in claims)
-            + "</ul>"
+        body = (
+            f'<p class="small">Explain in context sends these {lines} lines of the app\'s own '
+            f"code (public on GitHub, no Home Assistant data) to the AI behind "
+            f"<code>{e(entity, 120)}</code>. Nothing is sent until you click.</p>"
+            + form.replace("{label}", "✦ Explain in context")
+            + sent
         )
     else:
-        body.append('<p class="small">It gave no statement we could check against the code.</p>')
-    if questions:
-        body.append(
-            '<div class="small"><b>Worth checking</b></div><ul>'
-            + "".join(f"<li>{_ai_text(q['text'], 300)}{_cite(q['cites'])}</li>" for q in questions)
-            + "</ul>"
+        claims = answer.get("claims") or []
+        questions = answer.get("questions") or []
+        n_c, n_q = len(claims), len(questions)
+        summary = f"{n_c} statement{'s' if n_c != 1 else ''}"
+        if n_q:
+            summary += f", {n_q} question{'s' if n_q != 1 else ''}"
+        inline = f'<a class="aichip" href="#{mid}">✦ AI\'s reading of the code: {summary}</a>'
+        out = []
+        if claims:
+            out.append(
+                "<ul>"
+                + "".join(f"<li>{_ai_text(c['text'], 400)}{_cite(c['cites'])}</li>" for c in claims)
+                + "</ul>"
+            )
+        else:
+            out.append('<p class="small">It gave no statement we could check against the code.</p>')
+        if questions:
+            out.append(
+                "<h3>Worth checking</h3><ul>"
+                + "".join(
+                    f"<li>{_ai_text(q['text'], 300)}{_cite(q['cites'])}</li>" for q in questions
+                )
+                + "</ul>"
+            )
+        dropped = answer.get("dropped") or []
+        if dropped:
+            why = ", ".join(e(w, 60) for w in sorted(set(dropped)))
+            n = len(dropped)
+            out.append(f'<p class="tech">Left out {n} statement{"s" if n != 1 else ""} that '
+                       f"didn't check out ({why}).</p>")  # fmt: skip
+        out.append(
+            f'<p class="tech">By <code>{e(answer.get("entity_id"), 120)}</code>, '
+            f"{e(str(answer.get('created', ''))[:16].replace('T', ' '))} UTC. Each statement "
+            "cites lines we sent, which contain the code it names (comments don't count). It "
+            "can still be wrong, and it can't change the score or clear a finding.</p>"
         )
-    dropped = answer.get("dropped") or []
-    if dropped:
-        why = ", ".join(e(w, 60) for w in sorted(set(dropped)))
-        n = len(dropped)
-        body.append(f'<p class="tech">Left out {n} statement{"s" if n != 1 else ""} that '
-                    f"didn't check out ({why}).</p>")  # fmt: skip
-    body.append(
-        f'<p class="tech">By <code>{e(answer.get("entity_id"), 120)}</code>, '
-        f"{e(str(answer.get('created', ''))[:16].replace('T', ' '))} UTC. Each statement cites "
-        "lines we sent, which contain the code it names (comments don't count). It can still "
-        "be wrong, and it can't change the score or clear a finding.</p>"
-        + sent
-        + form.replace("{label}", "Ask again")
-        + "</div>"
+        body = "".join(out) + sent + form.replace("{label}", "✦ Ask again")
+    sheet = (
+        f'<div class="modal" id="{mid}"><a class="shade" href="#item-{e(item_id, 40)}" '
+        'aria-label="Close"></a><div class="sheet" role="dialog">'
+        f'<div class="sh">{AI_BADGE}<b>The AI\'s reading of the code</b>'
+        f'<a class="x" href="#item-{e(item_id, 40)}">Close ✕</a></div>'
+        f'<div class="st">{e(title, 200)}</div>{body}</div></div>'
     )
-    return "".join(body)
+    return f'<div class="deepi" id="item-{e(item_id, 40)}">{inline}</div>{sheet}'
 
 
 def privacy_html(notes: list[privacy.Note]) -> str:
@@ -1425,8 +1474,8 @@ def render_app(
     parts.append(
         f'<section class="box"><h2>In short</h2><p class="inshort">{in_short(report)}</p>'
         + (
-            f'<dl class="finding ai" style="display:block;border:0;padding:8px 0 0"><dt>AI explanation</dt>'
-            f"<dd>{e(summary, 1500)}</dd></dl>"
+            f'<div class="aibox"><div class="small">{AI_BADGE}<b>AI explanation</b></div>'
+            f"<p>{e(summary, 1500)}</p></div>"
             if summary
             else ""
         )

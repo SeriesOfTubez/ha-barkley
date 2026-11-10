@@ -43,7 +43,9 @@ MAX_TOTAL = 300_000  # characters per report
 MAX_FILE = 2_000_000  # bytes read from one file
 MAX_PY_FILES = 300  # files parsed per report when looking for importers
 LONG_LINE = 400  # longer lines are cut (minified bundles)
-WINDOW = 1_200  # characters each side of the hint on a long line
+WINDOW = 1_200  # characters each side of the hint on a long line (shared by its windows)
+MIN_WINDOW = 300  # characters each side, at least, when a line has several windows
+MAX_WINDOWS = 5  # windows on one long line
 TEXT_RADIUS = 25  # lines each side for non-Python files
 FUNC_WINDOW = 50  # lines each side of the location inside a very long function
 HOST_CLASSES = UNEXPLAINED | {"messaging"}  # "unknown addresses": no docs or name explain them
@@ -56,7 +58,7 @@ class Item:
     kind: str  # finding | host | port
     file: str
     line: int
-    hint: str = ""  # text to centre a cut line on (host, evidence)
+    hints: tuple[str, ...] = ()  # text to centre a cut line on (host, evidence, names)
 
 
 def items(findings: Iterable[dict[str, Any]], graph: dict[str, Any] | None) -> list[Item]:
@@ -66,12 +68,23 @@ def items(findings: Iterable[dict[str, Any]], graph: dict[str, Any] | None) -> l
     order = ["critical", "high", "medium", "low", "info"]
     out: list[Item] = []
     seen_rules: set[str] = set()
+    findings = list(findings)
     for f in sorted(findings, key=lambda f: order.index(f.get("severity", "info"))):
         if f["rule_id"] in seen_rules:
             continue
         seen_rules.add(f["rule_id"])
         if f.get("file") and f.get("line") and f.get("category") != "dependency":
-            out.append(Item(f["id"], "finding", f["file"], int(f["line"]), f.get("evidence") or ""))
+            # Every occurrence on the same line (a minified bundle: Bambu's 5 token uses
+            # are all on line 87) gets its own window.
+            same = [
+                x.get("evidence") or ""
+                for x in findings
+                if x["rule_id"] == f["rule_id"]
+                and x.get("file") == f["file"]
+                and x.get("line") == f["line"]
+            ]
+            hints = tuple(dict.fromkeys([f.get("evidence") or "", *same]))[:MAX_WINDOWS]
+            out.append(Item(f["id"], "finding", f["file"], int(f["line"]), hints))
     g = graph or {}
     nodes = {n["id"]: n for n in g.get("nodes", [])}
     hosts, ports = [], []
@@ -82,11 +95,11 @@ def items(findings: Iterable[dict[str, Any]], graph: dict[str, Any] | None) -> l
         attrs = edge.get("attrs", {})
         if edge["relation"] == "connects_to" and attrs.get("class") in HOST_CLASSES:
             label = nodes.get(edge["target"], {}).get("label", "")
-            hosts.append(Item(edge["id"], "host", sample["file"], int(sample["line"]), label))
+            hosts.append(Item(edge["id"], "host", sample["file"], int(sample["line"]), (label,)))
         elif edge["relation"] == "uses_port":
             hint = (attrs.get("names") or [""])[0]
-            ports.append(Item(edge["id"], "port", sample["file"], int(sample["line"]), hint))
-    return out + sorted(hosts, key=lambda i: i.hint) + ports
+            ports.append(Item(edge["id"], "port", sample["file"], int(sample["line"]), (hint,)))
+    return out + sorted(hosts, key=lambda i: i.hints) + ports
 
 
 def build(root: Path, findings: list[dict[str, Any]], graph: dict[str, Any] | None) -> dict:
@@ -99,7 +112,7 @@ def build(root: Path, findings: list[dict[str, Any]], graph: dict[str, Any] | No
     for it in items(findings, graph):
         if len(out_items) >= MAX_ITEMS:
             break
-        snip = snippet(tree, it.file, it.line, it.hint)
+        snip = snippet(tree, it.file, it.line, it.hints)
         if snip is None:
             continue
         key = repr([(s["file"], s["start"], s.get("col", 0)) for s in snip["segments"]])
@@ -224,7 +237,11 @@ def _read(root: Path, rel: str) -> str | None:
     return data.decode("utf-8", "replace")
 
 
-def snippet(tree: _Tree | Path, rel: str, line: int, hint: str = "") -> dict[str, Any] | None:
+def snippet(
+    tree: _Tree | Path, rel: str, line: int, hints: str | tuple[str, ...] = ()
+) -> dict[str, Any] | None:
+    if isinstance(hints, str):
+        hints = (hints,)
     if isinstance(tree, Path):
         tree = _Tree(tree)
     text = tree.text(rel)
@@ -237,7 +254,7 @@ def snippet(tree: _Tree | Path, rel: str, line: int, hint: str = "") -> dict[str
         py = tree.py(rel)
         if py is not None:
             return _python(tree, py, line)
-    return _text(rel, lines, line, hint)
+    return _text(rel, lines, line, hints)
 
 
 # --- Python -----------------------------------------------------------------------------------
@@ -483,16 +500,39 @@ def _python_noncode(text: str, tree: ast.AST) -> tuple[set[int], dict[int, int]]
 # --- other text (cards) -----------------------------------------------------------------------
 
 
-def _text(rel: str, lines: list[str], line: int, hint: str) -> dict[str, Any]:
+def find_hint(target: str, hint: str) -> int:
+    """Where `hint` is in `target`, -1 if nowhere. Evidence is stored cut, with "…" at
+    either end (`…tch("/api/bambu_lab/print_history",…`), so the marks are dropped and,
+    failing a full match, shorter pieces from its start are tried."""
+    for piece in (p.strip() for p in hint.split("…")):
+        if len(piece) < 8:
+            continue
+        for n in (len(piece), 80, 40, 20):
+            if n <= len(piece):
+                col = target.find(piece[:n])
+                if col >= 0:
+                    return col
+    return -1
+
+
+def _text(rel: str, lines: list[str], line: int, hints: tuple[str, ...]) -> dict[str, Any]:
     target = lines[line - 1]
     if len(target) > LONG_LINE:
-        col = target.find(hint) if hint else -1
-        if col < 0:
-            col = len(target) // 2
-        a = max(0, col - WINDOW)
-        b = min(len(target), col + len(hint) + WINDOW)
-        seg = {"file": rel, "start": line, "col": a, "code": [_clean(target[a:b])]}
-        return {"file": rel, "lang": "text", "segments": [seg], "noncode": {}, "comment_col": {}}
+        cols = sorted({c for c in (find_hint(target, h) for h in hints if h) if c >= 0})
+        if not cols:
+            cols = [len(target) // 2]
+        side = max(MIN_WINDOW, WINDOW // len(cols))
+        spans: list[list[int]] = []
+        for c in cols:
+            a, b = max(0, c - side), min(len(target), c + side)
+            if spans and a <= spans[-1][1]:
+                spans[-1][1] = max(spans[-1][1], b)
+            else:
+                spans.append([a, b])
+        segs = [
+            {"file": rel, "start": line, "col": a, "code": [_clean(target[a:b])]} for a, b in spans
+        ]
+        return {"file": rel, "lang": "text", "segments": segs, "noncode": {}, "comment_col": {}}
     a, b = max(1, line - TEXT_RADIUS), min(len(lines), line + TEXT_RADIUS)
     noncode = {
         n
@@ -553,12 +593,13 @@ def _segments(
 
 
 def line_text(snip: dict[str, Any], file: str, n: int) -> str | None:
-    """The code we sent for file:n (None if not sent). A cut line is its window."""
+    """The code we sent for file:n (None if not sent). A cut line is its windows, joined."""
+    parts = []
     for s in snip.get("segments", []):
         i = n - int(s["start"])
         if s.get("file") == file and 0 <= i < len(s["code"]):
-            return s["code"][i]
-    return None
+            parts.append(s["code"][i])
+    return "\n".join(parts) if parts else None
 
 
 def code_part(snip: dict[str, Any], file: str, n: int) -> str | None:

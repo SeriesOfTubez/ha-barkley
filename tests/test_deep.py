@@ -49,7 +49,7 @@ def test_summary_mode_has_no_button_and_refuses_the_call(tmp_path):
     store, base, httpd = _serve(tmp_path, lambda *a: calls.append(a), mode="summary")
     sid = store.save(_report(tmp_path))
     _, _, page = get(f"{base}/scan/{sid}")
-    assert "🔎 Explain in context" not in page and "AI summary only" in page
+    assert "✦ Explain in context" not in page and "AI summary only" in page
     assert post(f"{base}/explain-item", {"token": token(base), "scan": sid, "item": FID})[0] == 400
     assert not calls
     httpd.shutdown()
@@ -71,10 +71,15 @@ def test_deep_flow_sends_the_snippet_and_shows_only_checked_claims(tmp_path):
     store, base, httpd = _serve(tmp_path, fake_ai)
     sid = store.save(_report(tmp_path))
     _, _, page = get(f"{base}/scan/{sid}")
-    assert "🔎 Explain in context" in page and "Sends these 4 lines" in page
+    assert (
+        "✦ Explain in context" in page
+        and "sends these 4 lines" in page
+        and f'id="ai-{FID}"' in page
+    )
     assert HOSTILE not in page  # the code we'd send is shown, escaped
     assert not calls  # nothing is sent before the click
-    assert post(f"{base}/explain-item", {"token": token(base), "scan": sid, "item": FID})[0] == 303
+    status, headers = post(f"{base}/explain-item", {"token": token(base), "scan": sid, "item": FID})
+    assert status == 303 and headers["Location"].endswith(f"#ai-{FID}")  # opens its sheet
     _wait(httpd, sid)
     assert len(calls) == 1 and "diag.py:3| " in calls[0] and "secrets.yaml" in calls[0]
     _, _, page = get(f"{base}/scan/{sid}")
@@ -83,6 +88,7 @@ def test_deep_flow_sends_the_snippet_and_shows_only_checked_claims(tmp_path):
     assert "(diag.py:3\u20134)" in page
     assert "The code is safe" not in page and "A comment asks" not in page
     assert "Left out 2 statements" in page
+    assert "reading of the code: 1 statement, 1 question" in page
     assert "<script>" not in page
     assert store.report(sid)["score"] == 75  # untouched
     assert 'aria-label="Score 75 of 100"' in page
@@ -108,7 +114,7 @@ def test_mode_is_chosen_in_the_panel_and_remembered(tmp_path):
     assert post(f"{base}/ai-mode", {"token": token(base), "scan": sid, "mode": "x"})[0] == 400
     assert store.setting("ai_mode") == "deep"
     _, _, page = get(f"{base}/scan/{sid}")
-    assert "🔎 Explain in context" in page
+    assert "✦ Explain in context" in page
     httpd.shutdown()
     _s2, _b2, httpd2 = _serve(tmp_path, lambda *a: {}, mode="summary")  # restart
     assert httpd2.panel.ai_mode == "deep"  # the panel's choice wins over the option
@@ -119,5 +125,5 @@ def test_old_reports_without_context_show_no_button(tmp_path):
     store, base, httpd = _serve(tmp_path, lambda *a: {})
     sid = store.save(report(findings=[FINDING], score=75))
     _, _, page = get(f"{base}/scan/{sid}")
-    assert "🔎 Explain in context" not in page
+    assert "✦ Explain in context" not in page
     httpd.shutdown()

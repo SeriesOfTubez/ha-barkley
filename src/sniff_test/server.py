@@ -718,7 +718,7 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
     form = (f'<form method=post action="{base}/explain" class="act" style="margin-top:8px">'
             f'<input type=hidden name=token value="{token}">'
             f'<input type=hidden name=scan value="{sid}">'
-            f'<button class="primary">{{label}}</button></form>')  # fmt: skip
+            f'<button class="ai">✦ {{label}}</button></form>')  # fmt: skip
     note = ('<p class="tech">Sends this scan\'s findings (about a public project, no Home '
             f"Assistant data) to the AI provider behind <code>{e(entity, 120)}</code>. The AI "
             "explains only; it can't change the score or the findings.</p>")  # fmt: skip
@@ -772,7 +772,8 @@ def render_scan(
                     f'<input type=hidden name=scan value="{sid}">'
                     f'<input type=hidden name=item value="{e(item_id, 40)}">'
                     "<button>{label}</button></form>")  # fmt: skip
-            return ui.deep_html(form, answer=answers.get(item_id), state=state, error=err,
+            return ui.deep_html(form, item_id=item_id, title=ai_context.title(report, item_id),
+                                answer=answers.get(item_id), state=state, error=err,
                                 snip=snip, entity=ai_entity)  # fmt: skip
 
     return ui.render_app(
@@ -1481,7 +1482,7 @@ class Panel:
                             )
                     except StoreError as ex:
                         return self._text(HTTPStatus.NOT_FOUND, str(ex))
-                    return self._redirect(f"{self._base()}/scan/{sid}")
+                    return self._redirect(f"{self._base()}/scan/{sid}#ai-{item}")
                 if path == "/explain":
                     if not get("scan").isdigit() or not panel.ai_entity:
                         return self._text(HTTPStatus.BAD_REQUEST, "no AI Task entity set")
