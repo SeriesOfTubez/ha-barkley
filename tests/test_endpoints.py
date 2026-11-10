@@ -38,7 +38,15 @@ def _write(root: Path, name: str, text: str, manifest: dict | None = None) -> Pa
 
 
 def _hosts(result) -> dict[str, str]:
-    return {f.key: f.attrs["class"] for f in result.facts}
+    return {f.key: f.attrs["class"] for f in result.facts if f.kind in ("host", "ip")}
+
+
+def _ports(result) -> list[tuple[int, str, str]]:
+    return [
+        (int(f.key), f.attrs["names"][0], f"{f.file}:{f.line}")
+        for f in result.facts
+        if f.kind == "port"
+    ]
 
 
 def test_python_comments_and_docstrings_are_not_endpoints(tmp_path):
@@ -169,3 +177,90 @@ def test_clean_fixture_is_quiet(fixtures):
     r = endpoints.run(_target(root))
     assert r.findings == []
     assert _hosts(r) == {"api.acme-weather.example": "declared"}
+
+
+def test_analytics_class_stays_unexplained(tmp_path, monkeypatch):
+    monkeypatch.setattr(endpoints, "host_classes", lambda: (("analytics", "metrics.invalid"),))
+    root = _write(tmp_path, "x.py", 'DSN = "https://o1.ingest.metrics.invalid/api/7"\n')
+    r = endpoints.run(_target(root))
+    assert _hosts(r) == {"o1.ingest.metrics.invalid": "analytics"}
+    assert r.findings == []
+    # same weight as "undeclared" in the correlation, so scores don't move
+    assert "analytics" in endpoints.UNEXPLAINED
+
+
+def test_bundled_table_has_analytics():
+    assert ("analytics", "sentry.io") in endpoints.host_classes()
+
+
+def test_url_samples_and_ports(tmp_path):
+    root = _write(
+        tmp_path,
+        "x.py",
+        'A = "https://user:pw@api.acme-weather.example:8443/v2/data?key=SECRET#frag"\n'
+        'B = "http://192.168.1.20:8080/status"\n'
+        'C = "https://api.acme-weather.example/v2/{device}/state"\n'
+        'D = "https://x.invalid/bot123456789:AAHf0123456789abcdefghijABCDEFGHIJ_k/send"\n',
+    )
+    r = endpoints.run(_target(root))
+    urls = {f.key: f.attrs.get("urls") for f in r.facts if f.kind in ("host", "ip")}
+    ports = {f.key: f.attrs.get("ports") for f in r.facts if f.kind in ("host", "ip")}
+    assert urls["192.168.1.20"] == ["http://192.168.1.20:8080/status"]
+    assert ports["192.168.1.20"] == [8080]
+    api = [f.attrs.get("urls", []) for f in r.facts if f.key == "api.acme-weather.example"]
+    assert sorted(u for us in api for u in us) == [
+        "https://api.acme-weather.example/v2/…/state",
+        "https://api.acme-weather.example:8443/v2/data",
+    ]
+    assert urls["x.invalid"] == ["https://x.invalid/…"]  # the credential path is hidden
+    assert not any("SECRET" in str(f.attrs) or "pw@" in str(f.attrs) for f in r.facts)
+
+
+def test_url_samples_are_capped_per_host(tmp_path):
+    lines = "".join(f'U{i} = "https://api.acme-weather.example/p{i}"\n' for i in range(9))
+    r = endpoints.run(_target(_write(tmp_path, "x.py", lines)))
+    kept = [u for f in r.facts for u in f.attrs.get("urls", [])]
+    assert len(kept) == 5
+
+
+def test_ports_from_python(tmp_path):
+    root = _write(
+        tmp_path,
+        "client.py",
+        "port = 6000\n"
+        "class C:\n"
+        "    def __init__(self, host: str, mqtt_port: int = 1883):\n"
+        "        self._port = 8883\n"
+        "        ftp.connect(host=h, port=990, timeout=15)\n"
+        'CFG = {"mqtt_port": 1884, CONF_PORT: 502}\n'
+        "DEFAULT_MODBUS_PORT = 502\n"
+        "SUPPORTS_EARLY_FTP_DOWNLOAD = 24\n"  # not a port name
+        "port_count = 4\n"  # a count, not a port
+        "if port == 80: pass\n"  # a comparison, not an assignment
+        "timeout = 990\n"
+        "PORT = 0\n",  # out of range
+    )
+    assert _ports(endpoints.run(_target(root))) == [
+        (6000, "port", "client.py:1"),
+        (1883, "mqtt_port", "client.py:3"),
+        (8883, "_port", "client.py:4"),
+        (990, "port", "client.py:5"),
+        (1884, "mqtt_port", "client.py:6"),
+        (502, "CONF_PORT", "client.py:6"),
+        (502, "DEFAULT_MODBUS_PORT", "client.py:7"),
+    ]
+
+
+def test_ports_skip_test_doubles_and_cards(tmp_path):
+    _write(tmp_path, "mock_mqtt_client.py", "def connect(host, port: int = 1883): ...\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "helpers.py").write_text("port = 1883\n")
+    assert _ports(endpoints.run(_target(tmp_path))) == []
+    (tmp_path / "card.py").write_text("port = 1883\n")
+    card = Target(source="x", kind=TargetKind.PLUGIN, root=tmp_path, source_root=tmp_path)
+    assert _ports(endpoints.run(card)) == []
+
+
+def test_ports_never_from_comments_or_broken_files(tmp_path):
+    _write(tmp_path, "x.py", '# port = 1883\n"""port = 21"""\nbroken = (\n')
+    assert _ports(endpoints.run(_target(tmp_path))) == []

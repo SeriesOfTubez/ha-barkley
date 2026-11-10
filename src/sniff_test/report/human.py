@@ -108,7 +108,7 @@ def hooks_line(graph: dict | None) -> str:
     undeclared = sum(
         1
         for e in hosts
-        if e["attrs"].get("class") in ("undeclared", "developer_hosted", "public_ip")
+        if e["attrs"].get("class") in ("undeclared", "developer_hosted", "analytics", "public_ip")
     )
     if hosts:
         parts.append(

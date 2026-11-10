@@ -12,6 +12,11 @@ ships 14 donation/doc links; iCloud3 pings a dict of public DNS servers):
 
 Undeclared hosts feed the possible-exfil correlation (`correlate.py`).
 
+Host edges also carry up to five URL samples (scheme, host, port and path; userinfo,
+query and fragment dropped, and the path of a credential URL hidden) and the URL ports.
+Port numbers assigned in Python (`port = 6668`, `port=990`, `"mqtt_port": 1883`) become
+`port` facts. Neither is scored; the panel shows them and builds privacy notes on them.
+
 Nothing is executed: Python is split into tokens with `tokenize` (a lexer) so comments
 and docstrings are skipped; JS is matched with regexes.
 """
@@ -363,8 +368,8 @@ def extract(root: Path) -> tuple[list[HostRef], list[tuple[str, int]]]:
 
 
 def classify(host: str, declared: Declared) -> str:
-    """One of: namespace, local, public_ip, exfil_service, messaging, developer_hosted,
-    infrastructure, link, declared, undeclared."""
+    """One of: namespace, local, public_ip, resolver, exfil_service, messaging,
+    developer_hosted, analytics, infrastructure, link, declared, undeclared."""
     bare = host.strip("[]")
     try:
         ip = ipaddress.ip_address(bare)
@@ -385,7 +390,150 @@ def classify(host: str, declared: Declared) -> str:
 
 
 # Classes the correlation treats as "data could leave to somewhere unexplained".
-UNEXPLAINED = frozenset({"undeclared", "developer_hosted", "public_ip", "exfil_service"})
+# `analytics` was `undeclared` before it had a class of its own; keeping it here keeps
+# the correlation (and so every score) exactly as it was.
+UNEXPLAINED = frozenset(
+    {"undeclared", "developer_hosted", "analytics", "public_ip", "exfil_service"}
+)
+
+_URL_SAMPLES = 5
+_SAMPLE_MAX = 200
+
+
+def url_sample(url: str | None, credential: bool = False) -> str | None:
+    """scheme://host[:port]/path, with userinfo, query and fragment dropped (they can hold
+    keys). A credential URL keeps only scheme://host/…"""
+    if not url or not (m := _URL.match(url)):
+        return None
+    base = f"{m['scheme'].lower()}://{m['host'].lower()}"
+    if m["port"]:
+        base += f":{int(m['port'])}"
+    if credential:
+        return base + "/…"
+    path = re.split(r"[?#]", m["path"] or "", maxsplit=1)[0]
+    path = re.sub(r"\$\{[^}]*\}?|\{[^}]*\}?", "…", path)  # template holes
+    path = path.rstrip(").,;:!]")  # prose / markdown around the URL
+    return (base + path)[:_SAMPLE_MAX]
+
+
+# --- ports from Python code (a lexer, never executed) ----------------------------------
+
+_PORT_NAME = re.compile(r"(?i)(?:^|_)ports?(?:$|_)")
+_NOT_A_PORT = re.compile(r"(?i)(?:^|_)(?:count|num|number|index|idx|len|max|min|range)(?:$|_)")
+# name -> (plain name, encrypted?). None: depends on the device or protocol version.
+WELL_KNOWN_PORTS: dict[int, tuple[str, bool | None]] = {
+    21: ("FTP", False),
+    22: ("SSH", True),
+    23: ("Telnet", False),
+    80: ("HTTP", False),
+    443: ("HTTPS", True),
+    502: ("Modbus", False),
+    554: ("RTSP video", False),
+    990: ("FTPS", True),
+    1883: ("MQTT", False),
+    5683: ("CoAP", False),
+    6668: ("Tuya local", None),
+    8080: ("HTTP (alternate)", False),
+    8443: ("HTTPS (alternate)", True),
+    8883: ("MQTT over TLS", True),
+    47808: ("BACnet", False),
+}
+
+
+@dataclass(frozen=True)
+class PortRef:
+    port: int
+    name: str  # the variable or key it was assigned to (untrusted)
+    file: str
+    line: int
+
+
+def _port_value(tok: tokenize.TokenInfo) -> int | None:
+    if tok.type != tokenize.NUMBER:
+        return None
+    try:
+        n = int(tok.string.replace("_", ""), 0)
+    except ValueError:
+        return None
+    return n if 1 <= n <= 65535 else None
+
+
+def _port_named(name: str) -> bool:
+    return bool(_PORT_NAME.search(name)) and not _NOT_A_PORT.search(name)
+
+
+def py_ports(text: str, rel: str) -> Iterator[PortRef]:
+    """`port = 6668`, `self._port = 8883`, `port=990` (keyword), `port: int = 1883`,
+    `{"mqtt_port": 1883}` and `{CONF_PORT: 502}`."""
+    try:
+        toks = [
+            t
+            for t in tokenize.generate_tokens(io.StringIO(text).readline)
+            if t.type not in (tokenize.NL, tokenize.COMMENT, tokenize.ENCODING)
+        ]
+    except (tokenize.TokenError, SyntaxError, ValueError, RecursionError):
+        return
+    for i, tok in enumerate(toks[:-2]):
+        if tok.type == tokenize.NAME:
+            name = tok.string
+        elif tok.type == tokenize.STRING:
+            name = _unquote(tok.string)
+            if not re.fullmatch(r"[A-Za-z_][\w-]{0,60}", name):
+                continue
+        else:
+            continue
+        if not _port_named(name):
+            continue
+        op = toks[i + 1]
+        if op.type != tokenize.OP or op.string not in ("=", ":"):
+            continue
+        if tok.type == tokenize.STRING and op.string != ":":
+            continue
+        j = i + 2
+        if op.string == ":" and tok.type == tokenize.NAME and _port_value(toks[j]) is None:
+            # an annotation: `port: int = 1883` / `port: int | None = 1883`
+            while j < len(toks) and j < i + 10 and toks[j].string != "=":
+                if toks[j].type in (tokenize.NEWLINE, tokenize.ENDMARKER) or toks[j].string in (
+                    ",",
+                    ")",
+                ):
+                    break
+                j += 1
+            if j >= len(toks) or toks[j].string != "=":
+                continue
+            j += 1
+        if j < len(toks) and (port := _port_value(toks[j])) is not None:
+            yield PortRef(port, name, rel, toks[j].start[0])
+
+
+def _skip_for_ports(rel: str) -> bool:
+    """Test doubles say nothing about where the shipped code connects."""
+    parts = rel.lower().split("/")
+    name = parts[-1]
+    return (
+        any(p in ("tests", "test", "testing") for p in parts[:-1])
+        or name.startswith(("test_", "mock_", "fake_"))
+        or name.endswith(("_test.py", "_mock.py"))
+        or name == "conftest.py"
+    )
+
+
+def extract_ports(root: Path) -> list[PortRef]:
+    out: list[PortRef] = []
+    for p in sorted(root.rglob("*.py")):
+        if not p.is_file() or p.is_symlink():
+            continue
+        rel = p.relative_to(root).as_posix()
+        if _skip_for_ports(rel):
+            continue
+        try:
+            if p.stat().st_size > _MAX_FILE:
+                continue
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        out.extend(py_ports(text, rel))
+    return out
 
 
 def _cred_kind(url: str | None) -> str | None:
@@ -460,6 +608,11 @@ def run(target: Target) -> AnalyzerResult:
             attrs["schemes"] = [ref.scheme]
         if cred:
             attrs["credential"] = cred
+        if sample := url_sample(ref.url, credential=bool(cred)):
+            attrs["urls"] = [sample]
+            m = _URL.match(ref.url or "")
+            if m and m["port"]:
+                attrs["ports"] = [int(m["port"])]
         facts.append(
             Fact(
                 ring=Ring.NETWORK,
@@ -485,10 +638,37 @@ def run(target: Target) -> AnalyzerResult:
                 )
             )
     distinct = {f.key for f in facts}
-    return AnalyzerResult(
-        NAME,
-        AnalyzerState.OK,
-        findings=findings,
-        facts=facts,
-        detail=f"{len(distinct)} hosts/IPs",
-    )
+    _cap_url_samples(facts)
+    ports = extract_ports(target.root) if target.kind is TargetKind.INTEGRATION else []
+    for pr in ports:
+        facts.append(
+            Fact(
+                ring=Ring.NETWORK,
+                kind="port",
+                key=str(pr.port),
+                relation="uses_port",
+                evidence=Evidence.POSSIBLE,
+                file=pr.file,
+                line=pr.line,
+                attrs={"names": [pr.name[:80]]},
+                analyzer=NAME,
+            )
+        )
+    detail = f"{len(distinct)} hosts/IPs"
+    if ports:
+        detail += f", {len({p.port for p in ports})} ports"
+    return AnalyzerResult(NAME, AnalyzerState.OK, findings=findings, facts=facts, detail=detail)
+
+
+def _cap_url_samples(facts: list[Fact]) -> None:
+    """At most five distinct URL samples per host, across all its facts."""
+    seen: dict[str, list[str]] = {}
+    for f in facts:
+        urls = f.attrs.get("urls")
+        if not urls:
+            continue
+        kept = seen.setdefault(f.key, [])
+        if urls[0] in kept or len(kept) >= _URL_SAMPLES:
+            del f.attrs["urls"]
+        else:
+            kept.append(urls[0])

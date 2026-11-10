@@ -39,6 +39,7 @@ _HOST_RANK = {
     "public_ip": 90,
     "undeclared": 70,
     "developer_hosted": 70,
+    "analytics": 70,
     "messaging": 60,
 }
 _UNEXPLAINED = set(_HOST_RANK)

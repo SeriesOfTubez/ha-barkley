@@ -68,6 +68,51 @@ developer_hosted supabase.co
 developer_hosted azurewebsites.net
 developer_hosted web.app
 #
+# analytics: product analytics, tag managers and crash/error reporting services. Not a
+# finding: a privacy note on the panel. Counted as an unexplained destination for the
+# possible-exfil correlation, exactly as before this class existed (they were undeclared).
+analytics sentry.io
+analytics sentry-cdn.com
+analytics ingest.sentry.io
+analytics google-analytics.com
+analytics analytics.google.com
+analytics googletagmanager.com
+analytics stats.g.doubleclick.net
+analytics mixpanel.com
+analytics mxpnl.com
+analytics posthog.com
+analytics i.posthog.com
+analytics segment.io
+analytics segment.com
+analytics amplitude.com
+analytics bugsnag.com
+analytics rollbar.com
+analytics datadoghq.com
+analytics datadoghq.eu
+analytics browser-intake-datadoghq.com
+analytics nr-data.net
+analytics newrelic.com
+analytics honeybadger.io
+analytics raygun.io
+analytics logrocket.com
+analytics lr-ingest.io
+analytics hotjar.com
+analytics fullstory.com
+analytics heap.io
+analytics heapanalytics.com
+analytics plausible.io
+analytics matomo.cloud
+analytics clarity.ms
+analytics appcenter.ms
+analytics app-measurement.com
+analytics crashlytics.com
+analytics umami.is
+analytics pirsch.io
+analytics usefathom.com
+analytics countly.com
+analytics telemetrydeck.com
+analytics aptabase.com
+#
 # messaging: chat APIs that accept webhooks. Only a finding when the URL carries a
 # credential (webhook id/token, bot token); otherwise it's a user-configured notifier.
 messaging discord.com
