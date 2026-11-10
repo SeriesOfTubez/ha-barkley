@@ -36,11 +36,13 @@ backup_exclude:
 options:
   exposure: local
   jobs: 1
+  parallel_scans: 2
   github_token: ""
   ai_entity: ""
 schema:
   exposure: list(local|public)
   jobs: int(1,4)
+  parallel_scans: int(1,4)
   github_token: password?
   ai_entity: "match(^(ai_task\\.[a-z0-9_]+)?$)?"
 # Published multi-arch image (built with the repo root as context, see DOCS.md).

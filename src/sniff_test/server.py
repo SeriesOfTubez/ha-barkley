@@ -84,8 +84,24 @@ class MemoryRefused(Exception):
     """The memory guard stopped a scan before it started."""
 
 
+# Parallel scans (M8): a job runs beside others only if the box could take one more full
+# scan on top of the warn threshold. Each running scan counts as able to grow by this
+# much (an integration scan peaked at ~1.1 GB, measured M6), since one that just started
+# hasn't allocated yet.
+PER_SCAN = int(1.5 * memory.GIB)
+PARALLEL_MAX = 4
+
+
 class Worker:
-    """Runs scans one at a time (Semgrep is the memory hog; never run two at once)."""
+    """Runs scan jobs on up to `parallel` threads, bounded by memory.
+
+    - The first job always starts (the memory guard may still refuse it).
+    - Another starts only while available memory >= warn threshold + PER_SCAN for each
+      scan already running; unknown memory means one at a time.
+    - Never two jobs for the same repo at once (they would scan the same versions).
+    - GitHub: budget checks go through one gate and reserve what running jobs may still
+      need; a job that hits the limit anyway waits and reruns (never a scan result).
+    """
 
     def __init__(
         self,
@@ -98,7 +114,9 @@ class Worker:
         memory_fn: Callable[[], memory.Memory] = memory.check,
         budget_fn: Callable[[], RateLimit | None] = lambda: None,
         sleep_fn: Callable[[float], None] = time.sleep,
+        parallel: int = 1,
     ):
+        self.parallel = max(1, min(int(parallel), PARALLEL_MAX))
         self.store = store
         self.scan_fn = scan_fn
         self.tool_version = tool_version
@@ -112,8 +130,47 @@ class Worker:
         self._q: queue.Queue[Job] = queue.Queue()
         self._lock = threading.Lock()
         self._next = 1
-        self._thread = threading.Thread(target=self._run, name="sniff-worker", daemon=True)
-        self._thread.start()
+        self._running: list[Job] = []
+        self._slots = threading.Condition()
+        self._gate = threading.Lock()  # GitHub budget checks, one at a time
+        self._threads = [
+            threading.Thread(target=self._run, name=f"sniff-worker-{i}", daemon=True)
+            for i in range(self.parallel)
+        ]
+        for th in self._threads:
+            th.start()
+
+    def running(self) -> list[Job]:
+        with self._slots:
+            return list(self._running)
+
+    def _room_for_another(self) -> bool:
+        mem = self.memory_fn()
+        if mem.available is None:
+            return False
+        return mem.available >= memory.WARN_BELOW + PER_SCAN * len(self._running)
+
+    def _admit(self, job: Job) -> None:
+        """Wait for a slot; the job then counts as running (state set by the caller)."""
+        with self._slots:
+            while True:
+                same = any(j.repo.lower() == job.repo.lower() for j in self._running)
+                if not same and (not self._running or self._room_for_another()):
+                    break
+                job.message = (
+                    "waiting for the other check of this repo"
+                    if same
+                    else "waiting for memory to run beside the scans already running"
+                )
+                self._slots.wait(timeout=30)  # memory can free up without a job ending
+            self._running.append(job)
+            job.message = ""
+
+    def _release(self, job: Job) -> None:
+        with self._slots:
+            if job in self._running:
+                self._running.remove(job)
+            self._slots.notify_all()
 
     def submit(self, kind: str, repo: str, ref: str | None, to: str | None = None) -> Job:
         with self._lock:
@@ -176,9 +233,11 @@ class Worker:
             self.github_wait = ""
 
     def _budget_ok(self, job: Job) -> bool:
-        b = self.budget_fn()
-        if b is None or b.remaining >= _GITHUB_NEED.get(job.kind, 15):
-            return True
+        with self._gate:
+            b = self.budget_fn()
+            others = sum(_GITHUB_NEED.get(j.kind, 15) for j in self.running() if j is not job)
+            if b is None or b.remaining >= _GITHUB_NEED.get(job.kind, 15) + others:
+                return True
         tip = " A GitHub token in the app's options raises it to 5,000."
         token = "" if b.authenticated else tip
         left = f"{b.remaining} of {b.limit} requests left this hour"
@@ -208,15 +267,19 @@ class Worker:
         while True:
             job = self._q.get()
             try:
-                while True:
-                    while not self._budget_ok(job):
-                        pass
-                    job.state = "running"
-                    try:
-                        self._do(job)
-                        break
-                    except RateLimitError as ex:  # ran out mid-job: wait, run it again
-                        self._park(job, ex.reset_at, str(ex).split(" [", 1)[0] + ".")
+                self._admit(job)
+                try:
+                    while True:
+                        while not self._budget_ok(job):
+                            pass
+                        job.state = "running"
+                        try:
+                            self._do(job)
+                            break
+                        except RateLimitError as ex:  # ran out mid-job: wait, run again
+                            self._park(job, ex.reset_at, str(ex).split(" [", 1)[0] + ".")
+                finally:
+                    self._release(job)
                 job.state = "done"
                 self._log_incomplete(job)
             except MemoryRefused as ex:
@@ -427,13 +490,19 @@ def render_index(
     mem: memory.Memory | None = None,
     github_wait: str = "",
     ha: str | None = None,
+    parallel: int = 1,
 ) -> bytes:
     rows = store.history(limit=100)
     against = f" against HA {e(ha)}" if ha else ""
     out = [
         '<div class="head"><h1>🐕 Sniff Test</h1>'
-        f'<span class="muted small">Sniff Test {e(__version__)}{against}. Scans run one at a '
-        "time. Scores never come from an AI.</span></div>",
+        f'<span class="muted small">Sniff Test {e(__version__)}{against}. '
+        + (
+            "Scans run one at a time. "
+            if parallel <= 1
+            else f"Up to {parallel} scans run at once, as memory allows. "
+        )
+        + "Scores never come from an AI.</span></div>",
         _memory_banner(mem) if mem else "",
         _github_banner(github_wait),
         installed,
@@ -815,6 +884,7 @@ class Panel:
                             base, panel.store, jobs, panel.token,
                             panel.installed_html(base, refresh, f), panel.memory_fn(),
                             panel.worker.github_wait, panel.worker.ha_fn(),
+                            panel.worker.parallel,
                         )  # fmt: skip
                         return self._send(200, body)
                     if m := re.fullmatch(r"/scan/(\d+)(\.json)?", url.path):
@@ -913,11 +983,13 @@ def serve(
     budget_fn: Callable[[], RateLimit | None] = lambda: None,
     ai_entity: str = "",
     ai_fn: AiFn | None = None,
+    parallel: int = 1,
 ) -> PanelServer:
     """Build the server (caller runs `serve_forever`); `.panel.worker` runs the scans."""
     worker = Worker(
-        store, scan_fn, exposure=exposure, ha_fn=ha_fn, memory_fn=memory_fn, budget_fn=budget_fn
-    )
+        store, scan_fn, exposure=exposure, ha_fn=ha_fn, memory_fn=memory_fn,
+        budget_fn=budget_fn, parallel=parallel,
+    )  # fmt: skip
     panel = Panel(store, worker, allow, installed_fn, memory_fn)
     if ai_entity and not supervisor.ai_entity_ok(ai_entity):
         print(f"ignoring ai_entity {ai_entity!r}: not an ai_task.* entity", file=sys.stderr)

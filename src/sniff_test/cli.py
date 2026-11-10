@@ -130,6 +130,12 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--exposure", choices=[e.value for e in Exposure], default=Exposure.LOCAL.value)
     v.add_argument("--jobs", type=int, default=1)
     v.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="scans that may run at once, as memory allows (1-4)",
+    )
+    v.add_argument(
         "--ai-entity",
         default="",
         metavar="ai_task.NAME",
@@ -342,6 +348,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         exposure=args.exposure, ha_fn=ha_fn, installed_fn=installed_fn,
         budget_fn=lambda: GitHub.from_env().rate_limit(),
         ai_entity=args.ai_entity.strip() if supervisor.token() else "",
+        parallel=args.parallel,
     )  # fmt: skip
     out.print(
         f"🐕 Sniff Test {__version__} panel on {args.host}:{args.port} "

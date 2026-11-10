@@ -24,7 +24,7 @@ from pathlib import Path
 from sniff_test.deps import uv
 from sniff_test.deps.reqs import ReqKind, constraint_names, normalize, parse
 from sniff_test.fetch.github import GitHub, GitHubError, RateLimitError
-from sniff_test.paths import cache_root
+from sniff_test.paths import atomic_write, cache_root
 
 HA_REPO = ("home-assistant", "core")
 HA_WHEELS_INDEX = uv.HA_WHEELS_INDEX
@@ -154,9 +154,7 @@ def _load_shipped(env: HAEnv, platform: str) -> frozenset[tuple[str, str]] | Non
         if proc.returncode != 0 or not out.is_file():
             return None
         pairs = sorted({(name, ver) for name, ver, _arts in uv.parse_pylock(out)})
-    tmp_file = env.dir / f".shipped.{platform}.tmp"
-    tmp_file.write_text("".join(f"{n}=={v}\n" for n, v in pairs), encoding="utf-8")
-    tmp_file.replace(cached)
+    atomic_write(cached, "".join(f"{n}=={v}\n" for n, v in pairs))
     return frozenset(pairs)
 
 
@@ -206,9 +204,7 @@ def load(version: str | None = None, gh: GitHub | None = None) -> HAEnv:
         raise HAEnvError(f"Home Assistant {version} has no package_constraints.txt")
     d.mkdir(parents=True, exist_ok=True)
     for name, text in texts.items():
-        tmp = d / f".{name}.tmp"
-        tmp.write_text(text or "", encoding="utf-8")
-        tmp.replace(d / name)
+        atomic_write(d / name, text or "")
     return _from_dir(version, d)
 
 
@@ -239,10 +235,7 @@ def _stable_releases(gh: GitHub) -> list[tuple[str, str]]:
         ),
         reverse=True,
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(out), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write(path, json.dumps(out))
     return out
 
 

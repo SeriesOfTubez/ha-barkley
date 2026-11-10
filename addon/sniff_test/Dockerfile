@@ -7,7 +7,16 @@
 # compiled in the image). yara-python 4.5.4 has wheels up to cp313, so the tools run
 # on Debian trixie's Python 3.13. The scanner resolves *scanned* dependencies for
 # HA's musl platforms with uv regardless of the image's own libc.
-FROM ghcr.io/home-assistant/base-debian:trixie
+#
+# Two stages (M8, image slimming): tools are installed and trimmed in `build`, and only
+# the results are copied into a fresh base, so build-only packages (binutils) and
+# anything deleted never ship. Measured on amd64 before trimming: 695 MB unpacked, of
+# which semgrep-core 255 MB and GuardDog 120 MB (boto3/botocore 33 MB, used only by its
+# S3 upload helper, imported lazily there).
+# Do NOT strip semgrep-core: its sections are laid out unusually (".dynstr not in
+# segment"), and every binutils mode, even --strip-debug, leaves it failing with
+# "symbol lookup error: undefined symbol: , version" (tried 2026-11-10).
+FROM ghcr.io/home-assistant/base-debian:trixie AS build
 
 # TARGETARCH comes from BuildKit (amd64/arm64); the Supervisor passes BUILD_ARCH
 # (amd64/aarch64). Either is enough.
@@ -68,6 +77,14 @@ ENV UV_TOOL_DIR=/opt/tools \
 RUN uv tool install --python /usr/bin/python3 --no-build "semgrep==${SEMGREP_VERSION}" \
     && uv tool install --python /usr/bin/python3 --no-build "guarddog==${GUARDDOG_VERSION}"
 
+# Trim what never runs. GuardDog: boto3 and friends serve only guarddog/utils/s3.py,
+# which imports them lazily for S3 uploads; local scans never load them (Diagnostics
+# runs a GuardDog scan in the image).
+RUN set -eu; \
+    gd="$(echo /opt/tools/guarddog/lib/python3*/site-packages)"; \
+    rm -rf "${gd}"/boto3 "${gd}"/boto3-* "${gd}"/botocore "${gd}"/botocore-* \
+           "${gd}"/s3transfer "${gd}"/s3transfer-* "${gd}"/jmespath "${gd}"/jmespath-*; \
+    rm -f /usr/local/bin/uvx
 # The scanner, with its locked runtime dependencies.
 COPY scanner /src
 RUN uv venv --python /usr/bin/python3 /opt/sniff-test \
@@ -76,6 +93,21 @@ RUN uv venv --python /usr/bin/python3 /opt/sniff-test \
     && uv pip install --python /opt/sniff-test --no-deps /src \
     && ln -s /opt/sniff-test/bin/sniff-test /usr/local/bin/sniff-test \
     && rm -rf /src /tmp/req.txt
+
+# --- the shipped image: base + Python + the trimmed tools ---------------------------
+FROM ghcr.io/home-assistant/base-debian:trixie
+ARG BUILD_VERSION=0.3.0
+ARG BUILD_ARCH
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ENV UV_PYTHON_DOWNLOADS=never \
+    UV_NO_CACHE=1 \
+    SEMGREP_SEND_METRICS=off \
+    SEMGREP_ENABLE_VERSION_CHECK=0
+COPY --from=build /opt/tools /opt/tools
+COPY --from=build /opt/sniff-test /opt/sniff-test
+COPY --from=build /usr/local/bin/ /usr/local/bin/
 
 COPY rootfs /
 

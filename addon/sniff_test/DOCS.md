@@ -30,7 +30,8 @@ installed. Scores are computed by fixed rules; no AI decides anything.
 | Option | Default | Meaning |
 |---|---|---|
 | `exposure` | `local` | `public` if your HA is reachable from the internet. Raises inbound findings; never lowers exfiltration findings. |
-| `jobs` | `1` | Parallel Semgrep jobs. More is faster and uses more memory. |
+| `jobs` | `1` | Parallel Semgrep jobs inside one scan. More is faster and uses more memory. |
+| `parallel_scans` | `2` | How many scans may run at once. A second scan starts only while the box has room for another full scan above the 2 GB warning line (1.5 GB counted for each scan already running); otherwise it waits. Two checks of the same project never run together. |
 | `github_token` | empty | A GitHub token (no scopes needed) for the 5,000 requests/hour limit instead of 60. |
 | `ai_entity` | empty | An AI Task entity (for example `ai_task.openrouter_ai_task`) for the "Explain this app" button. Empty turns the button off. |
 
@@ -56,7 +57,8 @@ with an error on the page.
 ## Resources
 
 Semgrep is the heavy part: plan for 0.5–1 GB of RAM while a large card bundle is
-scanned. Scans run one at a time. Home Assistant sets no memory limit for apps, so
+scanned (an integration scan peaked at about 1.1 GB). Up to `parallel_scans` scans run
+at once, but only while memory allows. Home Assistant sets no memory limit for apps, so
 Sniff Test guards itself: with under 2 GB available on the box the panel warns, and
 under 1 GB it refuses to start a scan, so a scan can't push Home Assistant out of
 memory. Diagnostics shows the current figure.

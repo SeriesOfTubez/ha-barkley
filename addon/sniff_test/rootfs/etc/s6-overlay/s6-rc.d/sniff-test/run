@@ -17,4 +17,5 @@ exec sniff-test serve \
     --port 8099 \
     --exposure "$(bashio::config 'exposure')" \
     --jobs "$(bashio::config 'jobs')" \
+    --parallel "$(bashio::config 'parallel_scans' '1')" \
     --ai-entity "$(bashio::config 'ai_entity' '')"
