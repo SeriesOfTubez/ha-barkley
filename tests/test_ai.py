@@ -130,7 +130,8 @@ def test_no_entity_no_button_and_no_call(tmp_path):
     store, base, httpd = _serve(tmp_path, lambda *a: calls.append(a), entity="")
     sid = store.save(_report())
     _, _, page = get(f"{base}/scan/{sid}")
-    assert "Explain this app" not in page and "AI Task entity" in page
+    assert 'action="/explain"' not in page and "<button disabled" in page
+    assert "ai_entity" in page
     assert post(f"{base}/explain", {"token": token(base), "scan": sid})[0] == 400
     assert post(f"{base}/explain", {"token": "wrong", "scan": sid})[0] == 403
     assert calls == []

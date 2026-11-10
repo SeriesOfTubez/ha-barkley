@@ -320,14 +320,14 @@ def parse_installed(result: Any) -> tuple[list[Installed], dict[str, int]]:
     return items, other
 
 
-def installed_hacs(tok: str | None = None, **kw: Any) -> tuple[list[Installed], dict[str, int]]:
-    """Installed Marketplace (HACS) integrations and cards; SupervisorError says why not."""
+def _repositories(tok: str | None = None, **kw: Any) -> Any:
+    """The Marketplace's whole catalog (installed or not), via the allowlisted command."""
     tok = tok or token()
     if not tok:
         raise SupervisorError("not running as a Home Assistant add-on (no SUPERVISOR_TOKEN)")
     for command in LIST_COMMANDS:
         try:
-            return parse_installed(core_command(command, tok, **kw))
+            return core_command(command, tok, **kw)
         except SupervisorError as ex:
             if "unknown_command" in str(ex):
                 continue  # not this HA's Marketplace; try the next one
@@ -337,3 +337,91 @@ def installed_hacs(tok: str | None = None, **kw: Any) -> tuple[list[Installed], 
     raise SupervisorError(
         "neither the Marketplace (HA 2026.11+) nor HACS answered; is either set up?"
     )
+
+
+def installed_hacs(tok: str | None = None, **kw: Any) -> tuple[list[Installed], dict[str, int]]:
+    """Installed Marketplace (HACS) integrations and cards; SupervisorError says why not."""
+    return parse_installed(_repositories(tok, **kw))
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogItem:
+    """One integration or card the Marketplace offers. Text fields come from third-party
+    repos (untrusted): the panel escapes them, and only `repo` can become a scan target,
+    after the same validation as the installed list."""
+
+    repo: str
+    kind: str  # integration | card
+    name: str
+    description: str
+    stars: int
+    downloads: int
+    installed: bool
+    topics: tuple[str, ...]
+
+
+def _int(v: Any) -> int:
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 0
+
+
+def parse_catalog(result: Any) -> list[CatalogItem]:
+    if not isinstance(result, list):
+        raise SupervisorError("the Marketplace returned something other than a list")
+    out = []
+    for r in result:
+        if not isinstance(r, dict) or r.get("category") not in SCANNABLE:
+            continue
+        repo = str(r.get("full_name") or "")
+        if not _REPO.match(repo):
+            continue
+        topics = r.get("topics") if isinstance(r.get("topics"), list) else []
+        out.append(
+            CatalogItem(
+                repo=repo,
+                kind=SCANNABLE[r["category"]],
+                name=str(r.get("name") or repo)[:100],
+                description=str(r.get("description") or "")[:300],
+                stars=_int(r.get("stars")),
+                downloads=_int(r.get("downloads")),
+                installed=bool(r.get("installed")),
+                topics=tuple(str(x)[:40] for x in topics[:20]),
+            )
+        )
+    return out
+
+
+def catalog(tok: str | None = None, **kw: Any) -> list[CatalogItem]:
+    return parse_catalog(_repositories(tok, **kw))
+
+
+def search(
+    items: list[CatalogItem], query: str, kind: str = "", limit: int = 30
+) -> list[CatalogItem]:
+    """Rank by how well the query matches (name, then repo, then description/topics),
+    then by downloads and stars. Plain substring matching on every word."""
+    words = [w for w in query.lower().split() if w][:8]
+    if not words:
+        return []
+    scored = []
+    for it in items:
+        if kind and it.kind != kind:
+            continue
+        name, repo = it.name.lower(), it.repo.lower()
+        text = " ".join([it.description.lower(), *(t.lower() for t in it.topics)])
+        score = 0
+        for w in words:
+            if w == name or w == repo.split("/")[-1]:
+                score += 100
+            elif w in name:
+                score += 40
+            elif w in repo:
+                score += 25
+            elif w in text:
+                score += 10
+            else:
+                score = -1
+                break
+        if score > 0:
+            scored.append((score, it.downloads, it.stars, it))
+    scored.sort(key=lambda s: (-s[0], -s[1], -s[2], s[3].repo.lower()))
+    return [s[3] for s in scored[:limit]]

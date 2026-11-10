@@ -491,6 +491,7 @@ def render_index(
     github_wait: str = "",
     ha: str | None = None,
     parallel: int = 1,
+    search: bool = False,
 ) -> bytes:
     rows = store.history(limit=100)
     against = f" against HA {e(ha)}" if ha else ""
@@ -505,6 +506,7 @@ def render_index(
         + "Scores never come from an AI.</span></div>",
         _memory_banner(mem) if mem else "",
         _github_banner(github_wait),
+        _search_box(base) if search else "",
         installed,
     ]
     active = [j for j in jobs if j.state in ("queued", "running", "waiting")]
@@ -597,8 +599,15 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
              have: dict[str, Any] | None) -> str:  # fmt: skip
     """The "Explain this app" control. Nothing is sent until the user clicks."""
     if not entity:
-        return ('<p class="tech">Want this explained by AI? Choose an AI Task entity in the '
-                "app's options.</p>")  # fmt: skip
+        return (
+            '<div class="banner" style="margin-top:10px"><b>🤖 Explain this app with AI</b> '
+            '<button disabled title="Set up an AI Task entity first">Explain this app</button>'
+            '<p class="small" style="margin-top:6px">Sniff Test can ask your Home Assistant\'s '
+            "AI to explain these findings in plain words. It's off until you choose an AI "
+            "Task entity: find its id under Settings &gt; Devices &amp; services &gt; Entities "
+            "(search for <code>ai_task</code>), then put it in Settings &gt; Apps &gt; Sniff "
+            "Test &gt; Configuration, option <code>ai_entity</code>, and restart the app.</p></div>"
+        )
     form = (f'<form method=post action="{base}/explain" class="act" style="margin-top:8px">'
             f'<input type=hidden name=token value="{token}">'
             f'<input type=hidden name=scan value="{sid}">'
@@ -645,6 +654,76 @@ def render_scan(
         ai_form=_ai_form(base, sid, token, ai_entity, ai_state, ai_error, have),
         refresh=5 if ai_state == "running" else 0,
     )
+
+
+def _search_box(base: str, q: str = "", kind: str = "") -> str:
+    opts = "".join(
+        f'<option value="{v}"{" selected" if v == kind else ""}>{label}</option>'
+        for v, label in (("", "Integrations and cards"), ("integration", "Integrations"),
+                         ("card", "Dashboard cards"))
+    )  # fmt: skip
+    return (
+        f'<form method=get action="{base}/search" class="box tools search" role="search">'
+        f'<input name=q value="{e(q, 100)}" maxlength=100 required '
+        'placeholder="Find a Marketplace app to sniff before you install it">'
+        f"<select name=kind>{opts}</select><button class=primary>Search</button></form>"
+    )
+
+
+def render_search(
+    base: str,
+    q: str,
+    kind: str,
+    results: list[supervisor.CatalogItem],
+    scans: dict[str, ScanRow],
+    busy: dict[str, str],
+    token: str,
+    error: str = "",
+    total: int = 0,
+) -> bytes:
+    out = [
+        f'<p class="crumb"><a href="{base}/">← All apps</a></p>',
+        "<h1>Find an app to sniff</h1>",
+        '<p class="muted small">Searches the Marketplace catalog your Home Assistant already '
+        "has. Sniffing checks exactly what the Marketplace would install, without installing "
+        "anything.</p>",
+        _search_box(base, q, kind),
+    ]
+    if error:
+        out.append(f'<div class="banner warn">Can\'t search the Marketplace: {e(error, 300)}</div>')
+    elif q and not results:
+        out.append(f'<p class="muted">No integration or card in the Marketplace matches '
+                   f"&ldquo;{e(q, 100)}&rdquo; ({total} searched).</p>")  # fmt: skip
+    rows = []
+    for it in results:
+        scan = scans.get(it.repo.lower())
+        if b := busy.get(it.repo.lower()):
+            act = '<span class="muted">' + {"running": "sniffing…"}.get(b, "queued…") + "</span>"
+        elif scan:
+            bd = ui.band(scan.score, scan.complete)
+            act = (f'<a class="badge {bd}" style="text-decoration:none" '
+                   f'href="{base}/scan/{scan.id}">'
+                   f"{scan.score}<small>{e(ui.BANDS[bd][0])}</small></a>")  # fmt: skip
+        else:
+            act = (f'<form method=post action="{base}/scan">'
+                   f'<input type=hidden name=token value="{token}">'
+                   f'<input type=hidden name=repo value="{e(it.repo)}">'
+                   f'<input type=hidden name=q value="{e(q, 100)}">'
+                   f'<input type=hidden name=kind value="{e(kind)}">'
+                   '<button class="primary">Sniff it</button></form>')  # fmt: skip
+        tag = ' <span class="chip new">installed</span>' if it.installed else ""
+        rows.append(
+            f"<tr><td><b>{e(it.name, 100)}</b>{tag}<br>"
+            f'<span class="muted small">{e(ui.KIND.get(it.kind, it.kind))} · '
+            f"{e(it.repo, 120)} · ★ {it.stars:,} · {it.downloads:,} downloads</span>"
+            f'<br><span class="small">{e(it.description, 300)}</span></td>'
+            f'<td style="width:7em;text-align:right">{act}</td></tr>'
+        )
+    if rows:
+        out.append(f'<p class="muted small">{len(results)} best matches of {total} '
+                   "integrations and cards.</p>")  # fmt: skip
+        out.append('<table class="box">' + "".join(rows) + "</table>")
+    return _page("Sniff Test · search", "".join(out))
 
 
 def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
@@ -707,7 +786,9 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
 
 InstalledFn = Callable[[], tuple[list[supervisor.Installed], dict[str, int]]]
 AiFn = Callable[[str, str, dict[str, Any], str], Any]
+CatalogFn = Callable[[], list[supervisor.CatalogItem]]
 _REPORTS_KEPT = 64
+_CATALOG_TTL = 600
 _INSTALLED_TTL = 300  # seconds; HACS itself refreshes far less often
 
 
@@ -730,6 +811,8 @@ class Panel:
         self._installed_lock = threading.Lock()
         self._diffs: dict[tuple[int, int], dict[str, Any]] = {}
         self._reports: dict[int, dict[str, Any]] = {}
+        self.catalog_fn: CatalogFn | None = None
+        self._catalog: tuple[float, list[supervisor.CatalogItem], str] = (0.0, [], "")
         self.ai_entity = ""
         self.ai_fn: AiFn = supervisor.ai_generate_data
         self._ai: dict[int, tuple[str, str]] = {}  # scan id -> (running|failed, error)
@@ -786,6 +869,62 @@ class Panel:
         threading.Thread(target=run, name=f"explain-{sid}", daemon=True).start()
         return True
 
+    def catalog(self) -> tuple[list[supervisor.CatalogItem], str]:
+        """The Marketplace catalog, cached for 10 minutes (one websocket round trip)."""
+        if self.catalog_fn is None:
+            return [], "not running as a Home Assistant add-on"
+        fetched, items, err = self._catalog
+        if not fetched or time.time() - fetched > _CATALOG_TTL:
+            try:
+                items, err = self.catalog_fn(), ""
+            except supervisor.SupervisorError as ex:
+                items, err = [], str(ex)
+            self._catalog = (time.time(), items, err)
+        return items, err
+
+    def current_scans(self) -> dict[str, ScanRow]:
+        """Newest complete scan per repo made with the current rules (lower-case repo)."""
+        out: dict[str, ScanRow] = {}
+        for r in self.store.history(limit=10000):
+            if r.repo and r.tool_version == self.worker.tool_version and r.complete:
+                out.setdefault(r.repo.lower(), r)
+        return out
+
+    def busy(self) -> dict[str, str]:
+        return {
+            j.repo.lower(): j.state
+            for j in reversed(list(self.worker.jobs))
+            if j.state in ("queued", "running", "waiting")
+        }
+
+    def not_installed_html(self, base: str, installed: set[str]) -> str:
+        """Cards for apps sniffed from search (or by name) that aren't installed."""
+        names = {c.repo.lower(): c.name for c in self.catalog()[0]} if self.catalog_fn else {}
+        busy = self.busy()
+        cards = []
+        for repo, scan in self.current_scans().items():
+            if repo in installed:
+                continue
+            cards.append(
+                ui.Card(
+                    repo=scan.repo or repo,
+                    name=names.get(repo) or (scan.repo or repo).rsplit("/", 1)[-1],
+                    kind=scan.kind,
+                    installed=scan.ref or "?",
+                    available=None,
+                    scan=scan,
+                    report=self.report(scan.id),
+                    busy=busy.get(repo, ""),
+                )
+            )
+        if not cards:
+            return ""
+        cards.sort(key=lambda c: (c.scan.score if c.scan else -1, c.name.lower()))
+        return (
+            f'<h2 style="margin-top:8px">Sniffed, not installed ({len(cards)})</h2>'
+            '<div class="grid">' + "".join(ui.card_html(base, c) for c in cards) + "</div>"
+        )
+
     def ai_state(self, sid: int) -> tuple[str, str]:
         with self._ai_lock:
             return self._ai.get(sid, ("", ""))
@@ -827,7 +966,10 @@ class Panel:
         if self.installed_fn is None:
             return ""
         st, rows = self.rows(refresh)
-        return render_installed(base, st, rows, self.token, self.report, f)
+        html = render_installed(base, st, rows, self.token, self.report, f)
+        if not st.error:
+            html += self.not_installed_html(base, {r.item.repo.lower() for r in rows})
+        return html
 
     def handler(self) -> type[BaseHTTPRequestHandler]:
         panel = self
@@ -884,7 +1026,7 @@ class Panel:
                             base, panel.store, jobs, panel.token,
                             panel.installed_html(base, refresh, f), panel.memory_fn(),
                             panel.worker.github_wait, panel.worker.ha_fn(),
-                            panel.worker.parallel,
+                            panel.worker.parallel, panel.catalog_fn is not None,
                         )  # fmt: skip
                         return self._send(200, body)
                     if m := re.fullmatch(r"/scan/(\d+)(\.json)?", url.path):
@@ -898,6 +1040,18 @@ class Panel:
                         page = render_scan(
                             base, sid, report, panel.store, row, panel.token,
                             panel.ai_entity, state, err,
+                        )  # fmt: skip
+                        return self._send(200, page)
+                    if url.path == "/search" and panel.catalog_fn is not None:
+                        q = urllib.parse.parse_qs(url.query)
+                        text = (q.get("q") or [""])[0].strip()[:100]
+                        kind = (q.get("kind") or [""])[0]
+                        kind = kind if kind in ("integration", "card") else ""
+                        items, err = panel.catalog()
+                        found = supervisor.search(items, text, kind) if text else []
+                        page = render_search(
+                            base, text, kind, found, panel.current_scans(), panel.busy(),
+                            panel.token, err, len(items),
                         )  # fmt: skip
                         return self._send(200, page)
                     if url.path == "/doctor":
@@ -956,6 +1110,10 @@ class Panel:
                 ):
                     return self._text(HTTPStatus.BAD_REQUEST, "want owner/repo and a tag")
                 panel.worker.submit(path.lstrip("/"), m[1], ref, to if path == "/update" else None)
+                if path == "/scan" and (q := get("q")[:100]):
+                    kind = get("kind") if get("kind") in ("integration", "card") else ""
+                    back = urllib.parse.urlencode({"q": q, "kind": kind})
+                    return self._redirect(f"{self._base()}/search?{back}")
                 self._redirect(f"{self._base()}/")
 
         return Handler
@@ -984,6 +1142,7 @@ def serve(
     ai_entity: str = "",
     ai_fn: AiFn | None = None,
     parallel: int = 1,
+    catalog_fn: CatalogFn | None = None,
 ) -> PanelServer:
     """Build the server (caller runs `serve_forever`); `.panel.worker` runs the scans."""
     worker = Worker(
@@ -995,6 +1154,7 @@ def serve(
         print(f"ignoring ai_entity {ai_entity!r}: not an ai_task.* entity", file=sys.stderr)
         ai_entity = ""
     panel.ai_entity = ai_entity
+    panel.catalog_fn = catalog_fn
     if ai_fn is not None:
         panel.ai_fn = ai_fn
     httpd = PanelServer((host, port), panel.handler())

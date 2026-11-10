@@ -148,7 +148,10 @@ table { border-collapse:collapse; width:100%; font-size:0.86rem; }
 td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);
   vertical-align:top; overflow-wrap:anywhere; }
 .tools form { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
-.tools input { padding:6px; min-width:0; flex:1 1 180px; font:inherit; }
+.tools input, .tools select { padding:6px; min-width:0; flex:1 1 180px; font:inherit;
+  background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:6px; }
+.tools select { flex:0 1 auto; }
+form.search { display:flex; gap:8px; flex-wrap:wrap; margin:0; }
 .sev-critical { color:var(--red); font-weight:600; } .sev-high { color:var(--orange); font-weight:600; }
 .sev-medium { color:var(--yellow); } .ok { color:var(--green); } .bad { color:var(--red); }
 """
@@ -736,7 +739,7 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
         else:
             title = f"{len(pts)} servers or devices"
             nums = ", ".join(str(p.port) for p in pts[:4]) + (" …" if len(pts) > 4 else "")
-            sub = f"ports {nums} · addresses not in code"
+            sub = f"{nums} · address unknown"
         right.append(("ports", title, sub, ""))
     flowing = {nodes.get(t, {}).get("label") for t in flow_targets}
     net = [h for h in internet(hs) if h.name not in flowing]
@@ -773,8 +776,12 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
         f'role="img" aria-label="Data flow for {e(name, 80)}">',
         '<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
         'markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
-        'fill="var(--red)"/></marker></defs>',
+        'fill="var(--red)"/></marker>'
+        '<marker id="arrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" '
+        'markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
+        'fill="var(--muted)"/></marker></defs>',
     ]
+    port_dirs = {p.direction for p in pts}
     proven_src = {x["source"] for x in fl if x["evidence"] == "proven"}
     flow_src = {x["source"] for x in fl}
 
@@ -796,8 +803,8 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
             f'<text class="sm" x="18" y="{y + 35:.0f}">{e(_clip(label, 30))}</text>'
         )
         parts.append(
-            f'<line x1="182" y1="{y + 22:.0f}" x2="260" y2="{cy:.0f}" '
-            'stroke="var(--muted)" stroke-dasharray="3 3"/>'
+            f'<line x1="182" y1="{y + 22:.0f}" x2="258" y2="{cy:.0f}" '
+            'stroke="var(--muted)" stroke-dasharray="3 3" marker-end="url(#arrg)"/>'
         )
         lpos[nid] = y + 22
     if not rd:
@@ -825,9 +832,21 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
             f'<text x="{w - 188}" y="{y + 19:.0f}">{e(title, 60)}</text>'
             f'<text class="sm" x="{w - 188}" y="{y + 35:.0f}">{e(_clip(sub, 32))}</text>'
         )
-        parts.append(
-            f'<line x1="430" y1="{cy:.0f}" x2="{w - 200}" y2="{y + 22:.0f}" stroke="var(--line)"/>'
-        )
+        # Arrow = who opens the connection: out to a site or server; into the app for a
+        # port it listens on; no arrow when the code doesn't make the direction clear.
+        way = (port_dirs.pop() if len(port_dirs) == 1 else None) if key == "ports" else "out"
+        if way == "in":
+            parts.append(
+                f'<line x1="{w - 200}" y1="{y + 22:.0f}" x2="432" y2="{cy:.0f}" '
+                'stroke="var(--muted)" marker-end="url(#arrg)"/>'
+            )
+        else:
+            mark = ' marker-end="url(#arrg)"' if way == "out" else ""
+            x2 = w - 202 if way == "out" else w - 200
+            parts.append(
+                f'<line x1="430" y1="{cy:.0f}" x2="{x2}" y2="{y + 22:.0f}" '
+                f'stroke="var(--muted)"{mark}/>'
+            )
         rpos[key] = y + 22
     lines: list[str] = []
     for x in fl:
@@ -846,7 +865,7 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
         if extra > 0:
             cap += f" · {extra} more destination{'s' * (extra != 1)} below"
     else:
-        cap = "No path found from your data to the internet."
+        cap = "Arrows: which way the connection goes. No path found from your data to the internet."
     parts.append(f'<text class="sm" x="6" y="{height - 8:.0f}">{e(cap)}</text></svg>')
     del proven_src, g
     return '<div class="flowwrap">' + "".join(parts) + "</div>"

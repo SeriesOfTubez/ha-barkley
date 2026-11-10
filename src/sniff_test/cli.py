@@ -349,6 +349,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         budget_fn=lambda: GitHub.from_env().rate_limit(),
         ai_entity=args.ai_entity.strip() if supervisor.token() else "",
         parallel=args.parallel,
+        catalog_fn=supervisor.catalog if supervisor.token() else None,
     )  # fmt: skip
     out.print(
         f"🐕 Sniff Test {__version__} panel on {args.host}:{args.port} "
