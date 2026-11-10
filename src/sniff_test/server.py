@@ -371,13 +371,17 @@ def _action(base: str, r: Row, token: str) -> str:
     hidden = (f'<input type=hidden name=token value="{token}">'
               f'<input type=hidden name=repo value="{e(it.repo)}">'
               f'<input type=hidden name=ref value="{e(it.installed)}">')  # fmt: skip
-    if it.update and not (r.installed_scan and r.available_scan):
+    # An incomplete scan is never reused, so the same button scans again.
+    unfinished = [x for x in (r.installed_scan, r.available_scan) if x and not x.complete]
+    if it.update and (unfinished or not (r.installed_scan and r.available_scan)):
+        label = "Check again" if unfinished else "Check update"
         return (f'<form method=post action="{base}/update">{hidden}'
                 f'<input type=hidden name=to value="{e(it.available)}">'
-                "<button>Check update</button></form>")  # fmt: skip
-    if not r.installed_scan:
+                f"<button>{label}</button></form>")  # fmt: skip
+    if not r.installed_scan or not r.installed_scan.complete:
+        label = "Sniff again" if r.installed_scan else "Sniff installed"
         return (f'<form method=post action="{base}/installed">{hidden}'
-                "<button>Sniff installed</button></form>")  # fmt: skip
+                f"<button>{label}</button></form>")  # fmt: skip
     return ""
 
 

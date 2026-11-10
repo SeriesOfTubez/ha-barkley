@@ -1,4 +1,4 @@
-"""GitHub's rate limit: recognised, waited out by the add-on, and spared by ETags."""
+"""GitHub's rate limit: recognised, waited out by the add-on, never a scan result."""
 
 import email.message
 import io
@@ -6,11 +6,17 @@ import threading
 import time
 import urllib.error
 
+import pytest
+from conftest import requires_semgrep
+from test_repo_signals import LONG_HISTORY, FakeGitHub, _target
 from test_store import report
 
 from sniff_test import server
+from sniff_test.analyzers import repo_signals
+from sniff_test.deps import ha_env
 from sniff_test.fetch import github
-from sniff_test.fetch.github import RateLimit, RateLimitError
+from sniff_test.fetch.github import GitHub, RateLimit, RateLimitError
+from sniff_test.scanner import scan
 from sniff_test.store import Store
 
 
@@ -137,3 +143,86 @@ def test_queued_sniffs_and_an_update_check_all_finish_across_a_reset(tmp_path):
     w.wait()
     assert [j.state for j in reversed(w.jobs)] == ["done"] * 4
     assert [j.kind for j in reversed(w.jobs)] == ["installed"] * 3 + ["update"]  # order kept
+
+
+# --- a rate limit is never a scan result ------------------------------------------------
+
+LIMIT = RateLimitError("https://api.github.com/x", 0.0, authenticated=False)
+
+
+class LimitedGitHub(FakeGitHub):
+    def __init__(self, fail_on):
+        super().__init__(LONG_HISTORY, {})
+        self.fail_on = fail_on
+
+    def releases(self, owner, name, max_pages=5):
+        if "releases" in self.fail_on:
+            raise LIMIT
+        return super().releases(owner, name)
+
+    def get_json(self, path):
+        if any(k in path for k in self.fail_on):
+            raise LIMIT
+        return super().get_json(path)
+
+
+@pytest.mark.parametrize("fail_on", [("releases",), ("/compare/",), ("/repos/oldowner",)])
+def test_repo_signals_never_turn_a_rate_limit_into_a_partial_result(tmp_path, fail_on):
+    meta = {"id": 42, "full_name": "newowner/widget", "default_branch": "main"}
+    files = {"README.md": "https://github.com/oldowner/widget"}  # a former-name candidate
+    t = _target(tmp_path, repo_meta=meta, commit_sha="abc", files=files)
+    with pytest.raises(RateLimitError):
+        repo_signals.run(t, LimitedGitHub(fail_on))
+
+
+def test_ha_env_lets_a_rate_limit_through(tmp_path, monkeypatch):
+    monkeypatch.setenv("SNIFF_TEST_CACHE", str(tmp_path))
+
+    class G:
+        def file_at(self, *a):
+            raise LIMIT
+
+        def releases(self, *a, **k):
+            raise LIMIT
+
+    with pytest.raises(RateLimitError):
+        ha_env.load("2026.11.0", G())
+    with pytest.raises(RateLimitError):
+        ha_env.version_at("2026-11-01T00:00:00Z", G())
+
+
+def test_incomplete_scans_are_never_reused(tmp_path):
+    store = Store(tmp_path / "s.db")
+    bad = report(ref="v1")
+    bad["complete"] = False
+    store.save(bad)
+    assert (
+        store.find("acme/acme", "v1", exposure="local", tool_version=bad["tool"]["version"]) is None
+    )
+    good = store.save(report(ref="v1"))
+    hit = store.find("acme/acme", "v1", exposure="local", tool_version=bad["tool"]["version"])
+    assert hit.id == good
+
+
+@pytest.mark.network
+@requires_semgrep
+def test_a_rate_limit_on_any_github_request_of_a_real_scan_aborts_it(monkeypatch):
+    """Sweep: fail the Nth GitHub request of a real scan, for every N. A scan must never
+    come back (stored, reused, scored) with part of it missing for a rate limit."""
+    real = GitHub._request
+    calls = {"n": 0, "fail_at": None}
+
+    def counting(self, url, accept="application/vnd.github+json"):
+        calls["n"] += 1
+        if calls["n"] == calls["fail_at"]:
+            raise RateLimitError(url, 0.0, authenticated=bool(self.token))
+        return real(self, url, accept)
+
+    monkeypatch.setattr(GitHub, "_request", counting)
+    scan("ReikanYsora/Helios", ref="2026.9.6", ha_version="2026.11.0")
+    total = calls["n"]
+    assert total >= 5
+    for n in range(1, total + 1):
+        calls.update(n=0, fail_at=n)
+        with pytest.raises(RateLimitError):
+            scan("ReikanYsora/Helios", ref="2026.9.6", ha_version="2026.11.0")

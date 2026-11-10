@@ -376,3 +376,18 @@ def test_scans_from_older_rules_dont_count(addon):
     assert post(base + "/installed-all", {"token": token(base)})[0] == 303
     _worker(httpd).wait()
     assert ("acme/fine", "v1") in scan_fn.calls
+
+
+def test_an_incomplete_scan_offers_to_scan_again(addon):
+    store, _, base, _, _ = addon
+    _seed(store)
+    bad = report(repo="acme/fine", ref="v1")
+    bad["complete"] = False
+    store.save(bad)  # newer, but a complete one exists: that one is shown
+    _, _, page = get(base + "/?refresh=1")
+    assert "Sniff again" not in page
+    never = report(repo="acme/never", ref="v3", kind="plugin")
+    never["complete"] = False
+    store.save(never)
+    _, _, page = get(base + "/?refresh=1")
+    assert "Sniff again" in page

@@ -23,7 +23,7 @@ from pathlib import Path
 
 from sniff_test.deps import uv
 from sniff_test.deps.reqs import ReqKind, constraint_names, normalize, parse
-from sniff_test.fetch.github import GitHub, GitHubError
+from sniff_test.fetch.github import GitHub, GitHubError, RateLimitError
 from sniff_test.paths import cache_root
 
 HA_REPO = ("home-assistant", "core")
@@ -198,6 +198,8 @@ def load(version: str | None = None, gh: GitHub | None = None) -> HAEnv:
         if all((d / n).is_file() for n in _FILES):
             return _from_dir(version, d)
         texts = {name: gh.file_at(*HA_REPO, path, version) for name, path in _FILES.items()}
+    except RateLimitError:
+        raise  # not "no HA data": the caller waits for GitHub and scans again
     except GitHubError as e:
         raise HAEnvError(f"could not fetch Home Assistant {version or 'release'} data: {e}") from e
     if texts["package_constraints.txt"] is None:
@@ -223,6 +225,8 @@ def _stable_releases(gh: GitHub) -> list[tuple[str, str]]:
         pass
     try:
         rels = gh.releases(*HA_REPO, max_pages=10)
+    except RateLimitError:
+        raise
     except GitHubError as e:
         raise HAEnvError(f"could not list Home Assistant releases: {e}") from e
     out = sorted(

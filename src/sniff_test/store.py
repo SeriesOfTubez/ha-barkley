@@ -273,6 +273,8 @@ class Store:
 
         Same exposure and tool version; for integrations also the same HA release
         (dependencies resolve against it). Cards don't depend on the HA release.
+        Incomplete scans are never reused: what stopped them (a network error, GitHub's
+        rate limit) is usually gone, so a fresh scan wouldn't reproduce them.
         """
         with self._connect() as db:
             rows = db.execute(
@@ -282,6 +284,8 @@ class Store:
             ).fetchall()
         for r in rows:
             row = _row(r)
+            if not row.complete:
+                continue
             if row.kind == "plugin" or ha_version is None or row.ha_version == ha_version:
                 return row
         return None

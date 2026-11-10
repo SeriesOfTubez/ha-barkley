@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sniff_test.fetch.github import GitHub, GitHubError, NotFoundError
+from sniff_test.fetch.github import GitHub, GitHubError, NotFoundError, RateLimitError
 from sniff_test.models import (
     AnalyzerResult,
     AnalyzerState,
@@ -169,6 +169,8 @@ def find_former_names(target: Target, gh: GitHub) -> list[dict[str, Any]]:
             other = gh.get_json(f"/repos/{cand}")
         except NotFoundError:
             continue
+        except RateLimitError:
+            raise  # never a partial result: the caller waits and scans again
         except GitHubError:
             break
         if isinstance(other, dict) and other.get("id") == meta.get("id"):
@@ -393,6 +395,8 @@ def tag_off_default_branch(target: Target, gh: GitHub, owner: str, name: str) ->
             f"/repos/{owner}/{name}/compare/{urllib.parse.quote(str(default), safe='')}..."
             f"{urllib.parse.quote(head, safe='')}"
         )
+    except RateLimitError:
+        raise  # "no finding" would be a guess; the caller waits and scans again
     except GitHubError:
         return None
     if not isinstance(cmp, dict) or cmp.get("status") not in ("ahead", "diverged"):
@@ -425,6 +429,8 @@ def run(target: Target, gh: GitHub | None = None) -> tuple[AnalyzerResult, Prove
     try:
         releases = [to_release(r) for r in gh.releases(owner, name)]
         former = find_former_names(target, gh)
+    except RateLimitError:
+        raise  # an incomplete scan would be stored and reused; the caller waits instead
     except GitHubError as e:
         return AnalyzerResult(NAME, AnalyzerState.ERROR, detail=str(e)), None
 
