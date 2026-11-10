@@ -33,11 +33,13 @@ installed. Scores are computed by fixed rules; no AI decides anything.
 | `jobs` | `1` | Parallel Semgrep jobs inside one scan. More is faster and uses more memory. |
 | `parallel_scans` | `2` | How many scans may run at once. A second scan starts only while the box has room for another full scan above the 2 GB warning line (1.5 GB counted for each scan already running); otherwise it waits. Two checks of the same project never run together. |
 | `github_token` | empty | A GitHub token (no scopes needed) for the 5,000 requests/hour limit instead of 60. |
-| `ai_entity` | empty | An AI Task entity (for example `ai_task.openrouter_ai_task`) for the "Explain this app" button. Empty turns the button off. |
+| `ai_entity` | empty | Optional. Easier: pick your AI in the panel (any app's page, "Explain this app with AI"), which lists your AI Task entities. A choice made in the panel wins over this option. |
 
 ### AI explanations
 
-With `ai_entity` set, each app's page gets an **Explain this app** button. Nothing is
+Pick an AI on any app's page (the dropdown lists your AI Task entities; Home Assistant
+renders one fixed template that returns only their ids and names), and each app's page
+gets an **Explain this app** button. Nothing is
 sent until you click it. Sniff Test then calls Home Assistant's `ai_task.generate_data`
 with that scan's findings: rule names, severities, file names and short code excerpts
 from the public project that was scanned. No Home Assistant data is sent. The request
@@ -69,7 +71,9 @@ The app asks for the Home Assistant API only. It reads the installed HA version 
 dependencies resolve against the release you run), asks the Marketplace for its
 installed list (`marketplace/repositories/list`, or HACS's `hacs/repositories/list` on
 older HA; the only websocket commands the app sends), and, only when you click
-"Explain this app", calls `ai_task.generate_data` (the only service it calls). No host network,
+"Explain this app", calls `ai_task.generate_data` (the only service it calls). To
+fill the AI dropdown it asks Home Assistant to render one fixed template that returns
+only the ids and names of AI Task entities. No host network,
 no ports, no Supervisor role, no folder access: the app never reads your config folder
 and never opens the installed copies.
 

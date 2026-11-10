@@ -16,10 +16,16 @@ Three calls, all covered by `homeassistant_api: true` in config.yaml, no other p
   options. It sends findings about a public repo (the report's `ai_brief`), never HA
   data, to whatever AI provider that entity uses.
 
+- (M8) `POST http://supervisor/core/api/template` with one template fixed in code
+  (`AI_ENTITIES_TEMPLATE`) that returns only the ids and names of `ai_task` entities, so
+  the panel can offer them in a dropdown. HA renders it; no other entity or state ever
+  reaches the app (user decision over reading all states via /api/states).
+
 The proxy talks to Core as the Supervisor's admin user, so these connections could reach
-almost anything in Core. The client sends only the two list commands and the one AI Task
-service call, fixed in code (`_ALLOWED_COMMANDS`, `AI_TASK_PATH`); nothing from a request
-or a report ever becomes a command, a service name or a URL.
+almost anything in Core. The client sends only the two list commands, the one AI Task
+service call and the one fixed template, all in code (`_ALLOWED_COMMANDS`,
+`AI_TASK_PATH`, `AI_ENTITIES_TEMPLATE`); nothing from a request or a report ever becomes
+a command, a service name, a template or a URL.
 
 Nothing here touches installed code: the Marketplace only reports names and versions.
 """
@@ -59,6 +65,37 @@ class SupervisorError(Exception):
 AI_TASK_PATH = "/core/api/services/ai_task/generate_data?return_response"
 _AI_ENTITY = re.compile(r"^ai_task\.[a-z0-9_]{1,100}$")
 _AI_TIMEOUT = 180
+
+
+AI_ENTITIES_TEMPLATE = (
+    "{% set ns = namespace(out=[]) %}{% for s in states.ai_task %}"
+    "{% set ns.out = ns.out + [[s.entity_id, s.name]] %}{% endfor %}{{ ns.out | tojson }}"
+)
+
+
+def ai_task_entities(tok: str | None = None) -> list[tuple[str, str]]:
+    """(entity_id, name) of every ai_task entity, via the one fixed template."""
+    tok = tok or token()
+    if not tok:
+        raise SupervisorError("not running as a Home Assistant add-on")
+    req = urllib.request.Request(
+        f"http://{SUPERVISOR_HOST}/core/api/template",
+        data=json.dumps({"template": AI_ENTITIES_TEMPLATE}).encode(),
+        method="POST",
+    )
+    req.add_header("Authorization", f"Bearer {tok}")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310
+            data = json.loads(r.read().decode("utf-8", "replace") or "[]")
+    except (OSError, ValueError) as ex:
+        raise SupervisorError(f"couldn't list AI Task entities: {ex}") from ex
+    out = []
+    for item in data if isinstance(data, list) else []:
+        ok = isinstance(item, list) and len(item) == 2 and isinstance(item[0], str)
+        if ok and ai_entity_ok(item[0]):
+            out.append((item[0], str(item[1] or item[0])[:100]))
+    return out
 
 
 def ai_entity_ok(entity_id: str) -> bool:

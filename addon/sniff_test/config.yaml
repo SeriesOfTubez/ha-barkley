@@ -17,7 +17,7 @@ ingress: true
 ingress_port: 8099
 panel_icon: mdi:dog-side
 panel_title: Sniff Test
-# Three calls, nothing else (each fixed in code, see supervisor.py):
+# Four calls, nothing else (each fixed in code, see supervisor.py):
 # - GET /core/api/config: the installed HA version, so dependencies resolve against
 #   the release the user actually runs.
 # - The Marketplace's `marketplace/repositories/list` (older HA: HACS's
@@ -25,8 +25,10 @@ panel_title: Sniff Test
 #   cards with their installed and available versions.
 # - POST /core/api/services/ai_task/generate_data?return_response: only when the user
 #   clicks "Explain this app" with `ai_entity` set. It sends findings about a public
-#   repo to the AI provider behind that entity; no HA data. Covered by the same
-#   permission, so no new one is asked for.
+#   repo to the AI provider behind that entity; no HA data.
+# - POST /core/api/template with one fixed template that returns only the ids and names
+#   of ai_task entities, for the panel's AI dropdown (nothing else is read).
+# All covered by this one permission, so no new one is asked for.
 # No host network, no ports, no Supervisor role, no folder access: the installed list
 # comes from HACS, so the HA config folder (secrets.yaml, .storage/auth) stays unmapped.
 homeassistant_api: true

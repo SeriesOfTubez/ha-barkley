@@ -595,19 +595,41 @@ def _update_box(base: str, row: Row | None, token: str) -> str:
     return "".join(parts)
 
 
+def _ai_picker(base: str, sid: int, token: str, entity: str,
+               choices: list[tuple[str, str]] | None, err: str) -> str:  # fmt: skip
+    """A dropdown of the AI Task entities HA has (from the one fixed template)."""
+    if err:
+        return (f'<p class="small">Couldn\'t list your AI Task entities: {e(err, 300)}. You can '
+                "still set <code>ai_entity</code> in the app's Configuration.</p>")  # fmt: skip
+    if not choices:
+        return ('<p class="small">Your Home Assistant has no AI Task entity yet. Add an '
+                "<b>AI Task</b> entry under your AI integration (for OpenRouter: Settings &gt; "
+                "Devices &amp; services &gt; OpenRouter &gt; Add AI Task), then reload this "
+                "page.</p>")  # fmt: skip
+    opts = ['<option value="">Off</option>'] + [
+        f'<option value="{e(eid, 120)}"{" selected" if eid == entity else ""}>'
+        f"{e(name, 100)} ({e(eid, 120)})</option>"
+        for eid, name in choices
+    ]
+    return (f'<form method=post action="{base}/ai-entity" class="act tools" '
+            'style="margin-top:6px">'
+            f'<input type=hidden name=token value="{token}">'
+            f'<input type=hidden name=scan value="{sid}">'
+            f'<select name=entity>{"".join(opts)}</select>'
+            "<button>Save</button></form>")  # fmt: skip
+
+
 def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: str,
-             have: dict[str, Any] | None) -> str:  # fmt: skip
+             have: dict[str, Any] | None, choices: list[tuple[str, str]] | None = None,
+             choices_err: str = "") -> str:  # fmt: skip
     """The "Explain this app" control. Nothing is sent until the user clicks."""
+    picker = _ai_picker(base, sid, token, entity, choices, choices_err)
     if not entity:
         return (
-            '<div class="banner" style="margin-top:10px"><b>🤖 Explain this app with AI</b> '
-            '<button disabled title="Set up an AI Task entity first">'
-            "Explain this app (needs ai_entity)</button>"
+            '<div class="banner" style="margin-top:10px"><b>🤖 Explain this app with AI</b>'
             '<p class="small" style="margin-top:6px">Sniff Test can ask your Home Assistant\'s '
-            "AI to explain these findings in plain words. It's off until you choose an AI "
-            "Task entity: find its id under Settings &gt; Devices &amp; services &gt; Entities "
-            "(search for <code>ai_task</code>), then put it in Settings &gt; Apps &gt; Sniff "
-            "Test &gt; Configuration, option <code>ai_entity</code>, and restart the app.</p></div>"
+            "AI to explain these findings in plain words. Choose which AI to use:</p>"
+            f"{picker}</div>"
         )
     form = (f'<form method=post action="{base}/explain" class="act" style="margin-top:8px">'
             f'<input type=hidden name=token value="{token}">'
@@ -616,18 +638,20 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
     note = ('<p class="tech">Sends this scan\'s findings (about a public project, no Home '
             f"Assistant data) to the AI provider behind <code>{e(entity, 120)}</code>. The AI "
             "explains only; it can't change the score or the findings.</p>")  # fmt: skip
+    change = f"<details><summary>Change which AI explains</summary>{picker}</details>"
     if state == "running":
         return ('<p class="muted small" style="margin-top:8px">Asking your AI… this page '
                 "refreshes by itself.</p>")  # fmt: skip
     if error:
         return (f'<div class="banner warn" style="margin-top:8px">The AI didn\'t answer: '
-                f"{e(error, 400)}</div>" + form.replace("{label}", "Try again") + note)  # fmt: skip
+                f"{e(error, 400)}</div>" + form.replace("{label}", "Try again") + note
+                + change)  # fmt: skip
     if have:
         return (f'<p class="tech">AI explanation by <code>{e(have.get("entity_id"), 120)}</code>, '
                 f"{e(str(have.get('created', ''))[:16].replace('T', ' '))} UTC. It can be wrong; "
                 "it can't change the score.</p>"
-                + form.replace("{label}", "Ask again"))  # fmt: skip
-    return form.replace("{label}", "Explain this app") + note
+                + form.replace("{label}", "Ask again") + change)  # fmt: skip
+    return form.replace("{label}", "Explain this app") + note + change
 
 
 def render_scan(
@@ -640,6 +664,8 @@ def render_scan(
     ai_entity: str = "",
     ai_state: str = "",
     ai_error: str = "",
+    ai_choices: list[tuple[str, str]] | None = None,
+    ai_choices_err: str = "",
 ) -> bytes:
     repo = report.get("target", {}).get("repo")
     rows = store.history(repo, limit=200) if repo else []
@@ -652,7 +678,9 @@ def render_scan(
         name=row.item.name if row else None,
         update=_update_box(base, row, token),
         ai=have,
-        ai_form=_ai_form(base, sid, token, ai_entity, ai_state, ai_error, have),
+        ai_form=_ai_form(
+            base, sid, token, ai_entity, ai_state, ai_error, have, ai_choices, ai_choices_err
+        ),
         refresh=5 if ai_state == "running" else 0,
     )
 
@@ -788,8 +816,10 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
 InstalledFn = Callable[[], tuple[list[supervisor.Installed], dict[str, int]]]
 AiFn = Callable[[str, str, dict[str, Any], str], Any]
 CatalogFn = Callable[[], list[supervisor.CatalogItem]]
+EntitiesFn = Callable[[], list[tuple[str, str]]]
 _REPORTS_KEPT = 64
 _CATALOG_TTL = 600
+_ENTITIES_TTL = 300
 _INSTALLED_TTL = 300  # seconds; HACS itself refreshes far less often
 
 
@@ -815,6 +845,8 @@ class Panel:
         self.catalog_fn: CatalogFn | None = None
         self._catalog: tuple[float, list[supervisor.CatalogItem], str] = (0.0, [], "")
         self.ai_entity = ""
+        self.entities_fn: EntitiesFn | None = None
+        self._entities: tuple[float, list[tuple[str, str]], str] = (0.0, [], "")
         self.ai_fn: AiFn = supervisor.ai_generate_data
         self._ai: dict[int, tuple[str, str]] = {}  # scan id -> (running|failed, error)
         self._ai_lock = threading.Lock()
@@ -925,6 +957,19 @@ class Panel:
             f'<h2 style="margin-top:8px">Sniffed, not installed ({len(cards)})</h2>'
             '<div class="grid">' + "".join(ui.card_html(base, c) for c in cards) + "</div>"
         )
+
+    def ai_choices(self, refresh: bool = False) -> tuple[list[tuple[str, str]] | None, str]:
+        """AI Task entities for the picker (None outside an add-on), cached 5 minutes."""
+        if self.entities_fn is None:
+            return None, ""
+        fetched, items, err = self._entities
+        if refresh or not fetched or time.time() - fetched > _ENTITIES_TTL:
+            try:
+                items, err = self.entities_fn(), ""
+            except supervisor.SupervisorError as ex:
+                items, err = [], str(ex)
+            self._entities = (time.time(), items, err)
+        return items, err
 
     def ai_state(self, sid: int) -> tuple[str, str]:
         with self._ai_lock:
@@ -1038,9 +1083,10 @@ class Panel:
                             return self._send(200, body, "application/json")
                         row = panel.row_for(report.get("target", {}).get("repo"))
                         state, err = panel.ai_state(sid)
+                        choices, choices_err = panel.ai_choices()
                         page = render_scan(
                             base, sid, report, panel.store, row, panel.token,
-                            panel.ai_entity, state, err,
+                            panel.ai_entity, state, err, choices, choices_err,
                         )  # fmt: skip
                         return self._send(200, page)
                     if url.path == "/search" and panel.catalog_fn is not None:
@@ -1079,6 +1125,20 @@ class Panel:
                 if not secrets.compare_digest(get("token"), panel.token):
                     return self._text(HTTPStatus.FORBIDDEN, "stale form; reload the page")
                 path = urllib.parse.urlsplit(self.path).path
+                if path == "/ai-entity":
+                    value = get("entity")
+                    choices, _err = panel.ai_choices(refresh=True)
+                    if value and (choices is None or value not in {c[0] for c in choices}):
+                        return self._text(
+                            HTTPStatus.BAD_REQUEST, "not one of your AI Task entities"
+                        )
+                    panel.store.set_setting("ai_entity", value or "off")
+                    panel.ai_entity = value
+                    print(f"AI explanations: {'on, via ' + value if value else 'off'} (chosen in "
+                          "the panel)", file=sys.stderr, flush=True)  # fmt: skip
+                    sid = get("scan")
+                    return self._redirect(f"{self._base()}/scan/{sid}" if sid.isdigit()
+                                          else f"{self._base()}/")  # fmt: skip
                 if path == "/explain":
                     if not get("scan").isdigit() or not panel.ai_entity:
                         return self._text(HTTPStatus.BAD_REQUEST, "no AI Task entity set")
@@ -1144,6 +1204,7 @@ def serve(
     ai_fn: AiFn | None = None,
     parallel: int = 1,
     catalog_fn: CatalogFn | None = None,
+    entities_fn: EntitiesFn | None = None,
 ) -> PanelServer:
     """Build the server (caller runs `serve_forever`); `.panel.worker` runs the scans."""
     worker = Worker(
@@ -1154,8 +1215,14 @@ def serve(
     if ai_entity and not supervisor.ai_entity_ok(ai_entity):
         print(f"ignoring ai_entity {ai_entity!r}: not an ai_task.* entity", file=sys.stderr)
         ai_entity = ""
+    stored = store.setting("ai_entity")  # chosen in the panel; wins over the option
+    if stored == "off":
+        ai_entity = ""
+    elif stored and supervisor.ai_entity_ok(stored):
+        ai_entity = stored
     panel.ai_entity = ai_entity
     panel.catalog_fn = catalog_fn
+    panel.entities_fn = entities_fn
     if ai_fn is not None:
         panel.ai_fn = ai_fn
     httpd = PanelServer((host, port), panel.handler())

@@ -86,6 +86,10 @@ CREATE TABLE IF NOT EXISTS explanations (  -- AI explanations (M8); never a scor
     entity_id TEXT NOT NULL,
     data      TEXT NOT NULL  -- {"summary": str, "findings": {finding_id: str}}, filtered
 );
+CREATE TABLE IF NOT EXISTS settings (  -- panel settings (M8), e.g. the chosen AI entity
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS edge_findings (
     scan_id    INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
     edge_id    TEXT NOT NULL,
@@ -235,6 +239,15 @@ class Store:
                 [(sid, e["id"], fid) for e in edges for fid in e.get("finding_ids", [])],
             )
         return sid
+
+    def setting(self, key: str) -> str | None:
+        with self._connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
     def save_explanation(self, scan_id: int, entity_id: str, data: dict[str, Any]) -> None:
         with self._connect() as db:

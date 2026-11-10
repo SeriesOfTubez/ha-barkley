@@ -350,6 +350,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         ai_entity=args.ai_entity.strip() if supervisor.token() else "",
         parallel=args.parallel,
         catalog_fn=supervisor.catalog if supervisor.token() else None,
+        entities_fn=supervisor.ai_task_entities if supervisor.token() else None,
     )  # fmt: skip
     ai = httpd.panel.ai_entity
     if args.ai_entity.strip() and not ai:

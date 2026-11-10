@@ -72,10 +72,10 @@ def test_entity_id_is_validated():
         assert not supervisor.ai_entity_ok(bad)
 
 
-def _serve(tmp_path, ai_fn, entity="ai_task.test"):
+def _serve(tmp_path, ai_fn, entity="ai_task.test", entities_fn=None):
     store = Store(tmp_path / "s.db")
     httpd = server.serve(store, lambda r, f: {}, "127.0.0.1", 0, {"127.0.0.1"},
-                         ai_entity=entity, ai_fn=ai_fn)  # fmt: skip
+                         ai_entity=entity, ai_fn=ai_fn, entities_fn=entities_fn)  # fmt: skip
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return store, f"http://127.0.0.1:{httpd.server_address[1]}", httpd
 
@@ -130,8 +130,7 @@ def test_no_entity_no_button_and_no_call(tmp_path):
     store, base, httpd = _serve(tmp_path, lambda *a: calls.append(a), entity="")
     sid = store.save(_report())
     _, _, page = get(f"{base}/scan/{sid}")
-    assert 'action="/explain"' not in page and "<button disabled" in page
-    assert "ai_entity" in page
+    assert 'action="/explain"' not in page and "Choose which AI" in page
     assert post(f"{base}/explain", {"token": token(base), "scan": sid})[0] == 400
     assert post(f"{base}/explain", {"token": "wrong", "scan": sid})[0] == 403
     assert calls == []
@@ -142,3 +141,37 @@ def test_bad_entity_option_is_ignored(tmp_path):
     _store, _base, httpd = _serve(tmp_path, lambda *a: {}, entity="light.kitchen")
     assert httpd.panel.ai_entity == ""
     httpd.shutdown()
+
+
+def test_picker_lists_ai_task_entities_and_saves_the_choice(tmp_path):
+    found = [("ai_task.openrouter_ai_task", f"OpenRouter {HOSTILE}"), ("ai_task.local", "Local")]
+    store, base, httpd = _serve(tmp_path, lambda *a: {}, entity="", entities_fn=lambda: found)
+    sid = store.save(_report())
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert 'value="ai_task.openrouter_ai_task"' in page and "<script>" not in page
+    tok = token(base)
+    bad = {"token": tok, "scan": sid, "entity": "light.kitchen"}
+    assert post(f"{base}/ai-entity", bad)[0] == 400
+    good = {"token": tok, "scan": sid, "entity": "ai_task.local"}
+    status, headers = post(f"{base}/ai-entity", good)
+    assert status == 303 and headers["Location"] == f"/scan/{sid}"
+    assert httpd.panel.ai_entity == "ai_task.local"
+    assert store.setting("ai_entity") == "ai_task.local"
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert "Explain this app" in page and 'action="/explain"' in page
+    httpd.shutdown()
+    # the saved choice survives a restart and wins over the option
+    httpd = server.serve(store, lambda r, f: {}, "127.0.0.1", 0, {"127.0.0.1"},
+                         ai_entity="ai_task.other")  # fmt: skip
+    assert httpd.panel.ai_entity == "ai_task.local"
+    store.set_setting("ai_entity", "off")
+    httpd2 = server.serve(store, lambda r, f: {}, "127.0.0.1", 0, {"127.0.0.1"},
+                          ai_entity="ai_task.other")  # fmt: skip
+    assert httpd2.panel.ai_entity == ""
+    httpd.server_close()
+    httpd2.server_close()
+
+
+def test_entities_template_is_fixed_and_parsed_safely():
+    assert "states.ai_task" in supervisor.AI_ENTITIES_TEMPLATE
+    assert "states." not in supervisor.AI_ENTITIES_TEMPLATE.replace("states.ai_task", "")
