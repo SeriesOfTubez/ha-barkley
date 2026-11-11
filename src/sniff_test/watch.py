@@ -330,36 +330,51 @@ class Watcher:
         self.sweep()
         wait = _RECONNECT
         while not self.stop.is_set():
-            sub = None
-            if self.subscribe_fn is not None:
-                try:
-                    sub = self.subscribe_fn()
-                    self.mode, self.error, self.since, wait = (
-                        "subscribed",
-                        "",
-                        self.now_fn(),
-                        (_RECONNECT),
-                    )
-                except SupervisorError as ex:
-                    self.mode, self.error = "polling (no subscription)", str(ex)
-                    print(f"auto-sniff: subscription failed, polling every {self.poll:.0f} s: "
-                          f"{ex}", file=sys.stderr, flush=True)  # fmt: skip
-            else:
-                self.mode = "polling"
-            if sub is None:
-                self.sleep_fn(min(wait, self.poll))
-                wait = min(wait * 2, self.poll)
-                self.tick()
-                continue
             try:
-                self.watch(sub.events())
+                wait = self._round(wait)
+            except Exception as ex:  # never let the thread die: say why and go on
+                self.error = f"{type(ex).__name__}: {ex}"
+                print(f"auto-sniff: {self.error}", file=sys.stderr, flush=True)
+                self.sleep_fn(wait)
+                wait = min(wait * 2, self.poll)
+
+    def _round(self, wait: float) -> float:  # pragma: no cover - the loop; parts are tested
+        """One subscription (or one polling wait); returns the next reconnect wait."""
+        sub = None
+        if self.subscribe_fn is not None:
+            try:
+                sub = self.subscribe_fn()
+                self.mode, self.error, self.since, wait = "subscribed", "", self.now_fn(), 0.0
+                wait = _RECONNECT
+                print(
+                    "auto-sniff: subscribed to the Marketplace's events "
+                    f"({supervisor.SUBSCRIBE}: {', '.join(supervisor.WATCH_SIGNALS)}); the "
+                    f"installed list is read again every {self.poll:.0f} s anyway",
+                    file=sys.stderr,
+                    flush=True,
+                )
             except SupervisorError as ex:
-                self.error = str(ex)
-                print(f"auto-sniff: subscription ended: {ex}", file=sys.stderr, flush=True)
-            finally:
-                sub.close()
-            self.sleep_fn(wait)
-            wait = min(wait * 2, self.poll)
+                self.mode, self.error = "polling (no subscription)", str(ex)
+                print(
+                    f"auto-sniff: subscription failed, polling every {self.poll:.0f} s: {ex}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        else:
+            self.mode = "polling"
+        if sub is None:
+            self.sleep_fn(min(wait, self.poll))
+            self.tick()
+            return min(wait * 2, self.poll)
+        try:
+            self.watch(sub.events())
+        except SupervisorError as ex:
+            self.error = str(ex)
+            print(f"auto-sniff: subscription ended: {ex}", file=sys.stderr, flush=True)
+        finally:
+            sub.close()
+        self.sleep_fn(wait)
+        return min(wait * 2, self.poll)
 
     def watch(self, events: Iterable[tuple[str, dict[str, Any]] | None]) -> None:
         """Consume one subscription's events; idle ticks poll and sweep."""

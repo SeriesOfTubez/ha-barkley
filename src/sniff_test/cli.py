@@ -365,6 +365,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     if installed_fn is not None:
         from sniff_test import watch
 
+        target = args.notify_target.strip()
         watcher = watch.Watcher(
             store, None, installed_fn,
             subscribe_fn=lambda: supervisor.Subscription(supervisor.token() or ""),
@@ -372,8 +373,9 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
             notify_service_fn=supervisor.notify_service,
             targets_fn=supervisor.notify_targets,
             slug_fn=supervisor.self_slug,
-            enabled=str(args.auto_scan).strip().lower() in ("true", "1", "on", "yes"),
-            notify_target=args.notify_target.strip(),
+            # bashio prints "null" for an option missing from an older options file
+            enabled=str(args.auto_scan).strip().lower() in ("true", "1", "on", "yes", "null"),
+            notify_target=target if target != "null" else "",
         )  # fmt: skip
     httpd = server.serve(
         store, scan_fn, args.host, args.port, allow,

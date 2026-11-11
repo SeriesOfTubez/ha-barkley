@@ -4,7 +4,8 @@
 set -e
 
 token="$(bashio::config 'github_token' '')"
-if [ -n "${token}" ]; then
+# bashio prints "null" for an option that isn't in the options file yet
+if [ -n "${token}" ] && [ "${token}" != "null" ]; then
     export GITHUB_TOKEN="${token}"
 fi
 # Downloaded HA constraints and package caches: persistent, but excluded from backups.
