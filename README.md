@@ -108,7 +108,11 @@ Lockfiles are scanned in isolation with Barkley's own osv-scanner config, so a p
 `addon/sniff_test/` is the add-on: a Debian-based image with Semgrep, GuardDog,
 osv-scanner and uv pinned, an ingress panel (`sniff-test serve`), and the scan store in
 `/data/sniff-test.db`. "What would updating change?" scans the release HACS would
-install now and diffs it against the stored scan of the installed tag. Build from the
+install now and diffs it against the stored scan of the installed tag. **Auto-sniff**
+watches the Marketplace: every install or update is scanned at the version that landed
+(reusing a scan sniffed from search), an update gets its diff, and a notification says
+what was found. Note that a new integration runs as soon as it's installed, so the
+protection for a new install is sniffing it from search first. Build from the
 repository root: `docker buildx build -f addon/sniff_test/Dockerfile .`. See
 [`addon/sniff_test/DOCS.md`](addon/sniff_test/DOCS.md).
 
