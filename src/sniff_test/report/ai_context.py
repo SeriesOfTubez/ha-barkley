@@ -28,6 +28,7 @@ import secrets
 from typing import Any
 
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
+from sniff_test.models import years_since
 from sniff_test.report import context, explain
 from sniff_test.report.json_report import sanitize_untrusted
 
@@ -181,6 +182,8 @@ def _describe_dependency(report: dict[str, Any], item_id: str) -> tuple[str, dic
         "ecosystem": d.get("ecosystem"),
         "fixed_in": d.get("fixed_in"),  # "" means no fixed version is listed
         "newest_release": d.get("latest"),
+        "newest_release_date": d.get("latest_date"),
+        "years_without_a_release": years_since(d.get("latest_date")),
         "listed_by_the_app_itself": d.get("direct"),
         "advisories_untrusted": [
             {

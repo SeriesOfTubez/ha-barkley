@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from sniff_test import __version__
 from sniff_test.analyzers.correlate import SENSITIVE_NODES
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
-from sniff_test.models import fix_phrase
+from sniff_test.models import STALE_YEARS, fix_phrase, years_since
 from sniff_test.report import explain, privacy
 from sniff_test.report.json_report import sanitize_untrusted
 
@@ -873,6 +873,12 @@ def dependency_line(d: dict[str, Any]) -> str:
         parts.append(f"newest is {e(latest, 60)}{on}{ahead}")
     elif d.get("lookup_error"):
         parts.append("we couldn't look up the newest release")
+    age = years_since(when) if latest else None
+    if age is not None and age >= STALE_YEARS:
+        stale = f"no release in over {age} years: likely unmaintained"
+        if not d.get("fixed_in"):
+            stale += ", so a fix may never come"
+        parts.append(f"<b>{stale}</b>")
     if d.get("direct") is True:
         parts.append("the app lists it itself")
     elif d.get("direct") is False:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import re
 from dataclasses import dataclass, field, replace
@@ -102,6 +103,20 @@ def fix_phrase(ecosystem: str, fixes: list[tuple[str, str | None]]) -> str:
     if none:
         return "no fixed version yet"
     return "the advisory doesn't say which version fixes it"
+
+
+STALE_YEARS = 2  # no release for this long: likely unmaintained
+
+
+def years_since(date: str | None, today: datetime.date | None = None) -> int | None:
+    """Whole years since an ISO date (YYYY-MM-DD…), or None if unreadable."""
+    try:
+        then = datetime.date.fromisoformat(str(date)[:10])
+    except ValueError:
+        return None
+    today = today or datetime.datetime.now(datetime.UTC).date()
+    years = today.year - then.year - ((today.month, today.day) < (then.month, then.day))
+    return max(0, years)
 
 
 def version_key(ecosystem: str, version: str) -> tuple:

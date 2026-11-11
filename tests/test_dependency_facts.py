@@ -88,11 +88,13 @@ def test_newest_release_and_count_behind(monkeypatch):
     assert "registry.npmjs.org" in http.ALLOWED_HOSTS
 
 
-def test_dependency_line_reads_plainly():
+def test_dependency_line_reads_plainly(monkeypatch):
+    monkeypatch.setattr("sniff_test.ui.years_since", lambda _d: 3)
     d = DepFacts("deepmerge", "npm", "4.3.1", (osv.Advisory("GHSA-1", fixed=""),), True,
                  "4.3.1", "2023-03-16", 0)  # fmt: skip
     assert dependency_line(dependency_json(d)) == (
         "<b>deepmerge 4.3.1</b>: no fixed version yet · the newest release (2023-03-16) · "
+        "<b>no release in over 3 years: likely unmaintained, so a fix may never come</b> · "
         "the app lists it itself"
     )
 
@@ -195,3 +197,22 @@ def test_a_partial_fix_says_which_advisories_it_covers():
     assert "fixed in 3.4.0 for 2 of 3; no fix listed for PYSEC-2025-185" in dependency_line(
         dependency_json(d)
     )
+
+
+def test_a_package_without_releases_for_years_reads_as_unmaintained(monkeypatch):
+    import datetime
+
+    from sniff_test import models
+
+    assert models.years_since("2023-03-16", datetime.date(2026, 11, 10)) == 3
+    assert models.years_since("2023-11-11", datetime.date(2026, 11, 10)) == 2
+    assert models.years_since("not a date") is None
+    d = DepFacts("deepmerge", "npm", "4.3.1", (osv.Advisory("GHSA-1", fixed=""),), True,
+                 "4.3.1", "2023-03-16", 0)  # fmt: skip
+    monkeypatch.setattr("sniff_test.ui.years_since", lambda _d: 3)
+    line = dependency_line(dependency_json(d))
+    assert "<b>no release in over 3 years: likely unmaintained, so a fix may never come</b>" in line
+    fresh = DepFacts("js-yaml", "npm", "4.1.1", (osv.Advisory("G", fixed="4.3.2"),), True,
+                     "5.5.0", "2026-10-15", 16)  # fmt: skip
+    monkeypatch.setattr("sniff_test.ui.years_since", lambda _d: 0)
+    assert "unmaintained" not in dependency_line(dependency_json(fresh))
