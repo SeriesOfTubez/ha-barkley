@@ -216,3 +216,22 @@ def test_a_package_without_releases_for_years_reads_as_unmaintained(monkeypatch)
                      "5.5.0", "2026-10-15", 16)  # fmt: skip
     monkeypatch.setattr("sniff_test.ui.years_since", lambda _d: 0)
     assert "unmaintained" not in dependency_line(dependency_json(fresh))
+
+
+def test_the_page_names_the_bug_links_it_and_says_what_the_user_can_do():
+    from sniff_test.ui import finding_html
+
+    adv = osv.Advisory("GHSA-gcqx-w48m-w2h4", "deepmerge mergeObject() allows prototype poisoning",
+                       fixed="", aliases=("CVE-2026-93753",))  # fmt: skip
+    d = dependency_json(
+        DepFacts("deepmerge", "npm", "4.3.1", (adv,), True, "4.3.1", "2023-03-16", 0)
+    )
+    f = {"id": "x", "rule_id": "dep-vuln", "severity": "medium", "title": "t", "message": "m",
+         "file": "bun.lock", "dependency": d}  # fmt: skip
+    html = finding_html(f, [f], 8)
+    assert ('<a href="https://osv.dev/vulnerability/GHSA-gcqx-w48m-w2h4" target="_blank" '
+            'rel="noopener noreferrer">GHSA-gcqx-w48m-w2h4 (CVE-2026-93753)</a>: deepmerge '
+            "mergeObject() allows prototype poisoning") in html  # fmt: skip
+    assert "you can&#x27;t update it yourself" in html or "you can't update it yourself" in html
+    d["advisories"][0]["id"] = 'x" onmouseover="y'  # never a raw id in an attribute
+    assert "onmouseover" not in finding_html({**f, "dependency": d}, [{**f, "dependency": d}], 8)

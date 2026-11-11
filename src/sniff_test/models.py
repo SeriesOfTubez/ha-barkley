@@ -62,6 +62,7 @@ class Advisory:
     summary: str = ""
     details: str = ""
     fixed: str | None = None  # first fixed version above ours; "" = OSV lists none; None = unknown
+    aliases: tuple[str, ...] = ()  # e.g. the CVE id of a GHSA advisory
 
 
 @dataclass(frozen=True, slots=True)

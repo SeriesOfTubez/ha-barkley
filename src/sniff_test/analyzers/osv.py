@@ -206,6 +206,7 @@ def _dep_facts(p: _Pkg, ids: list[str], direct: set[str] | None, lookup: Lookup 
                 summary=str(rec.get("summary") or "")[:300],
                 details=str(rec.get("details") or "")[:_DETAILS_MAX],
                 fixed=fixed_for(rec, p.name, p.ecosystem, p.version),
+                aliases=tuple(str(a) for a in (rec.get("aliases") or [])[:4]),
             )
         )
     latest = date = behind = None

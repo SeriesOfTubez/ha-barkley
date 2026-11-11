@@ -838,7 +838,9 @@ def finding_html(
     dep_html = (
         "<dt>Fix and newer versions</dt><dd>"
         + "<br>".join(dependency_line(d) for d in deps)
-        + "</dd>"
+        + "</dd><dt>The bug</dt><dd>"
+        + "<br>".join(advisory_lines(d) for d in deps)
+        + f"</dd><dt>What you can do</dt><dd>{e(_DEP_ACTION.get(deps[0].get('ecosystem'), ''))}</dd>"
         if deps
         else ""
     )
@@ -852,6 +854,33 @@ def finding_html(
         + ai_html
         + f'</dl>{deep}<div class="tech">{" · ".join(tech)}</div>{code}</div></div>'
     )
+
+
+_DEP_ACTION = {
+    "npm": "The library is built into the card's JavaScript, so you can't update it yourself. "
+    "If the bug matters for how the card uses it, ask the developer to update, patch or "
+    "replace it (an issue on their repository). Be wary of switching to a replacement "
+    "library someone suggests online without checking who publishes it.",
+    "PyPI": "Home Assistant installs the version the integration asks for, so changing it "
+    "yourself doesn't last. If the bug matters for how the integration uses it, ask the "
+    "developer to update or replace it (an issue on their repository).",
+}
+
+
+def advisory_lines(d: dict[str, Any]) -> str:
+    """Each advisory: its id (and CVE), what OSV says it is, and a link to the record."""
+    out = []
+    for a in [a for a in d.get("advisories") or [] if isinstance(a, dict)][:4]:
+        vid = str(a.get("id", ""))
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{2,60}", vid):
+            continue
+        cves = [x for x in a.get("aliases") or [] if str(x).startswith("CVE-")][:2]
+        label = e(vid) + (f" ({e(', '.join(cves), 60)})" if cves else "")
+        link = (f'<a href="https://osv.dev/vulnerability/{vid}" target="_blank" '
+                f'rel="noopener noreferrer">{label}</a>')  # fmt: skip
+        summary = str(a.get("summary") or "") or str(a.get("details") or "")[:200]
+        out.append(f"{link}: {e(summary, 300)}" if summary else link)
+    return "<br>".join(out)
 
 
 def dependency_line(d: dict[str, Any]) -> str:

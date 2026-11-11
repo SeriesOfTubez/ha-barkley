@@ -101,6 +101,7 @@ def dependency_json(d: DepFacts) -> dict[str, Any]:
             {
                 "id": a.id,
                 "fixed": a.fixed,
+                "aliases": [sanitize_untrusted(x, 40) for x in a.aliases],
                 "summary": sanitize_untrusted(a.summary, 300),
                 "details": sanitize_untrusted(a.details, 1500),
             }
