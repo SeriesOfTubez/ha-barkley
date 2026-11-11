@@ -113,6 +113,65 @@ def test_an_update_reuses_the_old_scan_and_says_what_changed(ctx):
     assert HOSTILE not in plain
 
 
+def test_every_auto_job_leaves_one_outcome_line_in_the_log(ctx, capsys):
+    _store, worker, fakes, w = ctx
+    w.set_target("mobile_app_phone")
+    w.check()
+    fakes.items.append(Installed("acme/b", "card", "B", "v2", "v2", False))
+    w.check()
+    worker.wait()
+    err = capsys.readouterr().err
+    assert "auto-sniff: acme/b installed v2" in err
+    assert ("auto-sniff: acme/b v2 sniffed: 🐕\u200d🦺 Very Sus 75/100; @1; "
+            "notified bell + notify.mobile_app_phone") in err  # fmt: skip
+    assert HOSTILE not in err
+
+
+def test_a_restart_during_a_sniff_resumes_it(ctx):
+    """The snapshot already holds the new version when the job runs, so a restart (an app
+    rebuild, a host reboot) would lose the change: the change is kept in the store until
+    its job ends, and re-queued at the next start."""
+    store, worker, fakes, w = ctx
+    w.check()
+    hold = threading.Event()
+    worker.scan_fn = lambda repo, ref: hold.wait(10) and report(repo=repo, ref=ref)
+    fakes.items.append(Installed("acme/b", "card", "B", "v2", "v2", False))
+    w.check()  # the job starts and hangs, like a scan cut short by a restart
+    assert [(c.repo, c.version) for c in w.pending()] == [("acme/b", "v2")]
+    # Barkley starts again: a new worker and watcher on the same store
+    worker2 = server.Worker(store, _scan, ha_fn=lambda: "2026.11.0")
+    w2 = watch.Watcher(
+        store, worker2, fakes.installed, notify_fn=fakes.notify,
+        slug_fn=lambda: "local_sniff_test", sleep_fn=fakes.slept.append,
+        now_fn=lambda: fakes.now,
+    )  # fmt: skip
+    worker2.on_done.append(w2.on_job_done)
+    assert w2.check() == []  # the snapshot already had v2: nothing looks new
+    assert [c.repo for c in w2.resume()] == ["acme/b"]
+    worker2.wait()
+    assert worker2.jobs[0].state == "done" and store.get(worker2.jobs[0].scan_ids[0]).ref == "v2"
+    assert fakes.bell[0][0] == "Barkley: acme/b v2"
+    assert w2.pending() == [] and w2.resume() == []  # ended: forgotten
+    hold.set()
+
+
+def test_resume_drops_what_is_no_longer_installed_at_that_version(ctx):
+    store, worker, _fakes, w = ctx
+    w.check()
+    store.set_setting(watch.PENDING_KEY, json.dumps([
+        {"action": "update", "repo": "acme/a", "kind": "integration", "version": "v9",
+         "previous": "v1"},  # the box has v1 now (rolled back, or updated again)
+        {"action": "install", "repo": "acme/gone", "kind": "card", "version": "v1"},
+        {"bad": "entry"},
+    ]))  # fmt: skip
+    assert w.resume() == [] and worker.jobs == [] and w.pending() == []
+    w.enabled = False
+    store.set_setting(watch.PENDING_KEY, json.dumps(
+        [{"action": "install", "repo": "acme/a", "kind": "integration", "version": "v1"}]
+    ))  # fmt: skip
+    assert w.resume() == [] and worker.jobs == []  # off: nothing is sniffed
+
+
 def test_a_scan_sniffed_from_search_is_reused_on_install(ctx):
     store, worker, fakes, w = ctx
     w.check()

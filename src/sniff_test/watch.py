@@ -25,6 +25,13 @@ Notifications go through HA's own services (persistent_notification always, an o
 notify.<target>). Their text is built from validated repo names and versions, scores,
 verdicts and the fixed titles of rules: never from scanned text (README, code, evidence).
 
+A restart in the middle of a sniff (an app rebuild, a host reboot) can't lose the change:
+the snapshot is written as soon as the list is read, so the next start wouldn't see the
+change again, and the worker's queue only lives in memory. Every change whose job hasn't
+ended is also kept in the store (`PENDING_KEY`) and re-queued at start when the app is
+still installed at that version (seen on the user's box 2026-11-11: an update was noticed
+7 minutes before a rebuild, and nothing said whether its sniff had finished).
+
 Age-out: scans of apps that aren't installed are deleted after `AGE_OUT_DAYS`; a scan of
 anything installed (at any version) is never deleted, and nothing is deleted while the
 installed list can't be read.
@@ -37,7 +44,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -51,11 +58,13 @@ from sniff_test.supervisor import Installed, SupervisorError
 
 SNAPSHOT_KEY = "installed_snapshot"  # settings: the installed list as last seen
 LOG_KEY = "auto_log"  # settings: recent auto-sniffs (bounded)
+PENDING_KEY = "auto_pending"  # settings: changes whose auto job hasn't ended (survives a restart)
 AGE_OUT_DAYS = 7
 POLL = 600  # seconds between fallback reads of the installed list
 SWEEP_EVERY = 24 * 3600
 SETTLE = 3  # seconds after the Marketplace says an install ended, before the list is read
 _LOG_KEPT = 20
+_PENDING_KEPT = 20
 _RECONNECT = 10  # seconds; doubles up to POLL while the subscription keeps failing
 
 _VERDICT = {v.key: (v.label, v.emoji) for _, v in VERDICTS}
@@ -334,6 +343,7 @@ class Watcher:
 
     def run_forever(self) -> None:  # pragma: no cover - the loop; its parts are tested
         self.check()
+        self.resume()
         self.sweep()
         wait = _RECONNECT
         while not self.stop.is_set():
@@ -459,11 +469,77 @@ class Watcher:
         if not self.enabled:
             self._log(self._entry(c, state="noticed", message="auto-sniff is off"))
             return
+        self._queue(c)
+
+    def _queue(self, c: Change) -> bool:
+        """One auto job per change; the change is remembered until the job ends."""
         if self._active(c.repo, c.version):
-            return
+            return False
+        self._remember(c)
         job = self.worker.submit("auto", c.repo, c.version, prev=c.previous)
         with self._lock:
             self._pending[job.id] = c
+        return True
+
+    # --- changes whose job hasn't ended, kept across restarts ----------------------------
+
+    def pending(self) -> list[Change]:
+        raw = self.store.setting(PENDING_KEY)
+        try:
+            data = json.loads(raw) if raw else []
+        except ValueError:
+            return []
+        out = []
+        for x in data if isinstance(data, list) else []:
+            if isinstance(x, dict) and all(isinstance(x.get(k), str) for k in ("repo", "version")):
+                out.append(Change(str(x.get("action") or "install"), x["repo"],
+                                  str(x.get("kind") or ""), x["version"],
+                                  str(x["previous"]) if x.get("previous") else None))  # fmt: skip
+        return out
+
+    def _save_pending(self, items: list[Change]) -> None:
+        self.store.set_setting(PENDING_KEY, json.dumps([asdict(c) for c in items[-_PENDING_KEPT:]]))
+
+    def _remember(self, c: Change) -> None:
+        with self._lock:
+            self._save_pending([*self._without(c), c])
+
+    def _forget(self, c: Change) -> None:
+        with self._lock:
+            self._save_pending(self._without(c))
+
+    def _without(self, c: Change) -> list[Change]:
+        return [
+            x for x in self.pending()
+            if not (x.repo.lower() == c.repo.lower() and x.version == c.version)
+        ]  # fmt: skip
+
+    def resume(self) -> list[Change]:
+        """Re-queue the sniffs a restart interrupted (call after the first `check`, so the
+        snapshot is fresh). A change is dropped when the app is no longer installed at that
+        version (a newer version was found by `check`, or it was uninstalled) or when
+        auto-sniff is off. A scan that did finish before the restart is reused by the job,
+        so at worst the notification is repeated."""
+        items = self.pending()
+        if not items:
+            return []
+        snap = self._snapshot() or {}
+        with self._lock:
+            self._save_pending([])
+        out = []
+        for c in items:
+            cur = snap.get(c.repo.lower())
+            if not self.enabled or not isinstance(cur, dict) or cur.get("version") != c.version:
+                print(f"auto-sniff: dropping the sniff of {c.repo} {c.version} that a restart "
+                      "interrupted: no longer installed at that version"
+                      + ("" if self.enabled else " (auto-sniff is off)"),
+                      file=sys.stderr, flush=True)  # fmt: skip
+                continue
+            print(f"auto-sniff: {c.repo} {c.version}: sniffing again, a restart interrupted it",
+                  file=sys.stderr, flush=True)  # fmt: skip
+            if self._queue(c):
+                out.append(c)
+        return out
 
     def _entry(self, c: Change, **extra: Any) -> dict[str, Any]:
         return {
@@ -482,6 +558,7 @@ class Watcher:
             c = self._pending.pop(job.id, None)
         if c is None:
             return
+        self._forget(c)
         entry = self._entry(c, state=job.state, message=str(job.message)[:300],
                             scan_ids=list(job.scan_ids))  # fmt: skip
         report = d = None
@@ -508,7 +585,25 @@ class Watcher:
                 f"Barkley couldn't sniff {did} of {c.repo} ({job.state}: "
                 f"{str(job.message)[:200]}). Open Barkley from the sidebar to try again."
             )
-        self._notify(title, md, plain, f"barkley_{c.repo.lower()}")
+        err = self._notify(title, md, plain, f"barkley_{c.repo.lower()}")
+        # One line per outcome in the app's log (a finished job printed nothing before, so
+        # the log on the user's box couldn't say whether a sniff ended before a rebuild).
+        ver = f"{c.previous} → {c.version}" if c.previous else c.version
+        ids = " → ".join(f"@{i}" for i in job.scan_ids) or "no scan"
+        if report is not None:
+            label, emoji = _VERDICT.get(entry.get("verdict", ""), ("?", ""))
+            what = f"sniffed: {emoji} {label} {entry['score']}/100"
+            if entry.get("changes"):
+                what += f", {entry['changes']}"
+            if not entry.get("complete", True):
+                what += " (incomplete)"
+        else:
+            what = f"{entry['state']}: {entry['message'][:200]}"
+        sent = (
+            f"notification failed: {err}" if err
+            else "notified bell" + (f" + notify.{self.notify_target}" if self.notify_target else "")
+        )  # fmt: skip
+        print(f"auto-sniff: {c.repo} {ver} {what}; {ids}; {sent}", file=sys.stderr, flush=True)
 
     def _notify(self, title: str, md: str, plain: str, nid: str) -> str:
         """Both channels; errors are logged and returned, never raised into the worker."""
