@@ -37,7 +37,7 @@ import jsbeautifier
 
 from sniff_test.analyzers.endpoints import UNEXPLAINED
 
-CONTEXT_VERSION = 2  # 2: windows on long lines are reformatted (0.7.2)
+CONTEXT_VERSION = 3  # 2: long lines reformatted (0.7.2); 3: dependency items (0.7.4)
 MAX_LINES = 150  # per snippet
 MAX_CHARS = 12_000  # per snippet
 MAX_ITEMS = 40  # per report
@@ -50,6 +50,12 @@ MIN_WINDOW = 300  # characters each side, at least, when a line has several wind
 MAX_WINDOWS = 5  # windows on one long line
 TEXT_RADIUS = 25  # lines each side for non-Python files
 FUNC_WINDOW = 50  # lines each side of the location inside a very long function
+MAX_JS_FILES = 400  # card source files searched for a package's imports
+MAX_USES = 6  # places a dependency is used, per snippet
+DEP_RADIUS = 6  # lines each side of a use in a card's source
+_SKIP_DIRS = {"node_modules", "dist", "build", ".git", "coverage", "test", "tests",
+              "__tests__", "docs", "examples", "demo"}  # fmt: skip
+_JS_EXT = (".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx")
 HOST_CLASSES = UNEXPLAINED | {"messaging"}  # "unknown addresses": no docs or name explain them
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
@@ -57,7 +63,7 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 @dataclass(frozen=True)
 class Item:
     id: str  # finding id or graph edge id
-    kind: str  # finding | host | port
+    kind: str  # finding | host | port | dependency
     file: str
     line: int
     hints: tuple[str, ...] = ()  # text to centre a cut line on (host, evidence, names)
@@ -71,7 +77,14 @@ def items(findings: Iterable[dict[str, Any]], graph: dict[str, Any] | None) -> l
     out: list[Item] = []
     seen_rules: set[str] = set()
     findings = list(findings)
+    deps: list[Item] = []
     for f in sorted(findings, key=lambda f: order.index(f.get("severity", "info"))):
+        dep = f.get("dependency")
+        if f["rule_id"] == "dep-vuln" and isinstance(dep, dict):
+            # (0.7.4) where the app's own code uses the package; one item per package
+            hint = (str(dep.get("package", "")), str(dep.get("ecosystem", "")))
+            deps.append(Item(f["id"], "dependency", "", 0, hint))
+            continue
         if f["rule_id"] in seen_rules:
             continue
         seen_rules.add(f["rule_id"])
@@ -101,12 +114,19 @@ def items(findings: Iterable[dict[str, Any]], graph: dict[str, Any] | None) -> l
         elif edge["relation"] == "uses_port":
             hint = (attrs.get("names") or [""])[0]
             ports.append(Item(edge["id"], "port", sample["file"], int(sample["line"]), (hint,)))
-    return out + sorted(hosts, key=lambda i: i.hints) + ports
+    return out + deps + sorted(hosts, key=lambda i: i.hints) + ports
 
 
-def build(root: Path, findings: list[dict[str, Any]], graph: dict[str, Any] | None) -> dict:
-    """The report's `context` section: {"version", "snippets": {sid: …}, "items": {id: …}}."""
+def build(
+    root: Path,
+    findings: list[dict[str, Any]],
+    graph: dict[str, Any] | None,
+    source_root: Path | None = None,
+) -> dict:
+    """The report's `context` section: {"version", "snippets": {sid: …}, "items": {id: …}}.
+    source_root: the repo at the ref, where a card's own (unbundled) source lives."""
     tree = _Tree(root)
+    src = _Tree(source_root) if source_root is not None else tree
     snippets: dict[str, dict[str, Any]] = {}
     by_key: dict[str, str] = {}
     out_items: dict[str, dict[str, Any]] = {}
@@ -114,7 +134,14 @@ def build(root: Path, findings: list[dict[str, Any]], graph: dict[str, Any] | No
     for it in items(findings, graph):
         if len(out_items) >= MAX_ITEMS:
             break
-        snip = snippet(tree, it.file, it.line, it.hints)
+        if it.kind == "dependency":
+            package, ecosystem = it.hints
+            snip = dependency_usage(tree if ecosystem == "PyPI" else src, package, ecosystem)
+            if snip is None:  # no button; the page says we couldn't find where it's used
+                out_items[it.id] = {"kind": "dependency", "package": package, "snippet": None}
+                continue
+        else:
+            snip = snippet(tree, it.file, it.line, it.hints)
         if snip is None:
             continue
         key = repr(
@@ -129,8 +156,172 @@ def build(root: Path, findings: list[dict[str, Any]], graph: dict[str, Any] | No
             sid = f"s{len(snippets) + 1}"
             snippets[sid] = snip
             by_key[key] = sid
-        out_items[it.id] = {"kind": it.kind, "file": it.file, "line": it.line, "snippet": sid}
+        if it.kind == "dependency":
+            first = snip["segments"][0]
+            out_items[it.id] = {"kind": "dependency", "package": it.hints[0], "file": first["file"],
+                                "line": first["start"], "snippet": sid}  # fmt: skip
+        else:
+            out_items[it.id] = {"kind": it.kind, "file": it.file, "line": it.line, "snippet": sid}
     return {"version": CONTEXT_VERSION, "snippets": snippets, "items": out_items}
+
+
+# --- where the app uses a dependency (0.7.4) --------------------------------------------------
+
+
+def py_modules(package: str) -> set[str]:
+    """Import names a PyPI distribution likely provides: python-jose -> jose, PyJWT -> jwt."""
+    n = re.sub(r"[-.]+", "_", package.lower())
+    out = {n}
+    for prefix in ("python_", "py_", "py"):
+        if n.startswith(prefix) and len(n) > len(prefix) + 1:
+            out.add(n[len(prefix) :])
+    for suffix in ("_python", "_py"):
+        if n.endswith(suffix):
+            out.add(n[: -len(suffix)])
+    return out
+
+
+def dependency_usage(tree: _Tree, package: str, ecosystem: str) -> dict[str, Any] | None:
+    """The app's own lines that import the package and use what they import, or None."""
+    if ecosystem == "PyPI":
+        return _py_usage(tree, py_modules(package))
+    if ecosystem == "npm":
+        return _js_usage(tree, package)
+    return None
+
+
+def _enclosing_span(py: _Py, line: int) -> tuple[int, int]:
+    best: tuple[int, int] | None = None
+    for fn in py.funcs:
+        a, b = _span(fn)
+        if a <= line <= b and (best is None or b - a < best[1] - best[0]):
+            best = (a, b)
+    if best is None or best[1] - best[0] > 2 * FUNC_WINDOW:
+        return max(1, line - DEP_RADIUS), min(len(py.lines), line + DEP_RADIUS)
+    return best
+
+
+def _py_usage(tree: _Tree, modules: set[str]) -> dict[str, Any] | None:
+    spans: list[tuple[str, int, int]] = []
+    uses = 0
+    for rel in tree.py_files():
+        py = tree.py(rel)
+        if py is None:
+            continue
+        bound: set[str] = set()
+        for node in ast.walk(py.tree):
+            if isinstance(node, ast.Import):
+                for al in node.names:
+                    if al.name.split(".")[0] in modules:
+                        bound.add(al.asname or al.name.split(".")[0])
+                        spans.append((rel, node.lineno, node.end_lineno or node.lineno))
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and not node.level
+                and node.module
+                and node.module.split(".")[0] in modules
+            ):
+                bound |= {al.asname or al.name for al in node.names if al.name != "*"}
+                spans.append((rel, node.lineno, node.end_lineno or node.lineno))
+        if not bound:
+            continue
+        lines = sorted({n.lineno for n in ast.walk(py.tree)
+                        if isinstance(n, ast.Name) and n.id in bound
+                        and isinstance(n.ctx, ast.Load)})  # fmt: skip
+        for line in lines:
+            if uses >= MAX_USES:
+                break
+            a, b = _enclosing_span(py, line)
+            spans.append((rel, a, b))
+            uses += 1
+    if not spans:
+        return None
+    spans = _fit(spans)
+    return _finish(tree, spans[0][0], spans, "python")
+
+
+def _js_files(tree: _Tree) -> list[str]:
+    out: list[str] = []
+    try:
+        for p in sorted(tree.root.rglob("*")):
+            rel = p.relative_to(tree.root)
+            if any(part in _SKIP_DIRS for part in rel.parts[:-1]) or p.is_symlink():
+                continue
+            if p.suffix in _JS_EXT and not p.name.endswith((".min.js", ".d.ts")) and p.is_file():
+                out.append(rel.as_posix())
+                if len(out) >= MAX_JS_FILES:
+                    break
+    except OSError:
+        pass
+    return out
+
+
+def _js_import(package: str) -> re.Pattern[str]:
+    spec = re.escape(package) + r"(?:/[^'\"`]*)?"
+    return re.compile(
+        r"(?:import\s+(?P<what>[\w$*\s{},]+?)\s+from\s*|import\s*\(\s*|require\s*\(\s*)"
+        rf"['\"`]{spec}['\"`]"
+    )
+
+
+def _js_bound(text: str, m: re.Match[str]) -> set[str]:
+    """Local names an import binds: `x`, `{a as b}`, `* as ns`, `const {a: b} = require(…)`."""
+    what = m.group("what")
+    if what is None:  # require()/import(): look at what it's assigned to
+        head = text[max(0, m.start() - 120) : m.start()]
+        a = re.search(r"(?:const|let|var)\s+([\w$]+|\{[^}]*\})\s*=\s*(?:await\s+)?$", head)
+        what = a.group(1) if a else ""
+    names: set[str] = set()
+    for part in re.split(r"[,{}]", what):
+        part = part.strip()
+        if not part:
+            continue
+        local = re.split(r"\s+as\s+|\s*:\s*", part)[-1].strip()
+        if re.fullmatch(r"[A-Za-z_$][\w$]*", local):
+            names.add(local)
+    return names
+
+
+def _js_usage(tree: _Tree, package: str) -> dict[str, Any] | None:
+    pattern = _js_import(package)
+    spans: list[tuple[str, int, int]] = []
+    found: dict[str, list[str]] = {}
+    uses = 0
+    for rel in _js_files(tree):
+        text = tree.text(rel)
+        if text is None or package not in text:
+            continue
+        lines = text.splitlines()
+        if any(len(x) > LONG_LINE for x in lines[:50]):
+            continue  # a bundle: names are gone; the source files are what we read
+        hits = list(pattern.finditer(text))
+        if not hits:
+            continue
+        found[rel] = lines
+        bound: set[str] = set()
+        for m in hits:
+            n = text.count("\n", 0, m.start()) + 1
+            spans.append((rel, n, n))
+            bound |= _js_bound(text, m)
+        imports = {text.count("\n", 0, m.start()) + 1 for m in hits}
+        if bound:
+            word = re.compile(
+                r"(?<![\w$.])(?:" + "|".join(map(re.escape, sorted(bound))) + r")(?![\w$])"
+            )
+            for i, line in enumerate(lines, 1):
+                if uses >= MAX_USES:
+                    break
+                if i not in imports and word.search(line):
+                    spans.append((rel, max(1, i - DEP_RADIUS), min(len(lines), i + DEP_RADIUS)))
+                    uses += 1
+    if not spans:
+        return None
+    spans = _fit(spans)
+    noncode = {
+        f: ({n for n, x in enumerate(ls, 1) if x.strip().startswith(("//", "/*", "*"))}, {})
+        for f, ls in found.items()
+    }
+    return _segments(spans[0][0], "text", spans, found, noncode)
 
 
 # --- reading files ----------------------------------------------------------------------------

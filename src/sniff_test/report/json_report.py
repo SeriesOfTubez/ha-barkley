@@ -16,7 +16,7 @@ from typing import Any
 from sniff_test import __version__
 from sniff_test.analyzers.python_deps import Resolution
 from sniff_test.analyzers.repo_signals import Provenance
-from sniff_test.models import AnalyzerResult, AnalyzerState, Fact, Finding, Target
+from sniff_test.models import AnalyzerResult, AnalyzerState, DepFacts, Fact, Finding, Target
 from sniff_test.report import graph
 from sniff_test.scoring import Exposure, ScoreResult
 
@@ -81,6 +81,31 @@ def finding_json(f: Finding) -> dict[str, Any]:
         "evidence": sanitize_untrusted(f.evidence),
         "analyzer": f.analyzer,
         "platforms": sorted(f.platforms),
+        **({"dependency": dependency_json(f.dependency)} if f.dependency else {}),
+    }
+
+
+def dependency_json(d: DepFacts) -> dict[str, Any]:
+    """Advisory text is third-party (OSV): sanitized like the repo's own text."""
+    return {
+        "package": d.package,
+        "ecosystem": d.ecosystem,
+        "version": d.version,
+        "direct": d.direct,
+        "fixed_in": d.fixed_in,
+        "latest": d.latest,
+        "latest_date": d.latest_date,
+        "behind": d.behind,
+        "lookup_error": d.lookup_error,
+        "advisories": [
+            {
+                "id": a.id,
+                "fixed": a.fixed,
+                "summary": sanitize_untrusted(a.summary, 300),
+                "details": sanitize_untrusted(a.details, 1500),
+            }
+            for a in d.advisories
+        ],
     }
 
 

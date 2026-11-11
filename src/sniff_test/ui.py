@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from sniff_test import __version__
 from sniff_test.analyzers.correlate import SENSITIVE_NODES
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
+from sniff_test.models import fix_phrase
 from sniff_test.report import explain, privacy
 from sniff_test.report.json_report import sanitize_untrusted
 
@@ -810,15 +811,50 @@ def finding_html(
             + "</details>"
         )
     ai_html = f"<dt>{AI_BADGE}explanation</dt><dd>{e(ai, 1200)}</dd>" if ai else ""
+    deps = [x["dependency"] for x in fs if isinstance(x.get("dependency"), dict)][:6]
+    dep_html = (
+        "<dt>Fix and newer versions</dt><dd>"
+        + "<br>".join(dependency_line(d) for d in deps)
+        + "</dd>"
+        if deps
+        else ""
+    )
     return (
         f'<div class="finding"><div class="lvl {e(f["severity"])}">{e(explain.level(f["severity"]))}</div>'
         f"<div><h3>{e(ex.title)}</h3><dl{' class=ai' if ai else ''}>"
         f"<dt>What it means</dt><dd>{e(ex.means, 800)}</dd>"
         f"<dt>Should you worry?</dt><dd>{e(ex.worry, 600)}</dd>"
         + (f"<dt>Where we saw it</dt><dd>{where}</dd>" if where else "")
+        + dep_html
         + ai_html
         + f'</dl>{deep}<div class="tech">{" · ".join(tech)}</div>{code}</div></div>'
     )
+
+
+def dependency_line(d: dict[str, Any]) -> str:
+    """One vulnerable package: is there a fix, is the app on the newest release, and does
+    the app list it itself. Checked facts from OSV and the package registry."""
+    name = f"<b>{e(d.get('package'), 120)} {e(d.get('version'), 60)}</b>"
+    advisories = [a for a in d.get("advisories") or [] if isinstance(a, dict)]
+    fixes = [(str(a.get("id", "")), a.get("fixed")) for a in advisories]
+    parts = [e(fix_phrase(str(d.get("ecosystem", "")), fixes), 300)]
+    latest, when = d.get("latest"), d.get("latest_date")
+    on = f" ({e(when, 20)})" if when else ""
+    if latest and latest == d.get("version"):
+        parts.append(f"the newest release{on}")
+    elif latest:
+        n = d.get("behind")
+        ahead = (
+            f", {int(n)} release{'s' if n != 1 else ''} newer" if isinstance(n, int) and n else ""
+        )
+        parts.append(f"newest is {e(latest, 60)}{on}{ahead}")
+    elif d.get("lookup_error"):
+        parts.append("we couldn't look up the newest release")
+    if d.get("direct") is True:
+        parts.append("the app lists it itself")
+    elif d.get("direct") is False:
+        parts.append("comes in through another library")
+    return f"{name}: " + " · ".join(parts)
 
 
 _TICK = re.compile(r"`([^`<>]{1,80})`")

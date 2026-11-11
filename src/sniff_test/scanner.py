@@ -148,6 +148,9 @@ def scan(
         # Built while the workspace still exists: it reads manifests and parses files.
         result.graph = graph.build(result)
         result.context = context.build(
-            target.root, [finding_json(f) for f in findings], result.graph
+            target.root,
+            [finding_json(f) for f in findings],
+            result.graph,
+            source_root=target.source_root,
         )
         return result

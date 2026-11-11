@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field, replace
 from enum import IntEnum, StrEnum
 from pathlib import Path
@@ -53,6 +54,75 @@ class AnalyzerState(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class Advisory:
+    """One known vulnerability of a dependency, from the OSV record (third-party text)."""
+
+    id: str
+    summary: str = ""
+    details: str = ""
+    fixed: str | None = None  # first fixed version above ours; "" = OSV lists none; None = unknown
+
+
+@dataclass(frozen=True, slots=True)
+class DepFacts:
+    """Checked facts about a vulnerable dependency (0.7.4): no AI involved."""
+
+    package: str
+    ecosystem: str  # "PyPI" | "npm"
+    version: str
+    advisories: tuple[Advisory, ...] = ()
+    direct: bool | None = None  # listed by the app itself (manifest / package.json)
+    latest: str | None = None  # newest final release on the registry
+    latest_date: str | None = None  # YYYY-MM-DD
+    behind: int | None = None  # final releases newer than ours, up to latest
+    lookup_error: str = ""  # why latest/behind are missing
+
+    @property
+    def fixed_in(self) -> str | None:
+        """The version that fixes every advisory; "" if one has no fix; None if unknown."""
+        fixes = [a.fixed for a in self.advisories]
+        if not fixes or any(f is None for f in fixes):
+            return None
+        if any(f == "" for f in fixes):
+            return ""
+        return max(fixes, key=lambda v: version_key(self.ecosystem, v or ""))
+
+
+def fix_phrase(ecosystem: str, fixes: list[tuple[str, str | None]]) -> str:
+    """'fixed in 4.3.2', 'fixed in 3.4.0 for 2 of 3; no fix listed for X', 'no fixed version
+    yet' or "the advisory doesn't say which version fixes it", from (advisory id, fixed)."""
+    fixed = [(i, f) for i, f in fixes if f]
+    none = [i for i, f in fixes if f == ""]
+    if fixed:
+        top = max((f for _i, f in fixed), key=lambda v: version_key(ecosystem, v))
+        if len(fixed) == len(fixes):
+            return f"fixed in {top}"
+        out = f"fixed in {top} for {len(fixed)} of {len(fixes)}"
+        return out + (f"; no fix listed for {', '.join(none[:3])}" if none else "")
+    if none:
+        return "no fixed version yet"
+    return "the advisory doesn't say which version fixes it"
+
+
+def version_key(ecosystem: str, version: str) -> tuple:
+    """Sortable key for PyPI or npm versions; pre-releases sort before their release."""
+    v = version.strip().lstrip("vV").split("+", 1)[0]
+    m = re.match(r"(?:\d+!)?(\d+(?:\.\d+)*)(.*)", v)
+    if not m:
+        return ((), False)
+    nums = [int(x) for x in m[1].split(".")[:6]]
+    while nums and nums[-1] == 0:
+        nums.pop()
+    rest = m[2].lower()
+    pre = (
+        rest.startswith("-")
+        if ecosystem == "npm"
+        else bool(re.match(r"[.-]?(a|b|c|rc|alpha|beta|pre|preview|dev)", rest))
+    )
+    return (tuple(nums), not pre)
+
+
+@dataclass(frozen=True, slots=True)
 class Finding:
     rule_id: str
     title: str
@@ -71,6 +141,7 @@ class Finding:
     # Install platforms a dependency finding applies to (e.g. {"x86_64", "aarch64"});
     # empty when the finding isn't platform-specific.
     platforms: frozenset[str] = frozenset()
+    dependency: DepFacts | None = None  # dep-vuln only: fix, newest release, advisories
 
     @property
     def id(self) -> str:

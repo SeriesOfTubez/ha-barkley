@@ -22,6 +22,8 @@ ALLOWED_HOSTS = frozenset(
         "pypi.org",
         "files.pythonhosted.org",
         "wheels.home-assistant.io",
+        # (0.7.4) newest release and its date for a card's vulnerable npm dependency
+        "registry.npmjs.org",
     }
 )
 MAX_JSON_BYTES = 32 * 1024 * 1024

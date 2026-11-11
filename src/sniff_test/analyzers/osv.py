@@ -23,6 +23,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -30,15 +31,20 @@ from typing import Any
 from sniff_test.analyzers import _proc
 from sniff_test.analyzers.python_deps import Resolution
 from sniff_test.deps.reqs import normalize
+from sniff_test.fetch import http
 from sniff_test.models import (
+    Advisory,
     AnalyzerResult,
     AnalyzerState,
     Category,
+    DepFacts,
     Finding,
     Severity,
     Tag,
     Target,
     TargetKind,
+    fix_phrase,
+    version_key,
 )
 
 NAME = "osv"
@@ -119,15 +125,135 @@ PYTHON_POLICY = VulnPolicy(Severity.HIGH, True, "installed into Home Assistant's
 NPM_POLICY = VulnPolicy(Severity.MEDIUM, False, "bundled into the card's JavaScript")
 
 
+_DETAILS_MAX = 1500  # characters of an advisory's text kept for the page and the AI
+Lookup = Callable[[str, str, str], tuple[str | None, str | None, int | None]]
+
+
+def _same_package(a: str, b: str, ecosystem: str) -> bool:
+    return normalize(a) == normalize(b) if ecosystem == "PyPI" else a.lower() == b.lower()
+
+
+def fixed_for(vuln: dict[str, Any], name: str, ecosystem: str, version: str) -> str | None:
+    """The first fixed version above `version` from the record's ranges; "" when the range
+    holding `version` has no fix (OSV's `last_affected`, or open-ended); None when the
+    record doesn't say (only an explicit version list, or no matching range)."""
+    have = version_key(ecosystem, version)
+    verdict: str | None = None
+    for aff in vuln.get("affected") or []:
+        pkg = aff.get("package") or {}
+        if str(pkg.get("ecosystem")) != ecosystem or not _same_package(
+            str(pkg.get("name", "")), name, ecosystem
+        ):
+            continue
+        for rng in aff.get("ranges") or []:
+            if rng.get("type") not in ("ECOSYSTEM", "SEMVER"):
+                continue
+            start: tuple | None = None
+            for ev in rng.get("events") or []:
+                if "introduced" in ev:
+                    intro = str(ev["introduced"])
+                    start = ((), False) if intro == "0" else version_key(ecosystem, intro)
+                elif start is not None and "fixed" in ev:
+                    fx = str(ev["fixed"])
+                    if start <= have < version_key(ecosystem, fx):
+                        return fx
+                    start = None
+                elif start is not None and "last_affected" in ev:
+                    if start <= have <= version_key(ecosystem, str(ev["last_affected"])):
+                        verdict = ""
+                    start = None
+            if start is not None and start <= have:  # introduced, never fixed
+                verdict = ""
+    return verdict
+
+
+def latest_release(
+    name: str, ecosystem: str, version: str
+) -> tuple[str | None, str | None, int | None]:
+    """(newest final release, its date, final releases newer than `version`) from PyPI or
+    the npm registry. Raises http.HttpError."""
+    have = version_key(ecosystem, version)
+    if ecosystem == "PyPI":
+        meta = http.get_json(f"https://pypi.org/pypi/{name}/json")
+        latest = str((meta.get("info") or {}).get("version") or "") or None
+        dates: dict[str, str] = {}
+        for v, files in (meta.get("releases") or {}).items():
+            live = [f for f in files or [] if not f.get("yanked")]
+            if live:
+                dates[v] = min(str(f.get("upload_time_iso_8601", "")) for f in live)
+    elif ecosystem == "npm":
+        meta = http.get_json("https://registry.npmjs.org/" + name.replace("/", "%2F"))
+        latest = str((meta.get("dist-tags") or {}).get("latest") or "") or None
+        times = meta.get("time") or {}
+        dates = {v: str(times.get(v, "")) for v in (meta.get("versions") or {})}
+    else:
+        return None, None, None
+    if latest is None:
+        return None, None, None
+    top = version_key(ecosystem, latest)
+    finals = {v for v in dates if version_key(ecosystem, v)[1]}
+    behind = sum(1 for v in finals if have < version_key(ecosystem, v) <= top)
+    return latest, (dates.get(latest) or "")[:10] or None, behind
+
+
+def _dep_facts(p: _Pkg, ids: list[str], direct: set[str] | None, lookup: Lookup | None) -> DepFacts:
+    advisories = []
+    for vid in ids:
+        rec = p.vulns.get(vid) or {}
+        advisories.append(
+            Advisory(
+                id=vid,
+                summary=str(rec.get("summary") or "")[:300],
+                details=str(rec.get("details") or "")[:_DETAILS_MAX],
+                fixed=fixed_for(rec, p.name, p.ecosystem, p.version),
+            )
+        )
+    latest = date = behind = None
+    error = ""
+    if lookup is not None:
+        try:
+            latest, date, behind = lookup(p.name, p.ecosystem, p.version)
+        except http.HttpError as e:
+            error = str(e)[:200]
+    is_direct = (
+        None if direct is None else any(_same_package(p.name, d, p.ecosystem) for d in direct)
+    )
+    return DepFacts(p.name, p.ecosystem, p.version, tuple(advisories), is_direct,
+                    latest, date, behind, error)  # fmt: skip
+
+
+def facts_sentence(d: DepFacts) -> str:
+    """What we checked about the fix and the newest release, in one or two sentences."""
+    phrase = fix_phrase(d.ecosystem, [(a.id, a.fixed) for a in d.advisories])
+    out = {
+        "no fixed version yet": "OSV lists no fixed version.",
+        "the advisory doesn't say which version fixes it": (
+            "OSV doesn't say which version fixes it."
+        ),
+    }.get(phrase, phrase[0].upper() + phrase[1:] + ".")
+    if d.latest:
+        when = f" ({d.latest_date})" if d.latest_date else ""
+        if version_key(d.ecosystem, d.version) >= version_key(d.ecosystem, d.latest):
+            out += f" {d.version} is the newest release{when}."
+        else:
+            n = d.behind or 0
+            ahead = f", {n} release{'s' if n != 1 else ''} newer than {d.version}" if n else ""
+            out += f" The newest release is {d.latest}{when}{ahead}."
+    return out
+
+
 def to_findings(
     pkgs: list[_Pkg],
     file: str | None,
     skip_vulns: set[str],
     policy: VulnPolicy = PYTHON_POLICY,
     dev_only: set[tuple[str, str]] | frozenset[tuple[str, str]] = frozenset(),
+    direct: set[str] | None = None,
+    lookup: Lookup | None = None,
 ) -> list[Finding]:
     """skip_vulns: names whose CVEs aren't ours to report (HA-provided).
-    dev_only: (name, version) of build-only packages: malware is reported, CVEs aren't."""
+    dev_only: (name, version) of build-only packages: malware is reported, CVEs aren't.
+    direct: names the app lists itself. lookup: the newest release (None: offline)."""
     out: list[Finding] = []
     for p in sorted(pkgs, key=lambda p: (p.name, p.version)):
         evidence_base = f"{p.name}@{p.version} ({p.ecosystem})"
@@ -163,6 +289,7 @@ def to_findings(
         inbound = policy.inbound and _network_vector(best, p.vulns)
         tags = frozenset({Tag.INBOUND}) if inbound else frozenset()
         cvss = f"max CVSS {best_score:g}" if best_score is not None else "severity unknown"
+        dep = _dep_facts(p, ids, direct, lookup)
         out.append(
             Finding(
                 rule_id="dep-vuln",
@@ -172,13 +299,14 @@ def to_findings(
                 message=(
                     f"{p.name} {p.version} ({policy.where}) has {len(ids)} known "
                     f"{'vulnerability' if len(ids) == 1 else 'vulnerabilities'} ({cvss}): "
-                    f"{_ids_text(ids)}. Check whether a fixed version is available."
+                    f"{_ids_text(ids)}. {facts_sentence(dep)}"
                 ),
                 file=file,
                 evidence=f"{evidence_base}: {_ids_text(ids)}",
                 tags=tags,
                 analyzer=NAME,
                 platforms=plats,
+                dependency=dep,
             )
         )
     return out
@@ -259,7 +387,10 @@ def run_python(resolution: Resolution | None, work: Path) -> AnalyzerResult:
             p.name = normalize(p.name)
             merged.setdefault((p.name, p.version), p).platforms.add(plat)
     ha_provided = {p.name for p in resolution.packages.values() if p.ha_provided}
-    findings = to_findings(list(merged.values()), "manifest.json", ha_provided)
+    direct = {r.name for r in resolution.requirements if r.name}
+    findings = to_findings(
+        list(merged.values()), "manifest.json", ha_provided, direct=direct, lookup=latest_release
+    )
     state = AnalyzerState.ERROR if errors else AnalyzerState.OK
     detail = f"{len(resolution.lockfiles)} lockfile(s) checked"
     if errors:
@@ -415,6 +546,21 @@ def bun_dev_only(lockfile: Path) -> set[tuple[str, str]]:
     return every - shipped
 
 
+def _npm_direct(source_root: Path) -> set[str] | None:
+    """Names the card's package.json lists itself (runtime and build)."""
+    try:
+        pkg = json.loads((source_root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(pkg, dict):
+        return None
+    out: set[str] = set()
+    for k in ("dependencies", "optionalDependencies", "peerDependencies", "devDependencies"):
+        if isinstance(pkg.get(k), dict):
+            out |= set(pkg[k])
+    return out
+
+
 def _declares_npm_deps(source_root: Path) -> bool:
     try:
         pkg = json.loads((source_root / "package.json").read_text(encoding="utf-8"))
@@ -466,7 +612,15 @@ def run_npm(target: Target, work: Path) -> AnalyzerResult:
         if pkgs is None:
             errors.append(f"{lf.name}: {err}")
             continue
-        findings += to_findings(pkgs, lf.name, set(), NPM_POLICY, npm_dev_only(lf))
+        findings += to_findings(
+            pkgs,
+            lf.name,
+            set(),
+            NPM_POLICY,
+            npm_dev_only(lf),
+            direct=_npm_direct(root),
+            lookup=latest_release,
+        )
     state = AnalyzerState.ERROR if errors else AnalyzerState.OK
     detail = ", ".join(lf.name for lf in lockfiles) + (f"; {' | '.join(errors)}" if errors else "")
     return AnalyzerResult(name, state, findings, detail, tool_version=osv_version())

@@ -779,6 +779,12 @@ def render_scan(
         def deep(item_id: str) -> str:
             snip = ai_context.snippet_of(report, item_id)
             if snip is None:
+                it = (report["context"].get("items") or {}).get(item_id) or {}
+                if it.get("kind") == "dependency":  # nothing of the app's own to read
+                    return ('<p class="small muted">✦ Explain in context: we couldn\'t find '
+                            f"where the app's own code uses {e(it.get('package'), 120)}, so "
+                            "there's no code to send. It may come in through another library, "
+                            "or a bundle hides the name.</p>")  # fmt: skip
                 return ""
             state, err = item_states.get(item_id, ("", ""))
             form = (f'<form method=post action="{base}/explain-item">'
