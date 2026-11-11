@@ -9,11 +9,13 @@ goes through `e()`. Plain-English text comes from `report.explain` and
 
 from __future__ import annotations
 
+import base64
 import html
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from sniff_test import __version__
@@ -25,6 +27,25 @@ from sniff_test.report.json_report import sanitize_untrusted
 
 if TYPE_CHECKING:
     from sniff_test.store import ScanRow
+
+
+def _asset_uri(name: str) -> str:
+    try:
+        data = (resources.files("sniff_test") / "assets" / name).read_bytes()
+    except OSError:
+        return ""
+    return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
+
+
+# Barkley's head for the panel header, inline (the CSP allows img-src data:).
+LOGO_URI = _asset_uri("barkley-80.png")
+
+
+def logo_img(size: int = 40) -> str:
+    if not LOGO_URI:
+        return "🐕 "
+    return f'<img class="logo" src="{LOGO_URI}" width="{size}" height="{size}" alt="">'
+
 
 DeepFn = Callable[[str], str]  # item id -> "Explain in context" HTML ("" for none)
 
@@ -60,6 +81,8 @@ main { display:flex; flex-direction:column; gap:16px; }
   padding:14px 16px; min-width:0; }
 .sub { color:var(--muted); font-size:0.85rem; margin-bottom:10px; }
 .head { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:baseline; }
+.head h1 { display:flex; align-items:center; gap:10px; }
+.head img.logo { display:block; flex:none; }
 .summary { display:flex; flex-wrap:wrap; gap:8px 22px; font-size:0.9rem; }
 .summary b { font-variant-numeric:tabular-nums; }
 a.sum { color:var(--fg); text-decoration:none; border-bottom:2px solid transparent; }

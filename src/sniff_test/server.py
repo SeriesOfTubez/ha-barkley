@@ -555,7 +555,7 @@ def render_index(
     rows = store.history(limit=100)
     against = f" against HA {e(ha)}" if ha else ""
     out = [
-        '<div class="head"><h1>🐕 Barkley</h1>'
+        f'<div class="head"><h1>{ui.logo_img()}Barkley</h1>'
         f'<span class="muted small">Barkley {e(__version__)}{against}. '
         + (
             "Scans run one at a time. "
