@@ -281,14 +281,18 @@ class Watcher:
         return items, err
 
     def panel_path(self) -> str:
-        """`/hassio/ingress/<slug>`: HA's own page for this app; "" when unknown."""
+        """`/app/<slug>`: HA's page for this app, "" when unknown. Verified in Core
+        2026.11.0: the hassio integration registers a generic `app` panel at `/app`
+        and one per app at `/<slug>` (only while "show in sidebar" is on), both rendered
+        by the frontend's `ha-panel-app`; the old `/hassio/ingress/<slug>` route is gone
+        (it fell through to the default dashboard on the user's box)."""
         if self._slug is None:
             try:
                 self._slug = self.slug_fn() if self.slug_fn else ""
             except SupervisorError as ex:
                 print(f"auto-sniff: no panel link in notifications: {ex}", file=sys.stderr)
                 self._slug = ""
-        return f"/hassio/ingress/{self._slug}" if self._slug else ""
+        return f"/app/{self._slug}" if self._slug else ""
 
     def log(self) -> list[dict[str, Any]]:
         raw = self.store.setting(LOG_KEY)

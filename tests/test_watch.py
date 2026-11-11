@@ -85,7 +85,7 @@ def test_an_install_is_sniffed_at_its_version_and_notified(ctx):
     assert title == "Barkley: acme/b v2" and nid == "barkley_acme_b"
     assert "Card acme/b v2 was installed and sniffed" in message
     assert "75/100" in message and "Worth a look: Reads your secrets file" in message
-    assert "[Open Barkley](/hassio/ingress/local_sniff_test): scan @1." in message
+    assert "[Open Barkley](/app/local_sniff_test): scan @1." in message
     assert HOSTILE not in message and "x.invalid" not in message
     assert fakes.pushed == []  # no target chosen
     entry = w.log()[0]
@@ -109,7 +109,7 @@ def test_an_update_reuses_the_old_scan_and_says_what_changed(ctx):
     ((target, ptitle, plain, url),) = fakes.pushed
     assert target == "mobile_app_phone" and ptitle == title
     assert "Open Barkley from the sidebar" in plain and "[" not in plain
-    assert url == "/hassio/ingress/local_sniff_test"
+    assert url == "/app/local_sniff_test"
     assert HOSTILE not in plain
 
 
@@ -257,7 +257,7 @@ def test_notification_text_is_built_from_fixed_words_only():
         {"rank": 60, "group": "hosts", "sign": "+", "text": HOSTILE},
         {"rank": 5, "group": "coverage", "sign": "+", "text": HOSTILE},
     ]}  # fmt: skip
-    title, md, plain = watch.notification(entry, rep, d, "/hassio/ingress/x")
+    title, md, plain = watch.notification(entry, rep, d, "/app/x")
     assert title == "Barkley: acme/x v2"
     assert md.startswith(
         "Integration acme/x was updated from v1 to v2 and sniffed: 🐕\u200d🦺 Very Sus"

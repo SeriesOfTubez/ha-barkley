@@ -517,7 +517,7 @@ def notify_targets(tok: str | None = None) -> list[str]:
 
 def self_slug(tok: str | None = None) -> str:
     """This app's slug (GET /addons/self/info: every app may read its own info), for the
-    panel link `/hassio/ingress/<slug>` in notifications."""
+    panel link `/app/<slug>` in notifications."""
     tok = tok or token()
     if not tok:
         raise SupervisorError("not running as a Home Assistant add-on")
