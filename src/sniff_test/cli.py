@@ -367,7 +367,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
 
         watcher = watch.Watcher(
             store, None, installed_fn,
-            subscribe_fn=supervisor.Subscription,
+            subscribe_fn=lambda: supervisor.Subscription(supervisor.token() or ""),
             notify_fn=supervisor.notify_persistent,
             notify_service_fn=supervisor.notify_service,
             targets_fn=supervisor.notify_targets,
