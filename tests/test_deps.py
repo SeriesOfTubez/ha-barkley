@@ -641,3 +641,17 @@ def test_bun_lock_counts_as_a_lockfile(tmp_path, monkeypatch):
     monkeypatch.setattr(osv.shutil, "which", lambda _: None)  # stop before running osv
     res = osv.run_npm(target, tmp_path)
     assert res.state is AnalyzerState.SKIPPED and not res.findings  # no "no lockfile" finding
+
+
+def test_githubs_reviewed_rating_wins_over_the_reported_cvss():
+    # deepmerge CVE-2026-93753 on 2026-11-10: CVSS 5.3 from the reporter, GitHub says "low"
+    rec = {"id": "GHSA-gcqx-w48m-w2h4", "database_specific": {"severity": "LOW"}}
+    p = osv._Pkg("deepmerge", "4.3.1", "npm", {"GHSA-gcqx-w48m-w2h4": rec},
+                 [{"ids": ["GHSA-gcqx-w48m-w2h4"], "max_severity": "5.3"}])  # fmt: skip
+    [f] = osv.to_findings([p], "bun.lock", set(), osv.NPM_POLICY)
+    assert f.severity is Severity.LOW
+    assert "(GitHub rates it low; CVSS 5.3)" in f.message
+    # no GitHub rating: the CVSS decides, as before
+    p.vulns = {"GHSA-gcqx-w48m-w2h4": {"id": "GHSA-gcqx-w48m-w2h4"}}
+    [f] = osv.to_findings([p], "bun.lock", set(), osv.NPM_POLICY)
+    assert f.severity is Severity.MEDIUM and "(max CVSS 5.3)" in f.message

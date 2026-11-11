@@ -89,16 +89,30 @@ def is_malicious(vuln: dict[str, Any]) -> bool:
     return MALWARE_CWE in cwes
 
 
-def _group_score(group: dict[str, Any], vulns: dict[str, dict[str, Any]]) -> float | None:
-    try:
-        return float(group.get("max_severity") or "")
-    except ValueError:
-        pass
+def _github_label(group: dict[str, Any], vulns: dict[str, dict[str, Any]]) -> str | None:
+    """GitHub's reviewed rating (low / moderate / high / critical) of a GHSA record in the
+    group, the highest if several."""
+    labels = []
     for vid in group.get("ids", []):
         label = ((vulns.get(vid) or {}).get("database_specific") or {}).get("severity")
         if isinstance(label, str) and label.upper() in _GHSA_SEVERITY:
-            return _GHSA_SEVERITY[label.upper()]
-    return None
+            labels.append(label.upper())
+    return max(labels, key=_GHSA_SEVERITY.__getitem__) if labels else None
+
+
+def _cvss(group: dict[str, Any]) -> float | None:
+    try:
+        return float(group.get("max_severity") or "")
+    except ValueError:
+        return None
+
+
+def _group_score(group: dict[str, Any], vulns: dict[str, dict[str, Any]]) -> float | None:
+    """GitHub's reviewed rating wins over the record's CVSS (0.7.6, user decision): the CVSS
+    usually comes from the reporter, the label from GitHub's review (deepmerge
+    CVE-2026-93753: reported CVSS 5.3, GitHub "low")."""
+    label = _github_label(group, vulns)
+    return _GHSA_SEVERITY[label] if label else _cvss(group)
 
 
 def _network_vector(group: dict[str, Any], vulns: dict[str, dict[str, Any]]) -> bool:
@@ -289,7 +303,13 @@ def to_findings(
         ids = [g["ids"][0] for _s, g in scored if g.get("ids")]
         inbound = policy.inbound and _network_vector(best, p.vulns)
         tags = frozenset({Tag.INBOUND}) if inbound else frozenset()
-        cvss = f"max CVSS {best_score:g}" if best_score is not None else "severity unknown"
+        label, raw = _github_label(best, p.vulns), _cvss(best)
+        if label:
+            cvss = f"GitHub rates it {label.lower()}" + (
+                f"; CVSS {raw:g}" if raw is not None else ""
+            )
+        else:
+            cvss = f"max CVSS {raw:g}" if raw is not None else "severity unknown"
         dep = _dep_facts(p, ids, direct, lookup)
         out.append(
             Finding(
