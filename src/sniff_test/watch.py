@@ -242,6 +242,9 @@ class Watcher:
         self._slug: str | None = None
         self._targets: tuple[float, list[str], str] = (0.0, [], "")
         self._pending: dict[int, Change] = {}
+        # The panel's copy of the installed list is refreshed from every read here, so a
+        # just-installed app moves into the grid at once (set by `server.serve`).
+        self.on_list: Callable[[list[Installed], dict[str, int]], None] | None = None
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self.stop = threading.Event()  # tests and shutdown: end `run_forever`
@@ -417,12 +420,14 @@ class Watcher:
     def check(self) -> list[Change]:
         """Read the installed list, compare with the snapshot, queue scans for what changed."""
         try:
-            items, _other = self.installed_fn()
+            items, other = self.installed_fn()
         except SupervisorError as ex:
             self.error = str(ex)
             return []
         self.error = ""
         self.last_check = self.now_fn()
+        if self.on_list is not None:
+            self.on_list(items, other)
         new = snapshot_of(items)
         with self._lock:
             old = self._snapshot()

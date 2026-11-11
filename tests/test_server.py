@@ -489,6 +489,17 @@ def test_auto_jobs_show_in_the_jobs_table_and_doctor_names_the_watcher(auto, mon
     assert "Auto-sniff (Marketplace events)" in page and "auto-sniff on" in page
 
 
+def test_the_watcher_refreshes_the_panels_installed_list(auto):
+    _store, base, _httpd, w, _sent = auto
+    _, _, page = get(base + "/")
+    assert "<b>5</b> apps installed" in page
+    w.installed_fn = lambda: ([*INSTALLED, Installed("acme/just", "card", "Just", "v1", "v1",
+                                                     False)], {})  # fmt: skip
+    w.check()  # the watcher read a fresh list: the panel shows it without waiting 5 minutes
+    _, _, page = get(base + "/")
+    assert "<b>6</b> apps installed" in page and ">Just<" in page
+
+
 def test_no_auto_box_outside_an_addon(panel):
     _, _, base, _ = panel
     _, _, page = get(base + "/")

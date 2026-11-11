@@ -1225,6 +1225,11 @@ class Panel:
                 self._installed = st
             return st
 
+    def set_installed(self, items: list[supervisor.Installed], other: dict[str, int]) -> None:
+        """A fresh list read elsewhere (the auto-sniff watcher) replaces the cached one."""
+        with self._installed_lock:
+            self._installed = InstalledState(list(items), dict(other), None, time.time())
+
     def diff(self, old: int, new: int) -> dict[str, Any]:
         """Stored reports never change, so a diff of two of them is computed once."""
         key = (old, new)
@@ -1751,6 +1756,7 @@ def serve(
     if watcher is not None:
         panel.watcher = watcher
         watcher.worker = worker
+        watcher.on_list = panel.set_installed
         worker.on_done.append(watcher.on_job_done)
     httpd = PanelServer((host, port), panel.handler())
     httpd.panel = panel
