@@ -159,12 +159,21 @@ def test_a_failed_scan_still_notifies(ctx):
 def test_the_same_version_is_not_queued_twice(ctx):
     _store, worker, fakes, w = ctx
     w.check()
-    worker.submit("installed", "acme/f", "v1")  # already queued by hand
+    started, release = threading.Event(), threading.Event()
+
+    def slow(repo, ref):
+        started.set()
+        release.wait(5)
+        return report(repo=repo, ref=ref)
+
+    worker.scan_fn = slow
+    worker.submit("installed", "acme/f", "v1")  # queued by hand, still running below
+    assert started.wait(5)
     fakes.items.append(Installed("acme/f", "card", "F", "v1", "v1", False))
-    # a second snapshot change for the same (repo, version) while a job is active
-    w._pending.clear()
     assert w.check() == [watch.Change("install", "acme/f", "card", "v1")]
-    assert len(worker.jobs) == 1  # no "auto" job beside the active one
+    assert len(worker.jobs) == 1  # no "auto" job beside the active one for that version
+    release.set()
+    worker.wait()
 
 
 def test_list_errors_change_nothing(ctx):
