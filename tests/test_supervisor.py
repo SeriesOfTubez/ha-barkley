@@ -264,3 +264,205 @@ def test_diagnostics_say_where_the_ha_version_came_from(monkeypatch):
     assert not checks[1].ok and "HACS isn't installed" in checks[1].summary
     monkeypatch.delenv("SUPERVISOR_TOKEN")
     assert "not running as an add-on" in doctor.supervisor_checks()[0].summary
+
+
+# --- auto-sniff: the subscription and the notification calls ------------------------------
+
+
+class EventSupervisor(FakeSupervisor):
+    """Answers `marketplace/subscribe` and then sends the given events, in order."""
+
+    def __init__(self, events, **kw):
+        super().__init__(known=("marketplace/subscribe",), **kw)
+        self.events = list(events)
+
+    def _serve(self, conn):
+        with conn:
+            req = b""
+            while b"\r\n\r\n" not in req:
+                req += conn.recv(4096)
+            conn.sendall(
+                b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                b"Connection: Upgrade\r\nSec-WebSocket-Accept: x\r\n\r\n"
+            )
+            self._send_json(conn, {"type": "auth_required", "ha_version": "2026.11.0"})
+            subs = {}
+            try:
+                while True:
+                    op, data = _recv_frame(conn)
+                    if op == 0xA:
+                        continue
+                    if op == 0x8:
+                        return
+                    msg = json.loads(data)
+                    self.sent.append(msg)
+                    if msg["type"] == "auth":
+                        self._send_json(conn, {"type": "auth_ok"})
+                    elif msg["type"] == "marketplace/subscribe":
+                        subs[msg["signal"]] = msg["id"]
+                        self._send_json(conn, {"id": msg["id"], "type": "result",
+                                               "success": True, "result": None})  # fmt: skip
+                        if len(subs) == 2:
+                            for sig, ev in self.events:
+                                self._send_json(conn, {"id": subs[sig], "type": "event",
+                                                       "event": ev})  # fmt: skip
+                            self._send_json(conn, {"id": 77, "type": "event", "event": {}})
+                            self._send_json(conn, {"type": "pong"})
+                    else:
+                        self._send_json(conn, {"id": msg["id"], "type": "result",
+                                               "success": False,
+                                               "error": {"code": "unknown_command"}})  # fmt: skip
+            except (ConnectionError, OSError):
+                return
+
+
+def test_subscription_receives_the_marketplace_events_and_idles():
+    fake = EventSupervisor([
+        (supervisor.SIGNAL_INSTALL_PROGRESS, {"repository": "acme/a", "progress": 30}),
+        (supervisor.SIGNAL_INSTALL_PROGRESS, {"repository": "acme/a", "progress": False}),
+        (supervisor.SIGNAL_REPOSITORY, {"action": "uninstall", "repository": "acme/b",
+                                        "repository_id": "1"}),
+    ])  # fmt: skip
+    sub = supervisor.Subscription("tok", host="127.0.0.1", port=fake.port, idle=0.3)
+    got = []
+    for ev in sub.events():
+        got.append(ev)
+        if ev is None:
+            break
+    sub.close()
+    assert got[:3] == [
+        (supervisor.SIGNAL_INSTALL_PROGRESS, {"repository": "acme/a", "progress": 30}),
+        (supervisor.SIGNAL_INSTALL_PROGRESS, {"repository": "acme/a", "progress": False}),
+        (supervisor.SIGNAL_REPOSITORY, {"action": "uninstall", "repository": "acme/b",
+                                        "repository_id": "1"}),
+    ]  # fmt: skip
+    assert got[3] is None  # idle: the caller polls
+    cmds = [m for m in fake.sent if m.get("type") != "auth"]
+    assert cmds == [
+        {"id": 1, "type": "marketplace/subscribe", "signal": supervisor.SIGNAL_INSTALL_PROGRESS},
+        {"id": 2, "type": "marketplace/subscribe", "signal": supervisor.SIGNAL_REPOSITORY},
+    ]
+
+
+def test_subscription_only_takes_the_fixed_signals_and_reports_refusals():
+    with pytest.raises(SupervisorError, match="signal not allowed"):
+        supervisor.Subscription("tok", signals=("marketplace_config",), host="127.0.0.1", port=1)
+    fake = FakeSupervisor(known=("marketplace/repositories/list",))  # no subscribe (older HA)
+    with pytest.raises(SupervisorError, match="unknown_command"):
+        supervisor.Subscription("tok", host="127.0.0.1", port=fake.port)
+    with pytest.raises(SupervisorError, match="refused the add-on token"):
+        supervisor.Subscription("other", host="127.0.0.1", port=fake.port)
+
+
+def test_a_timeout_in_the_middle_of_a_frame_loses_nothing():
+    """The long-lived socket times out while idle; a frame split across that moment
+    must still arrive whole (the header is only consumed with the whole frame)."""
+    import socket as _socket
+
+    srv = _socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    payload = json.dumps({"id": 1, "type": "event", "event": {"progress": False}}).encode()
+    frame = _frame(0x1, payload)
+
+    def serve():
+        conn, _ = srv.accept()
+        req = b""
+        while b"\r\n\r\n" not in req:
+            req += conn.recv(4096)
+        conn.sendall(b"HTTP/1.1 101 Switching Protocols\r\n\r\n")
+        conn.sendall(frame[:3])  # header and the first byte, then a pause
+        time.sleep(0.5)
+        conn.sendall(frame[3:])
+        time.sleep(0.5)
+        conn.close()
+
+    import time
+
+    threading.Thread(target=serve, daemon=True).start()
+    ws = supervisor._WebSocket("127.0.0.1", port, "/core/websocket", timeout=0.2)
+    with pytest.raises(TimeoutError):
+        ws.recv_json()
+    for _ in range(20):  # the server is still pausing; keep asking
+        try:
+            msg = ws.recv_json()
+            break
+        except TimeoutError:
+            continue
+    assert msg == {"id": 1, "type": "event", "event": {"progress": False}}
+    ws.close()
+
+
+class FakeCore:
+    """A stand-in for the Supervisor's Core API proxy over HTTP (notifications)."""
+
+    def __init__(self):
+        import http.server
+
+        calls = self.calls = []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _reply(self, code, body):
+                data = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}")
+                calls.append((self.path, self.headers.get("Authorization"), body))
+                if self.path.endswith("/notify/broken"):
+                    return self._reply(500, {"message": "Service notify.broken not found"})
+                self._reply(200, [])
+
+            def do_GET(self):
+                calls.append((self.path, self.headers.get("Authorization"), None))
+                if self.path == "/core/api/services":
+                    return self._reply(200, [
+                        {"domain": "light", "services": {"turn_on": {}}},
+                        {"domain": "notify", "services": {
+                            "mobile_app_phone": {}, "persistent_notification": {},
+                            "send_message": {}, "Bad Name": {}}},
+                    ])  # fmt: skip
+                if self.path == "/addons/self/info":
+                    return self._reply(
+                        200,
+                        {
+                            "result": "ok",
+                            "data": {"slug": "local_sniff_test", "ingress_entry": "/x"},
+                        },
+                    )
+                self._reply(404, {"message": "nope"})
+
+        self.httpd = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.port = self.httpd.server_address[1]
+
+
+def test_notifications_go_through_the_core_api(monkeypatch):
+    fake = FakeCore()
+    monkeypatch.setattr(supervisor, "SUPERVISOR_HOST", f"127.0.0.1:{fake.port}")
+    supervisor.notify_persistent("T", "M", "barkley_acme_a", tok="tok")
+    supervisor.notify_service("mobile_app_phone", "T", "P", "/hassio/ingress/x", tok="tok")
+    assert fake.calls == [
+        ("/core/api/services/persistent_notification/create", "Bearer tok",
+         {"notification_id": "barkley_acme_a", "title": "T", "message": "M"}),
+        ("/core/api/services/notify/mobile_app_phone", "Bearer tok",
+         {"title": "T", "message": "P", "data": {"url": "/hassio/ingress/x"}}),
+    ]  # fmt: skip
+    assert supervisor.notify_targets(tok="tok") == ["mobile_app_phone", "send_message"]
+    assert supervisor.self_slug(tok="tok") == "local_sniff_test"
+    with pytest.raises(SupervisorError, match="not a notify target"):
+        supervisor.notify_service("../x", "T", "P", tok="tok")
+    with pytest.raises(SupervisorError, match=r"answered 500: Service notify\.broken"):
+        supervisor.notify_service("broken", "T", "P", tok="tok")
+    with pytest.raises(SupervisorError, match="not running as a Home Assistant add-on"):
+        supervisor.notify_persistent("T", "M", "x", tok=None)
+    fake.httpd.shutdown()

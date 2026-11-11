@@ -28,6 +28,9 @@ repos that changed hands.
   exact version you plan to pick.
 - **Sniff this version again** (on an app's page) runs a fresh scan instead of reusing
   the stored one.
+- **Auto-sniff (on by default):** when the Marketplace installs or updates an integration
+  or card, Barkley sniffs the version that landed and sends a notification (see below).
+  Turn it off, or pick who else gets notified, in the box on the panel's first page.
 - **The developer's security habits** (on an app's page): whether the repository runs
   security scanners in its workflows, has Dependabot or Renovate and a SECURITY.md, how
   many dependency-update pull requests wait, and open issues that look security-related.
@@ -40,6 +43,37 @@ repos that changed hands.
 Scanned code is treated as hostile: it is downloaded and read, never run, built or
 installed. Scores are computed by fixed rules; no AI decides anything.
 
+## Auto-sniff: installs and updates
+
+Barkley watches the Marketplace (its `marketplace/subscribe` events, with a read of the
+installed list every 10 minutes as a fallback, and once at start to catch what changed
+while Barkley was stopped). When an integration or card is installed or updated:
+
+- It sniffs **the version that landed**, not the newest release. A stored scan of that
+  exact version is reused, for example one you sniffed from search before installing.
+- For an update it shows **what changed** since the version you had, using the stored
+  scan of that version (scanning it first if there is none). One scan per version; the
+  scan queues behind whatever is already running.
+- It sends a **bell notification** in Home Assistant (always) and, if you picked one in
+  the panel, a `notify.<target>` message (for example your phone through the companion
+  app): the app and version, the verdict and score, up to three things worth a look in
+  plain words, and for an update what changed. Nothing from the scanned project (no
+  README text, code or evidence) is ever put in a notification. A test button sends a
+  sample through both.
+
+**Read this before you rely on it. A new integration runs as soon as it's installed.**
+Since Home Assistant 2026.11 the Marketplace sets a new integration up without a restart:
+right after the files land, Home Assistant opens its setup dialog, which loads its code.
+Barkley's auto-sniff comes after that, so for a new install it can only tell you what
+you already let in. The protection for a new install is to **sniff it from search
+first** (the search box on the panel's first page) and install only what passes. An
+update's new code waits for the next restart, so there the auto-sniff and its diff come
+before the code runs. Barkley reports; it never moves, refuses or blocks anything.
+
+Scans of apps that aren't installed are deleted after 7 days (sniff-before-install scans
+included, unless the app was installed by then, in which case the scan is reused). A
+scan of anything installed, at any version, is never deleted.
+
 ## Options
 
 | Option | Default | Meaning |
@@ -50,6 +84,8 @@ installed. Scores are computed by fixed rules; no AI decides anything.
 | `github_token` | empty | A GitHub token (no scopes needed) for the 5,000 requests/hour limit instead of 60. |
 | `ai_entity` | empty | Optional. Easier: pick your AI in the panel (any app's page, "Explain this app with AI"), which lists your AI Task entities. A choice made in the panel wins over this option. |
 | `ai_mode` | `summary` | `summary`: the AI explains the findings. `deep`: it can also read the code around one finding, port or unknown address when you click **Explain in context**. Also set in the panel (wins over this option). |
+| `auto_scan` | `true` | Sniff every Marketplace install and update and send a notification. Also set in the panel (wins over this option). |
+| `notify_target` | empty | A `notify` service name (for example `mobile_app_my_phone`) that gets each auto-sniff result besides the bell notification. Easier: pick it in the panel, which lists your notify services (wins over this option). |
 
 ### AI explanations
 
@@ -104,10 +140,14 @@ The app asks for the Home Assistant API only. It reads the installed HA version 
 dependencies resolve against the release you run), asks the Marketplace for its
 installed list (`marketplace/repositories/list`, or HACS's `hacs/repositories/list` on
 older HA; the only websocket commands the app sends), and, only when you click
-"Explain this app" or "Explain in context", calls `ai_task.generate_data` (the only
-service it calls). To
+"Explain this app" or "Explain in context", calls `ai_task.generate_data`. To
 fill the AI dropdown it asks Home Assistant to render one fixed template that returns
-only the ids and names of AI Task entities. No host network,
+only the ids and names of AI Task entities. For auto-sniff it subscribes to two of the
+Marketplace's websocket signals (an install that ended, an uninstall), calls
+`persistent_notification.create` and, only when you picked one, `notify.<target>`; to
+offer the targets it reads the list of services once and keeps only the `notify` names.
+It reads its own app info from the Supervisor (allowed for every app) to build the
+"Open Barkley" link. No host network,
 no ports, no Supervisor role, no folder access: the app never reads your config folder
 and never opens the installed copies.
 

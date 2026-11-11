@@ -21,11 +21,27 @@ Three calls, all covered by `homeassistant_api: true` in config.yaml, no other p
   the panel can offer them in a dropdown. HA renders it; no other entity or state ever
   reaches the app (user decision over reading all states via /api/states).
 
+- (auto-sniff) `marketplace/subscribe` on a long-lived websocket, for two fixed signals
+  (`WATCH_SIGNALS`): the install progress of a repository (its end, `progress: false`,
+  is the cue to read the installed list again) and repository changes (uninstalls).
+  Verified in Core's source at 2026.11.0: there is no `hacs/subscribe` any more, and no
+  event carries the installed version, so the list is read after each cue.
+
+- (auto-sniff) `POST /core/api/services/persistent_notification/create` and, when the
+  user picked a target in the panel, `POST /core/api/services/notify/<target>`: one
+  notification per auto-sniffed install or update. The text is built from validated
+  names, versions, scores and fixed rule titles, never from scanned text. To offer the
+  targets, `GET /core/api/services` is read and only the names of `notify` services
+  are kept. `GET /addons/self/info` (allowed for every app without a Supervisor role)
+  gives the app's own slug, for the "Open Barkley" link.
+
 The proxy talks to Core as the Supervisor's admin user, so these connections could reach
-almost anything in Core. The client sends only the two list commands, the one AI Task
-service call and the one fixed template, all in code (`_ALLOWED_COMMANDS`,
-`AI_TASK_PATH`, `AI_ENTITIES_TEMPLATE`); nothing from a request or a report ever becomes
-a command, a service name, a template or a URL.
+almost anything in Core. The client sends only the list commands and the subscribe
+command with fixed signals, the one AI Task service call, the two notification services
+and the one fixed template, all in code (`_ALLOWED_COMMANDS`, `WATCH_SIGNALS`,
+`AI_TASK_PATH`, `AI_ENTITIES_TEMPLATE`, `NOTIFY_PATH`); nothing from a request or a
+report ever becomes a command, a service name, a template or a URL (a notify target is
+checked against the list HA gave and a strict pattern).
 
 Nothing here touches installed code: the Marketplace only reports names and versions.
 """
@@ -49,7 +65,12 @@ SUPERVISOR_HOST = "supervisor"
 MARKETPLACE_LIST = "marketplace/repositories/list"  # HA 2026.11+: built into Core
 HACS_LIST = "hacs/repositories/list"  # older HA: the HACS custom integration
 LIST_COMMANDS = (MARKETPLACE_LIST, HACS_LIST)
-_ALLOWED_COMMANDS = frozenset(LIST_COMMANDS)
+SUBSCRIBE = "marketplace/subscribe"  # HA 2026.11+: Core's Marketplace dispatcher signals
+# The two signals the watcher subscribes to (Core `marketplace/enums.py`, MarketplaceSignal).
+SIGNAL_INSTALL_PROGRESS = "marketplace_repository_install_progress"
+SIGNAL_REPOSITORY = "marketplace_repository"
+WATCH_SIGNALS = (SIGNAL_INSTALL_PROGRESS, SIGNAL_REPOSITORY)
+_ALLOWED_COMMANDS = frozenset((*LIST_COMMANDS, SUBSCRIBE))
 _MAX_MESSAGE = 64 * 1024 * 1024  # what the Supervisor accepts from Core
 _TIMEOUT = 20
 # HACS categories Barkley can scan, and what it calls them.
@@ -173,6 +194,8 @@ class _WebSocket:
     def __init__(self, host: str, port: int, path: str, timeout: float = _TIMEOUT):
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self._buf = b""
+        self._parts: list[bytes] = []
+        self._size = 0
         key = base64.b64encode(secrets.token_bytes(16)).decode()
         self.sock.sendall(
             (
@@ -200,10 +223,15 @@ class _WebSocket:
             raise SupervisorError("connection closed")
         self._buf += chunk
 
-    def _read(self, n: int) -> bytes:
+    def _peek(self, n: int) -> bytes:
+        """The next n bytes, left in the buffer (a timeout while filling loses nothing)."""
         while len(self._buf) < n:
             self._fill()
-        out, self._buf = self._buf[:n], self._buf[n:]
+        return self._buf[:n]
+
+    def _read(self, n: int) -> bytes:
+        out = self._peek(n)
+        self._buf = self._buf[n:]
         return out
 
     def _send_frame(self, opcode: int, payload: bytes) -> None:
@@ -221,36 +249,51 @@ class _WebSocket:
     def send_json(self, obj: dict[str, Any]) -> None:
         self._send_frame(0x1, json.dumps(obj).encode())
 
+    def _frame(self) -> tuple[int, bool, bytes]:
+        """One whole frame: (opcode, fin, payload). The header is only peeked at until the
+        whole frame is buffered, so a socket timeout in the middle leaves the stream
+        intact and the next call starts over at the same frame."""
+        head = self._peek(2)
+        b0, b1 = head[0], head[1]
+        n, off = b1 & 0x7F, 2
+        if n == 126:
+            (n,) = struct.unpack("!H", self._peek(4)[2:4])
+            off = 4
+        elif n == 127:
+            (n,) = struct.unpack("!Q", self._peek(10)[2:10])
+            off = 10
+        masked = bool(b1 & 0x80)
+        if masked:
+            off += 4
+        if n > _MAX_MESSAGE:
+            raise SupervisorError("websocket message too large")
+        raw = self._read(off + n)
+        data = raw[off:]
+        if masked:
+            mask = raw[off - 4 : off]
+            data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+        return b0 & 0x0F, bool(b0 & 0x80), data
+
     def recv_json(self) -> Any:
-        parts: list[bytes] = []
-        size = 0
+        """The next JSON message. Pings are answered; a timeout (TimeoutError) keeps the
+        fragments read so far, so the caller may simply call again."""
         while True:
-            b0, b1 = self._read(2)
-            fin, opcode, n = b0 & 0x80, b0 & 0x0F, b1 & 0x7F
-            if n == 126:
-                (n,) = struct.unpack("!H", self._read(2))
-            elif n == 127:
-                (n,) = struct.unpack("!Q", self._read(8))
-            mask = self._read(4) if b1 & 0x80 else b""
-            size += n
-            if size > _MAX_MESSAGE:
-                raise SupervisorError("websocket message too large")
-            data = self._read(n)
-            if mask:
-                data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+            opcode, fin, data = self._frame()
             if opcode == 0x8:
                 raise SupervisorError("websocket closed by the server")
             if opcode == 0x9:
                 self._send_frame(0xA, data)
-                size -= n
                 continue
             if opcode == 0xA:
-                size -= n
                 continue
-            parts.append(data)
+            self._parts.append(data)
+            self._size += len(data)
+            if self._size > _MAX_MESSAGE:
+                raise SupervisorError("websocket message too large")
             if fin:
+                raw, self._parts, self._size = b"".join(self._parts), [], 0
                 try:
-                    return json.loads(b"".join(parts))
+                    return json.loads(raw)
                 except ValueError as ex:
                     raise SupervisorError("websocket message is not JSON") from ex
 
@@ -258,6 +301,29 @@ class _WebSocket:
         with contextlib.suppress(OSError):
             self._send_frame(0x8, b"")
         self.sock.close()
+
+
+def _open_core(tok: str, host: str, port: int, path: str, timeout: float = _TIMEOUT) -> _WebSocket:
+    """Connect to Core through the Supervisor's proxy and authenticate as the add-on."""
+    try:
+        ws = _WebSocket(host, port, path, timeout=timeout)
+    except OSError as ex:
+        raise SupervisorError(f"can't reach the Supervisor: {ex}") from ex
+    try:
+        msg = ws.recv_json()
+        if msg.get("type") != "auth_required":
+            raise SupervisorError(f"unexpected greeting: {str(msg.get('type'))[:40]}")
+        ws.send_json({"type": "auth", "access_token": tok})
+        msg = ws.recv_json()
+        if msg.get("type") != "auth_ok":
+            raise SupervisorError("the Supervisor refused the add-on token (homeassistant_api?)")
+    except (OSError, AttributeError) as ex:
+        ws.close()
+        raise SupervisorError(f"websocket failed: {ex}") from ex
+    except SupervisorError:
+        ws.close()
+        raise
+    return ws
 
 
 def core_command(
@@ -272,18 +338,8 @@ def core_command(
     """Send one allowed command over the Core websocket and return its result."""
     if command not in _ALLOWED_COMMANDS:
         raise SupervisorError(f"command not allowed: {command}")
+    ws = _open_core(tok, host, port, path)
     try:
-        ws = _WebSocket(host, port, path)
-    except OSError as ex:
-        raise SupervisorError(f"can't reach the Supervisor: {ex}") from ex
-    try:
-        msg = ws.recv_json()
-        if msg.get("type") != "auth_required":
-            raise SupervisorError(f"unexpected greeting: {str(msg.get('type'))[:40]}")
-        ws.send_json({"type": "auth", "access_token": tok})
-        msg = ws.recv_json()
-        if msg.get("type") != "auth_ok":
-            raise SupervisorError("the Supervisor refused the add-on token (homeassistant_api?)")
         ws.send_json({"id": 1, "type": command, **params})
         while True:
             msg = ws.recv_json()
@@ -299,6 +355,177 @@ def core_command(
         raise SupervisorError(f"websocket failed: {ex}") from ex
     finally:
         ws.close()
+
+
+class Subscription:
+    """A long-lived Core websocket subscribed to the Marketplace's signals (auto-sniff).
+
+    Only `WATCH_SIGNALS` can be subscribed (fixed in code). `events()` yields
+    `(signal, data)` for each event and `None` whenever `idle` seconds pass without
+    one, so the caller can poll the installed list as a fallback in between.
+    """
+
+    def __init__(
+        self,
+        tok: str,
+        *,
+        signals: tuple[str, ...] = WATCH_SIGNALS,
+        host: str = SUPERVISOR_HOST,
+        port: int = 80,
+        path: str = "/core/websocket",
+        idle: float = 60.0,
+    ):
+        bad = [x for x in signals if x not in WATCH_SIGNALS]
+        if bad:
+            raise SupervisorError(f"signal not allowed: {bad[0]!r}")
+        self.ws = _open_core(tok, host, port, path, timeout=idle)
+        self.signals: dict[int, str] = {}
+        try:
+            for i, sig in enumerate(signals, 1):
+                self.ws.send_json({"id": i, "type": SUBSCRIBE, "signal": sig})
+                self.signals[i] = sig
+            pending = set(self.signals)
+            while pending:
+                msg = self.ws.recv_json()
+                if not isinstance(msg, dict) or msg.get("type") != "result":
+                    continue
+                mid = msg.get("id")
+                if mid not in pending:
+                    continue
+                if not msg.get("success"):
+                    err = msg.get("error") or {}
+                    raise SupervisorError(
+                        f"{SUBSCRIBE}: {str(err.get('code'))[:40]}: {str(err.get('message'))[:200]}"
+                    )
+                pending.discard(mid)
+        except (OSError, AttributeError) as ex:
+            self.ws.close()
+            raise SupervisorError(f"websocket failed: {ex}") from ex
+        except SupervisorError:
+            self.ws.close()
+            raise
+
+    def events(self) -> Any:
+        """Yields (signal, data) per event, None after `idle` seconds without one.
+        Raises SupervisorError when the connection ends."""
+        while True:
+            try:
+                msg = self.ws.recv_json()
+            except TimeoutError:
+                yield None
+                continue
+            except OSError as ex:
+                raise SupervisorError(f"websocket failed: {ex}") from ex
+            if not isinstance(msg, dict) or msg.get("type") != "event":
+                continue
+            sig = self.signals.get(msg.get("id"))  # type: ignore[arg-type]
+            if sig is None:
+                continue
+            ev = msg.get("event")
+            yield sig, (ev if isinstance(ev, dict) else {})
+
+    def close(self) -> None:
+        self.ws.close()
+
+
+# --- notifications (auto-sniff) ---------------------------------------------------------
+
+NOTIFY_PERSISTENT_PATH = "/core/api/services/persistent_notification/create"
+NOTIFY_PATH = "/core/api/services/notify/"  # + a validated target
+SERVICES_PATH = "/core/api/services"
+SELF_INFO_PATH = "/addons/self/info"
+_NOTIFY_TARGET = re.compile(r"^[a-z0-9_]{1,100}$")
+_SLUG = re.compile(r"^[a-z0-9_]{1,100}$")
+_NOTIFY_TIMEOUT = 20
+
+
+def notify_target_ok(target: str) -> bool:
+    return bool(_NOTIFY_TARGET.match(target))
+
+
+def _call(path: str, body: dict[str, Any] | None, tok: str, timeout: float, what: str) -> Any:
+    req = urllib.request.Request(
+        f"http://{SUPERVISOR_HOST}{path}",
+        data=json.dumps(body).encode() if body is not None else None,
+        method="POST" if body is not None else "GET",
+    )
+    req.add_header("Authorization", f"Bearer {tok}")
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 - fixed host
+            raw = r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as ex:
+        try:
+            msg = json.loads(ex.read() or b"{}").get("message") or ex.reason
+        except ValueError:
+            msg = ex.reason
+        raise SupervisorError(f"{what}: Home Assistant answered {ex.code}: {msg}") from ex
+    except OSError as ex:
+        raise SupervisorError(f"{what} failed: {ex}") from ex
+    try:
+        return json.loads(raw) if raw.strip() else None
+    except ValueError as ex:
+        raise SupervisorError(f"{what}: Home Assistant's answer wasn't JSON") from ex
+
+
+def notify_persistent(
+    title: str, message: str, notification_id: str, tok: str | None = None
+) -> None:
+    """A bell notification in HA (persistent_notification.create). The same id replaces
+    the earlier notification about the same app."""
+    tok = tok or token()
+    if not tok:
+        raise SupervisorError("not running as a Home Assistant add-on")
+    if not _NOTIFY_TARGET.match(notification_id):
+        raise SupervisorError("bad notification id")
+    body = {"notification_id": notification_id, "title": title[:100], "message": message[:1500]}
+    _call(NOTIFY_PERSISTENT_PATH, body, tok, _NOTIFY_TIMEOUT, "persistent notification")
+
+
+def notify_service(
+    target: str, title: str, message: str, url: str = "", tok: str | None = None
+) -> None:
+    """notify.<target> (for example a phone's mobile_app). `url` is the panel path the
+    companion app opens from the notification; other platforms ignore it."""
+    tok = tok or token()
+    if not tok:
+        raise SupervisorError("not running as a Home Assistant add-on")
+    if not notify_target_ok(target):
+        raise SupervisorError(f"{target!r} is not a notify target name")
+    body: dict[str, Any] = {"title": title[:100], "message": message[:1500]}
+    if url:
+        body["data"] = {"url": url}
+    _call(NOTIFY_PATH + target, body, tok, _NOTIFY_TIMEOUT, f"notify.{target}")
+
+
+def notify_targets(tok: str | None = None) -> list[str]:
+    """Names of the `notify` services HA offers (GET /api/services, only that domain kept)."""
+    tok = tok or token()
+    if not tok:
+        raise SupervisorError("not running as a Home Assistant add-on")
+    data = _call(SERVICES_PATH, None, tok, 15, "listing notify targets")
+    out: list[str] = []
+    for dom in data if isinstance(data, list) else []:
+        if not isinstance(dom, dict) or dom.get("domain") != "notify":
+            continue
+        services = dom.get("services")
+        names = services.keys() if isinstance(services, dict) else []
+        out.extend(n for n in names if isinstance(n, str) and notify_target_ok(n))
+    return sorted(set(out) - {"persistent_notification"})
+
+
+def self_slug(tok: str | None = None) -> str:
+    """This app's slug (GET /addons/self/info: every app may read its own info), for the
+    panel link `/hassio/ingress/<slug>` in notifications."""
+    tok = tok or token()
+    if not tok:
+        raise SupervisorError("not running as a Home Assistant add-on")
+    data = _call(SELF_INFO_PATH, None, tok, 10, "reading the app's own info")
+    slug = (data or {}).get("data", {}).get("slug") if isinstance(data, dict) else None
+    if not isinstance(slug, str) or not _SLUG.match(slug):
+        raise SupervisorError("the Supervisor didn't say the app's slug")
+    return slug
 
 
 # --- installed HACS items ----------------------------------------------------------------

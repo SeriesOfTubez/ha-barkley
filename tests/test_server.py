@@ -417,3 +417,80 @@ def test_an_incomplete_scan_offers_to_scan_again(addon):
     store.save(never)
     _, _, page = get(base + "/?refresh=1")
     assert "Sniff again" in page
+
+
+# --- auto-sniff: the panel's box and settings -------------------------------------------
+
+
+@pytest.fixture
+def auto(tmp_path):
+    from sniff_test import watch
+
+    store = Store(tmp_path / "s.db")
+    scan_fn = Calls()
+    sent = []
+    w = watch.Watcher(
+        store, None, lambda: (list(INSTALLED), {}),
+        notify_fn=lambda t, m, n: sent.append(("bell", t, m, n)),
+        notify_service_fn=lambda tg, t, m, u: sent.append(("push", tg, t, m, u)),
+        targets_fn=lambda: ["mobile_app_phone"], slug_fn=lambda: "local_sniff_test",
+    )  # fmt: skip
+    httpd = server.serve(
+        store, scan_fn, "127.0.0.1", 0, {"127.0.0.1"},
+        ha_fn=lambda: "2026.11.0", installed_fn=lambda: (list(INSTALLED), {}),
+        memory_fn=_mem(8), watcher=w,
+    )  # fmt: skip
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield store, f"http://127.0.0.1:{httpd.server_address[1]}", httpd, w, sent
+    httpd.shutdown()
+
+
+def test_auto_box_says_what_it_does_and_that_a_new_integration_runs_at_once(auto):
+    _store, base, httpd, w, _sent = auto
+    _, _, page = get(base + "/")
+    assert "Auto-sniff: on · bell notification" in page
+    assert "A new integration runs as soon as it's installed" in page
+    assert "sniffing it from search <i>before</i> you install" in page
+    assert "deleted after 7 days; scans of installed apps are kept" in page
+    assert "name=target" in page and 'value="mobile_app_phone"' in page
+    assert "Turn auto-sniff off" in page
+    assert httpd.panel.worker.on_done == [w.on_job_done]  # the hook is wired
+
+
+def test_auto_settings_are_stored_and_the_test_button_notifies(auto):
+    store, base, _httpd, w, sent = auto
+    tok = token(base)
+    assert post(base + "/auto-scan", {"token": tok, "on": "0"})[0] == 303
+    assert store.setting("auto_scan") == "off" and not w.enabled
+    _, _, page = get(base + "/")
+    assert "Auto-sniff: off" in page and "Turn auto-sniff on" in page
+    assert post(base + "/notify-target", {"token": tok, "target": "mobile_app_phone"})[0] == 303
+    assert store.setting("notify_target") == "mobile_app_phone"
+    code, _ = post(base + "/notify-target", {"token": tok, "target": "not_offered"})
+    assert code == 400 and w.notify_target == "mobile_app_phone"
+    assert post(base + "/notify-test", {"token": tok})[0] == 303
+    assert [s[0] for s in sent] == ["bell", "push"]
+    assert sent[0][3] == "barkley_test" and sent[1][1] == "mobile_app_phone"
+    _, _, page = get(base + "/")
+    assert "bell + notify.mobile_app_phone" in page and "sent at" in page
+    assert post(base + "/notify-test", {"token": "bad"})[0] == 403
+
+
+def test_auto_jobs_show_in_the_jobs_table_and_doctor_names_the_watcher(auto, monkeypatch):
+    _store, base, httpd, _w, _sent = auto
+    job = httpd.panel.worker.submit("auto", "acme/quiet", "v2", prev="v1")
+    httpd.panel.worker.wait()
+    assert job.state == "done" and len(job.scan_ids) == 2
+    _, _, page = get(base + "/")
+    assert "<td>auto-sniff</td><td>acme/quiet@v1 → @v2</td>" in page
+    assert f"diff?old={job.scan_ids[0]}&amp;new={job.scan_ids[1]}" in page
+    monkeypatch.setattr(server.doctor, "run_checks", lambda addon=False: [])
+    _, _, page = get(base + "/doctor")
+    assert "Auto-sniff (Marketplace events)" in page and "auto-sniff on" in page
+
+
+def test_no_auto_box_outside_an_addon(panel):
+    _, _, base, _ = panel
+    _, _, page = get(base + "/")
+    assert "Auto-sniff" not in page
+    assert post(base + "/auto-scan", {"token": token(base), "on": "0"})[0] == 400

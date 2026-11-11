@@ -19,4 +19,6 @@ exec sniff-test serve \
     --jobs "$(bashio::config 'jobs')" \
     --parallel "$(bashio::config 'parallel_scans' '1')" \
     --ai-entity "$(bashio::config 'ai_entity' '')" \
-    --ai-mode "$(bashio::config 'ai_mode' 'summary')"
+    --ai-mode "$(bashio::config 'ai_mode' 'summary')" \
+    --auto-scan "$(bashio::config 'auto_scan' 'true')" \
+    --notify-target "$(bashio::config 'notify_target' '')"

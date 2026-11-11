@@ -31,6 +31,12 @@ panel_title: Barkley
 #   on GitHub, captured at scan time), never anything from the HA config.
 # - POST /core/api/template with one fixed template that returns only the ids and names
 #   of ai_task entities, for the panel's AI dropdown (nothing else is read).
+# - Auto-sniff: `marketplace/subscribe` for two fixed signals over a long-lived Core
+#   websocket (an install that ended, an uninstall), then the list above again; one
+#   persistent_notification.create per auto-sniffed install or update, and notify.<target>
+#   when one is picked in the panel (GET /core/api/services is read once to offer the
+#   notify targets; only their names are kept). GET /addons/self/info (allowed for every
+#   app) gives the app's own slug for the "Open Barkley" link.
 # All covered by this one permission, so no new one is asked for.
 # No host network, no ports, no Supervisor role, no folder access: the installed list
 # comes from HACS, so the HA config folder (secrets.yaml, .storage/auth) stays unmapped.
@@ -45,6 +51,8 @@ options:
   github_token: ""
   ai_entity: ""
   ai_mode: summary
+  auto_scan: true
+  notify_target: ""
 schema:
   exposure: list(local|public)
   jobs: int(1,4)
@@ -52,6 +60,8 @@ schema:
   github_token: password?
   ai_entity: "match(^(ai_task\\.[a-z0-9_]+)?$)?"
   ai_mode: list(summary|deep)?
+  auto_scan: bool?
+  notify_target: "match(^[a-z0-9_]{0,100}$)?"
 # Published multi-arch image (built with the repo root as context, see DOCS.md).
 # Uncomment once the registry exists; without it the Supervisor would try to build
 # from this folder alone, which doesn't contain the scanner's source.

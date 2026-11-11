@@ -27,7 +27,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from sniff_test import __version__, doctor, memory, supervisor, ui
+from sniff_test import __version__, doctor, memory, supervisor, ui, watch
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import GitHubError, RateLimit, RateLimitError
@@ -51,7 +51,16 @@ _JOBS_KEPT = 20
 # before they start and wait out a rate limit inside. The one GitHub request outside a
 # job is the versions page's release list (cached 10 min; a limit there says "try later").
 # Without a token GitHub allows 60/hour and counts even 304 answers.
-_GITHUB_NEED = {"scan": 10, "installed": 10, "update": 19}
+_GITHUB_NEED = {"scan": 10, "installed": 10, "update": 19, "auto": 19}
+
+
+def _need(job: Job) -> int:
+    """GitHub requests this job may still make."""
+    if job.kind == "auto" and not job.prev:
+        return _GITHUB_NEED["installed"]
+    return _GITHUB_NEED.get(job.kind, 15)
+
+
 _CSP = (
     "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; "
     "form-action 'self'; base-uri 'none'; frame-ancestors 'self'"
@@ -69,10 +78,11 @@ def e(text: Any, limit: int = 300) -> str:
 @dataclass
 class Job:
     id: int
-    kind: str  # scan | update
+    kind: str  # scan | installed | update | auto
     repo: str
     ref: str | None
     to: str | None = None  # update: the version HACS would install now (None: work it out)
+    prev: str | None = None  # auto: the version installed before an update (its diff base)
     state: str = "queued"  # queued | running | waiting | done | failed | refused
     message: str = ""
     scan_ids: list[int] = field(default_factory=list)
@@ -129,6 +139,7 @@ class Worker:
         self.budget_fn = budget_fn
         self.sleep_fn = sleep_fn
         self.github_wait: str = ""  # why queued work is paused (shown on the panel)
+        self.on_done: list[Callable[[Job], None]] = []  # called after every job (auto-sniff)
         self.jobs: list[Job] = []
         self._q: queue.Queue[Job] = queue.Queue()
         self._lock = threading.Lock()
@@ -175,9 +186,11 @@ class Worker:
                 self._running.remove(job)
             self._slots.notify_all()
 
-    def submit(self, kind: str, repo: str, ref: str | None, to: str | None = None) -> Job:
+    def submit(
+        self, kind: str, repo: str, ref: str | None, to: str | None = None, prev: str | None = None
+    ) -> Job:
         with self._lock:
-            job = Job(self._next, kind, repo, ref, to)
+            job = Job(self._next, kind, repo, ref, to, prev)
             self._next += 1
             self.jobs.insert(0, job)
             del self.jobs[_JOBS_KEPT:]
@@ -238,8 +251,8 @@ class Worker:
     def _budget_ok(self, job: Job) -> bool:
         with self._gate:
             b = self.budget_fn()
-            others = sum(_GITHUB_NEED.get(j.kind, 15) for j in self.running() if j is not job)
-            if b is None or b.remaining >= _GITHUB_NEED.get(job.kind, 15) + others:
+            others = sum(_need(j) for j in self.running() if j is not job)
+            if b is None or b.remaining >= _need(job) + others:
                 return True
         tip = " A GitHub token in the app's options raises it to 5,000."
         token = "" if b.authenticated else tip
@@ -255,6 +268,17 @@ class Worker:
         elif job.kind == "installed":  # an installed version: reuse a stored scan
             job.scan_ids = [self._stored_or_scan(job.repo, job.ref, self.exposure, self.ha_fn())]
             job.message = "sniffed"
+        elif job.kind == "auto":  # the Marketplace installed or updated it: that exact version
+            new = self._stored_or_scan(job.repo, job.ref, self.exposure, self.ha_fn())
+            if job.prev:  # an update: the version before is the diff's old side
+                row = self.store.get(new)
+                assert row is not None  # noqa: S101 - just saved or found
+                old = self._stored_or_scan(job.repo, job.prev, row.exposure, row.ha_version)
+                job.scan_ids = [old, new]
+                job.message = f"{job.prev} → {job.ref}"
+            else:
+                job.scan_ids = [new]
+                job.message = "sniffed after install"
         else:  # update: stored scan of the installed ref vs what HACS installs now
             if job.to:  # HACS told us (installed list): reuse a stored scan of it
                 new = self._stored_or_scan(job.repo, job.to, self.exposure, self.ha_fn())
@@ -295,6 +319,12 @@ class Worker:
                 print(f"job {job.id} {job.repo} failed: {job.message}", file=sys.stderr)
             finally:
                 job.finished = time.time()
+                for fn in list(self.on_done):
+                    try:
+                        fn(job)
+                    except Exception as ex:  # a hook never breaks the worker
+                        print(f"job {job.id} hook failed: {type(ex).__name__}: {ex}",
+                              file=sys.stderr, flush=True)  # fmt: skip
                 self._q.task_done()
 
 
@@ -509,6 +539,8 @@ def status_html(
     for j in active:
         if j.state == "running":
             what = "🐕 Sniffing" if j.kind != "update" else "🐕 Checking the update of"
+            if j.kind == "auto":
+                what = "🐕 Auto-sniffing the update of" if j.prev else "🐕 Auto-sniffing"
             lines.append(f"<b>{what} {name(j)}…</b>")
         elif j.state == "waiting":
             lines.append(f"⏳ {name(j)}: {e(j.message, 200)}")
@@ -520,7 +552,7 @@ def status_html(
         sid = j.scan_ids[-1] if j.scan_ids else None
         if j.state == "done" and sid is not None:
             link = f'<a href="{base}/scan/{sid}">see the result</a>'
-            if j.kind == "update" and len(j.scan_ids) == 2:
+            if j.kind in ("update", "auto") and len(j.scan_ids) == 2:
                 old, new = j.scan_ids
                 link = f'<a href="{base}/diff?old={old}&amp;new={new}">what the update changes</a>'
             lines.append(f'<span class="ok">✓</span> {name(j)} is done: {link}')
@@ -551,6 +583,7 @@ def render_index(
     search: bool = False,
     status: str = "",
     here: str = "",
+    auto: str = "",
 ) -> bytes:
     rows = store.history(limit=100)
     against = f" against HA {e(ha)}" if ha else ""
@@ -569,6 +602,7 @@ def render_index(
         _github_banner(github_wait),
         _search_box(base) if search else "",
         installed,
+        auto,
     ]
     active = [j for j in jobs if j.state in ("queued", "running", "waiting")]
     if jobs:
@@ -579,11 +613,13 @@ def render_index(
         )
         for j in jobs:
             links = " ".join(f'<a href="{base}/scan/{i}">@{i}</a>' for i in j.scan_ids)
-            if j.kind == "update" and len(j.scan_ids) == 2:
+            if j.kind in ("update", "auto") and len(j.scan_ids) == 2:
                 old, new = j.scan_ids
                 links += f' · <a href="{base}/diff?old={old}&amp;new={new}">diff</a>'
+            kind = "auto-sniff" if j.kind == "auto" else j.kind
             out.append(
-                f"<tr><td>{e(j.kind)}</td><td>{e(j.repo)}{'@' + e(j.ref) if j.ref else ''}"
+                f"<tr><td>{e(kind)}</td><td>{e(j.repo)}"
+                f"{'@' + e(j.prev) + ' → ' if j.prev else ''}{'@' + e(j.ref) if j.ref else ''}"
                 f"{' → ' + e(j.to) if j.to else ''}"
                 f"</td><td>{e(j.state)}</td><td>{e(j.message)} {links}</td></tr>"
             )
@@ -625,6 +661,86 @@ def render_index(
         "this box?</p>"
     )
     return ui.page("Barkley", "".join(out), refresh=5 if active else 0)
+
+
+AUTO_NOTE = (
+    "<b>A new integration runs as soon as it's installed:</b> Home Assistant opens its setup "
+    "right away, which loads its code. The auto-sniff of a new install comes after that, so "
+    "the protection for a new install is sniffing it from search <i>before</i> you install. "
+    "An update's new code waits for a restart, so its sniff and diff come before it runs."
+)
+
+
+def render_auto(base: str, w: watch.Watcher, token: str, now: float | None = None) -> str:
+    """The auto-sniff box: what it does, the plain timing note, settings, recent results."""
+    now = time.time() if now is None else now
+    on = w.enabled
+    targets, terr = w.targets()
+    chosen = w.notify_target
+    who = f"bell + notify.{e(chosen)}" if chosen else "bell notification"
+    ok, diag = w.diagnostics()
+    hidden = f'<input type=hidden name=token value="{token}">'
+    opts = ['<option value="">no one else (bell notification only)</option>'] + [
+        f'<option value="{e(t)}"{" selected" if t == chosen else ""}>notify.{e(t)}</option>'
+        for t in targets
+    ]
+    if chosen and chosen not in targets:
+        opts.append(f'<option value="{e(chosen)}" selected>notify.{e(chosen)} (not offered now)'
+                    "</option>")  # fmt: skip
+    rows = []
+    for x in w.log()[:10]:
+        ids = [int(i) for i in x.get("scan_ids", []) if isinstance(i, int)]
+        links = " ".join(f'<a href="{base}/scan/{i}">@{i}</a>' for i in ids)
+        if len(ids) == 2:
+            links += f' · <a href="{base}/diff?old={ids[0]}&amp;new={ids[1]}">diff</a>'
+        did = (f"updated {e(x.get('previous'))} → {e(x.get('version'))}" if x.get("previous")
+               else f"installed {e(x.get('version'))}")  # fmt: skip
+        if "score" in x:
+            result = _verdict(int(x["score"]), str(x.get("verdict", "")))
+            if x.get("changes"):
+                result += f' <span class="muted">{e(x["changes"], 200)}</span>'
+            if not x.get("complete", True):
+                result += ' <span class="muted">(incomplete)</span>'
+        else:
+            result = f"{e(x.get('state'))}: {e(x.get('message'), 200)}"
+        rows.append(
+            f"<tr><td>{e(str(x.get('when', ''))[:16].replace('T', ' '))}</td>"
+            f"<td>{e(x.get('repo'))} {did}</td><td>{result} {links}</td></tr>"
+        )
+    recent = (
+        "<table><tr><th>when</th><th>what happened</th><th>result</th></tr>"
+        + "".join(rows) + "</table>"
+        if rows
+        else '<p class="muted small">Nothing installed or updated since Barkley started '
+        "watching.</p>"
+    )  # fmt: skip
+    return (
+        f'<div class="box auto"><h2>Auto-sniff: {"on" if on else "off"} · {who}</h2>'
+        '<p class="sub">When the Marketplace installs or updates an integration or card, '
+        "Barkley sniffs the version that landed (reusing a stored scan of that exact version, "
+        "for example one you sniffed from search) and sends a notification: the app, its "
+        "version, the verdict and score, what's worth a look, and for an update what changed "
+        "since the version you had.</p>"
+        f"<p>{AUTO_NOTE}</p>"
+        '<div class="again">'
+        f'<form method=post action="{base}/auto-scan">{hidden}'
+        f'<input type=hidden name=on value="{0 if on else 1}">'
+        f'<button class="{"" if on else "primary"}">Turn auto-sniff {"off" if on else "on"}'
+        "</button></form>"
+        f'<form method=post action="{base}/notify-target">{hidden}'
+        f"<label>Also notify <select name=target>{''.join(opts)}</select></label> "
+        "<button>Save</button></form>"
+        f'<form method=post action="{base}/notify-test">{hidden}'
+        "<button>Send a test notification</button></form>"
+        + (f'<span class="small">{e(w.last_test, 300)}</span>' if w.last_test else "")
+        + "</div>"
+        + (f'<p class="muted small">Notify targets: {e(terr, 300)}</p>' if terr else "")
+        + f'<p class="muted small">{"" if ok else "⚠ "}{e(diag, 600)}. Scans of apps that '
+        f"aren't installed are deleted after {w.age_out_days:g} days; scans of installed apps "
+        "are kept.</p>"
+        f"<details><summary>Recent auto-sniffs ({len(w.log())})</summary>{recent}</details>"
+        "</div>"
+    )
 
 
 def _update_box(base: str, row: Row | None, token: str) -> str:
@@ -1092,6 +1208,7 @@ class Panel:
         self._ai_items: dict[tuple[int, str], tuple[str, str]] = {}  # (scan, item) -> same
         self._ai_lock = threading.Lock()
         self.ai_mode = "summary"
+        self.watcher: watch.Watcher | None = None  # auto-sniff (set by `serve` in an add-on)
 
     def installed(self, refresh: bool = False) -> InstalledState:
         """HACS's installed list, cached; one websocket round trip at most every 5 minutes."""
@@ -1390,12 +1507,14 @@ class Panel:
                         v = ui.View.parse(q, panel.store.setting("view") or "cards")
                         if q.get("view") and v.view != panel.store.setting("view"):
                             panel.store.set_setting("view", v.view)  # remembered for next time
+                        auto = (render_auto(base, panel.watcher, panel.token)
+                                if panel.watcher is not None else "")  # fmt: skip
                         body = render_index(
                             base, panel.store, jobs, panel.token,
                             panel.installed_html(base, refresh, v), panel.memory_fn(),
                             panel.worker.github_wait, panel.worker.ha_fn(),
                             panel.worker.parallel, panel.catalog_fn is not None,
-                            status_html(base, jobs, panel.names(), v.qs()), v.qs(),
+                            status_html(base, jobs, panel.names(), v.qs()), v.qs(), auto,
                         )  # fmt: skip
                         return self._send(200, body)
                     if m := re.fullmatch(r"/scan/(\d+)(\.json)?", url.path):
@@ -1448,7 +1567,12 @@ class Panel:
                         )  # fmt: skip
                         return self._send(200, page)
                     if url.path == "/doctor":
-                        return self._send(200, render_doctor(base, doctor.run_checks(addon=True)))
+                        checks = doctor.run_checks(addon=True)
+                        if panel.watcher is not None:
+                            ok, summary = panel.watcher.diagnostics()
+                            checks.insert(3, doctor.Check("Auto-sniff (Marketplace events)", ok,
+                                                          summary))  # fmt: skip
+                        return self._send(200, render_doctor(base, checks))
                     if url.path == "/diff":
                         q = urllib.parse.parse_qs(url.query)
                         old, new = int(q["old"][0]), int(q["new"][0])
@@ -1474,6 +1598,20 @@ class Panel:
                 # Back to the same filter, view and page (rebuilt from known values only)
                 v = ui.View.parse(urllib.parse.parse_qs(get("back")[:200]))
                 home = f"{self._base()}/?{v.qs('&')}" if get("back") else f"{self._base()}/"
+                if path in ("/auto-scan", "/notify-target", "/notify-test"):
+                    w = panel.watcher
+                    if w is None:
+                        return self._text(HTTPStatus.BAD_REQUEST, "auto-sniff needs the add-on")
+                    if path == "/auto-scan":
+                        w.set_enabled(get("on") == "1")
+                    elif path == "/notify-target":
+                        if not w.set_target(get("target")[:100]):
+                            return self._text(HTTPStatus.BAD_REQUEST,
+                                              "not one of the notify targets Home Assistant "
+                                              "offers")  # fmt: skip
+                    else:
+                        w.notify_test()
+                    return self._redirect(f"{self._base()}/")
                 if path == "/ai-entity":
                     value = get("entity")
                     choices, _err = panel.ai_choices(refresh=True)
@@ -1583,8 +1721,10 @@ def serve(
     catalog_fn: CatalogFn | None = None,
     entities_fn: EntitiesFn | None = None,
     releases_fn: ReleasesFn | None = None,
+    watcher: watch.Watcher | None = None,
 ) -> PanelServer:
-    """Build the server (caller runs `serve_forever`); `.panel.worker` runs the scans."""
+    """Build the server (caller runs `serve_forever`); `.panel.worker` runs the scans.
+    `watcher`: auto-sniff; built by the caller with the worker from `make_worker`."""
     worker = Worker(
         store, scan_fn, exposure=exposure, ha_fn=ha_fn, memory_fn=memory_fn,
         budget_fn=budget_fn, parallel=parallel,
@@ -1608,6 +1748,10 @@ def serve(
     panel.releases_fn = releases_fn
     if ai_fn is not None:
         panel.ai_fn = ai_fn
+    if watcher is not None:
+        panel.watcher = watcher
+        watcher.worker = worker
+        worker.on_done.append(watcher.on_job_done)
     httpd = PanelServer((host, port), panel.handler())
     httpd.panel = panel
     return httpd

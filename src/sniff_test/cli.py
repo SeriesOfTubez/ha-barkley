@@ -148,6 +148,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="summary: explain the findings; deep: also 'Explain in context' (reads code)",
     )
     v.add_argument(
+        "--auto-scan",
+        default="true",
+        metavar="true|false",
+        help="sniff every Marketplace install and update and notify (add-on only)",
+    )
+    v.add_argument(
+        "--notify-target",
+        default="",
+        metavar="NAME",
+        help="a notify service (notify.NAME) that also gets auto-sniff results",
+    )
+    v.add_argument(
         "--ha-version",
         metavar="YYYY.M.P",
         help="resolve against this HA release (default: the installed one, via the "
@@ -349,6 +361,20 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     allow = set(args.allow or [server.SUPERVISOR_IP])
     # The installed list needs HA (through the Supervisor); outside an add-on there's none.
     installed_fn = supervisor.installed_hacs if supervisor.token() else None
+    watcher = None
+    if installed_fn is not None:
+        from sniff_test import watch
+
+        watcher = watch.Watcher(
+            store, None, installed_fn,
+            subscribe_fn=supervisor.Subscription,
+            notify_fn=supervisor.notify_persistent,
+            notify_service_fn=supervisor.notify_service,
+            targets_fn=supervisor.notify_targets,
+            slug_fn=supervisor.self_slug,
+            enabled=str(args.auto_scan).strip().lower() in ("true", "1", "on", "yes"),
+            notify_target=args.notify_target.strip(),
+        )  # fmt: skip
     httpd = server.serve(
         store, scan_fn, args.host, args.port, allow,
         exposure=args.exposure, ha_fn=ha_fn, installed_fn=installed_fn,
@@ -359,7 +385,14 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         catalog_fn=supervisor.catalog if supervisor.token() else None,
         entities_fn=supervisor.ai_task_entities if supervisor.token() else None,
         releases_fn=lambda repo: releases.recent(repo),
+        watcher=watcher,
     )  # fmt: skip
+    if watcher is not None:
+        watcher.start()
+        out.print(
+            f"🐕 Auto-sniff: {'on' if watcher.enabled else 'off'}; notifications: bell"
+            + (f" + notify.{watcher.notify_target}" if watcher.notify_target else "")
+        )
     ai = httpd.panel.ai_entity
     if args.ai_entity.strip() and not ai:
         out.print(
