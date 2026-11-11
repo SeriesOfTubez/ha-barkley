@@ -586,3 +586,58 @@ def test_load_records_the_release_date_and_skips_it_on_error(tmp_path, monkeypat
     assert not (tmp_path / "ha" / "2026.11.0" / "released_at").exists()  # asks again next time
     g.fail = False
     assert ha_env.load("2026.11.0", g).released_at == "2026-11-04T17:32:55Z"
+
+
+# --- bun.lock (0.7.3: Plotly's card pins with bun and was told it had no lockfile) ---------
+
+BUN_LOCK = """{
+  // bun.lock is JSONC: comments and trailing commas
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "card",
+      "dependencies": { "lit": "^3.1.0", "@scope/util": "^1.0.0", },
+      "devDependencies": { "vite": "^8.0.0", },
+    },
+  },
+  "packages": {
+    "lit": ["lit@3.1.0", "", { "dependencies": { "deepmerge": "^4.2.2" } }, "sha512-a"],
+    "deepmerge": ["deepmerge@4.3.1", "", {}, "sha512-b"],
+    "@scope/util": ["@scope/util@1.0.0", "", { "dependencies": { "semver": "^6" } }, "sha512-c"],
+    "@scope/util/semver": ["semver@6.3.1", "", {}, "sha512-d"],
+    "vite": ["vite@8.0.0", "", { "dependencies": { "semver": "^7", "esbuild": "^0.25" } }, "x"],
+    "semver": ["semver@7.0.0", "", {}, "sha512-e"],
+    "esbuild": ["esbuild@0.25.0", "", {}, "sha512-f"],
+    "odd": ["odd@1.0.0", "", { "note": "a // not a comment, ]" }, "sha512-g"],
+  },
+}
+"""
+
+
+def test_jsonc_keeps_strings_and_drops_comments_and_trailing_commas():
+    data = osv.jsonc_loads(BUN_LOCK)
+    assert data["packages"]["odd"][2]["note"] == "a // not a comment, ]"
+    assert data["workspaces"][""]["devDependencies"] == {"vite": "^8.0.0"}
+
+
+def test_bun_dev_only_follows_the_graph_with_nested_keys(tmp_path):
+    lock = tmp_path / "bun.lock"
+    lock.write_text(BUN_LOCK)
+    # semver 6.3.1 is bundled through @scope/util's nested copy; 7.0.0 only via vite.
+    assert osv.npm_dev_only(lock) == {
+        ("vite", "8.0.0"),
+        ("semver", "7.0.0"),
+        ("esbuild", "0.25.0"),
+        ("odd", "1.0.0"),
+    }
+    lock.write_text("{ not json")
+    assert osv.npm_dev_only(lock) == set()  # unreadable: everything counts as bundled
+
+
+def test_bun_lock_counts_as_a_lockfile(tmp_path, monkeypatch):
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"lit": "^3"}}))
+    (tmp_path / "bun.lock").write_text(BUN_LOCK)
+    target = Target(source="x", kind=TargetKind.PLUGIN, root=tmp_path, source_root=tmp_path)
+    monkeypatch.setattr(osv.shutil, "which", lambda _: None)  # stop before running osv
+    res = osv.run_npm(target, tmp_path)
+    assert res.state is AnalyzerState.SKIPPED and not res.findings  # no "no lockfile" finding

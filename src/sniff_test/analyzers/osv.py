@@ -42,7 +42,13 @@ from sniff_test.models import (
 )
 
 NAME = "osv"
-NPM_LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml")
+NPM_LOCKFILES = (
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lock",
+)
 MALWARE_CWE = "CWE-506"  # Embedded Malicious Code: GitHub's (pre-MAL) malware advisories
 _TIMEOUT = 600
 _MAX_IDS = 8
@@ -265,8 +271,12 @@ def npm_dev_only(lockfile: Path) -> set[tuple[str, str]]:
     """(name, version) pairs that appear in a package-lock only as dev dependencies.
 
     yarn.lock and pnpm-lock.yaml don't mark dev packages per entry; for those we can't
-    tell, so everything is treated as bundled (and capped at medium).
+    tell, so everything is treated as bundled (and capped at medium). bun.lock has the
+    dependency graph, so packages not reachable from a workspace's runtime dependencies
+    are dev-only (`bun_dev_only`).
     """
+    if lockfile.name == "bun.lock":
+        return bun_dev_only(lockfile)
     if lockfile.name not in ("package-lock.json", "npm-shrinkwrap.json"):
         return set()
     try:
@@ -293,6 +303,116 @@ def npm_dev_only(lockfile: Path) -> set[tuple[str, str]]:
                     note(name, meta)
                     stack.append(meta.get("dependencies") or {})
     return {k for k, dev in flags.items() if dev}
+
+
+def jsonc_loads(text: str) -> Any:
+    """JSON with // and /* */ comments and trailing commas (bun.lock's format)."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':  # copy a string verbatim, escapes included
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i : j + 1])
+            i = j + 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        elif c in "]}":  # drop a trailing comma before a closer
+            k = len(out) - 1
+            while k >= 0 and out[k].isspace():
+                k -= 1
+            if k >= 0 and out[k] == ",":
+                del out[k]
+            out.append(c)
+            i += 1
+        else:
+            out.append(c)
+            i += 1
+    return json.loads("".join(out))
+
+
+def _bun_segments(key: str) -> list[str]:
+    """'a/@s/b/c' -> ['a', '@s/b', 'c']: bun.lock keys are nesting paths of package names."""
+    parts = key.split("/")
+    segs: list[str] = []
+    while parts:
+        p = parts.pop(0)
+        if p.startswith("@") and parts:
+            p += "/" + parts.pop(0)
+        segs.append(p)
+    return segs
+
+
+def bun_dev_only(lockfile: Path) -> set[tuple[str, str]]:
+    """(name, version) pairs in a bun.lock reachable only from devDependencies.
+
+    Entries are `"key": ["name@version", registry, {dependencies...}, integrity]`; a
+    dependency of the package at key K resolves to `K/<dep>`, else to the same name one
+    level up, as Node does. Unparseable files give an empty set (everything counts as
+    bundled, the safe side).
+    """
+    try:
+        data = jsonc_loads(lockfile.read_text(encoding="utf-8"))
+        packages = data["packages"]
+        workspaces = data.get("workspaces") or {}
+    except (OSError, ValueError, KeyError, TypeError):
+        return set()
+    if not isinstance(packages, dict) or not isinstance(workspaces, dict):
+        return set()
+
+    def ident(entry: Any) -> tuple[str, str] | None:
+        if not isinstance(entry, list) or not entry or not isinstance(entry[0], str):
+            return None
+        spec = entry[0]
+        at = spec.rfind("@")
+        return (spec[:at], spec[at + 1 :]) if at > 0 else None
+
+    def deps(entry: Any) -> list[str]:
+        meta = (
+            next((x for x in entry[1:] if isinstance(x, dict)), {})
+            if isinstance(entry, list)
+            else {}
+        )
+        names: list[str] = []
+        for k in ("dependencies", "optionalDependencies", "peerDependencies"):
+            if isinstance(meta.get(k), dict):
+                names += list(meta[k])
+        return names
+
+    def resolve(parent: list[str], dep: str) -> str | None:
+        for depth in range(len(parent), -1, -1):
+            key = "/".join([*parent[:depth], dep])
+            if key in packages:
+                return key
+        return None
+
+    runtime: set[str] = set()
+    todo: list[str] = []
+    for ws in workspaces.values():
+        if not isinstance(ws, dict):
+            continue
+        for k in ("dependencies", "optionalDependencies", "peerDependencies"):
+            for dep in ws.get(k) or {}:
+                if (key := resolve([], dep)) is not None:
+                    todo.append(key)
+    while todo:
+        key = todo.pop()
+        if key in runtime:
+            continue
+        runtime.add(key)
+        segs = _bun_segments(key)
+        for dep in deps(packages[key]):
+            if (child := resolve(segs, dep)) is not None and child not in runtime:
+                todo.append(child)
+    shipped = {i for k in runtime if (i := ident(packages[k]))}
+    every = {i for e in packages.values() if (i := ident(e))}
+    return every - shipped
 
 
 def _declares_npm_deps(source_root: Path) -> bool:
@@ -327,8 +447,8 @@ def run_npm(target: Target, work: Path) -> AnalyzerResult:
                     category=Category.DEPENDENCY,
                     message=(
                         "package.json declares dependencies, but there's no package-lock.json, "
-                        "yarn.lock or pnpm-lock.yaml, so the exact versions bundled into the "
-                        "card can't be verified against known-malicious packages."
+                        "yarn.lock, pnpm-lock.yaml or bun.lock, so the exact versions bundled into "
+                        "the card can't be verified against known-malicious packages."
                     ),
                     file="package.json",
                     analyzer=NAME,

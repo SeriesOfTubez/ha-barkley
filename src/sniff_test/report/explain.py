@@ -358,9 +358,13 @@ RULES: dict[str, Explanation] = {
     ),
     "dep-npm-no-lockfile": _E(
         "Doesn't pin the versions of the code it's built from",
-        "The card lists the code libraries it's made from, but not their exact versions, "
-        "so we couldn't check those exactly.",
-        "Usually not. It's a gap in what we could check.",
+        "The card is built from code libraries it doesn't pin to exact versions. Each time "
+        "the developer builds a new release, it can pick up newer versions of those "
+        "libraries, which is how a hijacked library gets into a card. The release you'd "
+        "install is already built, and we checked its code, but we couldn't match the "
+        "libraries inside it against known-malicious versions.",
+        "Not about this release. It's a weakness in how future releases get built: worth "
+        "checking the next update.",
         "Library versions unpinned",
     ),
     # --- who publishes it --------------------------------------------------------------
