@@ -1468,7 +1468,7 @@ def render_app(
         f"<h1>{e(title, 80)}</h1>"
         f'<div><span class="verdict" style="color:var(--{b})">{_VERDICT_EMOJI.get(vkey, "")} '
         f"{e(report.get('verdict', {}).get('label', ''))} · {e(plain)}</span> "
-        f'<span class="muted">· {e(kind)} · {e(t.get("ref") or "?", 60)} · {e(t.get("repo") or t.get("input"), 120)}</span></div>'
+        f'<span class="muted">· {e(kind)}{" · " + e(t["ref"], 60) if t.get("ref") else ""} · {e(t.get("repo") or t.get("input"), 120)}</span></div>'
         f'<div class="muted small">Checked with Barkley {e(report.get("tool", {}).get("version"))}: '
         f"{e(_SOURCE.get(str(t.get('install_source')), t.get('install_source')))}"
         f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}.</div>"

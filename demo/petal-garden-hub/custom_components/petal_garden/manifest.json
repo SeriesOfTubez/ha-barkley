@@ -1,0 +1,10 @@
+{
+  "domain": "petal_garden",
+  "name": "Petal Garden Hub",
+  "codeowners": ["@petal-garden-demo"],
+  "config_flow": true,
+  "documentation": "https://github.com/petal-garden-demo/petal-garden-hub",
+  "iot_class": "cloud_push",
+  "requirements": ["python-jose==3.3.0"],
+  "version": "1.8.0"
+}

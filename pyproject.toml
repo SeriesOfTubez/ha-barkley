@@ -34,7 +34,7 @@ packages = ["src/sniff_test"]
 line-length = 100
 target-version = "py313"
 # Rule test targets and fixtures are deliberately "malicious" sample code.
-extend-exclude = ["tests/rules", "tests/fixtures"]
+extend-exclude = ["tests/rules", "tests/fixtures", "demo"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "PTH"]

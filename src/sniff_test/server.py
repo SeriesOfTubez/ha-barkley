@@ -614,7 +614,7 @@ def render_index(
             out.append(
                 f'<tr><td><a href="{base}/scan/{r.id}">@{r.id}</a></td>'
                 f"<td>{_verdict(r.score, r.verdict)}</td>"
-                f"<td>{e(r.repo or r.source, 100)}@{e(r.ref or '?', 60)}"
+                f"<td>{e(r.repo or r.source, 100)}{'@' + e(r.ref, 60) if r.ref else ''}"
                 f'<br><span class="muted">{e(extra)}</span></td>'
                 f"<td>{e(r.scanned_at[:16].replace('T', ' '))}</td></tr>"
             )
