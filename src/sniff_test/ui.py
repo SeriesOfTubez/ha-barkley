@@ -263,6 +263,9 @@ button.primary:hover { filter:brightness(1.08); }
 .finding dl { margin:var(--s2) 0 0; display:grid; grid-template-columns:9.5em 1fr;
   gap:var(--s1) var(--s3); }
 .finding dt { color:var(--muted); } .finding dd { margin:0; min-width:0; }
+.finding.quiet { color:var(--muted); padding:var(--s2) 0 0; }
+.finding.quiet details { margin-top:0; }
+.dscore { align-self:start; }
 .aib { display:inline-block; font-size:var(--t-xs); line-height:16px; font-weight:600;
   letter-spacing:0.04em; color:var(--card); background:var(--ai); border-radius:var(--r1);
   padding:0 var(--s1); margin-right:var(--s1); vertical-align:1px; }
@@ -1241,6 +1244,188 @@ def privacy_html(notes: list[privacy.Note]) -> str:
         )
     parts.append("</section>")
     return "".join(parts)
+
+
+# --- what an update changes, in plain words ------------------------------------------------------
+
+_HOST_CLASS_WORDS = {
+    "declared": "one of the app's own",
+    "undeclared": "not in the app's docs",
+    "developer_hosted": "run by the developer",
+    "analytics": "an analytics or crash-report service",
+    "exfil_service": "a data-collection site",
+    "messaging": "a messaging service",
+    "public_ip": "a public IP address",
+    "local": "on your own network",
+    "link": "a project or help link",
+    "infrastructure": "a package or project site",
+    "resolver": "a DNS resolver",
+}
+_RELATION_WORDS = {
+    "registers": "registers",
+    "exposes": "opens",
+    "calls_service": "calls the action",
+    "listens_to": "listens for the event",
+    "fires_event": "fires the event",
+    "reads": "reads",
+    "writes": "writes",
+    "imports": "imports",
+    "executes": "runs",
+    "depends_on": "depends on",
+    "bundles": "bundles",
+}
+_KIND_WORDS = {
+    "http_view": "a web page or API route",
+    "http_static": "a static-file route",
+    "webhook": "a webhook",
+    "ws_command": "a websocket command",
+    "inbound": "a way in from the network",
+    "service": "an action",
+    "panel": "a sidebar page",
+    "event": "an event",
+    "package": "a package",
+    "host": "a site",
+    "data": "data",
+    "auth": "login data",
+    "port": "a port",
+}
+_SIGN_WORDS = {"+": "New", "-": "Gone", "~": "Changed"}
+
+
+def _rules_words(note: str) -> str:
+    """` · rule-a, rule-b` (the diff's note of the findings an edge carries) → titles."""
+    ids = [r.strip() for r in note.split(",") if r.strip()]
+    titles = []
+    for rid in ids:
+        if not re.fullmatch(r"[a-z0-9-]{3,60}", rid):
+            continue
+        if rid in explain.RULES or rid.startswith("dep-guarddog-"):
+            titles.append(_lower1(explain.explain(rid).title))
+    return explain._join(titles)
+
+
+def _split_note(text: str) -> tuple[str, str]:
+    """The diff's text and its trailing ` · rule, rule` note, if any."""
+    if " · " in text:
+        head, note = text.rsplit(" · ", 1)
+        if all(re.fullmatch(r"[a-z0-9-]{3,60}", r.strip()) for r in note.split(",")):
+            return head, note
+    return text, ""
+
+
+def _node_words(nid: str) -> str:
+    kind, _, label = str(nid).partition(":")
+    if kind == "data" or kind == "auth":
+        return explain.data_label(label)
+    if kind == "package":
+        return label.split("/", 1)[-1]
+    return label or nid
+
+
+def change_line(c: dict[str, Any]) -> tuple[str, str, str]:
+    """One diff change as (lead word, plain sentence as escaped HTML, the raw text).
+    Everything from the reports is escaped; rule ids become their plain titles."""
+    kind, text, sign = str(c.get("kind", "")), str(c.get("text", "")), str(c.get("sign", "+"))
+    d = c.get("detail") or {}
+    sev = c.get("severity")
+    head, note = _split_note(text)
+    why = _rules_words(note) if note else ""
+    lead = explain.level(sev) if sev and sign == "+" else _SIGN_WORDS.get(sign, "Changed")
+    out = ""
+    if kind == "new_finding":
+        rule = str(d.get("rule_id", ""))
+        where = head.rsplit(" (", 1)[1].rstrip(")") if head.endswith(")") and " (" in head else ""
+        out = e(explain.explain(rule).title) + (f" (<code>{e(where, 160)}</code>)" if where else "")
+    elif kind == "resolved_finding":
+        rule = str(d.get("rule_id", ""))
+        out = f"No longer: {e(_lower1(explain.explain(rule).title))}"
+    elif kind in ("severity_up", "severity_down"):
+        rule = str(d.get("rule_id", ""))
+        was = explain.level(str(d.get("from", "")))
+        now = explain.level(str(sev or ""))
+        out = f"{e(explain.explain(rule).title)}: now {e(now.lower())}, was {e(was.lower())}"
+        lead = "Changed"
+    elif kind == "new_flow":
+        ev = str(d.get("evidence", ""))
+        src = _node_words(str(d.get("source", "")))
+        targets = [_node_words(t) for t in d.get("targets") or []]
+        shown = explain._join([e(t, 80) for t in targets[:3]]) + (
+            f" and {len(targets) - 3} more" if len(targets) > 3 else ""
+        )
+        if ev == "proven":
+            out = f"<b>We traced {e(_lower1(src))} being sent to {shown}</b>"
+        else:
+            out = (f"It now reads {e(_lower1(src))} and can reach {shown}, which we can't "
+                   "explain; the path isn't proven")  # fmt: skip
+    elif kind == "new_read":
+        out = f"It now reads {e(_lower1(_node_words(str(d.get('target', '')))))}"
+    elif kind == "new_package":
+        if "new dependencies" in head or "new bundled packages" in head:
+            out = e(head)
+        else:
+            rel = "bundles" if head.startswith("bundles") else "depends on"
+            rest = head.split(" ", 1)[1] if " " in head else head
+            what = "A new bundled library" if rel == "bundles" else "A new dependency"
+            out = f"{what}: <code>{e(rest, 120)}</code>"
+            if "now resolves" in head:
+                out = e(head)
+    elif kind == "new_inbound":
+        words = head.split(" ", 2)
+        kw = _KIND_WORDS.get(words[1].replace(" ", "_"), words[1]) if len(words) > 1 else ""
+        label = words[2] if len(words) > 2 else ""
+        out = f"Opens a new way in: {e(kw)} <code>{e(label, 120)}</code>"
+    elif kind == "new_hook":
+        rel = str(d.get("relation", ""))
+        target = str(d.get("target", ""))
+        tk = target.partition(":")[0]
+        out = (f"Now {e(_RELATION_WORDS.get(rel, rel.replace('_', ' ')))} "
+               f"{e(_KIND_WORDS.get(tk, tk.replace('_', ' ')))} "
+               f"<code>{e(_node_words(target), 120)}</code>")  # fmt: skip
+    elif kind == "new_host":
+        cls = str(d.get("class", "undeclared"))
+        cw = _HOST_CLASS_WORDS.get(cls, cls.replace("_", " "))
+        if "targets" in d:
+            names = [_node_words(t) for t in d["targets"]]
+            shown = ", ".join(f"<code>{e(n, 80)}</code>" for n in names[:4])
+            out = f"{len(names)} new sites ({e(cw)}): {shown}" + (", …" if len(names) > 4 else "")
+        else:
+            host = _node_words(str(d.get("target", "")))
+            out = f"Names a new site, <code>{e(host, 120)}</code>: {e(cw)}"
+    elif kind.startswith("removed_"):
+        rel = str(d.get("relation", ""))
+        target = str(d.get("target", ""))
+        verb = {"flows_to": "sends data to", "connects_to": "names the site",
+                "reads": "reads", "depends_on": "depends on", "bundles": "bundles"}.get(
+            rel, _RELATION_WORDS.get(rel, rel.replace("_", " ")))  # fmt: skip
+        out = f"No longer {e(verb)} <code>{e(_node_words(target), 120)}</code>"
+    elif kind in ("evidence_up", "evidence_down"):
+        what = head.rsplit(":", 1)[0] if ":" in head else head
+        out = (f"{e(what, 160)}: the evidence is now {e(str(d.get('to', '')))} "
+               f"(was {e(str(d.get('from', '')))})")  # fmt: skip
+    elif kind == "host_class":
+        out = (f"<code>{e(_node_words(str(d.get('target', ''))), 120)}</code> now counts as "
+               f"{e(_HOST_CLASS_WORDS.get(str(d.get('to')), str(d.get('to'))))} "
+               f"(was {e(_HOST_CLASS_WORDS.get(str(d.get('from')), str(d.get('from'))))})")  # fmt: skip
+    elif kind == "package_version":
+        out = (f"<code>{e(_node_words(str(d.get('target', ''))), 120)}</code> goes from "
+               f"{e(str(d.get('from')), 60)} to {e(str(d.get('to')), 60)}")  # fmt: skip
+    elif kind == "repo_moved":
+        out = "The repository moved: " + e(head.split(": ", 1)[-1], 200)
+    elif kind == "new_publisher":
+        out = "A new publisher: " + e(head, 300)
+    elif kind == "publisher_changed":
+        out = "A different publisher: " + e(head, 300)
+    elif kind == "coverage_lost":
+        out = "Part of the new check didn't finish, so changes may be missing: " + e(head, 300)
+    elif kind == "install_source":
+        a, _, b = head.removeprefix("installed from ").partition(" → ")
+        out = (f"The Marketplace now installs {e(_SOURCE.get(b, b))} "
+               f"(it was {e(_SOURCE.get(a, a))})")  # fmt: skip
+    else:
+        out = e(head, 300)
+    if why:
+        out += f". Flagged: {e(why, 300)}"
+    return lead, out, text
 
 
 # --- data-flow diagram -------------------------------------------------------------------------

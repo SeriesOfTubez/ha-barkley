@@ -1,5 +1,7 @@
 """The panel's pages: escaping, honest wording, flow lines only for real flows."""
 
+from html import unescape
+
 from test_store import FINDING, report
 
 from sniff_test import ui
@@ -83,3 +85,54 @@ def test_bands():
         "green", "green", "yellow", "yellow", "orange", "orange", "red", "red"
     ]  # fmt: skip
     assert ui.band(95, complete=False) == "grey" and ui.band(None) == "grey"
+
+
+def test_diff_changes_read_as_plain_english():
+    """The diff page used to print raw edges and rule ids; each change kind now reads as a
+    sentence, rule ids become their titles, and the raw text stays under the details."""
+    cases = [
+        ({"kind": "new_finding", "sign": "+", "severity": "high", "rank": 90,
+          "text": "Reads secrets.yaml (diagnostics.py)", "detail": {"rule_id": "ha-read-secrets"}},
+         "Serious", "Reads your secrets"),
+        ({"kind": "new_flow", "sign": "+", "severity": "high", "rank": 85,
+          "text": "possible: secrets.yaml → status.weather-mirror.invalid · possible-exfil",
+          "detail": {"source": "data:secrets.yaml",
+                     "targets": ["host:status.weather-mirror.invalid"], "evidence": "possible"}},
+         "Serious", "reads your secrets file and can reach status.weather-mirror.invalid"),
+        ({"kind": "new_flow", "sign": "+", "severity": "critical", "rank": 100,
+          "text": "proven: user's access token → evil.invalid · card-token-exfil",
+          "detail": {"source": "auth:user's access token", "targets": ["host:evil.invalid"],
+                     "evidence": "proven"}},
+         "Danger", "We traced your HA login being sent to evil.invalid"),
+        ({"kind": "new_host", "sign": "+", "rank": 70,
+          "text": "undeclared: status.weather-mirror.invalid (const.py:4)",
+          "detail": {"target": "host:status.weather-mirror.invalid", "class": "undeclared"}},
+         "New", "not in the app's docs"),
+        ({"kind": "new_package", "sign": "+", "rank": 45, "text": "depends on requests 2.32.0",
+          "detail": {"target": "package:pypi/requests", "attrs": {}}},
+         "New", "A new dependency"),
+        ({"kind": "removed_host", "sign": "-", "rank": 3, "text": "declared: api.old.invalid",
+          "detail": {"target": "host:api.old.invalid", "relation": "connects_to"}},
+         "Gone", "No longer names the site"),
+        ({"kind": "package_version", "sign": "~", "rank": 8, "text": "pyyaml 6.0 → 6.0.2",
+          "detail": {"target": "package:pypi/pyyaml", "from": "6.0", "to": "6.0.2"}},
+         "Changed", "goes from 6.0 to 6.0.2"),
+        ({"kind": "new_publisher", "sign": "+", "rank": 60, "severity": "medium",
+          "text": "mallory published v2, and published none of the 12 release(s) up to v1 "
+                  "(alice 12)",
+          "detail": {}},
+         "Worth a look", "A new publisher"),
+        ({"kind": "install_source", "sign": "~", "rank": 30,
+          "text": "installed from release_asset → tag_source", "detail": {}},
+         "Changed", "now installs the tagged source"),
+    ]  # fmt: skip
+    for change, lead, phrase in cases:
+        got_lead, html, raw = ui.change_line(change)
+        assert got_lead == lead, (change["kind"], got_lead)
+        assert phrase in unescape(html), (change["kind"], html)
+        assert raw == change["text"]
+        for rid in ("ha-read-secrets", "possible-exfil", "card-token-exfil"):
+            assert rid not in html, (change["kind"], html)
+    hostile = {"kind": "new_host", "sign": "+", "rank": 70, "text": f"undeclared: {HOSTILE}",
+               "detail": {"target": f"host:{HOSTILE}", "class": "undeclared"}}  # fmt: skip
+    assert "<script>" not in ui.change_line(hostile)[1]

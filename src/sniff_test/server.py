@@ -1181,41 +1181,57 @@ def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
     return _page("Barkley diagnostics", "".join(out), base)
 
 
-def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
+def render_diff(base: str, old: int, new: int, d: dict[str, Any], name: str | None = None) -> bytes:
+    """What an update changes, in plain words: the headline changes as a list with the
+    same level labels as findings, the rest folded behind a disclosure; the diff's own
+    text stays available per line under "Technical details"."""
     frm, to = d["from"], d["to"]
     changes = d.get("changes", [])
     head = [c for c in changes if c["rank"] >= HEADLINE_RANK][:HEADLINE_MAX]
     rest = [c for c in changes if c not in head]
+    title = name or str(frm.get("repo") or "?").rsplit("/", 1)[-1]
+    s_from, s_to = d["score"].get("from"), d["score"].get("to")
     out = [
         f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
-        f"<h1>What changes: {e(frm.get('repo'), 100)}</h1>",
-        f'<p class="box"><a href="{base}/scan/{old}">@{old}</a> {e(frm.get("ref"), 60)} → '
-        f'<a href="{base}/scan/{new}">@{new}</a> {e(to.get("ref"), 60)}<br>'
-        f'<span class="muted">score {e(d["score"].get("from"))} → {e(d["score"].get("to"))} '
-        "(each side's own score; the diff never scores)</span></p>",
+        '<section class="box dhead"><div class="dscore">'
+        f"{ui.ring(int(s_to or 0), ui.band(s_to))}</div>"
+        f"<div><h1>What the update changes: {e(title, 100)}</h1>"
+        f'<div>From <b>{e(frm.get("ref"), 60)}</b> (<a href="{base}/scan/{old}">scan @{old}</a>) '
+        f'to <b>{e(to.get("ref"), 60)}</b> (<a href="{base}/scan/{new}">scan @{new}</a>) · '
+        f"{e(frm.get('repo'), 120)}</div>"
+        f'<div class="muted small">Score {e(s_from)} → {e(s_to)}: each side\'s own score; '
+        "this comparison never scores. It lists what the new version does that the old one "
+        "didn't, and the other way round.</div></div></section>",
     ]
     for w in d.get("warnings", []):
         out.append(f'<div class="banner warn">{ui.icon("alert")} {e(w, 400)}</div>')
+
+    def lines(cs: list[dict[str, Any]], quiet: bool = False) -> str:
+        items = []
+        for c in cs:
+            lead, text, raw = ui.change_line(c)
+            sev = str(c.get("severity") or "")
+            cls = sev if sev in ("critical", "high", "medium") and c.get("sign") == "+" else ""
+            tech = (f'<details><summary>Technical details</summary><code class="ev">'
+                    f"{e(raw, 400)}</code></details>")  # fmt: skip
+            items.append(
+                f'<div class="finding{" quiet" if quiet else ""}"><div class="lvl {cls}">'
+                f"{e(lead)}</div><div><div>{text}</div>{tech}</div></div>"
+            )
+        return "".join(items)
+
     if not head:
-        out.append(f'<p class="ok">{ui.icon("check", 16, "ok")} Nothing important changed.</p>')
+        out.append(f'<section class="box"><h2>In short</h2><p class="ok">'
+                   f'{ui.icon("check", 16, "ok")} Nothing important changed.</p>'
+                   "</section>")  # fmt: skip
     else:
-        out.append("<table>")
-        for c in head:
-            cls = _SEV_CLASS.get(c.get("severity") or "", "")
-            out.append(
-                f'<tr><td class="{cls}">{e(c["sign"])}</td><td class="wrap">{e(c["text"], 400)}'
-                "</td></tr>"
-            )
-        out.append("</table>")
+        out.append(f'<section class="box"><h2>Worth a look ({len(head)})</h2>{lines(head)}'
+                   "</section>")  # fmt: skip
     if rest:
-        out.append(f"<h2>Also changed ({len(rest)})</h2><table>")
-        for c in rest:
-            out.append(
-                f'<tr><td class=muted>{e(c["sign"])}</td><td class="muted wrap">'
-                f"{e(c['text'], 300)}</td></tr>"
-            )
-        out.append("</table>")
-    return _page("Barkley diff", "".join(out), base)
+        out.append(f'<details class="box"><summary>Also changed ({len(rest)}): smaller things, '
+                   f"none of them a concern on its own</summary>{lines(rest, True)}"
+                   "</details>")  # fmt: skip
+    return _page("Barkley · what changes", "".join(out), base)
 
 
 # --- HTTP ------------------------------------------------------------------------------
@@ -1647,7 +1663,9 @@ class Panel:
                         q = urllib.parse.parse_qs(url.query)
                         old, new = int(q["old"][0]), int(q["new"][0])
                         d = panel.diff(old, new)
-                        return self._send(200, render_diff(base, old, new, d))
+                        repo = str((d.get("to") or {}).get("repo") or "")
+                        name = panel.names().get(repo.lower()) if repo else None
+                        return self._send(200, render_diff(base, old, new, d, name))
                 except StoreError as ex:
                     return self._text(HTTPStatus.NOT_FOUND, str(ex))
                 except (KeyError, ValueError):
