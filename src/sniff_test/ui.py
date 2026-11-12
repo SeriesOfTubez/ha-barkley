@@ -1133,14 +1133,24 @@ def deep_html(
     error: str,
     snip: dict[str, Any],
     entity: str,
+    open_url: str = "",
+    close_url: str = "",
 ) -> str:
     """One item's "Explain in context": a compact chip or button where the item is, and
     a full-width sheet (`#ai-<id>`, opened with CSS :target, no script) with the answer
     and the code. `form` is the server-built button form with a `{label}` placeholder.
-    Everything from the AI or the repo is escaped."""
+    Everything from the AI or the repo is escaped.
+
+    `open_url` / `close_url` (escaped, from the server; set only while the page refreshes
+    itself because a reading runs): the sheet's links are then real URLs, not fragments.
+    Only the query (`?open=<id>`) tells the server which sheet is open, so a fragment-only
+    Close kept `?open=` in the address and the next refresh reopened the sheet (the user's
+    report, 2026-11-12), and a fragment-only open would stop the plain reload (a page at a
+    fragment never reloads)."""
     from sniff_test.report.context import line_count
 
     mid = f"ai-{e(item_id, 40)}"
+    to = open_url or f"#{mid}"
     lines = line_count(snip)
     nseg = len(snip.get("segments", []))
     parts_txt = f", {nseg} parts" if nseg > 1 else ""
@@ -1149,7 +1159,7 @@ def deep_html(
         f"{'s' if lines != 1 else ''}{parts_txt})</summary>{code_html(snip)}</details>"
     )
     if state == "running":
-        inline = (f'<a class="aichip" href="#{mid}">{icon("sparkle")} AI is reading the code… '
+        inline = (f'<a class="aichip" href="{to}">{icon("sparkle")} AI is reading the code… '
                   "(can take minutes)</a>")  # fmt: skip
         body = (
             '<p class="small"><b>Reading the code…</b> This can take a few minutes, depending '
@@ -1158,13 +1168,13 @@ def deep_html(
             "ready. While it works, this page refreshes by itself.</p>" + sent
         )
     elif error:
-        inline = f'<a class="aichip warn" href="#{mid}">{icon("sparkle")} The AI didn\'t answer</a>'
+        inline = f'<a class="aichip warn" href="{to}">{icon("sparkle")} The AI didn\'t answer</a>'
         body = (f'<p class="small">{e(error, 400)}</p>{form.replace("{label}", f"{icon('sparkle', 16)} Try again")}'
                 + sent)  # fmt: skip
     elif not answer:
         inline = (
             form.replace("{label}", f"{icon('sparkle', 16)} Explain in context")
-            + f'<a class="small" href="#{mid}">see the {lines} lines it would send</a>'
+            + f'<a class="small" href="{to}">see the {lines} lines it would send</a>'
         )
         body = (
             f'<p class="small">Explain in context sends these {lines} lines of the app\'s own '
@@ -1180,7 +1190,7 @@ def deep_html(
         summary = f"{n_c} statement{'s' if n_c != 1 else ''}"
         if n_q:
             summary += f", {n_q} question{'s' if n_q != 1 else ''}"
-        inline = (f'<a class="aichip" href="#{mid}">{icon("sparkle")} AI\'s reading of the code: '
+        inline = (f'<a class="aichip" href="{to}">{icon("sparkle")} AI\'s reading of the code: '
                   f"{summary}</a>")  # fmt: skip
         out = []
         if claims:
@@ -1212,11 +1222,12 @@ def deep_html(
             "can still be wrong, and it can't change the score or clear a finding.</p>"
         )
         body = "".join(out) + sent + form.replace("{label}", f"{icon('sparkle', 16)} Ask again")
+    close = close_url or f"#item-{e(item_id, 40)}"
     sheet = (
-        f'<div class="modal" id="{mid}"><a class="shade" href="#item-{e(item_id, 40)}" '
+        f'<div class="modal" id="{mid}"><a class="shade" href="{close}" '
         'aria-label="Close"></a><div class="sheet" role="dialog">'
         f'<div class="sh">{AI_BADGE}<b>The AI\'s reading of the code</b>'
-        f'<a class="x" href="#item-{e(item_id, 40)}">Close {icon("x")}</a></div>'
+        f'<a class="x" href="{close}">Close {icon("x")}</a></div>'
         f'<div class="st">{e(title, 200)}</div>{body}</div></div>'
     )
     return f'<div class="deepi" id="item-{e(item_id, 40)}">{inline}</div>{sheet}'

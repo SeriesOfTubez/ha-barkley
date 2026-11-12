@@ -926,6 +926,11 @@ def render_scan(
     rows = store.history(repo, limit=200) if repo else []
     have = store.explanation(sid)
     item_states = item_states or {}
+    # While anything is being read the page refreshes itself. With a sheet open it goes to
+    # a fresh URL that reopens it (`?open=`); otherwise it's a plain reload, which keeps the
+    # reader's scroll position but needs an address without a fragment, so the sheets'
+    # links are URLs for that long (see ui.deep_html).
+    running = ai_state == "running" or any(st == "running" for st, _ in item_states.values())
     deep = None
     if ai_mode == "deep" and ai_entity and report.get("context"):
         answers = store.item_explanations(sid)
@@ -949,7 +954,9 @@ def render_scan(
                     "<button>{label}</button></form>")  # fmt: skip
             return ui.deep_html(form, item_id=item_id, title=ai_context.title(report, item_id),
                                 answer=answers.get(item_id), state=state, error=err,
-                                snip=snip, entity=ai_entity)  # fmt: skip
+                                snip=snip, entity=ai_entity,
+                                open_url=_scan_url(base, sid, item_id) if running else "",
+                                close_url=e(f"{base}/scan/{sid}") if running else "")  # fmt: skip
 
     return ui.render_app(
         base,
@@ -977,11 +984,9 @@ def render_scan(
                 if v.get("claims") or v.get("questions")
             ],
         ),
-        refresh=5
-        if ai_state == "running" or any(st == "running" for st, _ in item_states.values())
-        else 0,
+        refresh=5 if running else 0,
         deep=deep,
-        refresh_url=_scan_url(base, sid, open_item, fresh=True),
+        refresh_url=_scan_url(base, sid, open_item, fresh=True) if open_item else "",
     )
 
 

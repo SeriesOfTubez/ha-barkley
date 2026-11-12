@@ -213,10 +213,19 @@ def test_a_running_reading_refreshes_to_a_fresh_url_that_keeps_its_sheet_open(tm
     assert "AI is reading the code" in page
     m = re.search(r'<meta http-equiv="refresh" content="5; url=([^"]+)">', page)
     assert m and m[1].startswith(f"/scan/{sid}?open={FID}&amp;t=") and m[1].endswith(f"#ai-{FID}")
-    _, _, quiet = get(f"{base}/scan/{sid}")  # the same page without the sheet still refreshes
-    assert re.search(rf'content="5; url=/scan/{sid}\?t=\d+">', quiet)
+    # Close leaves `?open=` behind (a fragment-only Close kept it, and every refresh reopened
+    # the sheet: the user's report, 2026-11-12); other sheets open through URLs too
+    assert f'class="x" href="/scan/{sid}">' in page and f'class="shade" href="/scan/{sid}"' in page
+    assert f'class="aichip" href="/scan/{sid}?open={FID}#ai-{FID}"' in page
+    assert 'href="#' not in page
+    # the page without a sheet reloads plainly (keeps the scroll position; a refresh to a new
+    # URL jumps to the top every time) and has no fragment link that would stop the reload
+    _, _, quiet = get(f"{base}/scan/{sid}")
+    assert '<meta http-equiv="refresh" content="5">' in quiet and 'href="#' not in quiet
     gate.set()
     _wait(httpd, sid)
     _, _, done = get(f"{base}/scan/{sid}?open={FID}")
     assert "http-equiv" not in done and "reading of the code: 1 statement" in done
+    # nothing refreshes any more: the sheet opens and closes in place again
+    assert f'class="aichip" href="#ai-{FID}"' in done and f'class="x" href="#item-{FID}"' in done
     httpd.shutdown()
