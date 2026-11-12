@@ -914,7 +914,9 @@ def render_scan(
     ai_choices_err: str = "",
     ai_mode: str = "summary",
     item_states: dict[str, tuple[str, str]] | None = None,
+    open_item: str = "",
 ) -> bytes:
+    """`open_item`: the item whose AI sheet is open (`?open=`), kept open across refreshes."""
     repo = report.get("target", {}).get("repo")
     rows = store.history(repo, limit=200) if repo else []
     have = store.explanation(sid)
@@ -974,7 +976,20 @@ def render_scan(
         if ai_state == "running" or any(st == "running" for st, _ in item_states.values())
         else 0,
         deep=deep,
+        refresh_url=_scan_url(base, sid, open_item, fresh=True),
     )
+
+
+def _scan_url(base: str, sid: int, open_item: str = "", fresh: bool = False) -> str:
+    """An app page's URL, with the AI sheet for `open_item` open. `fresh` adds the time so
+    a meta refresh never targets the page's own URL (with a fragment that never reloads)."""
+    q = {}
+    if open_item:
+        q["open"] = open_item
+    if fresh:
+        q["t"] = str(int(time.time()))
+    url = f"{base}/scan/{sid}" + (f"?{urllib.parse.urlencode(q)}" if q else "")
+    return e(url + (f"#ai-{open_item}" if open_item else ""))
 
 
 def _again_box(base: str, report: dict[str, Any], token: str) -> str:
@@ -1037,7 +1052,8 @@ def render_search(
     for it in results:
         scan = scans.get(it.repo.lower())
         if b := busy.get(it.repo.lower()):
-            act = '<span class="muted">' + {"running": "sniffing…"}.get(b, "queued…") + "</span>"
+            act = ('<span class="muted"><span class="dot"></span>'
+                   + {"running": "sniffing…"}.get(b, "queued…") + "</span>")  # fmt: skip
         elif scan:
             bd = ui.band(scan.score, scan.complete)
             act = (f'<a class="badge {bd}" style="text-decoration:none" '
@@ -1108,7 +1124,8 @@ def render_versions(
     def action(ref: str | None) -> str:
         key = (ref or "").lower()
         if b := busy.get(key):
-            return '<span class="muted">' + {"running": "sniffing…"}.get(b, "queued…") + "</span>"
+            return ('<span class="muted"><span class="dot"></span>'
+                    + {"running": "sniffing…"}.get(b, "queued…") + "</span>")  # fmt: skip
         if scan := scans.get(key):
             bd = ui.band(scan.score, scan.complete)
             return (f'<a class="badge {bd}" style="text-decoration:none" '
@@ -1575,10 +1592,14 @@ class Panel:
                         row = panel.row_for(report.get("target", {}).get("repo"))
                         state, err = panel.ai_state(sid)
                         choices, choices_err = panel.ai_choices()
+                        q = urllib.parse.parse_qs(url.query)
+                        open_item = (q.get("open") or [""])[0]
+                        if not re.fullmatch(r"[0-9a-f]{16}", open_item):
+                            open_item = ""
                         page = render_scan(
                             base, sid, report, panel.store, row, panel.token,
                             panel.ai_entity, state, err, choices, choices_err,
-                            panel.ai_mode, panel.item_states(sid),
+                            panel.ai_mode, panel.item_states(sid), open_item,
                         )  # fmt: skip
                         return self._send(200, page)
                     if url.path == "/search" and panel.catalog_fn is not None:
@@ -1698,7 +1719,7 @@ class Panel:
                             )
                     except StoreError as ex:
                         return self._text(HTTPStatus.NOT_FOUND, str(ex))
-                    return self._redirect(f"{self._base()}/scan/{sid}#ai-{item}")
+                    return self._redirect(f"{self._base()}/scan/{sid}?open={item}#ai-{item}")
                 if path == "/explain":
                     if not get("scan").isdigit() or not panel.ai_entity:
                         return self._text(HTTPStatus.BAD_REQUEST, "no AI Task entity set")

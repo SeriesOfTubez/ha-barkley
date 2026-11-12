@@ -270,7 +270,7 @@ button.primary:hover { filter:brightness(1.08); }
   padding-left:var(--s2); }
 .aibox { border-left:2px solid var(--ai); background:var(--ai-bg);
   border-radius:0 var(--r3) var(--r3) 0; padding:var(--s2) var(--s3); margin-top:var(--s2); }
-button.ai, .deepi button { color:var(--ai); border-color:var(--ai); background:var(--ai-bg);
+button.ai, .deepi button, .sheet button { color:var(--ai); border-color:var(--ai); background:var(--ai-bg);
   font-weight:500; }
 .deepi { margin-top:var(--s2); display:flex; flex-wrap:wrap; gap:var(--s1) var(--s2);
   align-items:center; }
@@ -346,16 +346,48 @@ input, select { padding:var(--s1) var(--s2); min-width:0; font:inherit; line-hei
 .tools input, .tools select { flex:1 1 180px; }
 .tools select { flex:0 1 auto; }
 form.search { display:flex; gap:var(--s2); flex-wrap:wrap; margin:0; }
+/* motion (CSS only): the sheet grows from its top edge, details fade in, hover rings and
+   buttons ease, a dot pulses while a scan runs, and a busy card wears a moving bar. Close
+   is instant: it gets out of the way. */
+@keyframes sheet-in { from { opacity:0; transform:translateY(-8px) scaleY(0.97); }
+  to { opacity:1; transform:none; } }
+@keyframes fade-in { from { opacity:0; } to { opacity:1; } }
+@keyframes pulse { 0%, 100% { opacity:0.3; } 50% { opacity:1; } }
+@keyframes slide { from { transform:translateX(-100%); } to { transform:translateX(100%); } }
+div.modal:target .sheet { transform-origin:top center;
+  animation:sheet-in var(--dur-in) ease-out; }
+div.modal:target .shade { animation:fade-in var(--dur-in) ease-out; }
+details[open] > :not(summary) { animation:fade-in var(--dur-in) ease-out; }
+.app, button, .pill, a.sum { transition:box-shadow var(--dur-in) ease-out,
+  border-color var(--dur-in) ease-out, background-color var(--dur-out) ease-out,
+  filter var(--dur-out) ease-out; }
+.dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--brand);
+  margin-right:var(--s2); vertical-align:0; animation:pulse 1.4s ease-in-out infinite; }
+.app.busy { overflow:hidden; }
+.app.busy::after { content:""; position:absolute; left:0; right:0; bottom:0; height:2px;
+  background:linear-gradient(90deg, transparent, var(--brand), transparent);
+  animation:slide 1.6s linear infinite; }
+tr.busy .badge { background:linear-gradient(90deg, var(--soft) 30%, var(--line) 50%,
+  var(--soft) 70%); background-size:300% 100%; animation:shimmer 1.6s linear infinite; }
+@keyframes shimmer { from { background-position:100% 0; } to { background-position:-100% 0; } }
+@media (prefers-reduced-motion: reduce) { *, ::before, ::after { animation:none !important;
+  transition:none !important; } }
 .sev-critical { color:var(--red); font-weight:600; } .sev-high { color:var(--orange);
   font-weight:600; }
 .sev-medium { color:var(--yellow); } .ok { color:var(--green); } .bad { color:var(--red); }
 """
 
 
-def page(title: str, body: str, refresh: int = 0, base: str = "") -> bytes:
+def page(title: str, body: str, refresh: int = 0, base: str = "", refresh_url: str = "") -> bytes:
     """`refresh`: reload after N seconds (a meta tag, not a script: the CSP allows it).
+    `refresh_url`: where to (escaped); needed when the page's URL carries a fragment, since
+    a refresh to the very same URL with a fragment never reloads (Chromium treats it as a
+    same-document navigation: the AI sheet stayed "reading" until a hard reload).
     `base`: the ingress path prefix, so the panel's own font files resolve from any page."""
-    meta = f'<meta http-equiv="refresh" content="{int(refresh)}">' if refresh else ""
+    meta = ""
+    if refresh:
+        to = f"; url={refresh_url}" if refresh_url else ""
+        meta = f'<meta http-equiv="refresh" content="{int(refresh)}{to}">'
     fonts = (
         f'<link rel="preload" href="{base}/fonts/Geist-Variable.woff2" as="font" '
         'type="font/woff2" crossorigin>'
@@ -658,7 +690,7 @@ def card_html(base: str, c: Card) -> str:
         links = f'<a href="{base}/diff?{c.diff_link}">what the update changes</a>'
     actions = f'<div class="act">{act}{links}</div>' if (act or links) else ""
     return (
-        f'<div class="app {b}"><div class="app-top"><div>{name}'
+        f'<div class="app {b}{" busy" if c.busy else ""}"><div class="app-top"><div>{name}'
         f'<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}</div></div>'
         f'<div class="badge {b}">{score}<small>{label}</small></div></div>'
         f'<div class="say">{e(card_sentence(c), 400)}</div>'
@@ -729,7 +761,8 @@ def _sort_key(c: Card) -> tuple[Any, ...]:
 
 
 def _busy_text(c: Card) -> str:
-    return {"running": "checking…", "waiting": "waiting for GitHub…"}.get(c.busy, "queued…")
+    text = {"running": "checking…", "waiting": "waiting for GitHub…"}.get(c.busy, "queued…")
+    return f'<span class="dot"></span>{text}'
 
 
 def card_row(base: str, c: Card) -> str:
@@ -748,7 +781,8 @@ def card_row(base: str, c: Card) -> str:
         act += f' <a href="{base}/diff?{c.diff_link}">what the update changes</a>'
     act = f'<div class="act">{act}</div>' if act else ""
     return (
-        f'<tr><td><span class="badge {b}">{score}<small>{label}</small></span></td>'
+        f'<tr{" class=busy" if c.busy else ""}><td><span class="badge {b}">{score}'
+        f"<small>{label}</small></span></td>"
         f'<td>{name}<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}'
         f'</div><div class="small">{e(card_sentence(c), 400)}</div></td>'
         f'<td><div class="chips">{chips}</div></td>'
@@ -1825,6 +1859,7 @@ def render_app(
     refresh: int = 0,
     deep: DeepFn | None = None,
     again: str = "",
+    refresh_url: str = "",
 ) -> bytes:
     """One app's detail page. `update`, `ai_form` and `again` (the "sniff this version
     again" / "other versions" text actions in the head) are server-built HTML snippets."""
@@ -1928,4 +1963,4 @@ def render_app(
         + f'</section><section class="box"><h2>History</h2>{history_html(base, sid, report, rows)}'
         f'<p class="tech"><a href="{base}/scan/{sid}.json">Technical report (raw JSON)</a></p></section></div>'
     )
-    return page(f"Barkley · {title}", "".join(parts), refresh, base)
+    return page(f"Barkley · {title}", "".join(parts), refresh, base, refresh_url)

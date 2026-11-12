@@ -1,5 +1,6 @@
 """AI deep analysis in the panel: off unless chosen, code only on a click, checked output."""
 
+import re
 import threading
 import time
 from pathlib import Path
@@ -190,3 +191,32 @@ def test_sheet_lists_keep_bullets_inside_zones():
     css = Path(ui.__file__).read_text()
     assert ".modal .sheet ul { list-style:disc" in css
     assert css.index(".modal .sheet ul") < css.index(".zone ul")  # wins by specificity, not order
+
+
+def test_a_running_reading_refreshes_to_a_fresh_url_that_keeps_its_sheet_open(tmp_path):
+    """A meta refresh to the page's own URL does nothing when that URL has a fragment
+    (Chromium treats it as a same-document navigation), and the sheet opens via #ai-<id>.
+    So while the AI works the page refreshes to a URL with the time in it and `?open=` to
+    reopen the sheet (the user saw "reading…" until a hard reload, 2026-11-11)."""
+
+    gate = threading.Event()
+
+    def slow_ai(entity, instructions, structure, task):
+        gate.wait(10)
+        return {"claim_1": "It reads `secrets.yaml` and returns it (diag.py:3-4)."}
+
+    store, base, httpd = _serve(tmp_path, slow_ai)
+    sid = store.save(_report(tmp_path))
+    status, headers = post(f"{base}/explain-item", {"token": token(base), "scan": sid, "item": FID})
+    assert status == 303 and headers["Location"].endswith(f"/scan/{sid}?open={FID}#ai-{FID}")
+    _, _, page = get(f"{base}/scan/{sid}?open={FID}")
+    assert "AI is reading the code" in page
+    m = re.search(r'<meta http-equiv="refresh" content="5; url=([^"]+)">', page)
+    assert m and m[1].startswith(f"/scan/{sid}?open={FID}&amp;t=") and m[1].endswith(f"#ai-{FID}")
+    _, _, quiet = get(f"{base}/scan/{sid}")  # the same page without the sheet still refreshes
+    assert re.search(rf'content="5; url=/scan/{sid}\?t=\d+">', quiet)
+    gate.set()
+    _wait(httpd, sid)
+    _, _, done = get(f"{base}/scan/{sid}?open={FID}")
+    assert "http-equiv" not in done and "reading of the code: 1 statement" in done
+    httpd.shutdown()
