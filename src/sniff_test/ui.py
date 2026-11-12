@@ -461,6 +461,7 @@ class Host:
     where: list[str] = field(default_factory=list)  # untrusted
     flagged: bool = False  # a finding is attached to the edge
     edge_id: str = ""
+    service: str = ""  # who runs it, from the shipped list of well-known services (0.8.0)
 
 
 @dataclass
@@ -504,6 +505,7 @@ def hosts(report: dict[str, Any]) -> list[Host]:
                 [_loc(s) for s in edge.get("samples", [])],
                 bool(edge.get("finding_ids")),
                 str(edge.get("id", "")),
+                str(a.get("service", "")),
             )
         )
     return sorted(out, key=lambda h: h.name)
@@ -1845,9 +1847,12 @@ def _host_li(h: Host, deep: str = "") -> str:
         bits.append("port " + ", ".join(map(str, explicit)))
     urls = "".join(f'<span class="u">{e(u, 200)}</span>' for u in h.urls[:3])
     flag = ' <span class="chip bad">see findings</span>' if h.flagged else ""
+    # whose address it is: a name from our own list, never a verdict; on its own line, since
+    # beside the address it squeezed the host name into a three-letter column
+    who = f'<span class="u">{e(h.service, 120)}</span>' if h.service else ""
     return (
         f'<li><div><code>{e(h.name, 120)}</code>{flag}<span class="p">{" · ".join(bits)}</span>'
-        f"</div>{urls}{deep}</li>"
+        f"</div>{who}{urls}{deep}</li>"
     )
 
 

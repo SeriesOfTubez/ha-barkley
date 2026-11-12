@@ -313,6 +313,17 @@ RULES: dict[str, Explanation] = {
         "hit, but it's worth updating the app when a fix ships.",
         "Outdated library",
     ),
+    # host reputation (0.8.0): GuardDog's address-shape heuristic, where every address it
+    # matched is on the shipped list of well-known services (analyzers/guarddog.py)
+    "dep-guarddog-network-exfiltration-known-service": _E(
+        "A code library it uses names a well-known service at an odd-looking address",
+        "An automatic check flags addresses with endings that throwaway sites often use, "
+        "such as .xyz. This one belongs to a well-known service, named in the technical "
+        "line below. The check looks only at the address: it doesn't show what the library "
+        "sends there, or whether this app uses that part of the library at all.",
+        "Probably not. Worth knowing if you didn't expect this app to use that service.",
+        "Known service",
+    ),
     "dep-typosquat": _E(
         "Uses a code library with a name one typo away from a popular one",
         "Copycat packages copy well-known names with a small typo so that people install "
@@ -455,7 +466,10 @@ _GUARDDOG = _E(
 )
 GUARDDOG_WHAT = {
     "network-exfil-messenger": "sends data to a chat service",
-    "network-exfiltration": "reads data and sends it out",
+    # GuardDog's rule matches the address alone (a drop-box service, an ending such as
+    # .xyz, a public IP), not a data flow; the old text "reads data and sends it out"
+    # claimed more than the rule sees (0.8.0)
+    "network-exfiltration": "names an address of a kind often used to collect stolen data",
     "network-dns-exfil": "hides data in internet name lookups",
     "network-exfil-sysinfo": "sends details about your system out",
     "network-reverse-shell": "opens a remote-control connection",

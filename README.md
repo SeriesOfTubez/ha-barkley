@@ -49,6 +49,11 @@ rest in one line. It compares; it never changes how either scan is scored.
   the name alone), VCS/URL requirements, brand-new packages, known vulnerabilities and
   known-malicious packages (osv-scanner), and heuristic malware checks (GuardDog) on every
   package HA doesn't already ship.
+- **Known services**: a shipped list (`src/sniff_test/data/known_services.txt`) names who runs
+  a host ("api.together.xyz: Together AI"). It is matched locally: no host from a scan is ever
+  sent anywhere to be looked up. A name never changes a host's class or any finding, with one
+  exception: GuardDog's address-shape heuristic (an ending such as `.xyz`) is shown as low
+  instead of high when every address it matched is on the list.
 - **npm dependencies** (cards): the repo's lockfile, checked with osv-scanner. Known
   malware is reported for every package; CVEs only for packages bundled into the card,
   not for build-only tools.

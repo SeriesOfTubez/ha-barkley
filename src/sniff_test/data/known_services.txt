@@ -1,0 +1,114 @@
+# Well-known services, by host. Format:  <host-suffix> | <who runs it> | <what it is> [| shared]
+# A host matches an entry when it equals it or ends with "." + it.
+#
+# What this list is for (host reputation, user decision 2026-11-12):
+#   1. the panel and the report can say who a host belongs to ("api.together.xyz: Together AI");
+#   2. GuardDog's address-shape heuristic (an unusual ending such as .xyz) is shown as low
+#      instead of high when every address it matched is on this list and not marked shared.
+# It never changes a host's class (declared, undeclared, ...), the possible-exfil
+# correlation, or any other finding.
+#
+# Rules for adding a line (tests/test_known.py enforces the ones a test can):
+#   - one operator runs the whole suffix. Never a place where anyone can sign up and get a
+#     drop box under it: paste sites, request catchers, tunnels, chat webhooks, free app
+#     hosting, file buckets, URL shorteners. Those live in endpoint_hosts.txt and stay
+#     findings or context there; no suffix here may overlap its exfil_service, messaging,
+#     developer_hosted or analytics entries.
+#   - mark it `shared` when customers get their own host under the suffix
+#     (<name>.openai.azure.com). A shared entry is named in the panel but never lowers
+#     a finding.
+#   - prefer the exact API host over a whole company domain.
+#   - "what it is" is a few plain words; it is shown to the user as written.
+
+# --- AI model APIs
+api.openai.com | OpenAI | AI model API
+api.anthropic.com | Anthropic | AI model API
+api.together.xyz | Together AI | AI model API
+api.together.ai | Together AI | AI model API
+api.mistral.ai | Mistral AI | AI model API
+api.groq.com | Groq | AI model API
+api.cohere.com | Cohere | AI model API
+api.cohere.ai | Cohere | AI model API
+api.deepseek.com | DeepSeek | AI model API
+api.perplexity.ai | Perplexity | AI model API
+api.x.ai | xAI | AI model API
+api.fireworks.ai | Fireworks AI | AI model API
+api.replicate.com | Replicate | AI model API
+openrouter.ai | OpenRouter | AI model API
+generativelanguage.googleapis.com | Google | Gemini AI model API
+api.voyageai.com | Voyage AI | AI embeddings API
+api.jina.ai | Jina AI | AI embeddings API
+api.elevenlabs.io | ElevenLabs | AI voice API
+api.deepgram.com | Deepgram | speech-to-text API
+api.assemblyai.com | AssemblyAI | speech-to-text API
+openai.azure.com | Microsoft | Azure OpenAI, one address per customer | shared
+cognitiveservices.azure.com | Microsoft | Azure AI services, one address per customer | shared
+
+# --- sign-in and account APIs
+accounts.google.com | Google | account sign-in
+oauth2.googleapis.com | Google | account sign-in
+login.microsoftonline.com | Microsoft | account sign-in
+graph.microsoft.com | Microsoft | Microsoft 365 API
+appleid.apple.com | Apple | account sign-in
+api.amazon.com | Amazon | account sign-in
+api.spotify.com | Spotify | music API
+accounts.spotify.com | Spotify | account sign-in
+
+# --- weather, maps, time and energy data
+api.openweathermap.org | OpenWeather | weather data
+api.open-meteo.com | Open-Meteo | weather data
+api.met.no | MET Norway | weather data
+api.weather.gov | US National Weather Service | weather data
+api.weatherapi.com | WeatherAPI | weather data
+api.tomorrow.io | Tomorrow.io | weather data
+api.pirateweather.net | Pirate Weather | weather data
+nominatim.openstreetmap.org | OpenStreetMap | address lookup
+tile.openstreetmap.org | OpenStreetMap | map images
+maps.googleapis.com | Google | maps API
+api.mapbox.com | Mapbox | maps API
+api.sunrise-sunset.org | Sunrise-Sunset | sunrise and sunset times
+api.forecast.solar | Forecast.Solar | solar forecast
+api.solcast.com.au | Solcast | solar forecast
+api.electricitymap.org | Electricity Maps | grid carbon data
+api.octopus.energy | Octopus Energy | energy tariff API
+api.tibber.com | Tibber | energy tariff API
+api.awattar.de | aWATTar | energy price data
+api.energy-charts.info | Fraunhofer ISE | energy price data
+
+# --- smart-home vendor clouds
+api.smartthings.com | Samsung SmartThings | smart-home cloud API
+api.netatmo.com | Netatmo | smart-home cloud API
+api.ecobee.com | ecobee | thermostat cloud API
+api.tesla.com | Tesla | vehicle and energy API
+owner-api.teslamotors.com | Tesla | vehicle API
+openapi.tuyaus.com | Tuya | smart-home cloud API (US)
+openapi.tuyaeu.com | Tuya | smart-home cloud API (EU)
+openapi.tuyacn.com | Tuya | smart-home cloud API (China)
+api.switch-bot.com | SwitchBot | smart-home cloud API
+developer-api.govee.com | Govee | smart-home cloud API
+api.meethue.com | Philips Hue | smart-home cloud API
+discovery.meethue.com | Philips Hue | finds the bridge on your network
+api.home-connect.com | Home Connect | appliance cloud API
+api.bambulab.com | Bambu Lab | 3D-printer cloud API
+api.ring.com | Ring | doorbell and camera cloud API
+api.enphaseenergy.com | Enphase | solar cloud API
+monitoringapi.solaredge.com | SolarEdge | solar cloud API
+
+# --- project and package sites (class "infrastructure" in endpoint_hosts.txt covers their
+# --- treatment; these lines only give them a name)
+home-assistant.io | Home Assistant | project site
+nabucasa.com | Nabu Casa | Home Assistant Cloud
+hacs.xyz | HACS | project site
+api.github.com | GitHub | code hosting API
+pypi.org | PyPI | Python package index
+files.pythonhosted.org | PyPI | Python package downloads
+registry.npmjs.org | npm | JavaScript package index
+
+# --- common building blocks
+fonts.googleapis.com | Google | web fonts
+fonts.gstatic.com | Google | web fonts
+www.gstatic.com | Google | static files for Google services
+cdn.jsdelivr.net | jsDelivr | public file CDN for open-source packages
+unpkg.com | unpkg | public file CDN for npm packages
+cdnjs.cloudflare.com | Cloudflare | public file CDN for open-source packages
+api.ipify.org | ipify | tells a program its public IP address

@@ -14,6 +14,8 @@ Undeclared hosts feed the possible-exfil correlation (`correlate.py`).
 
 Host edges also carry up to five URL samples (scheme, host, port and path; userinfo,
 query and fragment dropped, and the path of a credential URL hidden) and the URL ports.
+A host on the shipped list of well-known services (`known.py`) also carries `service`,
+who runs it in plain words; that never changes its class.
 Port numbers assigned in Python (`port = 6668`, `port=990`, `"mqtt_port": 1883`) become
 `port` facts. Neither is scored; the panel shows them and builds privacy notes on them.
 
@@ -36,6 +38,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from sniff_test import known
 from sniff_test.models import (
     AnalyzerResult,
     AnalyzerState,
@@ -688,6 +691,8 @@ def run(target: Target) -> AnalyzerResult:
                 )
             )
         attrs: dict[str, Any] = {"class": cls}
+        if svc := known.lookup(ref.host):  # a name only; the class above is untouched
+            attrs["service"] = svc.label
         if ref.scheme:
             attrs["schemes"] = [ref.scheme]
         if cred:
