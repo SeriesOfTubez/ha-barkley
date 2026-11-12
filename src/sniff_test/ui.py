@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import html
 import re
+import textwrap
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -93,8 +94,8 @@ a.sum.on { border-bottom-color:currentColor; font-weight:600; }
 .bar > :last-child { margin-left:auto; }
 .tablebox { padding:4px 8px; overflow-x:auto; }
 table.apps td { vertical-align:middle; }
-table.apps .badge { display:inline-block; white-space:nowrap; overflow-wrap:normal; }
-table.apps td.actcell { width:1%; }
+table.apps td.actcell { width:1%; white-space:nowrap; overflow-wrap:normal; }
+table.apps td.actcell .act { flex-wrap:nowrap; }
 .again { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; }
 .again form { margin:0; }
 .status { display:flex; flex-direction:column; gap:4px; border-color:var(--accent); }
@@ -114,9 +115,10 @@ table.apps td.actcell { width:1%; }
   text-decoration:none; overflow-wrap:anywhere; }
 a.app-name::after { content:""; position:absolute; inset:0; border-radius:10px; }
 .app-kind { font-size:0.76rem; color:var(--muted); overflow-wrap:anywhere; }
-.badge { flex:none; min-width:44px; text-align:center; border-radius:8px; padding:3px 6px 4px;
+.badge { flex:none; display:inline-block; white-space:nowrap; overflow-wrap:normal;
+  min-width:44px; text-align:center; border-radius:8px; padding:3px 6px 4px;
   font-weight:700; font-size:1.1rem; font-variant-numeric:tabular-nums; line-height:1.1;
-  background:var(--soft); color:var(--muted); }
+  background:var(--soft); color:var(--muted); text-decoration:none; }
 .badge small { display:block; font-size:0.6rem; font-weight:600; letter-spacing:0.03em;
   text-transform:uppercase; }
 .badge.green { background:var(--green-bg); color:var(--green); }
@@ -216,6 +218,8 @@ details summary { cursor:pointer; color:var(--muted); font-size:0.82rem; }
 .flowwrap { overflow-x:auto; }
 .flow text { fill:var(--fg); font:12px system-ui,sans-serif; }
 .flow .sm { fill:var(--muted); font-size:10.5px; }
+.flow-v { display:none; }
+@media (max-width:560px) { .flow-h { display:none; } .flow-v { display:block; } }
 .privbox { border:1px solid var(--priv); background:var(--priv-bg); border-radius:10px;
   padding:12px 14px; }
 .privbox h2 { color:var(--priv); }
@@ -223,7 +227,9 @@ ul.plain { margin:0; padding-left:1.1em; font-size:0.88rem; display:flex;
   flex-direction:column; gap:3px; }
 table { border-collapse:collapse; width:100%; font-size:0.86rem; }
 td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);
-  vertical-align:top; overflow-wrap:anywhere; }
+  vertical-align:top; }
+td.wrap { overflow-wrap:anywhere; } td.nowrap { white-space:nowrap; }
+.tablebox table { min-width:0; }
 .tools form { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
 .tools input, .tools select { padding:6px; min-width:0; flex:1 1 180px; font:inherit;
   background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:6px; }
@@ -1093,15 +1099,26 @@ def _clip(s: str, n: int = 26) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-def flow_svg(report: dict[str, Any], name: str) -> str:
-    """Left: what it reads. Middle: the app. Right: where it can connect. Lines between
-    left and right only for flows the scanner found (proven solid, possible dashed)."""
+@dataclass
+class _Flow:
+    """What the diagram shows, laid out two ways (wide and narrow screens)."""
+
+    rd: list[tuple[str, str, bool]]  # (node id, label, sensitive) the app reads
+    right: list[tuple[str, str, str, str]]  # (key, title, subtitle, style) it can reach
+    fl: list[dict[str, Any]]  # flows_to edges
+    extra: int  # flow destinations beyond the three drawn
+    port_dirs: set[str | None]
+    kind: str
+    flow_src: set[str]
+
+
+def _flow_data(report: dict[str, Any]) -> _Flow | None:
     rd = reads(report)[:6]
     fl = flows(report)
     hs = hosts(report)
     pts = ports(report)
-    g, nodes = _graph(report)
-    right: list[tuple[str, str, str, str]] = []  # (key, title, subtitle, style)
+    _g, nodes = _graph(report)
+    right: list[tuple[str, str, str, str]] = []
     flow_targets = []
     for x in fl:
         if x["target"] not in flow_targets:
@@ -1165,77 +1182,121 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
         label = "Other internet sites" if dev else "Internet sites"
         right.append(("net", f"{label}: {len(rest)}", sub, ""))
     if not rd and not right:
-        return '<p class="muted">It reads none of your private data, and its code names no network addresses.</p>'
+        return None
+    return _Flow(
+        rd,
+        right,
+        fl,
+        extra,
+        {p.direction for p in pts},
+        KIND.get(str(report.get("target", {}).get("kind")), ""),
+        {x["source"] for x in fl},
+    )
 
-    row_h, top = 56, 16
-    rows = max(len(rd), len(right), 2)
+
+_BOX_STYLE = {"bad": ("var(--card)", "var(--red)"), "priv": ("var(--priv-bg)", "var(--priv)")}
+
+
+def _flow_defs(suffix: str) -> str:
+    return (
+        f'<defs><marker id="arr{suffix}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
+        'markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
+        'fill="var(--red)"/></marker>'
+        f'<marker id="arrg{suffix}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" '
+        'markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
+        'fill="var(--muted)"/></marker></defs>'
+    )
+
+
+def _read_box(d: _Flow, item: tuple[str, str, bool], x: int, y: float, w: int) -> str:
+    nid, label, sens = item
+    fill, stroke = (
+        ("var(--red-bg)", "var(--red)")
+        if nid in d.flow_src
+        else (("var(--yellow-bg)", "var(--yellow)") if sens else ("var(--soft)", "var(--line)"))
+    )
+    return (
+        f'<rect x="{x}" y="{y:.0f}" width="{w}" height="44" rx="8" fill="{fill}" stroke="{stroke}"/>'
+        f'<text x="{x + 12}" y="{y + 19:.0f}">{e(_clip(explain.data_label(label)))}</text>'
+        f'<text class="sm" x="{x + 12}" y="{y + 35:.0f}">{e(_clip(label, 30))}</text>'
+    )
+
+
+def _dest_box(item: tuple[str, str, str, str], x: int, y: float, w: int) -> str:
+    _key, title, sub, style = item
+    fill, stroke = _BOX_STYLE.get(style, ("var(--soft)", "var(--line)"))
+    return (
+        f'<rect x="{x}" y="{y:.0f}" width="{w}" height="44" rx="8" fill="{fill}" stroke="{stroke}"/>'
+        f'<text x="{x + 12}" y="{y + 19:.0f}">{e(title, 60)}</text>'
+        f'<text class="sm" x="{x + 12}" y="{y + 35:.0f}">{e(_clip(sub, 32))}</text>'
+    )
+
+
+def _app_box(d: _Flow, name: str, x: int, cy: float) -> str:
+    # bold system-ui is ~0.62em per character; the box has ~154px for text
+    name_px = 12 if len(name) <= 19 else max(9.5, round(154 / (0.62 * min(len(name), 26)), 1))
+    return (
+        f'<rect x="{x}" y="{cy - 28:.0f}" width="170" height="56" rx="10" fill="var(--card)" '
+        'stroke="var(--fg)" stroke-width="1.5"/>'
+        f'<text x="{x + 85}" y="{cy - 3:.0f}" text-anchor="middle" '
+        f'style="font-weight:650;font-size:{name_px}px">{e(_clip(name, 26))}</text>'
+        f'<text class="sm" x="{x + 85}" y="{cy + 13:.0f}" text-anchor="middle">{e(d.kind)}</text>'
+    )
+
+
+def _flow_way(d: _Flow, key: str) -> str | None:
+    """Who opens the connection: "out" to a site or server, "in" for a port it listens on,
+    None when the code doesn't make the direction clear."""
+    if key != "ports":
+        return "out"
+    return next(iter(d.port_dirs)) if len(d.port_dirs) == 1 else None
+
+
+def _flow_caption(d: _Flow) -> list[str]:
+    if d.fl:
+        cap = ["solid: traced in the code", "dashed: reads it and can reach an unexplained site, "
+               "path not proven"]  # fmt: skip
+        if d.extra > 0:
+            cap.append(f"{d.extra} more destination{'s' * (d.extra != 1)} below")
+        return cap
+    return ["Arrows: which way the connection goes.", "No path found from your data to the "
+            "internet."]  # fmt: skip
+
+
+def _flow_wide(d: _Flow, name: str) -> str:
+    """Left: reads. Middle: the app. Right: destinations. Red lines left to right."""
+    row_h, top, w = 56, 16, 700
+    rows = max(len(d.rd), len(d.right), 2)
     height = top * 2 + rows * row_h + 22
     cy = top + rows * row_h / 2
-    w = 700
     parts = [
         f'<svg class="flow" viewBox="0 0 {w} {height:.0f}" width="100%" style="min-width:560px" '
         f'role="img" aria-label="Data flow for {e(name, 80)}">',
-        '<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
-        'markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
-        'fill="var(--red)"/></marker>'
-        '<marker id="arrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" '
-        'markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
-        'fill="var(--muted)"/></marker></defs>',
+        _flow_defs(""),
     ]
-    port_dirs = {p.direction for p in pts}
-    proven_src = {x["source"] for x in fl if x["evidence"] == "proven"}
-    flow_src = {x["source"] for x in fl}
 
     def ys(n: int) -> list[float]:
-        span = n * row_h
-        start = cy - span / 2
+        start = cy - n * row_h / 2
         return [start + i * row_h + 6 for i in range(n)]
 
     lpos: dict[str, float] = {}
-    for (nid, label, sens), y in zip(rd, ys(len(rd)), strict=False):
-        style = (
-            ("var(--red-bg)", "var(--red)")
-            if nid in flow_src
-            else (("var(--yellow-bg)", "var(--yellow)") if sens else ("var(--soft)", "var(--line)"))
-        )
-        parts.append(
-            f'<rect x="6" y="{y:.0f}" width="176" height="44" rx="8" fill="{style[0]}" stroke="{style[1]}"/>'
-            f'<text x="18" y="{y + 19:.0f}">{e(_clip(explain.data_label(label)))}</text>'
-            f'<text class="sm" x="18" y="{y + 35:.0f}">{e(_clip(label, 30))}</text>'
-        )
+    for item, y in zip(d.rd, ys(len(d.rd)), strict=False):
+        parts.append(_read_box(d, item, 6, y, 176))
         parts.append(
             f'<line x1="182" y1="{y + 22:.0f}" x2="258" y2="{cy:.0f}" '
             'stroke="var(--muted)" stroke-dasharray="3 3" marker-end="url(#arrg)"/>'
         )
-        lpos[nid] = y + 22
-    if not rd:
+        lpos[item[0]] = y + 22
+    if not d.rd:
         parts.append(
             f'<text class="sm" x="6" y="{cy + 4:.0f}">Reads none of your private data</text>'
         )
-    # bold system-ui is ~0.62em per character; the box has ~154px for text
-    name_px = 12 if len(name) <= 19 else max(9.5, round(154 / (0.62 * min(len(name), 26)), 1))
     center_at = len(parts)
-    parts.append(
-        f'<rect x="260" y="{cy - 28:.0f}" width="170" height="56" rx="10" fill="var(--card)" '
-        'stroke="var(--fg)" stroke-width="1.5"/>'
-        f'<text x="345" y="{cy - 3:.0f}" text-anchor="middle" style="font-weight:650;font-size:{name_px}px">{e(_clip(name, 26))}</text>'
-        f'<text class="sm" x="345" y="{cy + 13:.0f}" text-anchor="middle">'
-        f"{e(KIND.get(str(report.get('target', {}).get('kind')), ''))}</text>"
-    )
+    parts.append(_app_box(d, name, 260, cy))
     rpos: dict[str, float] = {}
-    for (key, title, sub, style), y in zip(right, ys(len(right)), strict=False):
-        fill, stroke = {
-            "bad": ("var(--card)", "var(--red)"),
-            "priv": ("var(--priv-bg)", "var(--priv)"),
-        }.get(style, ("var(--soft)", "var(--line)"))
-        parts.append(
-            f'<rect x="{w - 200}" y="{y:.0f}" width="194" height="44" rx="8" fill="{fill}" stroke="{stroke}"/>'
-            f'<text x="{w - 188}" y="{y + 19:.0f}">{e(title, 60)}</text>'
-            f'<text class="sm" x="{w - 188}" y="{y + 35:.0f}">{e(_clip(sub, 32))}</text>'
-        )
-        # Arrow = who opens the connection: out to a site or server; into the app for a
-        # port it listens on; no arrow when the code doesn't make the direction clear.
-        way = (port_dirs.pop() if len(port_dirs) == 1 else None) if key == "ports" else "out"
+    for item, y in zip(d.right, ys(len(d.right)), strict=False):
+        parts.append(_dest_box(item, w - 200, y, 194))
+        way = _flow_way(d, item[0])
         if way == "in":
             parts.append(
                 f'<line x1="{w - 200}" y1="{y + 22:.0f}" x2="432" y2="{cy:.0f}" '
@@ -1248,9 +1309,9 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
                 f'<line x1="430" y1="{cy:.0f}" x2="{x2}" y2="{y + 22:.0f}" '
                 f'stroke="var(--muted)"{mark}/>'
             )
-        rpos[key] = y + 22
+        rpos[item[0]] = y + 22
     lines: list[str] = []
-    for x in fl:
+    for x in d.fl:
         y1, y2 = lpos.get(x["source"]), rpos.get(x["target"])
         if y1 is None or y2 is None:
             continue
@@ -1261,15 +1322,106 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
             f'stroke="var(--red)" stroke-width="{width}"{dash} marker-end="url(#arr)"/>'
         )
     parts[center_at:center_at] = lines  # under the app's box, so its name stays readable
-    if fl:
-        cap = "solid: traced in the code · dashed: reads it and can reach an unexplained site, path not proven"
-        if extra > 0:
-            cap += f" · {extra} more destination{'s' * (extra != 1)} below"
-    else:
-        cap = "Arrows: which way the connection goes. No path found from your data to the internet."
+    cap = " · ".join(_flow_caption(d))
     parts.append(f'<text class="sm" x="6" y="{height - 8:.0f}">{e(cap)}</text></svg>')
-    del proven_src, g
-    return '<div class="flowwrap">' + "".join(parts) + "</div>"
+    return "".join(parts)
+
+
+def _flow_narrow(d: _Flow, name: str) -> str:
+    """The same picture stacked for a phone: reads on top, the app, then destinations.
+    Grey connectors run as one spine down the right margin (so no line crosses a box);
+    red data paths run down the left margin."""
+    row_h, top, w, bx, bw = 52, 12, 360, 40, 280
+    spine, red_x = w - 20, 12
+    n_r, n_d = len(d.rd), len(d.right)
+    y_reads = top
+    reads_end = y_reads + n_r * row_h if n_r else y_reads + 24
+    cy = reads_end + 56  # app box centre: 28 of gap, 28 of half height
+    y_dest = cy + 28 + 28
+    caption = [ln for part in _flow_caption(d) for ln in textwrap.wrap(part, 46)]
+    height = y_dest + max(n_d, 1) * row_h + 14 * len(caption) + 6
+    mid = w / 2
+    parts = [
+        f'<svg class="flow" viewBox="0 0 {w} {height:.0f}" width="100%" '
+        f'role="img" aria-label="Data flow for {e(name, 80)}">',
+        _flow_defs("v"),
+    ]
+    lpos: dict[str, float] = {}
+    for i, item in enumerate(d.rd):
+        y = y_reads + i * row_h
+        parts.append(_read_box(d, item, bx, y, bw))
+        parts.append(
+            f'<line x1="{bx + bw}" y1="{y + 22}" x2="{spine}" y2="{y + 22}" '
+            'stroke="var(--muted)" stroke-dasharray="3 3"/>'
+        )
+        lpos[item[0]] = y + 22
+    if d.rd:
+        y0, y1 = y_reads + 22, cy - 44
+        parts.append(
+            f'<path d="M{spine} {y0} V{y1} H{mid:.0f} V{cy - 30:.0f}" fill="none" '
+            'stroke="var(--muted)" stroke-dasharray="3 3" marker-end="url(#arrgv)"/>'
+        )
+    else:
+        parts.append(
+            f'<text class="sm" x="{bx}" y="{y_reads + 14}">Reads none of your private data</text>'
+        )
+    center_at = len(parts)
+    parts.append(_app_box(d, name, int(mid - 85), cy))
+    rpos: dict[str, float] = {}
+    if d.right:
+        last = y_dest + (n_d - 1) * row_h + 22
+        parts.append(
+            f'<path d="M{mid:.0f} {cy + 28:.0f} V{cy + 44:.0f} H{spine} V{last}" fill="none" '
+            'stroke="var(--muted)"/>'
+        )
+    for i, item in enumerate(d.right):
+        y = y_dest + i * row_h
+        parts.append(_dest_box(item, bx, y, bw))
+        way = _flow_way(d, item[0])
+        if way == "in":  # others connect in: the arrow points from the box to the spine
+            parts.append(
+                f'<line x1="{bx + bw}" y1="{y + 22}" x2="{spine - 1}" y2="{y + 22}" '
+                'stroke="var(--muted)" marker-end="url(#arrgv)"/>'
+            )
+        else:
+            mark = ' marker-end="url(#arrgv)"' if way == "out" else ""
+            x2 = bx + bw + 2 if way == "out" else bx + bw
+            parts.append(
+                f'<line x1="{spine}" y1="{y + 22}" x2="{x2}" y2="{y + 22}" '
+                f'stroke="var(--muted)"{mark}/>'
+            )
+        rpos[item[0]] = y + 22
+    lines: list[str] = []
+    for x in d.fl:
+        y1, y2 = lpos.get(x["source"]), rpos.get(x["target"])
+        if y1 is None or y2 is None:
+            continue
+        dash = "" if x["evidence"] == "proven" else ' stroke-dasharray="6 4"'
+        width = "2.4" if x["evidence"] == "proven" else "1.6"
+        lines.append(
+            f'<path d="M{bx} {y1:.0f} C {red_x} {y1:.0f}, {red_x} {y2:.0f}, {bx - 2} {y2:.0f}" '
+            f'fill="none" stroke="var(--red)" stroke-width="{width}"{dash} '
+            'marker-end="url(#arrv)"/>'
+        )
+    parts[center_at:center_at] = lines
+    for i, line in enumerate(caption):
+        y = height - 6 - 14 * (len(caption) - 1 - i)
+        parts.append(f'<text class="sm" x="{bx}" y="{y:.0f}">{e(line)}</text>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def flow_svg(report: dict[str, Any], name: str) -> str:
+    """Left: what it reads. Middle: the app. Right: where it can connect. Lines between
+    left and right only for flows the scanner found (proven solid, possible dashed). Drawn
+    twice: side by side for wide screens, stacked for narrow ones (CSS shows one)."""
+    d = _flow_data(report)
+    if d is None:
+        return '<p class="muted">It reads none of your private data, and its code names no network addresses.</p>'
+    return (
+        f'<div class="flowwrap"><div class="flow-h">{_flow_wide(d, name)}</div>'
+        f'<div class="flow-v">{_flow_narrow(d, name)}</div></div>'
+    )
 
 
 # --- where it connects -------------------------------------------------------------------------

@@ -449,6 +449,16 @@ def _diff_link(r: Row) -> str:
     return ""
 
 
+def not_installed_cards_html(base: str, cards: list[ui.Card]) -> str:
+    """The "Sniffed, not installed" section under the installed list."""
+    if not cards:
+        return ""
+    return (
+        f'<h2 style="margin-top:8px">Sniffed, not installed ({len(cards)})</h2>'
+        '<div class="grid">' + "".join(ui.card_html(base, c) for c in cards) + "</div>"
+    )
+
+
 def render_installed(
     base: str,
     state: InstalledState,
@@ -609,7 +619,7 @@ def render_index(
         out.append(
             f'<details class="box"{" open" if active else ""}><summary>Jobs '
             f"({len(active)} running or queued, {len(jobs) - len(active)} finished)</summary>"
-            "<table>"
+            '<div class="tablebox"><table>'
         )
         for j in jobs:
             links = " ".join(f'<a href="{base}/scan/{i}">@{i}</a>' for i in j.scan_ids)
@@ -618,12 +628,13 @@ def render_index(
                 links += f' · <a href="{base}/diff?old={old}&amp;new={new}">diff</a>'
             kind = "auto-sniff" if j.kind == "auto" else j.kind
             out.append(
-                f"<tr><td>{e(kind)}</td><td>{e(j.repo)}"
+                f'<tr><td class="nowrap">{e(kind)}</td><td class="wrap">{e(j.repo)}'
                 f"{'@' + e(j.prev) + ' → ' if j.prev else ''}{'@' + e(j.ref) if j.ref else ''}"
                 f"{' → ' + e(j.to) if j.to else ''}"
-                f"</td><td>{e(j.state)}</td><td>{e(j.message)} {links}</td></tr>"
+                f'</td><td class="nowrap">{e(j.state)}</td><td class="wrap">{e(j.message)} '
+                f"{links}</td></tr>"
             )
-        out.append("</table></details>")
+        out.append("</table></div></details>")
     out.append(
         '<details class="box tools"><summary>Check any repository</summary>'
         f'<form method=post action="{base}/scan">'
@@ -641,7 +652,8 @@ def render_index(
     if not rows:
         out.append('<p class="muted">No scans yet.</p>')
     else:
-        out.append("<table><tr><th>#</th><th>score</th><th>repo</th><th>when</th></tr>")
+        out.append('<div class="tablebox"><table><tr><th>#</th><th>score</th><th>repo</th>'
+                   "<th>when</th></tr>")  # fmt: skip
         for r in rows:
             extra = r.kind + (f" · HA {r.ha_version}" if r.ha_version else "")
             extra += f" · rules {r.tool_version}"
@@ -650,11 +662,12 @@ def render_index(
             out.append(
                 f'<tr><td><a href="{base}/scan/{r.id}">@{r.id}</a></td>'
                 f"<td>{_verdict(r.score, r.verdict)}</td>"
-                f"<td>{e(r.repo or r.source, 100)}{'@' + e(r.ref, 60) if r.ref else ''}"
+                f'<td class="wrap">{e(r.repo or r.source, 100)}'
+                f"{'@' + e(r.ref, 60) if r.ref else ''}"
                 f'<br><span class="muted">{e(extra)}</span></td>'
-                f"<td>{e(r.scanned_at[:16].replace('T', ' '))}</td></tr>"
+                f'<td class="nowrap">{e(r.scanned_at[:16].replace("T", " "))}</td></tr>'
             )
-        out.append("</table>")
+        out.append("</table></div>")
     out.append("</details>")
     out.append(
         f'<p class="muted small"><a href="{base}/doctor">Diagnostics</a>: can each tool run on '
@@ -704,12 +717,13 @@ def render_auto(base: str, w: watch.Watcher, token: str, now: float | None = Non
         else:
             result = f"{e(x.get('state'))}: {e(x.get('message'), 200)}"
         rows.append(
-            f"<tr><td>{e(str(x.get('when', ''))[:16].replace('T', ' '))}</td>"
-            f"<td>{e(x.get('repo'))} {did}</td><td>{result} {links}</td></tr>"
+            f'<tr><td class="nowrap">{e(str(x.get("when", ""))[:16].replace("T", " "))}</td>'
+            f'<td class="wrap">{e(x.get("repo"))} {did}</td><td class="wrap">{result} {links}'
+            "</td></tr>"
         )
     recent = (
-        "<table><tr><th>when</th><th>what happened</th><th>result</th></tr>"
-        + "".join(rows) + "</table>"
+        '<div class="tablebox"><table><tr><th>when</th><th>what happened</th><th>result</th>'
+        "</tr>" + "".join(rows) + "</table></div>"
         if rows
         else '<p class="muted small">Nothing installed or updated since Barkley started '
         "watching.</p>"
@@ -1018,7 +1032,7 @@ def render_search(
                    '<button class="primary">Sniff it</button></form>')  # fmt: skip
         tag = ' <span class="chip new">installed</span>' if it.installed else ""
         rows.append(
-            f"<tr><td><b>{e(it.name, 100)}</b>{tag}<br>"
+            f'<tr><td class="wrap"><b>{e(it.name, 100)}</b>{tag}<br>'
             f'<span class="muted small">{e(ui.KIND.get(it.kind, it.kind))} · '
             f"{e(it.repo, 120)} · ★ {it.stars:,} · {it.downloads:,} downloads</span>"
             f'<br><span class="small">{e(it.description, 300)}</span></td>'
@@ -1093,7 +1107,7 @@ def render_versions(
         when = e((r.published_at or "")[:10])
         act = action(r.tag) if _REF.match(r.tag) else '<span class="muted">odd tag name</span>'
         rows.append(
-            f"<tr><td><b><code>{e(r.tag, 100)}</code></b> {''.join(chips)}<br>"
+            f'<tr><td class="wrap"><b><code>{e(r.tag, 100)}</code></b> {"".join(chips)}<br>'
             f'<span class="muted small">{when}{who if r.publisher else ""}</span></td>'
             f'<td style="width:7em;text-align:right">{act}</td></tr>'
         )
@@ -1114,7 +1128,8 @@ def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
     for c in checks:
         cls = "ok" if c.ok else "bad"
         out.append(
-            f'<tr><td class="{cls}">{"ok" if c.ok else "FAIL"}</td><td><b>{e(c.name)}</b> '
+            f'<tr><td class="{cls}">{"ok" if c.ok else "FAIL"}</td>'
+            f'<td class="wrap"><b>{e(c.name)}</b> '
             f"{e(c.summary, 1000)}"
             + (f"<br><code>{e(c.command, 500)}</code>" if c.command else "")
             + (f" <span class=muted>{c.seconds}s</span>" if c.seconds is not None else "")
@@ -1148,15 +1163,16 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
         for c in head:
             cls = _SEV_CLASS.get(c.get("severity") or "", "")
             out.append(
-                f'<tr><td class="{cls}">{e(c["sign"])}</td><td>{e(c["text"], 400)}</td></tr>'
+                f'<tr><td class="{cls}">{e(c["sign"])}</td><td class="wrap">{e(c["text"], 400)}'
+                "</td></tr>"
             )
         out.append("</table>")
     if rest:
         out.append(f"<h2>Also changed ({len(rest)})</h2><table>")
         for c in rest:
             out.append(
-                f"<tr><td class=muted>{e(c['sign'])}</td><td class=muted>{e(c['text'], 300)}"
-                "</td></tr>"
+                f'<tr><td class=muted>{e(c["sign"])}</td><td class="muted wrap">'
+                f"{e(c['text'], 300)}</td></tr>"
             )
         out.append("</table>")
     return _page("Barkley diff", "".join(out))
@@ -1395,10 +1411,7 @@ class Panel:
         if not cards:
             return ""
         cards.sort(key=lambda c: (c.scan.score if c.scan else -1, c.name.lower()))
-        return (
-            f'<h2 style="margin-top:8px">Sniffed, not installed ({len(cards)})</h2>'
-            '<div class="grid">' + "".join(ui.card_html(base, c) for c in cards) + "</div>"
-        )
+        return not_installed_cards_html(base, cards)
 
     def ai_choices(self, refresh: bool = False) -> tuple[list[tuple[str, str]] | None, str]:
         """AI Task entities for the picker (None outside an add-on), cached 5 minutes."""

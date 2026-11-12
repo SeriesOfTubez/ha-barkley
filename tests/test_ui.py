@@ -60,7 +60,8 @@ def test_flow_lines_follow_the_graph():
         edges=[_edge("reads", src), _edge("flows_to", off, evidence="proven", source=src)],
     )
     svg = ui.flow_svg(rep, "acme")
-    assert svg.count('marker-end="url(#arr)"') == 1
+    assert svg.count('marker-end="url(#arr)"') == 1  # the wide layout
+    assert svg.count('marker-end="url(#arrv)"') == 1  # the stacked one for phones
     assert "Somewhere off your box" in svg and "Your secrets file" in svg
     assert 'stroke-dasharray="6 4"' not in svg  # proven: solid
 

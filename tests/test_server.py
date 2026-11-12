@@ -482,7 +482,7 @@ def test_auto_jobs_show_in_the_jobs_table_and_doctor_names_the_watcher(auto, mon
     httpd.panel.worker.wait()
     assert job.state == "done" and len(job.scan_ids) == 2
     _, _, page = get(base + "/")
-    assert "<td>auto-sniff</td><td>acme/quiet@v1 → @v2</td>" in page
+    assert '<td class="nowrap">auto-sniff</td><td class="wrap">acme/quiet@v1 → @v2</td>' in page
     assert f"diff?old={job.scan_ids[0]}&amp;new={job.scan_ids[1]}" in page
     monkeypatch.setattr(server.doctor, "run_checks", lambda addon=False: [])
     _, _, page = get(base + "/doctor")
