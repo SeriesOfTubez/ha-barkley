@@ -56,6 +56,7 @@ import re
 import secrets
 import socket
 import struct
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -274,10 +275,19 @@ class _WebSocket:
             data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
         return b0 & 0x0F, bool(b0 & 0x80), data
 
-    def recv_json(self) -> Any:
+    def recv_json(self, deadline: float | None = None) -> Any:
         """The next JSON message. Pings are answered; a timeout (TimeoutError) keeps the
-        fragments read so far, so the caller may simply call again."""
+        fragments read so far, so the caller may simply call again.
+
+        `deadline` (time.monotonic()) bounds the whole wait: without it the socket timeout
+        applies per frame, and the Supervisor's proxy pings every 30 s (`heartbeat=30`,
+        supervisor/api/proxy.py), so a quiet connection never timed out."""
         while True:
+            if deadline is not None:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError("deadline passed")
+                self.sock.settimeout(left)
             opcode, fin, data = self._frame()
             if opcode == 0x8:
                 raise SupervisorError("websocket closed by the server")
@@ -379,6 +389,7 @@ class Subscription:
         if bad:
             raise SupervisorError(f"signal not allowed: {bad[0]!r}")
         self.ws = _open_core(tok, host, port, path, timeout=idle)
+        self.idle = idle
         self.signals: dict[int, str] = {}
         try:
             for i, sig in enumerate(signals, 1):
@@ -406,14 +417,19 @@ class Subscription:
             raise
 
     def events(self) -> Any:
-        """Yields (signal, data) per event, None after `idle` seconds without one.
+        """Yields (signal, data) per event, and None at least every `idle` seconds, however
+        many pings or events arrive in between (the caller polls the installed list then).
         Raises SupervisorError when the connection ends."""
+        due = time.monotonic() + self.idle
         while True:
-            try:
-                msg = self.ws.recv_json()
-            except TimeoutError:
+            if time.monotonic() >= due:
+                due = time.monotonic() + self.idle
                 yield None
                 continue
+            try:
+                msg = self.ws.recv_json(deadline=due)
+            except TimeoutError:
+                continue  # `due` has passed: the top of the loop yields None
             except OSError as ex:
                 raise SupervisorError(f"websocket failed: {ex}") from ex
             if not isinstance(msg, dict) or msg.get("type") != "event":

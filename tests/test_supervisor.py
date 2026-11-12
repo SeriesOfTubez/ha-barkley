@@ -4,6 +4,7 @@ A fake Supervisor on 127.0.0.1 speaks the real handshake and HA's websocket prot
 nothing here can reach a real server.
 """
 
+import contextlib
 import json
 import socket
 import struct
@@ -466,3 +467,91 @@ def test_notifications_go_through_the_core_api(monkeypatch):
     with pytest.raises(SupervisorError, match="not running as a Home Assistant add-on"):
         supervisor.notify_persistent("T", "M", "x", tok=None)
     fake.httpd.shutdown()
+
+
+def _pinging_server(*, ping_every: float, event_every: float | None = None):
+    """A Core proxy that has subscribed us and then only pings (and maybe sends events),
+    the way the Supervisor's proxy pings every 30 s (`heartbeat=30`)."""
+    import time as _time
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    stop = threading.Event()
+
+    def serve():
+        conn, _ = srv.accept()
+        with conn:
+            req = b""
+            while b"\r\n\r\n" not in req:
+                req += conn.recv(4096)
+            conn.sendall(b"HTTP/1.1 101 Switching Protocols\r\n\r\n")
+            conn.sendall(_frame(0x1, json.dumps({"type": "auth_required"}).encode()))
+            _recv_frame(conn)  # auth
+            conn.sendall(_frame(0x1, json.dumps({"type": "auth_ok"}).encode()))
+            for i in (1, 2):
+                _recv_frame(conn)
+                conn.sendall(
+                    _frame(
+                        0x1,
+                        json.dumps(
+                            {"id": i, "type": "result", "success": True, "result": None}
+                        ).encode(),
+                    )
+                )
+            conn.settimeout(0.01)
+            last_ev = _time.monotonic()
+            try:
+                while not stop.is_set():
+                    conn.sendall(_frame(0x9, b"hb"))
+                    if event_every and _time.monotonic() - last_ev >= event_every:
+                        last_ev = _time.monotonic()
+                        ev = {
+                            "id": 2,
+                            "type": "event",
+                            "event": {"action": "update", "repository": "acme/a"},
+                        }
+                        conn.sendall(_frame(0x1, json.dumps(ev).encode()))
+                    _time.sleep(ping_every)
+                    with contextlib.suppress(TimeoutError, OSError):
+                        conn.recv(65536)  # drain our pongs
+            except OSError:
+                return
+
+    threading.Thread(target=serve, daemon=True).start()
+    return srv.getsockname()[1], stop
+
+
+def test_idle_turns_come_although_the_proxy_pings_more_often_than_idle():
+    """Found on the user's box (2026-11-12): the proxy's 30 s pings kept the 60 s idle
+    timeout from ever firing, so the 10-minute re-read of the installed list never ran
+    while subscribed, and two offered updates went unsniffed for hours."""
+    import time as _time
+
+    port, stop = _pinging_server(ping_every=0.05)
+    sub = supervisor.Subscription("tok", host="127.0.0.1", port=port, idle=0.3)
+    start = _time.monotonic()
+    got = next(sub.events())
+    took = _time.monotonic() - start
+    stop.set()
+    sub.close()
+    assert got is None
+    assert 0.25 <= took < 1.0
+
+
+def test_idle_turns_come_although_events_keep_arriving():
+    import time as _time
+
+    port, stop = _pinging_server(ping_every=0.03, event_every=0.05)
+    sub = supervisor.Subscription("tok", host="127.0.0.1", port=port, idle=0.3)
+    start = _time.monotonic()
+    seen = []
+    for ev in sub.events():
+        seen.append(ev)
+        if ev is None:
+            break
+    took = _time.monotonic() - start
+    stop.set()
+    sub.close()
+    assert len(seen) > 1 and seen[-1] is None and all(e is not None for e in seen[:-1])
+    assert took < 1.0
