@@ -1423,7 +1423,7 @@ def change_line(c: dict[str, Any]) -> tuple[str, str, str]:
                f"(it was {e(_SOURCE.get(a, a))})")  # fmt: skip
     else:
         out = e(head, 300)
-    if why:
+    if why and why.lower() not in html.unescape(re.sub(r"<[^>]+>", "", out)).lower():
         out += f". Flagged: {e(why, 300)}"
     return lead, out, text
 

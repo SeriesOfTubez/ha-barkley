@@ -1181,6 +1181,11 @@ def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
     return _page("Barkley diagnostics", "".join(out), base)
 
 
+def _side_words(base: str, side: dict[str, Any], sid: int) -> str:
+    link = f'<a href="{base}/scan/{sid}">scan @{sid}</a>'
+    return f"<b>{e(side['ref'], 60)}</b> ({link})" if side.get("ref") else link
+
+
 def render_diff(base: str, old: int, new: int, d: dict[str, Any], name: str | None = None) -> bytes:
     """What an update changes, in plain words: the headline changes as a list with the
     same level labels as findings, the rest folded behind a disclosure; the diff's own
@@ -1196,8 +1201,7 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any], name: str | No
         '<section class="box dhead"><div class="dscore">'
         f"{ui.ring(int(s_to or 0), ui.band(s_to))}</div>"
         f"<div><h1>What the update changes: {e(title, 100)}</h1>"
-        f'<div>From <b>{e(frm.get("ref"), 60)}</b> (<a href="{base}/scan/{old}">scan @{old}</a>) '
-        f'to <b>{e(to.get("ref"), 60)}</b> (<a href="{base}/scan/{new}">scan @{new}</a>) · '
+        f"<div>From {_side_words(base, frm, old)} to {_side_words(base, to, new)} · "
         f"{e(frm.get('repo'), 120)}</div>"
         f'<div class="muted small">Score {e(s_from)} → {e(s_to)}: each side\'s own score; '
         "this comparison never scores. It lists what the new version does that the old one "
