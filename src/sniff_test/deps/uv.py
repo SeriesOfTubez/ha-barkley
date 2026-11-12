@@ -73,7 +73,13 @@ def compile_lock(
     ]
     if excludes is not None:
         cmd += ["--excludes", str(excludes)]
-    return _proc.run(cmd, run_dir, TIMEOUT, _proc.tool_env(UV_NO_PROGRESS="1"))
+    # `--python-version` only sets the markers uv resolves for; it needs no interpreter of
+    # that version. Without this, uv downloads a managed CPython of that version from
+    # GitHub into ~/.local/share/uv and runs it (seen in the add-on image 2026-11-11:
+    # 3.14.10 fetched during the first integration scan, since `tool_env` drops the
+    # image's UV_PYTHON_DOWNLOADS). The image's own Python resolves the same lock.
+    env = _proc.tool_env(UV_NO_PROGRESS="1", UV_PYTHON_DOWNLOADS="never")
+    return _proc.run(cmd, run_dir, TIMEOUT, env)
 
 
 @dataclass

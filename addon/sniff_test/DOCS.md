@@ -151,6 +151,16 @@ It reads its own app info from the Supervisor (allowed for every app) to build t
 no ports, no Supervisor role, no folder access: the app never reads your config folder
 and never opens the installed copies.
 
+The app ships its own AppArmor profile (`apparmor.txt`, security rating 8). It confines
+every process in the container to what Barkley needs: run only the image's own Python,
+the scanner and the pinned tools (Semgrep, GuardDog, osv-scanner, uv), write only under
+`/data` (the scan store, options and caches) and `/tmp` (one workspace per scan), and
+use only ordinary network sockets. Nothing downloaded is executable. The scanner reads
+hostile code with several parsers, and this is the line that holds if one of them has a
+bug. Diagnostics shows the profile the app runs under; the Supervisor loads the profile
+when the app is installed or updated, so after an update check that the Diagnostics
+line says `local_sniff_test (enforce)` rather than `docker-default`.
+
 ## Installing as a local add-on
 
 1. In the repository: `uv run python scripts/stage_addon.py` (writes

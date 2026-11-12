@@ -1,0 +1,106 @@
+# Barkley's AppArmor profile (app slug sniff_test). The Supervisor loads it when the app
+# is installed or updated (never on Rebuild) and rewrites the profile name below to the
+# app's id (local_sniff_test here; <repository hash>_sniff_test from a store). It takes
+# the security rating from 7 to 8, but the point is the scanner: it parses hostile code
+# with Semgrep, GuardDog, osv-scanner and uv, and a hole in one of those parsers must not
+# be able to do more than this file allows. Every process runs under this one profile.
+#
+# What it allows, and why:
+# - s6-overlay and bashio: the block from HA's own example profile, kept whole.
+# - Run only what the image ships: the image's Python 3.13, the scanner's venv, the
+#   tools' venvs, uv and osv-scanner. Nothing under /tmp, /data or HOME is executable.
+# - Write only under /data (the store, options.json, the caches; HOME is moved to
+#   /data/cache/home by the run script so Semgrep's settings and log and uv's credential
+#   store land there; GuardDog's typosquat lists refresh into /data/cache/guarddog) and
+#   /tmp (one workspace per scan). /opt, /usr and /etc are never written.
+# - Network: TCP to GitHub, PyPI, HA's wheel index, OSV, the Supervisor's API and Core
+#   proxy, and the ingress panel on 8099; UDP and netlink for DNS. No raw sockets.
+# - No capabilities, no mount, no ptrace.
+#
+# Grounded in an strace of doctor, the four fixtures and two real scans (Bambu Lab
+# v2.3.0, Mushroom v5.2.3) in the arm64 image on 2026-11-11, then complain mode on the
+# user's box. HA OS 18.4 runs AppArmor 3.1.7: no abi line, nothing newer than 3.0 syntax.
+#include <tunables/global>
+
+profile sniff_test flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  # DNS and the sockets for it: inet/inet6 stream and dgram, netlink raw; /etc/hosts,
+  # resolv.conf, nsswitch.conf, gai.conf; libnss.
+  #include <abstractions/nameservice>
+
+  # Signals: s6 supervises its service, the scanner kills a tool that overran its
+  # timeout, Go's runtime (osv-scanner) signals its own threads; `docker stop` sends
+  # TERM from the host.
+  signal (send, receive) peer=@{profile_name},
+  signal (receive) peer=unconfined,
+
+  # Unix sockets: only the tools' own IPC (Python's multiprocessing in Semgrep); base
+  # already limits unix peers to this profile.
+  network unix stream,
+  network unix dgram,
+
+  # --- s6-overlay and bashio (HA's example profile; keep as is) ---
+  /init ix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /run/{s6,s6-rc*,service}/** ix,
+  /package/** ix,
+  /command/** ix,
+  /etc/services.d/** rwix,
+  /etc/cont-init.d/** rwix,
+  /etc/cont-finish.d/** rwix,
+  /etc/s6-overlay/** rwix,
+  /run/{,**} rwk,
+  /dev/tty rw,
+  /usr/lib/bashio/** ix,
+  /tmp/** rwk,
+  /data/** rw,
+
+  # --- Barkley ---
+  # The image's Python 3.13, the scanner's venv and the tools' venvs: read, map their
+  # native modules, run their launchers. Semgrep's engine (semgrep-core) is a native
+  # binary inside its package.
+  /usr/lib/python3.13/{,**} r,
+  /usr/lib/python3.13/lib-dynload/*.so mr,
+  /usr/lib/python3/{,**} r,
+  /usr/local/lib/python3.13/{,**} r,
+  /opt/sniff-test/{,**} r,
+  /opt/sniff-test/bin/* ix,
+  /opt/sniff-test/**.so mr,
+  /opt/tools/{,**} r,
+  /opt/tools/*/bin/* ix,
+  /opt/tools/**.so mr,
+  /opt/tools/semgrep/lib/python3*/site-packages/semgrep/bin/* ix,
+  /usr/local/bin/* ix,
+  # uv learns the C library's version by running the dynamic loader (`ld.so --version`).
+  /{usr/,}lib{,64}/ld-linux-*.so* ix,
+  /{usr/,}lib/@{multiarch}/ld-linux-*.so* ix,
+
+  # The store (SQLite needs locks), options.json, the caches (HA's constraints, uv,
+  # GuardDog's lists), HOME; and one temp workspace per scan. Never executable.
+  /data/{,**} rwk,
+  /tmp/{,**} rwk,
+
+  # What the tools read: TLS roots (urllib, curl, uv, osv-scanner), the OS id (uv),
+  # terminfo (bashio's shell), MIME types (urllib).
+  /etc/ssl/{,**} r,
+  /usr/lib/ssl/{,**} r,
+  /usr/share/ca-certificates/{,**} r,
+  /etc/os-release r,
+  /usr/lib/os-release r,
+  /etc/mime.types r,
+  /etc/inputrc r,
+  /etc/terminfo/{,**} r,
+  /usr/share/terminfo/{,**} r,
+  # Facts the panel reads: free memory (the memory guard) is in base; the profile the
+  # process runs under (diagnostics). Python's subprocess lists its own fds; uv and Go
+  # read their cgroup limits and their own exe path.
+  @{PROC}/@{pid}/attr/{,apparmor/}current r,
+  @{PROC}/@{pid}/fd/ r,
+  @{PROC}/@{pid}/cgroup r,
+  @{PROC}/@{pid}/mountinfo r,
+  @{PROC}/@{pid}/exe r,
+  @{sys}/fs/cgroup/{,**} r,
+  @{sys}/devices/system/cpu/{,**} r,
+  @{sys}/kernel/mm/transparent_hugepage/{,*} r,
+}

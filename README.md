@@ -103,6 +103,11 @@ them, so a manifest can't smuggle in installer options like `-e` or `--index-url
 Lockfiles are scanned in isolation with Barkley's own osv-scanner config, so a planted
 `osv-scanner.toml` can't hide a malicious package.
 
+In the app, every process runs under Barkley's own AppArmor profile
+(`addon/sniff_test/apparmor.txt`): it can run only the tools the image ships, write only
+under `/data` and `/tmp`, and open only network sockets (no raw sockets, no
+capabilities). A hole in one of the parsers that read hostile code is confined to that.
+
 ## Home Assistant add-on (app)
 
 `addon/sniff_test/` is the add-on: a Debian-based image with Semgrep, GuardDog,

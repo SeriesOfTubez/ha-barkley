@@ -55,6 +55,28 @@ def test_options_match_the_run_script():
     assert run.startswith("#!/command/with-contenv bashio")
     assert m["backup_exclude"] == ["cache/*"]
     assert "SNIFF_TEST_CACHE=/data/cache" in run
+    assert "export HOME=/data/cache/home" in run  # tools' home files stay under /data
+
+
+def test_apparmor_profile_is_what_the_supervisor_loads():
+    """supervisor/utils/apparmor.py (2026-11-11): exactly one `profile <name>` line, whose
+    name is rewritten to the app's id on install/update; the app folder's apparmor.txt is
+    loaded instead of docker-default (contributors.home-assistant.io/apps/reference/files)."""
+    text = (ADDON / "apparmor.txt").read_text()
+    heads = [ln for ln in text.splitlines() if ln.startswith("profile ")]
+    assert len(heads) == 1 and heads[0].split()[1] == manifest()["slug"]
+    assert "flags=(attach_disconnected,mediate_deleted)" in heads[0]
+    assert "#include <tunables/global>" in text and "#include <abstractions/base>" in text
+    for rule in ("/init ix,", "/usr/lib/bashio/** ix,", "/etc/s6-overlay/** rwix,"):
+        assert rule in text  # HA's s6/bashio block, kept whole
+    # Writes only under /data and /tmp; nothing downloaded is executable; no capabilities.
+    lines = [ln.strip() for ln in text.splitlines()]
+    rules = [ln for ln in lines if ln and not ln.startswith("#")]
+    assert "/data/{,**} rwk," in rules and "/tmp/{,**} rwk," in rules
+    for forbidden in ("capability", "mount", "ptrace", "/tmp/** ix", "/data/** ix", "file,"):
+        assert not any(r.startswith(forbidden) or f" {forbidden}" in r for r in rules), forbidden
+    assert not any(r.startswith(("/tmp/", "/data/")) and "x" in r.split()[-1] for r in rules)
+    assert "complain" not in heads[0]  # enforce (complain was only for the first on-box run)
 
 
 def test_panel_only_trusts_the_supervisor_by_default():

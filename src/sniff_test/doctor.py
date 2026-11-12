@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from sniff_test import memory, supervisor
-from sniff_test.analyzers import _proc
+from sniff_test.analyzers import _proc, guarddog
 from sniff_test.analyzers.semgrep import _tool_env as semgrep_env
 from sniff_test.analyzers.semgrep import rules_dir
 from sniff_test.fetch.github import GitHub, RateLimit
@@ -177,13 +177,16 @@ def run_checks(addon: bool = False) -> list[Check]:
         checks.append(sg)
         env = _proc.tool_env()
         checks.append(_run("osv-scanner --version", ["osv-scanner", "--version"], run_dir, env))
-        checks.append(_run("guarddog --version", ["guarddog", "--version"], run_dir, env))
+        gd_exe = shutil.which("guarddog")
+        gd_env = guarddog.tool_env(gd_exe) if gd_exe else env  # lists cached under /data
+        checks.append(_run("guarddog --version", ["guarddog", "--version"], run_dir, gd_env))
         gd_cmd = ["guarddog", "pypi", "scan", str(sample), "--output-format", "json"]
-        gd = _run("guarddog scan (one-line sample)", gd_cmd, run_dir, env)
+        gd = _run("guarddog scan (one-line sample)", gd_cmd, run_dir, gd_env)
         if not gd.ok and "sandbox" in gd.stderr.lower():
             # What the analyzer does too: GuardDog only parses; the container is the
             # outer sandbox. Reported, not hidden.
-            retry = _run("guarddog scan (one-line sample)", [*gd_cmd, "--no-sandbox"], run_dir, env)
+            retry = _run("guarddog scan (one-line sample)", [*gd_cmd, "--no-sandbox"], run_dir,
+                         gd_env)  # fmt: skip
             retry.summary += "; kernel sandbox unavailable here, ran with --no-sandbox"
             gd = retry
         checks.append(gd)

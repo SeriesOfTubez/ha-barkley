@@ -10,7 +10,11 @@ if [ -n "${token}" ] && [ "${token}" != "null" ]; then
 fi
 # Downloaded HA constraints and package caches: persistent, but excluded from backups.
 export SNIFF_TEST_CACHE=/data/cache
-mkdir -p "${SNIFF_TEST_CACHE}"
+# HOME too: Semgrep keeps settings.yml and its log in ~/.semgrep, uv its credential
+# store in ~/.local/share/uv. The AppArmor profile lets the app write only under /data
+# and /tmp, and nothing in /root is worth keeping.
+export HOME=/data/cache/home
+mkdir -p "${SNIFF_TEST_CACHE}" "${HOME}"
 
 bashio::log.info "Starting Barkley (exposure: $(bashio::config 'exposure'))"
 exec sniff-test serve \

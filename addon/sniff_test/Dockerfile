@@ -108,6 +108,10 @@ ENV UV_PYTHON_DOWNLOADS=never \
 COPY --from=build /opt/tools /opt/tools
 COPY --from=build /opt/sniff-test /opt/sniff-test
 COPY --from=build /usr/local/bin/ /usr/local/bin/
+# Precompile the venvs: 3,200 modules had no .pyc, so every run tried to write them next
+# to the code (strace, 2026-11-11). Under the AppArmor profile /opt is read-only, and
+# those writes would be denied (silently to Python, loudly in the audit log).
+RUN python3 -m compileall -q -j 0 /opt/tools /opt/sniff-test
 
 COPY rootfs /
 

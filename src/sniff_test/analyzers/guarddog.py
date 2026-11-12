@@ -30,6 +30,7 @@ from sniff_test.analyzers.python_deps import Resolution, ResolvedPackage, fetch_
 from sniff_test.analyzers.semgrep import neutralize_ignores
 from sniff_test.deps.uv import Artifact
 from sniff_test.models import AnalyzerResult, AnalyzerState, Category, Finding, Severity, Tag
+from sniff_test.paths import cache_root
 
 NAME = "guarddog"
 _TIMEOUT = 300
@@ -86,21 +87,56 @@ _UNKNOWN_THREAT = Severity.LOW
 
 
 def guarddog_version() -> str | None:
+    """Even `--version` imports the typosquat module, which refreshes the lists (so it
+    needs `tool_env`: under the app's AppArmor profile the plain call would crash)."""
     exe = shutil.which("guarddog")
-    return _proc.version([exe, "--version"]) if exe else None
+    return _proc.version([exe, "--version"], tool_env(exe)) if exe else None
 
 
-def _scan(exe: str, target: Path, run_dir: Path) -> tuple[dict | None, str, bool]:
+def shipped_lists(exe: str) -> Path | None:
+    """GuardDog's `resources/` folder (its vendored top-PyPI/npm lists) next to `exe`:
+    the venv layout of `uv tool install` and of the app image (/opt/tools/guarddog)."""
+    root = Path(exe).resolve().parent.parent
+    for p in root.glob("lib/python3*/site-packages/guarddog/analyzer/metadata/resources"):
+        if (p / "top_pypi_packages.json").is_file():
+            return p
+    return None
+
+
+def tool_env(exe: str) -> dict[str, str]:
+    """GuardDog's environment. Its typosquat lists expire after 30 days, and then it
+    downloads fresh ones and writes them next to its own code (an unguarded `open(w+)`
+    in `_get_top_packages_with_refresh`): with the shipped lists dated 2026-06 that
+    happens on the first scan of every fresh container. The lists are kept in our cache
+    instead (`GUARDDOG_TOP_PACKAGES_CACHE_LOCATION`), seeded from the shipped ones, so
+    the tool's install is never written (the app's AppArmor profile keeps /opt read-only)
+    and a refresh survives restarts like HA's constraints do. Without the shipped folder
+    (an unusual install) GuardDog is left as it is."""
+    shipped = shipped_lists(exe)
+    if shipped is None:
+        return _proc.tool_env()
+    cache = cache_root() / "guarddog"
+    cache.mkdir(parents=True, exist_ok=True)
+    for src in shipped.glob("top_*_packages.json"):
+        dst = cache / src.name
+        if not dst.exists():
+            shutil.copyfile(src, dst)
+    return _proc.tool_env(GUARDDOG_TOP_PACKAGES_CACHE_LOCATION=str(cache))
+
+
+def _scan(
+    exe: str, target: Path, run_dir: Path, env: dict[str, str] | None = None
+) -> tuple[dict | None, str, bool]:
     """Returns (json, error, sandboxed)."""
     base = [exe, "pypi", "scan", str(target), "--output-format", "json"]
     sandboxed = True
     try:
-        proc = _proc.run(base, run_dir, _TIMEOUT)
+        proc = _proc.run(base, run_dir, _TIMEOUT, env)
         if proc.returncode != 0 and "sandbox" in proc.stderr.lower():
             # No kernel sandbox here (e.g. some containers). GuardDog only parses files,
             # so fall back, but record it.
             sandboxed = False
-            proc = _proc.run([*base, "--no-sandbox"], run_dir, _TIMEOUT)
+            proc = _proc.run([*base, "--no-sandbox"], run_dir, _TIMEOUT, env)
     except subprocess.TimeoutExpired:
         return None, "timed out", sandboxed
     try:
@@ -160,6 +196,7 @@ def run(resolution: Resolution | None, work: Path, jobs: int | None = None) -> A
     if not exe:
         return AnalyzerResult(NAME, AnalyzerState.SKIPPED, detail="guarddog not installed")
     run_dir = _proc.empty_dir(work, "guarddog-run")
+    env = tool_env(exe)
 
     jobs_list: list[tuple[ResolvedPackage, Artifact]] = []
     seen: set[str] = set()
@@ -176,7 +213,7 @@ def run(resolution: Resolution | None, work: Path, jobs: int | None = None) -> A
         if local is None:
             return item, None, "download/extract failed", True
         neutralize_ignores(local)
-        return (item, *_scan(exe, local, run_dir))
+        return (item, *_scan(exe, local, run_dir, env))
 
     findings: list[Finding] = []
     errors: list[str] = []
