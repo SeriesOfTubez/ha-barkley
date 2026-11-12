@@ -67,8 +67,29 @@ def test_apparmor_profile_is_what_the_supervisor_loads():
     assert len(heads) == 1 and heads[0].split()[1] == manifest()["slug"]
     assert "flags=(attach_disconnected,mediate_deleted)" in heads[0]
     assert "#include <tunables/global>" in text and "#include <abstractions/base>" in text
-    for rule in ("/init ix,", "/usr/lib/bashio/** ix,", "/etc/s6-overlay/** rwix,"):
-        assert rule in text  # HA's s6/bashio block, kept whole
+    # HA's s6/bashio paths. HA's example grants `file,` on top, so its `ix` lines never
+    # needed `r`; without `file,` the box's logging-only run (0.7.7) showed s6 reading its
+    # own scripts, so the exec lines carry `r` here.
+    for rule in (
+        "/init rix,",
+        "/package/{,**} rix,",
+        "/command/{,**} rix,",
+        "/usr/lib/bashio/** ix,",
+        "/etc/s6-overlay/{,**} rwix,",
+    ):
+        assert rule in text
+    # The other two groups the box showed: bundled libraries named `.so.N` (semgrep-core,
+    # pygit2, yara-python), and uv listing PATH then reading the shell and Python it finds
+    # (plus osv-scanner reading its own binary).
+    for rule in (
+        "/opt/tools/**.so{,.*} mr,",
+        "/opt/sniff-test/**.so{,.*} mr,",
+        "/{usr/,}{s,}bin/ r,",
+        "/usr/local/{s,}bin/ r,",
+        "/usr/bin/** rix,",
+        "/usr/local/bin/* rix,",
+    ):
+        assert rule in text
     # Writes only under /data and /tmp; nothing downloaded is executable; no capabilities.
     lines = [ln.strip() for ln in text.splitlines()]
     rules = [ln for ln in lines if ln and not ln.startswith("#")]

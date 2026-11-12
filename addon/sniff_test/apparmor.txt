@@ -6,7 +6,11 @@
 # be able to do more than this file allows. Every process runs under this one profile.
 #
 # What it allows, and why:
-# - s6-overlay and bashio: the block from HA's own example profile, kept whole.
+# - s6-overlay and bashio: the paths from HA's own example profile. HA's example also
+#   grants `file,` (every file, every permission) at the top, which is why its `ix` lines
+#   never needed `r`; this profile has no `file,`, so the scripts and binaries that are
+#   read as well as run (execline scripts read themselves, uv reads the shell and Python
+#   it finds on PATH, osv-scanner reads its own binary) carry `r` explicitly.
 # - Run only what the image ships: the image's Python 3.13, the scanner's venv, the
 #   tools' venvs, uv and osv-scanner. Nothing under /tmp, /data or HOME is executable.
 # - Write only under /data (the store, options.json, the caches; HOME is moved to
@@ -18,8 +22,11 @@
 # - No capabilities, no mount, no ptrace.
 #
 # Grounded in an strace of doctor, the four fixtures and two real scans (Bambu Lab
-# v2.3.0, Mushroom v5.2.3) in the arm64 image on 2026-11-11, then complain mode on the
-# user's box. HA OS 18.4 runs AppArmor 3.1.7: no abi line, nothing newer than 3.0 syntax.
+# v2.3.0, Mushroom v5.2.3) in the arm64 image on 2026-11-11, then one logging-only run
+# of 0.7.7 on the user's HA OS box (Diagnostics, 16 re-sniffs, two sniffs from search, a
+# test notification, Explain in context): 9,304 would-be denials, all of them reads, in
+# three groups, each allowed below with its cause. 0.7.8 enforces. HA OS 18.4 runs
+# AppArmor 3.1.7: no abi line, nothing newer than 3.0 syntax.
 #include <tunables/global>
 
 profile sniff_test flags=(attach_disconnected,mediate_deleted) {
@@ -39,17 +46,22 @@ profile sniff_test flags=(attach_disconnected,mediate_deleted) {
   network unix stream,
   network unix dgram,
 
-  # --- s6-overlay and bashio (HA's example profile; keep as is) ---
-  /init ix,
-  /bin/** ix,
-  /usr/bin/** ix,
-  /run/{s6,s6-rc*,service}/** ix,
-  /package/** ix,
-  /command/** ix,
-  /etc/services.d/** rwix,
-  /etc/cont-init.d/** rwix,
-  /etc/cont-finish.d/** rwix,
-  /etc/s6-overlay/** rwix,
+  # --- s6-overlay and bashio (HA's example profile's paths, with `r` where the box's
+  # logging-only run showed a read: /init and s6's stage scripts are read by s6 itself,
+  # execline scripts such as printcontenv re-open themselves, s6-rc-compile reads the
+  # service definitions under /package, and the services.d / fix-attrs.d folders are
+  # listed) ---
+  /init rix,
+  /bin/** rix,
+  /usr/bin/** rix,
+  /run/{s6,s6-rc*,service}/** rix,
+  /package/{,**} rix,
+  /command/{,**} rix,
+  /etc/services.d/{,**} rwix,
+  /etc/cont-init.d/{,**} rwix,
+  /etc/cont-finish.d/{,**} rwix,
+  /etc/fix-attrs.d/{,**} r,
+  /etc/s6-overlay/{,**} rwix,
   /run/{,**} rwk,
   /dev/tty rw,
   /usr/lib/bashio/** ix,
@@ -59,20 +71,29 @@ profile sniff_test flags=(attach_disconnected,mediate_deleted) {
   # --- Barkley ---
   # The image's Python 3.13, the scanner's venv and the tools' venvs: read, map their
   # native modules, run their launchers. Semgrep's engine (semgrep-core) is a native
-  # binary inside its package.
+  # binary inside its package, and it maps 26 bundled libraries named like
+  # libcrypto.so.3 and libtree-sitter.so.0.26 (pygit2 and yara-python bundle theirs the
+  # same way), so the map rules take any `.so.*` suffix.
   /usr/lib/python3.13/{,**} r,
-  /usr/lib/python3.13/lib-dynload/*.so mr,
+  /usr/lib/python3.13/lib-dynload/*.so{,.*} mr,
   /usr/lib/python3/{,**} r,
   /usr/local/lib/python3.13/{,**} r,
   /opt/sniff-test/{,**} r,
   /opt/sniff-test/bin/* ix,
-  /opt/sniff-test/**.so mr,
+  /opt/sniff-test/**.so{,.*} mr,
   /opt/tools/{,**} r,
   /opt/tools/*/bin/* ix,
-  /opt/tools/**.so mr,
+  /opt/tools/**.so{,.*} mr,
   /opt/tools/semgrep/lib/python3*/site-packages/semgrep/bin/* ix,
-  /usr/local/bin/* ix,
-  # uv learns the C library's version by running the dynamic loader (`ld.so --version`).
+  # uv and osv-scanner, plus the venv launchers linked here. osv-scanner reads its own
+  # binary at start (Go's build info), so `r` as well as exec.
+  /usr/local/bin/* rix,
+  # uv looks for Python interpreters by listing every directory on PATH, then reads the
+  # ones it finds (/usr/bin/python3.13, and the shell), so the PATH directories are
+  # listable. uv also learns the C library's version by running the dynamic loader
+  # (`ld.so --version`).
+  /{usr/,}{s,}bin/ r,
+  /usr/local/{s,}bin/ r,
   /{usr/,}lib{,64}/ld-linux-*.so* ix,
   /{usr/,}lib/@{multiarch}/ld-linux-*.so* ix,
 
