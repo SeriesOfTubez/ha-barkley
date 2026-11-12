@@ -87,19 +87,29 @@ InstalledFn = Callable[[], tuple[list[Installed], dict[str, int]]]
 
 @dataclass(frozen=True, slots=True)
 class Change:
-    action: str  # install | update
+    action: str  # install | update | available (an update the Marketplace offers)
     repo: str
     kind: str
-    version: str
-    previous: str | None = None
+    version: str  # what landed; for "available", the offered version
+    previous: str | None = None  # the version before; for "available", the installed one
 
 
 def _now_iso(now: float) -> str:
     return datetime.fromtimestamp(now, UTC).isoformat(timespec="seconds")
 
 
+def _did(c: Change) -> str:
+    if c.action == "available":
+        return f"has an update waiting {c.previous} → {c.version}"
+    return f"updated {c.previous} → {c.version}" if c.previous else f"installed {c.version}"
+
+
 def snapshot_changes(old: dict[str, Any] | None, new: dict[str, Any]) -> list[Change]:
-    """Installs and updates between two snapshots ({lower repo: {repo, kind, version}})."""
+    """Installs, updates and newly offered updates between two snapshots
+    ({lower repo: {repo, kind, version, available}}). An offered update ("available",
+    user request 2026-11-12) is sniffed before it is installed, so the heads-up comes
+    first; a snapshot from before 0.7.8 has no `available`, so every update waiting at that
+    moment counts as newly offered once."""
     if old is None:
         return []
     out = []
@@ -107,16 +117,22 @@ def snapshot_changes(old: dict[str, Any] | None, new: dict[str, Any]) -> list[Ch
         prev = old.get(key)
         if not isinstance(prev, dict):
             out.append(Change("install", cur["repo"], cur["kind"], cur["version"]))
-        elif prev.get("version") != cur["version"]:
+            continue
+        if prev.get("version") != cur["version"]:
             out.append(Change("update", cur["repo"], cur["kind"], cur["version"],
                               str(prev.get("version") or "")))  # fmt: skip
+        offered = cur.get("available") or ""
+        if offered and offered != cur["version"] and offered != (prev.get("available") or ""):
+            out.append(Change("available", cur["repo"], cur["kind"], offered, cur["version"]))
     return out
 
 
 def snapshot_of(items: Iterable[Installed]) -> dict[str, dict[str, str]]:
     return {
-        it.repo.lower(): {"repo": it.repo, "kind": it.kind, "version": it.installed} for it in items
-    }
+        it.repo.lower(): {"repo": it.repo, "kind": it.kind, "version": it.installed,
+                          "available": it.available}
+        for it in items
+    }  # fmt: skip
 
 
 def matters(signal: str, data: dict[str, Any]) -> bool:
@@ -170,8 +186,16 @@ def notification(
     kind = _KIND.get(str(entry.get("kind")), "App")
     label, emoji = _VERDICT.get(str(report.get("verdict", {}).get("key")), ("?", ""))
     score = int(report.get("score", 0))
-    did = f"was updated from {prev} to {ver}" if prev else f"{ver} was installed"
-    lines = [f"{kind} {repo} {did} and sniffed: {emoji} {label}, {score}/100."]
+    offered = entry.get("action") == "available"
+    if offered:
+        did = f"has an update waiting, {prev} → {ver}, sniffed before you install it"
+    else:
+        did = (
+            f"was updated from {prev} to {ver} and sniffed"
+            if prev
+            else f"{ver} was installed and sniffed"
+        )
+    lines = [f"{kind} {repo} {did}: {emoji} {label}, {score}/100."]
     titles = top_titles(report)
     if titles:
         lines.append("Worth a look: " + "; ".join(titles) + ".")
@@ -192,7 +216,7 @@ def notification(
     if len(ids) == 2:
         where += f", what the update changes @{ids[0]} → @{ids[1]}"
     link = f"[Open Barkley]({panel})" if panel else "Open Barkley from the sidebar"
-    title = f"Barkley: {repo} {ver}"
+    title = f"Barkley: {repo} {ver}" + (" (update waiting)" if offered else "")
     plain = " ".join(lines) + f" Open Barkley from the sidebar: {where}."
     return title, "\n\n".join(lines) + f"\n\n{link}: {where}.", plain
 
@@ -463,7 +487,7 @@ class Watcher:
         )  # fmt: skip
 
     def _handle(self, c: Change) -> None:
-        did = f"updated {c.previous} → {c.version}" if c.previous else f"installed {c.version}"
+        did = _did(c)
         print(f"auto-sniff: {c.repo} {did}" + ("" if self.enabled else " (auto-sniff is off)"),
               file=sys.stderr, flush=True)  # fmt: skip
         if not self.enabled:
@@ -526,10 +550,20 @@ class Watcher:
         snap = self._snapshot() or {}
         with self._lock:
             self._save_pending([])
+        # Anything this process already queued (by `check`, a moment ago) is not a leftover,
+        # even when its job has finished and its on-done hook hasn't cleared it yet.
+        queued = {(j.repo.lower(), j.ref) for j in list(self.worker.jobs)}
         out = []
         for c in items:
+            if (c.repo.lower(), c.version) in queued:
+                continue
             cur = snap.get(c.repo.lower())
-            if not self.enabled or not isinstance(cur, dict) or cur.get("version") != c.version:
+            still = isinstance(cur, dict) and (
+                cur.get("available") == c.version and cur.get("version") == c.previous
+                if c.action == "available"
+                else cur.get("version") == c.version
+            )
+            if not self.enabled or not still:
                 print(f"auto-sniff: dropping the sniff of {c.repo} {c.version} that a restart "
                       "interrupted: no longer installed at that version"
                       + ("" if self.enabled else " (auto-sniff is off)"),
@@ -579,7 +613,10 @@ class Watcher:
         if report is not None:
             title, md, plain = notification(entry, report, d, self.panel_path())
         else:
-            did = f"the update to {c.version}" if c.previous else f"version {c.version}"
+            if c.action == "available":
+                did = f"the offered update {c.version}"
+            else:
+                did = f"the update to {c.version}" if c.previous else f"version {c.version}"
             title = f"Barkley: {c.repo} {c.version}"
             md = plain = (
                 f"Barkley couldn't sniff {did} of {c.repo} ({job.state}: "
@@ -589,6 +626,8 @@ class Watcher:
         # One line per outcome in the app's log (a finished job printed nothing before, so
         # the log on the user's box couldn't say whether a sniff ended before a rebuild).
         ver = f"{c.previous} → {c.version}" if c.previous else c.version
+        if c.action == "available":
+            ver += " (update waiting)"
         ids = " → ".join(f"@{i}" for i in job.scan_ids) or "no scan"
         if report is not None:
             label, emoji = _VERDICT.get(entry.get("verdict", ""), ("?", ""))

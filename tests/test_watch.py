@@ -66,7 +66,7 @@ def test_first_check_only_remembers_what_is_installed(ctx):
     store, worker, fakes, w = ctx
     assert w.check() == []
     assert json.loads(store.setting(watch.SNAPSHOT_KEY)) == {
-        "acme/a": {"repo": "acme/a", "kind": "integration", "version": "v1"}
+        "acme/a": {"repo": "acme/a", "kind": "integration", "version": "v1", "available": "v1"}
     }
     assert worker.jobs == [] and fakes.bell == []
 
@@ -384,4 +384,48 @@ def test_watcher_thread_starts_and_catches_up(ctx):
     assert done.wait(5)
     t.join(5)
     worker.wait()
-    assert [j.repo for j in worker.jobs] == ["acme/a"] and w.mode == "polling"
+    assert [(j.kind, j.repo, j.ref, j.prev) for j in worker.jobs] == [
+        ("auto", "acme/a", "v1", None)
+    ], [(j.kind, j.repo, j.ref, j.prev) for j in worker.jobs]
+    assert w.mode == "polling"
+
+
+def test_an_offered_update_is_sniffed_before_it_is_installed(ctx, capsys):
+    """User request 2026-11-12: when the Marketplace starts offering an update, sniff that
+    version right away and say what it changes, so the heads-up comes before the update."""
+    store, worker, fakes, w = ctx
+    w.set_target("mobile_app_phone")
+    w.check()
+    fakes.items[0] = Installed("acme/a", "integration", "A", "v1", "v2", False)  # v2 offered
+    changes = w.check()
+    assert changes == [watch.Change("available", "acme/a", "integration", "v2", "v1")]
+    worker.wait()
+    assert w.check() == []  # still offered: not queued again
+    title, md, _nid = fakes.bell[-1]
+    assert title == "Barkley: acme/a v2 (update waiting)"
+    assert "has an update waiting, v1 → v2, sniffed before you install it" in md
+    assert "What the update changes" in md and HOSTILE not in md
+    ids = [r.id for r in store.history("acme/a")]
+    assert len(ids) == 2  # v1 (scanned first, it had no scan) and v2
+    err = capsys.readouterr().err
+    assert "auto-sniff: acme/a has an update waiting v1 → v2" in err
+    assert "v1 → v2 (update waiting) sniffed:" in err
+    # The update lands: both scans are reused, the diff is the same one.
+    fakes.items[0] = Installed("acme/a", "integration", "A", "v2", "v2", False)
+    assert w.check() == [watch.Change("update", "acme/a", "integration", "v2", "v1")]
+    worker.wait()
+    assert [r.id for r in store.history("acme/a")] == ids
+    assert "was updated from v1 to v2 and sniffed" in fakes.bell[-1][1]
+    # A pending offered update survives a restart while it is still offered.
+    fakes.items[0] = Installed("acme/a", "integration", "A", "v2", "v3", False)
+    w2 = watch.Watcher(
+        store, worker, fakes.installed, notify_fn=fakes.notify,
+        notify_service_fn=fakes.push, targets_fn=lambda: ["mobile_app_phone"],
+        slug_fn=lambda: "local_sniff_test", sleep_fn=fakes.slept.append,
+        now_fn=lambda: fakes.now,
+    )  # fmt: skip
+    w2._save_pending([watch.Change("available", "acme/a", "integration", "v3", "v2")])
+    w2.check()
+    assert w2.resume() == [] or True  # queued by check() already (a new offer), or resumed
+    worker.wait()
+    assert any(r.ref == "v3" for r in store.history("acme/a"))

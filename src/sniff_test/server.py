@@ -697,7 +697,8 @@ AUTO_NOTE = (
     "<b>A new integration runs as soon as it's installed:</b> Home Assistant opens its setup "
     "right away, which loads its code. The auto-sniff of a new install comes after that, so "
     "the protection for a new install is sniffing it from search <i>before</i> you install. "
-    "An update's new code waits for a restart, so its sniff and diff come before it runs."
+    "An update is sniffed <b>as soon as the Marketplace offers it</b>, so the heads-up and "
+    "what it changes come before you update; its new code waits for a restart anyway."
 )
 
 
@@ -723,8 +724,12 @@ def render_auto(base: str, w: watch.Watcher, token: str, now: float | None = Non
         links = " ".join(f'<a href="{base}/scan/{i}">@{i}</a>' for i in ids)
         if len(ids) == 2:
             links += f' · <a href="{base}/diff?old={ids[0]}&amp;new={ids[1]}">diff</a>'
-        did = (f"updated {e(x.get('previous'))} → {e(x.get('version'))}" if x.get("previous")
-               else f"installed {e(x.get('version'))}")  # fmt: skip
+        if x.get("action") == "available":
+            did = f"update {e(x.get('previous'))} → {e(x.get('version'))} waiting"
+        elif x.get("previous"):
+            did = f"updated {e(x.get('previous'))} → {e(x.get('version'))}"
+        else:
+            did = f"installed {e(x.get('version'))}"
         if "score" in x:
             result = _verdict(int(x["score"]), str(x.get("verdict", "")))
             if x.get("changes"):
@@ -747,11 +752,11 @@ def render_auto(base: str, w: watch.Watcher, token: str, now: float | None = Non
     )  # fmt: skip
     return (
         f'<div class="box auto"><h2>Auto-sniff: {"on" if on else "off"} · {who}</h2>'
-        '<p class="sub">When the Marketplace installs or updates an integration or card, '
-        "Barkley sniffs the version that landed (reusing a stored scan of that exact version, "
-        "for example one you sniffed from search) and sends a notification: the app, its "
-        "version, the verdict and score, what's worth a look, and for an update what changed "
-        "since the version you had.</p>"
+        '<p class="sub">When the Marketplace offers an update, installs or updates an '
+        "integration or card, Barkley sniffs that version (reusing a stored scan of that exact "
+        "version, for example one you sniffed from search) and sends a notification: the app, "
+        "its version, the verdict and score, what's worth a look, and for an update what "
+        "changes compared with the version you have.</p>"
         f"<p>{AUTO_NOTE}</p>"
         '<div class="again">'
         f'<form method=post action="{base}/auto-scan">{hidden}'

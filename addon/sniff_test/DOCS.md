@@ -54,6 +54,10 @@ while Barkley was stopped). When an integration or card is installed or updated:
 - For an update it shows **what changed** since the version you had, using the stored
   scan of that version (scanning it first if there is none). One scan per version; the
   scan queues behind whatever is already running.
+- **An offered update is sniffed before you install it.** When the Marketplace starts
+  offering a new version of something you have, Barkley sniffs that version right away
+  and tells you what it changes, so the heads-up comes before you click Update. The
+  auto-sniff after the update then reuses those scans.
 - It sends a **bell notification** in Home Assistant (always) and, if you picked one in
   the panel, a `notify.<target>` message (for example your phone through the companion
   app): the app and version, the verdict and score, up to three things worth a look in
@@ -84,7 +88,7 @@ scan of anything installed, at any version, is never deleted.
 | `github_token` | empty | A GitHub token (no scopes needed) for the 5,000 requests/hour limit instead of 60. |
 | `ai_entity` | empty | Optional. Easier: pick your AI in the panel (any app's page, "Explain this app with AI"), which lists your AI Task entities. A choice made in the panel wins over this option. |
 | `ai_mode` | `summary` | `summary`: the AI explains the findings. `deep`: it can also read the code around one finding, port or unknown address when you click **Explain in context**. Also set in the panel (wins over this option). |
-| `auto_scan` | `true` | Sniff every Marketplace install and update and send a notification. Also set in the panel (wins over this option). |
+| `auto_scan` | `true` | Sniff every Marketplace install, update and offered update, and send a notification. Also set in the panel (wins over this option). |
 | `notify_target` | empty | A `notify` service name (for example `mobile_app_my_phone`) that gets each auto-sniff result besides the bell notification. Easier: pick it in the panel, which lists your notify services (wins over this option). |
 
 ### AI explanations
