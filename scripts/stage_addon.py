@@ -33,11 +33,26 @@ SCANNER_DIRS = ("src", "rules")
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store")
 
 
+def _build_locally(config: Path) -> None:
+    """Drop the `image:` key from the staged manifest.
+
+    The repository's config.yaml names the published image, so the app store pulls it.
+    With that key the Supervisor never builds: a staged folder on a box would pull the
+    last published image and ignore the source it carries.
+    """
+    lines = config.read_text().splitlines(keepends=True)
+    kept = [line for line in lines if not line.startswith("image:")]
+    if len(kept) != len(lines) - 1:
+        raise SystemExit(f"{config}: expected exactly one top-level `image:` line")
+    config.write_text("".join(kept))
+
+
 def stage(out: Path) -> Path:
     dest = out / "sniff_test"
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(ADDON, dest, ignore=_IGNORE)
+    _build_locally(dest / "config.yaml")
     scanner = dest / "scanner"
     scanner.mkdir()
     for name in SCANNER_FILES:

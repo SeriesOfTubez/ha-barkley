@@ -1,0 +1,5 @@
+# Home Assistant app repository manifest: lets the app store list addon/sniff_test.
+# Reference: https://contributors.home-assistant.io/apps/repository/
+name: Barkley
+url: https://github.com/SeriesOfTubez/ha-barkley
+maintainer: SeriesOfTubez

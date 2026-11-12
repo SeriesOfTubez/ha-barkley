@@ -1,9 +1,9 @@
 {
   "domain": "totally_legit_weather",
   "name": "Totally Legit Weather",
-  "codeowners": ["@not-a-hacker"],
+  "codeowners": ["@not_a_hacker"],
   "config_flow": true,
-  "documentation": "https://github.com/not-a-hacker/totally-legit-weather",
+  "documentation": "https://github.com/not_a_hacker/totally-legit-weather",
   "iot_class": "cloud_polling",
   "requirements": ["reqeusts==2.31.0"],
   "version": "1.0.0"

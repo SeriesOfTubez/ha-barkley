@@ -9,9 +9,25 @@ Barkley is the dog behind a static security scanner for Home Assistant Marketpla
 Python process; cards run in the HA frontend origin and can read your tokens. Nobody
 reviews them before you install. Barkley does a first pass.
 
-> **Status:** early development (step 1: CLI). Not yet a substitute for reading the code.
+> **Status:** young, and built by one person. Barkley is a first pass, not a substitute
+> for reading the code: a clean sniff means the checks below found nothing, not that
+> the code is safe. Other tools exist for this job (HA Security Sandbox, Marketplace
+> Guard); Barkley's difference is depth: dependencies resolved the way HA installs
+> them, data-flow rules, release and publisher history, and the diff of an update.
 
-## Usage
+## Install on Home Assistant
+
+Barkley runs as an app (add-on), so it needs Home Assistant OS or Supervised.
+
+1. Settings → Apps → the app store → ⋮ → Repositories, and add
+   `https://github.com/SeriesOfTubez/ha-barkley`.
+2. Install **Barkley**, start it, and open it from the sidebar.
+
+The app store downloads a prebuilt image (amd64 or aarch64, about 200 MB). What the
+app can do on your box, and why, is in its
+[documentation](addon/sniff_test/DOCS.md#permissions).
+
+## Command line
 
 ```sh
 uv run sniff-test scan https://github.com/owner/repo            # latest release, as HACS installs it
@@ -127,9 +143,32 @@ install now and diffs it against the stored scan of the installed tag. **Auto-sn
 watches the Marketplace: every install or update is scanned at the version that landed
 (reusing a scan sniffed from search), an update gets its diff, and a notification says
 what was found. Note that a new integration runs as soon as it's installed, so the
-protection for a new install is sniffing it from search first. Build from the
-repository root: `docker buildx build -f addon/sniff_test/Dockerfile .`. See
+protection for a new install is sniffing it from search first. See
 [`addon/sniff_test/DOCS.md`](addon/sniff_test/DOCS.md).
+
+### Where the image comes from
+
+`.github/workflows/build.yaml` builds the image when a release is published, on
+GitHub's runners, from `scripts/stage_addon.py`'s output (the app's files plus the
+scanner's source, never the tests or the malicious samples). The Dockerfile pins every
+tool's version: uv and osv-scanner are release binaries checked against a sha256,
+Semgrep and GuardDog are installed from wheels only (nothing is compiled), and the
+scanner's own dependencies are installed with hashes required. The base image's
+signature is checked before the build, the workflow's actions are pinned to commits,
+and a version that is already published is never overwritten.
+
+Each image is signed with [Cosign](https://docs.sigstore.dev/) by that workflow. Home
+Assistant doesn't check app signatures, so this is for you to check if you want to:
+
+```sh
+cosign verify ghcr.io/seriesoftubez/barkley:0.9.0 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/SeriesOfTubez/ha-barkley/'
+```
+
+To build it yourself instead: `uv run python scripts/stage_addon.py`, then
+`docker buildx build dist/addon/sniff_test`, or install the staged folder as a local
+app (see the app's documentation).
 
 ## Requirements
 
@@ -151,4 +190,5 @@ semgrep scan --test --config rules/ tests/rules/
 
 Rules live in `rules/` (Semgrep YAML) with annotated test targets in `tests/rules/`.
 `tests/fixtures/` contains deliberately malicious sample repos. They are never executed
-and only send to `.invalid` hosts.
+and only send to `.invalid` hosts. To report a security problem, see
+[SECURITY.md](SECURITY.md). MIT licensed.

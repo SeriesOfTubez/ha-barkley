@@ -163,9 +163,17 @@ use only ordinary network sockets. Nothing downloaded is executable. The scanner
 hostile code with several parsers, and this is the line that holds if one of them has a
 bug. Diagnostics shows the profile the app runs under; the Supervisor loads the profile
 when the app is installed or updated, so after an update check that the Diagnostics
-line says `local_sniff_test (enforce)` rather than `docker-default`.
+line names Barkley's own profile, ending in `sniff_test (enforce)`
+(`local_sniff_test (enforce)` for a local install), rather than `docker-default`.
 
-## Installing as a local add-on
+## Installing
+
+From the app store: Settings → Apps → the app store → ⋮ → Repositories, add
+`https://github.com/SeriesOfTubez/ha-barkley`, then install Barkley. Home Assistant
+downloads a prebuilt image for your box (amd64 or aarch64). Updates then appear on the
+app's page like any other app's.
+
+## Installing as a local add-on (for development)
 
 1. In the repository: `uv run python scripts/stage_addon.py` (writes
    `dist/addon/sniff_test/`, the add-on plus the scanner's source, and

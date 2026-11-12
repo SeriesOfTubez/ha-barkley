@@ -1,0 +1,54 @@
+# The offline checks from the README's Development section, on every push and pull
+# request. No secrets, read-only token. Semgrep is pinned to the version the image
+# ships, so the rule tests run on the engine users get. The tests that need
+# osv-scanner and GuardDog skip themselves here; the network tests are opt-in.
+#
+# tests/fixtures and tests/rules hold deliberately malicious sample code. Nothing here
+# runs it: the tests parse it, the same way the scanner does.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint, tests and rule tests
+    runs-on: ubuntu-24.04
+    env:
+      SEMGREP_VERSION: 1.181.0
+      SEMGREP_SEND_METRICS: "off"
+      SEMGREP_ENABLE_VERSION_CHECK: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Install the project (locked) and Semgrep (wheels only)
+        run: |
+          uv sync --locked
+          uv tool install --no-build "semgrep==${SEMGREP_VERSION}"
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Tests (offline)
+        run: uv run pytest
+
+      - name: Rule tests
+        run: semgrep scan --test --config rules/ tests/rules/
+
+      - name: The app folder stages
+        run: uv run python scripts/stage_addon.py

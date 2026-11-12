@@ -1,0 +1,14 @@
+# Update pull requests for what this repository pins: the workflows' actions (pinned
+# to commits) and the scanner's locked Python dependencies. The tools in the image
+# (Semgrep, GuardDog, osv-scanner, uv) are pinned by hand in the Dockerfile, with
+# checksums, and upgraded deliberately: a new Semgrep can change what the rules see.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly

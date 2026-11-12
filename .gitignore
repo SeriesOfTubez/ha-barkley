@@ -7,3 +7,7 @@ __pycache__/
 /build/
 *.egg-info/
 .sniff-cache/
+.DS_Store
+# The session handoff: working notes about one person's box. It lives in the folder
+# and is never committed (tests/test_publish.py checks).
+/HANDOFF.md

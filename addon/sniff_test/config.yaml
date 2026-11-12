@@ -62,7 +62,10 @@ schema:
   ai_mode: list(summary|deep)?
   auto_scan: bool?
   notify_target: "match(^[a-z0-9_]{0,100}$)?"
-# Published multi-arch image (built with the repo root as context, see DOCS.md).
-# Uncomment once the registry exists; without it the Supervisor would try to build
-# from this folder alone, which doesn't contain the scanner's source.
-# image: ghcr.io/OWNER/sniff-test
+url: https://github.com/SeriesOfTubez/ha-barkley
+# The published multi-arch image (.github/workflows/build.yaml pushes it, tagged with
+# the version above). Without this line the Supervisor would try to build from this
+# folder alone, which doesn't contain the scanner's source. scripts/stage_addon.py
+# removes the line from its copy, because a staged folder does carry the source and is
+# built on the box. Lowercase: registries refuse capitals in an image name.
+image: ghcr.io/seriesoftubez/barkley
