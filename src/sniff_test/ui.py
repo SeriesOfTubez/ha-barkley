@@ -325,6 +325,7 @@ details summary { cursor:pointer; color:var(--muted); font-size:var(--t-xs); }
 .lock { font-size:var(--t-xs); white-space:nowrap; } .lock.ok { color:var(--green); }
 .lock.no { color:var(--orange); }
 .flowwrap { overflow-x:auto; }
+.flow-h svg { display:block; max-width:700px; margin:0 auto; }
 .flow text { fill:var(--fg); font:var(--t-xs) var(--font); }
 .flow .sm { fill:var(--muted); }
 .flow .nm { font-weight:600; }
@@ -341,6 +342,7 @@ td, th { text-align:left; padding:var(--s2); border-bottom:1px solid var(--line)
   vertical-align:top; }
 th { font-weight:600; }
 td.wrap { overflow-wrap:anywhere; } td.nowrap { white-space:nowrap; }
+td.actcol { width:1%; white-space:nowrap; text-align:right; vertical-align:top; }
 .tablebox table { min-width:0; }
 .tools form { display:flex; gap:var(--s2); flex-wrap:wrap; margin:var(--s2) 0; }
 input, select { padding:var(--s1) var(--s2); min-width:0; font:inherit; line-height:20px;

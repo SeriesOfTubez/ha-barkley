@@ -1073,7 +1073,7 @@ def render_search(
             f"{e(it.repo, 120)} · {ui.icon('star', 14, 'muted')} {it.stars:,} · "
             f"{it.downloads:,} downloads</span>"
             f'<br><span class="small">{e(it.description, 300)}</span></td>'
-            f'<td style="width:7em;text-align:right">{act}'
+            f'<td class="actcol">{act}'
             f'<div class="small">{_versions_link(base, it.repo)}</div></td></tr>'
         )
     if rows:
@@ -1119,7 +1119,7 @@ def render_versions(
                 f'<input type=hidden name=repo value="{e(repo)}">'
                 f'<input type=hidden name=ref value="{e(ref or "")}">'
                 '<input type=hidden name=back_to value="versions">'
-                f'<button class="primary">{label}</button></form>')  # fmt: skip
+                f"<button>{label}</button></form>")  # fmt: skip
 
     def action(ref: str | None) -> str:
         key = (ref or "").lower()
@@ -1147,7 +1147,7 @@ def render_versions(
         rows.append(
             f'<tr><td class="wrap"><b><code>{e(r.tag, 100)}</code></b> {"".join(chips)}<br>'
             f'<span class="muted small">{when}{who if r.publisher else ""}</span></td>'
-            f'<td style="width:7em;text-align:right">{act}</td></tr>'
+            f'<td class="actcol">{act}</td></tr>'
         )
     if rows:
         out.append('<table class="box">' + "".join(rows) + "</table>")
