@@ -302,7 +302,7 @@ def test_detail_page_of_an_installed_app_shows_its_update(addon):
     _seed(store)
     sid = store.history("acme/moved")[-1].id  # v1, the installed version
     _, _, page = get(f"{base}/scan/{sid}")
-    assert "<h1>Moved</h1>" in page and "← All apps" in page
+    assert "<h1>Moved</h1>" in page and "All apps</a>" in page
     assert "Update available: v1 → v2" in page
     assert "Everything the update" in page
     assert "What we found" in page and "Where it connects" in page
@@ -361,7 +361,7 @@ def test_memory_guard_warns_and_refuses(addon):
     _, scan_fn, base, httpd, state = addon
     state["mem"] = _mem(1.5)
     _, _, page = get(base + "/")
-    assert "⚠ Memory: 1.5 GB available" in page and "may be slow" in page
+    assert "Memory: 1.5 GB available" in page and "may be slow" in page
     state["mem"] = _mem(0.5)
     _, _, page = get(base + "/")
     assert "scans are refused" in page

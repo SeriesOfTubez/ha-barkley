@@ -102,7 +102,11 @@ def test_radii_are_the_four_tokens():
             for px in px_values(resolve(val, toks)):
                 assert px in RADIUS_PX, f"{sel} {{ border-radius: {val} }} → {px}px"
     for name in ("ui.py", "server.py"):
-        for m in re.finditer(r' rx="(\d+)"', (SRC / name).read_text()):
+        text = (SRC / name).read_text()
+        if "_ICONS = {" in text:  # icon paths live in a 24-unit box; not UI radii
+            a = text.index("_ICONS = {")
+            text = text[:a] + text[text.index("\n}\n", a) :]
+        for m in re.finditer(r' rx="(\d+)"', text):
             assert int(m[1]) in RADIUS_PX, f"{name}: svg rx={m[1]}"
 
 

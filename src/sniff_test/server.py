@@ -43,7 +43,7 @@ SUPERVISOR_IP = "172.30.32.2"
 _INGRESS_PATH = re.compile(r"^/api/hassio_ingress/[A-Za-z0-9_-]+$")
 _REPO = re.compile(r"^(?:https://github\.com/)?([A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100})/?$")
 _REF = re.compile(r"^[A-Za-z0-9_.+/-]{1,100}$")
-_EMOJI = {v.key: v.emoji for _, v in VERDICTS}
+_LABEL = {v.key: v.label for _, v in VERDICTS}
 _SEV_CLASS = {"critical": "sev-critical", "high": "sev-high", "medium": "sev-medium"}
 _JOBS_KEPT = 20
 # GitHub API requests a job may need, measured 2026-11-09: 6-7 per scan (repo, release,
@@ -352,7 +352,7 @@ def _verdict(score: int, key: str) -> str:
     cls = {"good_boy": "ok", "kinda_sus": "sev-medium", "very_sus": "sev-high", "bork": "bad"}.get(
         key, ""
     )
-    return f'<span class="{cls}">{score} {_EMOJI.get(key, "")}</span>'
+    return f'<span class="{cls}"><b>{score}</b> {e(_LABEL.get(key, ""))}</span>'
 
 
 # --- installed HACS items --------------------------------------------------------------
@@ -536,14 +536,14 @@ def render_installed(
 
 def _memory_banner(mem: memory.Memory) -> str:
     if mem.level == "refuse":
-        return f'<div class="banner bad">⚠ Memory: {e(mem.message(), 300)}</div>'
+        return f'<div class="banner bad">{ui.icon("alert")} Memory: {e(mem.message(), 300)}</div>'
     if mem.level == "warn":
-        return f'<div class="banner warn">⚠ Memory: {e(mem.message(), 300)}</div>'
+        return f'<div class="banner warn">{ui.icon("alert")} Memory: {e(mem.message(), 300)}</div>'
     return ""
 
 
 def _github_banner(wait: str) -> str:
-    return f'<div class="banner warn">⏳ {e(wait, 400)}</div>' if wait else ""
+    return f'<div class="banner warn">{ui.icon("clock")} {e(wait, 400)}</div>' if wait else ""
 
 
 STATUS_RECENT = 600  # seconds a finished job stays in the status strip
@@ -565,12 +565,12 @@ def status_html(
     lines = []
     for j in active:
         if j.state == "running":
-            what = "🐕 Sniffing" if j.kind != "update" else "🐕 Checking the update of"
+            what = "Sniffing" if j.kind != "update" else "Checking the update of"
             if j.kind == "auto":
-                what = "🐕 Auto-sniffing the update of" if j.prev else "🐕 Auto-sniffing"
-            lines.append(f"<b>{what} {name(j)}…</b>")
+                what = "Auto-sniffing the update of" if j.prev else "Auto-sniffing"
+            lines.append(f'<b><span class="dot"></span>{what} {name(j)}…</b>')
         elif j.state == "waiting":
-            lines.append(f"⏳ {name(j)}: {e(j.message, 200)}")
+            lines.append(f"{ui.icon('clock', 14, 'muted')} {name(j)}: {e(j.message, 200)}")
     queued = sum(j.state == "queued" for j in active)
     if queued:
         nxt = ", ".join(name(j) for j in active if j.state == "queued")
@@ -582,9 +582,9 @@ def status_html(
             if j.kind in ("update", "auto") and len(j.scan_ids) == 2:
                 old, new = j.scan_ids
                 link = f'<a href="{base}/diff?old={old}&amp;new={new}">what the update changes</a>'
-            lines.append(f'<span class="ok">✓</span> {name(j)} is done: {link}')
+            lines.append(f"{ui.icon('check', 14, 'ok')} {name(j)} is done: {link}")
         else:
-            lines.append(f'<span class="bad">✗</span> {name(j)} {e(j.state)}: {e(j.message, 200)}')
+            lines.append(f"{ui.icon('x', 14, 'bad')} {name(j)} {e(j.state)}: {e(j.message, 200)}")
     tail = (
         '<span class="muted small">This page refreshes by itself while a scan runs.</span>'
         if active
@@ -593,7 +593,8 @@ def status_html(
     return (
         '<div class="box status" role="status">'
         + "".join(f'<div class="row">{x}</div>' for x in lines)
-        + f'<div class="row">{tail}<a class="small" href="{base}/?{here}">↻ Refresh</a></div></div>'
+        + f'<div class="row">{tail}<a class="small" href="{base}/?{here}">{ui.icon("refresh")} '
+        "Refresh</a></div></div>"
     )
 
 
@@ -616,7 +617,7 @@ def render_index(
     against = f" against HA {e(ha)}" if ha else ""
     out = [
         f'<div class="head"><h1>{ui.logo_img()}Barkley</h1>'
-        f'<a class="small" href="{base}/?{here}">↻ Refresh</a></div>',
+        f'<a class="small" href="{base}/?{here}">{ui.icon("refresh")} Refresh</a></div>',
         status,
         _memory_banner(mem) if mem else "",
         _github_banner(github_wait),
@@ -765,7 +766,8 @@ def render_auto(base: str, w: watch.Watcher, token: str, now: float | None = Non
         + (f'<span class="small">{e(w.last_test, 300)}</span>' if w.last_test else "")
         + "</div>"
         + (f'<p class="muted small">Notify targets: {e(terr, 300)}</p>' if terr else "")
-        + f'<p class="muted small">{"" if ok else "⚠ "}{e(diag, 600)}. Scans of apps that '
+        + f'<p class="muted small">{"" if ok else ui.icon("alert", 14, "warn") + " "}'
+        f"{e(diag, 600)}. Scans of apps that "
         f"aren't installed are deleted after {w.age_out_days:g} days; scans of installed apps "
         "are kept.</p>"
         f"<details><summary>Recent auto-sniffs ({len(w.log())})</summary>{recent}</details>"
@@ -857,7 +859,7 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
         picker += _mode_picker(base, sid, token, mode)
     if not entity:
         return (
-            '<div class="banner mt3"><b>🤖 Explain this app with AI</b>'
+            f'<div class="banner mt3"><b>{ui.icon("sparkle", 16)} Explain this app with AI</b>'
             '<p class="small mt2">Barkley can ask your Home Assistant\'s '
             "AI to explain these findings in plain words. Choose which AI to use:</p>"
             f"{picker}</div>"
@@ -865,7 +867,7 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
     form = (f'<form method=post action="{base}/explain" class="act mt2">'
             f'<input type=hidden name=token value="{token}">'
             f'<input type=hidden name=scan value="{sid}">'
-            f'<button class="ai">✦ {{label}}</button></form>')  # fmt: skip
+            f'<button class="ai">{ui.icon("sparkle", 16)} {{label}}</button></form>')  # fmt: skip
     note = ('<p class="tech">Sends this scan\'s findings (about a public project, no Home '
             f"Assistant data) to the AI provider behind <code>{e(entity, 120)}</code>. The AI "
             "explains only; it can't change the score or the findings.</p>")  # fmt: skip
@@ -926,7 +928,8 @@ def render_scan(
             if snip is None:
                 it = (report["context"].get("items") or {}).get(item_id) or {}
                 if it.get("kind") == "dependency":  # nothing of the app's own to read
-                    return ('<p class="small muted">✦ Explain in context: we couldn\'t find '
+                    return (f'<p class="small muted">{ui.icon("sparkle")} Explain in context: we '
+                            "couldn't find "
                             f"where the app's own code uses {e(it.get('package'), 120)}, so "
                             "there's no code to send. It may come in through another library, "
                             "or a bundle hides the name.</p>")  # fmt: skip
@@ -1018,7 +1021,7 @@ def render_search(
     total: int = 0,
 ) -> bytes:
     out = [
-        f'<p class="crumb"><a href="{base}/">← All apps</a></p>',
+        f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
         "<h1>Find an app to sniff</h1>",
         '<p class="muted small">Searches the Marketplace catalog your Home Assistant already '
         "has. Sniffing checks exactly what the Marketplace would install, without installing "
@@ -1051,7 +1054,8 @@ def render_search(
         rows.append(
             f'<tr><td class="wrap"><b>{e(it.name, 100)}</b>{tag}<br>'
             f'<span class="muted small">{e(ui.KIND.get(it.kind, it.kind))} · '
-            f"{e(it.repo, 120)} · ★ {it.stars:,} · {it.downloads:,} downloads</span>"
+            f"{e(it.repo, 120)} · {ui.icon('star', 14, 'muted')} {it.stars:,} · "
+            f"{it.downloads:,} downloads</span>"
             f'<br><span class="small">{e(it.description, 300)}</span></td>'
             f'<td style="width:7em;text-align:right">{act}'
             f'<div class="small">{_versions_link(base, it.repo)}</div></td></tr>'
@@ -1082,7 +1086,7 @@ def render_versions(
 ) -> bytes:
     """A repo's newest releases, betas included, each with its score or a Sniff button."""
     out = [
-        f'<p class="crumb"><a href="{base}/">← All apps</a></p>',
+        f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
         f"<h1>Versions of {e(name, 100)}</h1>",
         f'<p class="muted small">{e(repo, 120)} · the {len(releases) or "newest"} newest '
         "releases on GitHub, betas included. Sniffing a version checks exactly what the "
@@ -1140,7 +1144,8 @@ def render_versions(
 
 
 def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
-    out = [f'<p class="crumb"><a href="{base}/">← All apps</a></p>', "<h1>Diagnostics</h1>",
+    out = [f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
+           "<h1>Diagnostics</h1>",
            f'<p class="muted">Barkley {e(__version__)}. Each tool runs on a one-line '
            "sample written here, never on scanned code.</p><table>"]  # fmt: skip
     for c in checks:
@@ -1165,7 +1170,7 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
     head = [c for c in changes if c["rank"] >= HEADLINE_RANK][:HEADLINE_MAX]
     rest = [c for c in changes if c not in head]
     out = [
-        f'<p class="crumb"><a href="{base}/">← All apps</a></p>',
+        f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
         f"<h1>What changes: {e(frm.get('repo'), 100)}</h1>",
         f'<p class="box"><a href="{base}/scan/{old}">@{old}</a> {e(frm.get("ref"), 60)} → '
         f'<a href="{base}/scan/{new}">@{new}</a> {e(to.get("ref"), 60)}<br>'
@@ -1173,9 +1178,9 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
         "(each side's own score; the diff never scores)</span></p>",
     ]
     for w in d.get("warnings", []):
-        out.append(f'<div class="banner warn">⚠ {e(w, 400)}</div>')
+        out.append(f'<div class="banner warn">{ui.icon("alert")} {e(w, 400)}</div>')
     if not head:
-        out.append("<p>Nothing important changed. 🦴</p>")
+        out.append(f'<p class="ok">{ui.icon("check", 16, "ok")} Nothing important changed.</p>')
     else:
         out.append("<table>")
         for c in head:
@@ -1519,7 +1524,7 @@ class Panel:
                 self.wfile.write(body)
 
             def _text(self, status: int, msg: str) -> None:
-                self._send(status, _page("Barkley", f"<p>🐕 {e(msg)}</p>", self._base()))
+                self._send(status, _page("Barkley", f"<p>{e(msg)}</p>", self._base()))
 
             def _redirect(self, to: str) -> None:
                 self.send_response(HTTPStatus.SEE_OTHER)

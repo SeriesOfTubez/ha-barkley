@@ -92,7 +92,7 @@ def test_status_strip_shows_running_and_just_finished(tmp_path):
     assert '<meta http-equiv="refresh" content="5">' in page
     assert page.index('class="box status"') < page.index("Check any repository")
     quiet = server.render_index("", Store(tmp_path / "s.db"), jobs[3:], "t").decode()
-    assert "http-equiv" not in quiet and "↻ Refresh" in quiet
+    assert "http-equiv" not in quiet and "Refresh</a>" in quiet
 
 
 def test_finished_time_is_set(tmp_path):

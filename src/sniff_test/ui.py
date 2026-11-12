@@ -44,7 +44,7 @@ LOGO_URI = _asset_uri("barkley-80.png")
 
 def logo_img(size: int = 40) -> str:
     if not LOGO_URI:
-        return "🐕 "
+        return ""
     return f'<img class="logo" src="{LOGO_URI}" width="{size}" height="{size}" alt="">'
 
 
@@ -54,6 +54,61 @@ DeepFn = Callable[[str], str]  # item id -> "Explain in context" HTML ("" for no
 def e(text: Any, limit: int = 300) -> str:
     """Escape for HTML text and attribute values (untrusted text is also truncated)."""
     return html.escape(sanitize_untrusted(str(text), limit) if text is not None else "")
+
+
+# --- icons: a small inline-SVG set (Lucide paths, stroke 1.75) ---------------------------
+# 14 px inline with text, 16 px inside controls and headings; one stroke width everywhere.
+# The OS used to draw about twenty emoji and glyphs at whatever size and colour it liked.
+
+_ICONS = {
+    "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    "refresh": '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
+    "check": '<path d="M20 6 9 17l-5-5"/>',
+    "x": '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    "minus": '<path d="M5 12h14"/>',
+    "alert": '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/>'
+    '<path d="M12 9v4"/><path d="M12 17h.01"/>',
+    "clock": '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+    "grid": '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/>'
+    '<rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
+    "list": '<path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/>'
+    '<path d="M8 18h13"/><path d="M8 6h13"/>',
+    "sparkle": '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936'
+    "A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 "
+    '1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>',
+    "home": '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 '
+    ".709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1"
+    '-2-2z"/>',
+    "cloud": '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
+    "wrench": '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1'
+    "-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 "
+    '3.76z"/>',
+    "chart": '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/>'
+    '<path d="M8 17v-3"/>',
+    "globe": '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 '
+    '0 0 0-20"/><path d="M2 12h20"/>',
+    "link": '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>'
+    '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    "plug": '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 '
+    '0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+    "lock": '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 '
+    '1 10 0v4"/>',
+    "star": '<path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5'
+    ".166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53"
+    ".53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.5"
+    "6l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2"
+    '.122 2.122 0 0 0 1.597-1.16z"/>',
+    "back": '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+}
+
+
+def icon(name: str, size: int = 14, cls: str = "") -> str:
+    """An inline icon: `size` 14 beside text, 16 inside a control or heading."""
+    return (
+        f'<svg class="i{" " + cls if cls else ""}" width="{size}" height="{size}" '
+        'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" '
+        f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{_ICONS[name]}</svg>'
+    )
 
 
 # --- look --------------------------------------------------------------------------------
@@ -90,6 +145,9 @@ CSS = """
 body { background:var(--bg); color:var(--fg); font:400 var(--t-sm)/1.5 var(--font);
   margin:0 auto; max-width:1100px; padding:var(--s4) var(--s4) var(--s6); }
 a { color:var(--brand); }
+.i { display:inline-block; vertical-align:-0.125em; flex:none; }
+.i.ok { color:var(--green); } .i.bad { color:var(--red); } .i.muted { color:var(--muted); }
+.i.warn { color:var(--yellow); }
 h1 { font-size:var(--t-lg); font-weight:600; letter-spacing:-0.01em; margin:0; }
 h2 { font-size:var(--t-md); font-weight:600; letter-spacing:-0.01em; margin:0 0 var(--s1); }
 h3 { font-size:var(--t-sm); font-weight:600; margin:0; }
@@ -129,7 +187,7 @@ table.apps td.actcell .act { flex-wrap:nowrap; }
 .again { display:flex; flex-wrap:wrap; gap:var(--s2) var(--s3); align-items:center; }
 .again form { margin:0; }
 .status { display:flex; flex-direction:column; gap:var(--s1); }
-.status .row { display:flex; flex-wrap:wrap; gap:var(--s1) var(--s3); align-items:baseline; }
+.status .row { display:flex; flex-wrap:wrap; gap:var(--s1) var(--s2); align-items:baseline; }
 .filters { display:flex; flex-wrap:wrap; gap:var(--s1); }
 .pill { font-size:var(--t-xs); line-height:16px; padding:var(--s1) var(--s3);
   border-radius:var(--r2); border:1px solid var(--line); background:var(--card);
@@ -274,6 +332,7 @@ details summary { cursor:pointer; color:var(--muted); font-size:var(--t-xs); }
 .privbox h2 { color:var(--priv); }
 ul.plain { margin:0; padding-left:var(--s4); display:flex; flex-direction:column;
   gap:var(--s1); }
+ul.marks { list-style:none; padding-left:0; }
 table { border-collapse:collapse; width:100%; }
 td, th { text-align:left; padding:var(--s2); border-bottom:1px solid var(--line);
   vertical-align:top; }
@@ -318,7 +377,6 @@ BANDS = {
     "red": ("Bork", "don't install"),
     "grey": ("?", "not checked or unfinished"),
 }
-_VERDICT_EMOJI = {"good_boy": "🦴", "kinda_sus": "🐕", "very_sus": "🐕‍🦺", "bork": "🚨"}
 
 
 def band(score: int | None, complete: bool = True) -> str:
@@ -740,7 +798,7 @@ def render_grid(base: str, cards: list[Card], v: View | None = None, lead: str =
     views = "".join(
         f'<a class="pill{" on" if v.view == k else ""}" href="{base}/?{v.qs(view=k, pg=1)}">'
         f"{label}</a>"
-        for k, label in (("cards", "▦ Cards"), ("table", "☰ Table"))
+        for k, label in (("cards", f"{icon('grid')} Cards"), ("table", f"{icon('list')} Table"))
     )
     shown = sorted((c for c in cards if _keep(c, v.f)), key=_sort_key)
     per = PER_PAGE[v.view]
@@ -1023,7 +1081,7 @@ def code_html(snip: dict[str, Any]) -> str:
     return '<pre class="code">' + "\n".join(out) + "</pre>"
 
 
-AI_BADGE = '<span class="aib">✦ AI</span>'
+AI_BADGE = f'<span class="aib">{icon("sparkle", 12)} AI</span>'
 
 
 def deep_html(
@@ -1052,7 +1110,8 @@ def deep_html(
         f"{'s' if lines != 1 else ''}{parts_txt})</summary>{code_html(snip)}</details>"
     )
     if state == "running":
-        inline = f'<a class="aichip" href="#{mid}">✦ AI is reading the code… (can take minutes)</a>'
+        inline = (f'<a class="aichip" href="#{mid}">{icon("sparkle")} AI is reading the code… '
+                  "(can take minutes)</a>")  # fmt: skip
         body = (
             '<p class="small"><b>Reading the code…</b> This can take a few minutes, depending '
             "on your AI. You don't have to wait here: close this and carry on. The answer is "
@@ -1060,19 +1119,19 @@ def deep_html(
             "ready. While it works, this page refreshes by itself.</p>" + sent
         )
     elif error:
-        inline = f'<a class="aichip warn" href="#{mid}">✦ The AI didn\'t answer</a>'
-        body = (f'<p class="small">{e(error, 400)}</p>{form.replace("{label}", "✦ Try again")}'
+        inline = f'<a class="aichip warn" href="#{mid}">{icon("sparkle")} The AI didn\'t answer</a>'
+        body = (f'<p class="small">{e(error, 400)}</p>{form.replace("{label}", f"{icon('sparkle', 16)} Try again")}'
                 + sent)  # fmt: skip
     elif not answer:
         inline = (
-            form.replace("{label}", "✦ Explain in context")
+            form.replace("{label}", f"{icon('sparkle', 16)} Explain in context")
             + f'<a class="small" href="#{mid}">see the {lines} lines it would send</a>'
         )
         body = (
             f'<p class="small">Explain in context sends these {lines} lines of the app\'s own '
             f"code (public on GitHub, no Home Assistant data) to the AI behind "
             f"<code>{e(entity, 120)}</code>. Nothing is sent until you click.</p>"
-            + form.replace("{label}", "✦ Explain in context")
+            + form.replace("{label}", f"{icon('sparkle', 16)} Explain in context")
             + sent
         )
     else:
@@ -1082,7 +1141,8 @@ def deep_html(
         summary = f"{n_c} statement{'s' if n_c != 1 else ''}"
         if n_q:
             summary += f", {n_q} question{'s' if n_q != 1 else ''}"
-        inline = f'<a class="aichip" href="#{mid}">✦ AI\'s reading of the code: {summary}</a>'
+        inline = (f'<a class="aichip" href="#{mid}">{icon("sparkle")} AI\'s reading of the code: '
+                  f"{summary}</a>")  # fmt: skip
         out = []
         if claims:
             out.append(
@@ -1112,12 +1172,12 @@ def deep_html(
             "cites lines we sent, which contain the code it names (comments don't count). It "
             "can still be wrong, and it can't change the score or clear a finding.</p>"
         )
-        body = "".join(out) + sent + form.replace("{label}", "✦ Ask again")
+        body = "".join(out) + sent + form.replace("{label}", f"{icon('sparkle', 16)} Ask again")
     sheet = (
         f'<div class="modal" id="{mid}"><a class="shade" href="#item-{e(item_id, 40)}" '
         'aria-label="Close"></a><div class="sheet" role="dialog">'
         f'<div class="sh">{AI_BADGE}<b>The AI\'s reading of the code</b>'
-        f'<a class="x" href="#item-{e(item_id, 40)}">Close ✕</a></div>'
+        f'<a class="x" href="#item-{e(item_id, 40)}">Close {icon("x")}</a></div>'
         f'<div class="st">{e(title, 200)}</div>{body}</div></div>'
     )
     return f'<div class="deepi" id="item-{e(item_id, 40)}">{inline}</div>{sheet}'
@@ -1127,7 +1187,7 @@ def privacy_html(notes: list[privacy.Note]) -> str:
     if not notes:
         return ""
     parts = [
-        f'<section class="privbox"><h2>🔒 Privacy notes ({len(notes)})</h2>'
+        f'<section class="privbox"><h2>{icon("lock", 16)} Privacy notes ({len(notes)})</h2>'
         '<p class="sub">Things worth knowing about your privacy. They never change the score.</p>'
     ]
     for n in notes:
@@ -1484,24 +1544,39 @@ def flow_svg(report: dict[str, Any], name: str) -> str:
 # --- where it connects -------------------------------------------------------------------------
 
 ZONES = [
-    ("home", "🏠 Your home network", "Addresses on your own network", {"local"}),
-    ("own", "☁️ The app's own sites", "Named in its docs, or matching its name", {"declared"}),
-    ("dev", "🛠 Servers the developer runs", "On free app-hosting services", {"developer_hosted"}),
+    ("home", "home", "Your home network", "Addresses on your own network", {"local"}),
+    (
+        "own",
+        "cloud",
+        "The app's own sites",
+        "Named in its docs, or matching its name",
+        {"declared"},
+    ),
+    (
+        "dev",
+        "wrench",
+        "Servers the developer runs",
+        "On free app-hosting services",
+        {"developer_hosted"},
+    ),
     (
         "ana",
-        "📊 Analytics and crash reports",
+        "chart",
+        "Analytics and crash reports",
         "Services that collect usage or errors",
         {"analytics"},
     ),
     (
         "other",
-        "🌐 Other sites",
+        "globe",
+        "Other sites",
         "Not in the app's docs",
         {"undeclared", "public_ip", "exfil_service", "messaging"},
     ),
     (
         "links",
-        "🔗 Project and help links",
+        "link",
+        "Project and help links",
         "GitHub, Home Assistant, package sites, donations",
         {"infrastructure", "link", "resolver"},
     ),
@@ -1552,14 +1627,14 @@ def zones_html(report: dict[str, Any], deep: DeepFn | None = None) -> str:
     if not hs and not pts:
         return '<p class="muted">Its code names no sites, IP addresses or ports.</p>'
     out = ['<div class="zones">']
-    for key, title, sub, classes in ZONES:
+    for key, ic, title, sub, classes in ZONES:
         zh = [h for h in hs if h.cls in classes]
         if not zh:
             continue
         shown = zh[:12]
         more = f'<li class="muted">and {len(zh) - 12} more</li>' if len(zh) > 12 else ""
         out.append(
-            f'<div class="zone {key}"><h3>{title}</h3><div class="zs">{sub}</div><ul>'
+            f'<div class="zone {key}"><h3>{icon(ic)} {title}</h3><div class="zs">{sub}</div><ul>'
             + "".join(_host_li(h, deep(h.edge_id)) for h in shown)
             + more
             + "</ul></div>"
@@ -1580,7 +1655,7 @@ def zones_html(report: dict[str, Any], deep: DeepFn | None = None) -> str:
                 f'<span class="u">{e(how)} · {names} · {where}</span>{deep(p.edge_id)}</li>'
             )
         out.append(
-            '<div class="zone"><h3>🔌 Connections whose address isn\'t in the code</h3>'
+            f'<div class="zone"><h3>{icon("plug")} Connections whose address isn\'t in the code</h3>'
             '<div class="zs">The code sets these ports, but the server\'s address comes from '
             "setup or from another server while the app runs. So we can't tie them to any "
             "site listed here.</div><ul>" + "".join(items) + "</ul></div>"
@@ -1614,7 +1689,7 @@ def hygiene_html(report: dict[str, Any]) -> str:
     if not isinstance(h, dict):
         return ""
     repo = str(report.get("target", {}).get("repo") or "")
-    yes, no = '<span class="ok">✓</span>', '<span class="muted">–</span>'
+    yes, no = icon("check", 14, "ok"), icon("minus", 14, "muted")
     li = []
     sc = h.get("scanners") or []
     if sc:
@@ -1671,7 +1746,7 @@ def hygiene_html(report: dict[str, Any]) -> str:
                       f"({of} open issue{'s' * (of != 1)} checked).")  # fmt: skip
     if h.get("dependabot_but_known_vulns"):
         li.append(
-            '<span class="sev-medium">⚠</span> Dependabot watches these dependencies, yet this '
+            f"{icon('alert', 14, 'warn')} Dependabot watches these dependencies, yet this "
             "release ships some with known vulnerabilities (see What we found). Either an alert "
             "wasn't acted on, or the fix came after this release."
         )
@@ -1681,7 +1756,7 @@ def hygiene_html(report: dict[str, Any]) -> str:
         '<section class="box"><h2>The developer\'s security habits</h2><p class="sub">What the '
         "app's own repository shows about keeping it safe. This is context and never changes "
         "the score. GitHub keeps scan alerts private, so it's read from public signs.</p>"
-        '<ul class="plain">' + "".join(f"<li>{x}</li>" for x in li) + "</ul></section>"
+        '<ul class="plain marks">' + "".join(f"<li>{x}</li>" for x in li) + "</ul></section>"
     )
 
 
@@ -1757,7 +1832,6 @@ def render_app(
     title = name or (t.get("repo") or t.get("input") or "?").rsplit("/", 1)[-1]
     complete = bool(report.get("complete"))
     b = band(report.get("score"), complete)
-    vkey = report.get("verdict", {}).get("key", "")
     plain = BANDS[b][1] if complete else "the check didn't finish"
     kind = KIND.get(str(t.get("kind")), str(t.get("kind")))
     ha = (
@@ -1768,10 +1842,10 @@ def render_app(
     commit = (t.get("commit_sha") or "")[:12]
     ai = ai or {}
     head = (
-        f'<p class="crumb"><a href="{base}/">← All apps</a></p>'
+        f'<p class="crumb"><a href="{base}/">{icon("back")} All apps</a></p>'
         f'<section class="box dhead">{ring(int(report.get("score", 0)), b)}<div style="min-width:0">'
         f"<h1>{e(title, 80)}</h1>"
-        f'<div><span class="verdict" style="color:var(--{b})">{_VERDICT_EMOJI.get(vkey, "")} '
+        f'<div><span class="verdict" style="color:var(--{b})">'
         f"{e(report.get('verdict', {}).get('label', ''))} · {e(plain)}</span> "
         f'<span class="muted">· {e(kind)}{" · " + e(t["ref"], 60) if t.get("ref") else ""} · {e(t.get("repo") or t.get("input"), 120)}</span></div>'
         f'<div class="muted small">Checked with Barkley {e(report.get("tool", {}).get("version"))}: '
@@ -1827,7 +1901,8 @@ def render_app(
         )
     else:
         parts.append(
-            '<section class="box"><h2>What we found</h2><p class="ok">Nothing smelled off. 🦴</p></section>'
+            f'<section class="box"><h2>What we found</h2><p class="ok">{icon("check", 16, "ok")} '
+            "Nothing smelled off.</p></section>"
         )
     parts.append(
         '<section class="box"><h2>Where your data can go</h2><p class="sub">Left: what it can '
