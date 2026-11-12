@@ -48,6 +48,15 @@ exfil_service lhr.life
 exfil_service pinggy.link
 exfil_service pinggy.io
 exfil_service bore.pub
+# (0.9.0) the rest of GuardDog 3.2's drop-box names, so a user can never mark one trusted
+exfil_service webhook.cool
+exfil_service burpcollaborator.me
+exfil_service ghostbin.site
+exfil_service filetransfer.io
+exfil_service ply.gg
+exfil_service dnslog.cn
+exfil_service webhook-test.com
+exfil_service typedwebhook.tools
 #
 # developer_hosted: serverless / free app hosting. Legitimate uses exist (iCloud3's opt-in
 # analytics runs on workers.dev), so these are graph context only, but they count as

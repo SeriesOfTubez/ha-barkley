@@ -158,6 +158,11 @@ class Finding:
     # empty when the finding isn't platform-specific.
     platforms: frozenset[str] = frozenset()
     dependency: DepFacts | None = None  # dep-vuln only: fix, newest release, advisories
+    # Host reputation (0.9.0): set only on findings that are purely about where an address
+    # points (a hardcoded public IP, GuardDog's address heuristics), and only when every
+    # address behind the finding could be read with certainty. The panel lets the user
+    # mark these addresses trusted; a finding without them can never be switched off.
+    addresses: tuple[str, ...] = ()
 
     @property
     def id(self) -> str:

@@ -48,7 +48,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sniff_test import supervisor
+from sniff_test import supervisor, trust
 from sniff_test.diff import HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
 from sniff_test.report import explain
@@ -211,6 +211,13 @@ def notification(
         )  # fmt: skip
     if not report.get("complete", True):
         lines.append("Part of the check didn't finish, so the score is capped at 89.")
+    t = report.get("trust")
+    if t:  # counts and Barkley's own number only; never the addresses themselves
+        n = len(t.get("addresses") or [])
+        lines.append(
+            f"The score counts {n} address{'es' * (n != 1)} you trust as fine; "
+            f"Barkley's own score is {int(t.get('own_score') or 0)}."
+        )
     ids = entry.get("scan_ids") or []
     where = f"scan @{ids[-1]}" if ids else "the app's page"
     if len(ids) == 2:
@@ -601,6 +608,9 @@ class Watcher:
                 report = self.store.report(job.scan_ids[-1])
                 if len(job.scan_ids) == 2:
                     d = diff_reports(self.store.report(job.scan_ids[0]), report)
+                # the score as the panel shows it: findings about addresses the user
+                # trusts are set aside (the diff above compares the stored reports)
+                report = trust.view(report, self.store.trusted())
             except StoreError as ex:
                 entry["state"], entry["message"] = "failed", str(ex)
                 report = None

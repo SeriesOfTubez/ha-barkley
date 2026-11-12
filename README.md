@@ -49,11 +49,16 @@ rest in one line. It compares; it never changes how either scan is scored.
   the name alone), VCS/URL requirements, brand-new packages, known vulnerabilities and
   known-malicious packages (osv-scanner), and heuristic malware checks (GuardDog) on every
   package HA doesn't already ship.
-- **Known services**: a shipped list (`src/sniff_test/data/known_services.txt`) names who runs
-  a host ("api.together.xyz: Together AI"). It is matched locally: no host from a scan is ever
-  sent anywhere to be looked up. A name never changes a host's class or any finding, with one
-  exception: GuardDog's address-shape heuristic (an ending such as `.xyz`) is shown as low
-  instead of high when every address it matched is on the list.
+- **Addresses you trust.** A few findings are only about where an address points: a
+  hardcoded public IP, or an address in a dependency that GuardDog finds suspicious-looking
+  (`https://api.together.xyz/`, which is Together AI). Barkley can't know every host an
+  app legitimately uses, so in the panel you can mark such an address trusted, for one app
+  or for every app. The finding stays listed and stops costing points until the address
+  changes; Barkley's own score is always shown next to yours, and the stored scan is never
+  changed. Findings about what is sent, and paste sites, tunnels and chat webhooks, can't
+  be switched off. A shipped list (`src/sniff_test/data/known_services.txt`) names who runs
+  well-known hosts as a hint; it is matched locally (no host is ever sent anywhere to be
+  looked up) and changes no score.
 - **npm dependencies** (cards): the repo's lockfile, checked with osv-scanner. Known
   malware is reported for every package; CVEs only for packages bundled into the card,
   not for build-only tools.

@@ -19,10 +19,12 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from sniff_test import trust
 
 STORE_VERSION = 1
 
@@ -98,6 +100,12 @@ CREATE TABLE IF NOT EXISTS settings (  -- panel settings (M8), e.g. the chosen A
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS finding_addresses (  -- (0.9.0) addresses a finding is about
+    scan_id    INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
+    finding_id TEXT NOT NULL,
+    address    TEXT NOT NULL,   -- host or IP the user may mark trusted (see trust.py)
+    PRIMARY KEY (scan_id, finding_id, address)
+);
 CREATE TABLE IF NOT EXISTS edge_findings (
     scan_id    INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
     edge_id    TEXT NOT NULL,
@@ -128,6 +136,9 @@ class ScanRow:
     complete: bool
     score: int
     verdict: str
+    # Set only by a store with `trust_overlay` on, when addresses the user trusts changed
+    # the shown score: Barkley's own score for the scan (`score` is then the shown one).
+    own_score: int | None = None
 
     def label(self) -> str:
         return f"#{self.id} {self.repo or self.source}@{self.ref or '?'}"
@@ -160,6 +171,9 @@ def _row(r: sqlite3.Row) -> ScanRow:
 
 class Store:
     def __init__(self, path: str | Path):
+        # The panel turns this on: rows then show the score with the user's trusted
+        # addresses set aside (trust.py). Off for the CLI: its scores are the scanner's.
+        self.trust_overlay = False
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
@@ -243,6 +257,15 @@ class Store:
                 ],
             )  # fmt: skip
             db.executemany(
+                "INSERT OR IGNORE INTO finding_addresses VALUES (?,?,?)",
+                [
+                    (sid, f["id"], a)
+                    for f in report.get("findings", [])
+                    for a in f.get("addresses") or []
+                    if isinstance(a, str)
+                ],
+            )
+            db.executemany(
                 "INSERT OR IGNORE INTO edge_findings VALUES (?,?,?)",
                 [(sid, e["id"], fid) for e in edges for fid in e.get("finding_ids", [])],
             )
@@ -256,6 +279,50 @@ class Store:
     def set_setting(self, key: str, value: str) -> None:
         with self._connect() as db:
             db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+    # --- trusted addresses (trust.py) ----------------------------------------------
+
+    def trusted(self) -> trust.Trusted:
+        return trust.Trusted.loads(self.setting(trust.SETTING))
+
+    def set_trusted(self, trusted: trust.Trusted) -> None:
+        self.set_setting(trust.SETTING, trusted.dumps())
+
+    def _shown(self, rows: list[ScanRow]) -> list[ScanRow]:
+        """With `trust_overlay` on: each row's score as the panel shows it. Uses the
+        indexes only (no report is parsed): a scan changes only when it has findings
+        with addresses and the user trusts every address of at least one of them."""
+        if not self.trust_overlay or not rows:
+            return rows
+        trusted = self.trusted()
+        if not trusted:
+            return rows
+        by_id = {r.id: r for r in rows}
+        with self._connect() as db:
+            # The whole table, as a literal query: it only holds findings that are about
+            # an address, a handful of rows on a real box.
+            addr: dict[int, dict[str, list[str]]] = {}
+            for r in db.execute("SELECT scan_id, finding_id, address FROM finding_addresses"):
+                if r["scan_id"] in by_id:
+                    addr.setdefault(r["scan_id"], {}).setdefault(r["finding_id"], []).append(
+                        r["address"]
+                    )
+            out = dict(by_id)
+            for sid, per_finding in addr.items():
+                row = by_id[sid]
+                gone = {fid for fid, xs in per_finding.items() if trusted.covers(row.repo, xs)}
+                if not gone:
+                    continue
+                kept = [
+                    (f["id"], f["rule_id"], f["severity"])
+                    for f in db.execute(
+                        "SELECT id, rule_id, severity FROM findings WHERE scan_id = ?", (sid,)
+                    )
+                    if f["id"] not in gone
+                ]
+                r2 = trust.rescore(kept, row.complete)
+                out[sid] = replace(row, score=r2.score, verdict=r2.verdict_key, own_score=row.score)
+        return [out[r.id] for r in rows]
 
     def save_explanation(self, scan_id: int, entity_id: str, data: dict[str, Any]) -> None:
         with self._connect() as db:
@@ -315,7 +382,7 @@ class Store:
     def get(self, scan_id: int) -> ScanRow | None:
         with self._connect() as db:
             r = db.execute(_SELECT_ROWS + "WHERE id = ?", (scan_id,)).fetchone()
-        return _row(r) if r else None
+        return self._shown([_row(r)])[0] if r else None
 
     def history(self, repo: str | None = None, limit: int = 50) -> list[ScanRow]:
         """Newest first; `repo` matches owner/name case-insensitively."""
@@ -327,7 +394,8 @@ class Store:
                 )
             else:
                 rows = db.execute(_SELECT_ROWS + "ORDER BY id DESC LIMIT ?", (limit,))
-            return [_row(r) for r in rows]
+            found = [_row(r) for r in rows]
+        return self._shown(found)
 
     def find(
         self,
@@ -356,7 +424,7 @@ class Store:
             if not row.complete:
                 continue
             if row.kind == "plugin" or ha_version is None or row.ha_version == ha_version:
-                return row
+                return self._shown([row])[0]
         return None
 
     def scans_reaching(self, node: str) -> list[tuple[int, str, str]]:

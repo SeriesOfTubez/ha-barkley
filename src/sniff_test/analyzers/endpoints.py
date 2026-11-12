@@ -632,7 +632,9 @@ def _cred_kind(url: str | None) -> str | None:
     return None
 
 
-def _finding(rule: str, title: str, msg: str, ref: HostRef) -> Finding:
+def _finding(
+    rule: str, title: str, msg: str, ref: HostRef, addresses: tuple[str, ...] = ()
+) -> Finding:
     return Finding(
         rule_id=rule,
         title=title,
@@ -644,7 +646,15 @@ def _finding(rule: str, title: str, msg: str, ref: HostRef) -> Finding:
         evidence=ref.url or ref.host,
         tags=frozenset({Tag.POSSIBLE}),
         analyzer=NAME,
+        addresses=addresses,
     )
+
+
+def never_trustable(host: str) -> bool:
+    """Drop boxes and chat webhooks: the user can't mark these trusted (anyone can
+    receive data there, so knowing the service says nothing about who gets it)."""
+    hit = _suffix_class(host.lower(), host_classes())
+    return bool(hit and hit[0] in ("exfil_service", "messaging"))
 
 
 def run(target: Target) -> AnalyzerResult:
@@ -688,6 +698,7 @@ def run(target: Target) -> AnalyzerResult:
                     f"Connects to {ref.host} by IP instead of a hostname. Legitimate cloud "
                     "APIs use DNS names; hardcoded IPs are typical of command-and-control.",
                     ref,
+                    addresses=(ref.host.strip("[]").lower(),),
                 )
             )
         attrs: dict[str, Any] = {"class": cls}

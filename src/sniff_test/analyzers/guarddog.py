@@ -14,12 +14,14 @@ medium heuristics drop to low: there they are almost always legitimate features
 (e.g. typer's shell-completion installer writing to ~/.bashrc), while high-confidence
 threat rules still fire at full severity in case a popular package is hijacked.
 
-Host reputation (0.8.0, user decision 2026-11-12): `threat-network-exfiltration` fires on
-how an address looks (an ending such as .xyz, a named drop-box service, a public IP),
-not on a data flow. chromadb-client names `https://api.together.xyz/v1/embeddings`,
-Together AI's API, and that alone was a high finding. When every address the rule matched
-is a well-known service (`known.py`), the finding is kept but shown as low, under its own
-rule id, saying whose address it is. See `_known_service_hits` for what "every" means.
+Host reputation (0.9.0, user decision 2026-11-12): `threat-network-exfiltration` and
+`threat-network-outbound-shady-links` fire on how an address looks (an ending such as
+.xyz, a named service, a public IP), not on a data flow. chromadb-client names
+`https://api.together.xyz/v1/embeddings`, Together AI's API, and that alone is a high
+finding. The finding stays as it is; when every address behind it can be read with
+certainty (`_addresses`), the finding carries them, and the panel lets the user mark
+them trusted. 0.8.0 lowered such findings by itself from a shipped list of known
+services; the user chose to decide per address instead (the list now only names hosts).
 """
 
 from __future__ import annotations
@@ -33,14 +35,15 @@ from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from sniff_test import known
 from sniff_test.analyzers import _proc
+from sniff_test.analyzers.endpoints import never_trustable
 from sniff_test.analyzers.pypi_meta import is_popular
 from sniff_test.analyzers.python_deps import Resolution, ResolvedPackage, fetch_artifact
 from sniff_test.analyzers.semgrep import neutralize_ignores
 from sniff_test.deps.uv import Artifact
 from sniff_test.models import AnalyzerResult, AnalyzerState, Category, Finding, Severity, Tag
 from sniff_test.paths import cache_root
+from sniff_test.trust import valid_address
 
 NAME = "guarddog"
 _TIMEOUT = 300
@@ -95,51 +98,48 @@ SEVERITY: dict[str, Severity | None] = {
 }
 _UNKNOWN_THREAT = Severity.LOW
 
-_ADDRESS_SHAPE = "threat-network-exfiltration"
-KNOWN_SERVICE_RULE = "dep-guarddog-network-exfiltration-known-service"
-_GUARDDOG_MAX_HITS = 5  # the rule's own `max_hits`: at 5, more matches may exist unseen
+_ADDRESS_RULES = frozenset({"threat-network-exfiltration", "threat-network-outbound-shady-links"})
+_GUARDDOG_MAX_HITS = 5  # these rules' own `max_hits`: at 5, more matches may exist unseen
 _CODE_URL = re.compile(r"""https?://[^\s"'`<>)\]}]+""", re.I)
 
 
-def _known_service_hits(hits: list) -> list[tuple[str, known.Service]] | None:
-    """The (host, service) pairs behind an address-shape finding when **every** address
-    it matched is a well-known service, else None. Deliberately strict; anything unclear
-    keeps the finding high:
+def _addresses(hits: list) -> tuple[str, ...]:
+    """The hosts/IPs behind an address-shape finding, when **every** one of them can be
+    read with certainty; else nothing, and the finding can't be marked trusted.
+    Deliberately strict:
     - fewer hits than GuardDog's cap (at the cap, later matches were cut off unseen);
     - each hit shows its line of code, the match is a URL in that line, and every URL on
-      the line (not only the matched one) has a known host;
-    - the host is read the way a client would (`urlsplit`), so `https://api.together.xyz
-      @evil.tk/` or a backslash trick is another host, not a known one; any userinfo
-      disqualifies;
-    - services where each customer gets a host of their own (`shared`) don't count, and
-      neither does a bare IP or one of the drop-box names the rule also carries (those
-      aren't on the list at all)."""
+      the line (not only the matched one) is counted;
+    - the host is read the way a client would (`urlsplit`), so in
+      `https://api.together.xyz@evil.tk/` the address is evil.tk; any userinfo or
+      backslash disqualifies the finding altogether;
+    - no drop box or chat webhook (`endpoints.never_trustable`): for those, knowing the
+      service says nothing about who receives the data."""
     if not hits or len(hits) >= _GUARDDOG_MAX_HITS:
-        return None
-    out: list[tuple[str, known.Service]] = []
+        return ()
+    out: list[str] = []
     for hit in hits:
         if not isinstance(hit, dict):
-            return None
+            return ()
         code, match = str(hit.get("code") or ""), str(hit.get("match") or "").strip()
         if not match.lower().startswith(("http://", "https://")) or match not in code:
-            return None
+            return ()
         urls = _CODE_URL.findall(code)
         if not urls or "\\" in code:
-            return None
+            return ()
         for url in urls:
             try:
                 parts = urlsplit(url)
-                host = parts.hostname
+                host = (parts.hostname or "").lower()
             except ValueError:
-                return None
-            if not host or "@" in parts.netloc:
-                return None
-            svc = known.lookup(host)
-            if svc is None or svc.shared:
-                return None
-            if (host, svc) not in out:
-                out.append((host, svc))
-    return out
+                return ()
+            if not valid_address(host) or "@" in parts.netloc:
+                return ()
+            if never_trustable(host):
+                return ()
+            if host not in out:
+                out.append(host)
+    return tuple(out)
 
 
 def guarddog_version() -> str | None:
@@ -223,30 +223,6 @@ def to_findings(data: dict, pkg: ResolvedPackage, art: Artifact) -> list[Finding
         where = str(first.get("location", ""))
         match = " ".join(str(first.get("match", "")).split())[:_EVIDENCE_MAX]
         more = f" (and {len(hits) - 1} more)" if len(hits) > 1 else ""
-        named = _known_service_hits(hits) if rule == _ADDRESS_SHAPE else None
-        if named:
-            whose = "; ".join(f"{host} is {svc.label}" for host, svc in named)
-            out.append(
-                Finding(
-                    rule_id=KNOWN_SERVICE_RULE,
-                    title=f"Unusual-looking address in dependency {pkg.name}",
-                    severity=Severity.LOW,
-                    category=Category.DEPENDENCY,
-                    message=(
-                        f"GuardDog heuristic '{rule}' matched in {pkg.name} {pkg.version} "
-                        f"({art.filename}) at {where}{more}: the address has an ending "
-                        f"that throwaway sites often use, but {whose}. Every address the "
-                        "heuristic matched is a well-known service, so this is shown as "
-                        "low. The heuristic looks only at the address; it doesn't show "
-                        "what is sent there."
-                    ),
-                    file="manifest.json",
-                    evidence=f"{pkg.name}=={pkg.version} {where}: {match}",
-                    analyzer=NAME,
-                    platforms=_platforms_for(art, pkg),
-                )
-            )
-            continue
         out.append(
             Finding(
                 rule_id=f"dep-guarddog-{rule.removeprefix('threat-')}",
@@ -263,6 +239,7 @@ def to_findings(data: dict, pkg: ResolvedPackage, art: Artifact) -> list[Finding
                 tags=frozenset({Tag.POSSIBLE}) if rule in _EXFIL else frozenset(),
                 analyzer=NAME,
                 platforms=_platforms_for(art, pkg),
+                addresses=_addresses(hits) if rule in _ADDRESS_RULES else (),
             )
         )
     return out

@@ -1,9 +1,10 @@
 """Well-known services by host: who runs an address, in a few plain words.
 
 The list ships with Barkley (`data/known_services.txt`) and is matched locally, so no
-host from a scan is ever sent anywhere to be looked up. It adds a name to a host; it
-never changes the host's class or what the correlation makes of it. The one severity it
-touches is GuardDog's address-shape heuristic (see `analyzers/guarddog.py`).
+host from a scan is ever sent anywhere to be looked up. It adds a name to a host and
+nothing else: no class, finding or score depends on it. The panel shows the name where
+the host is listed and as a hint in the "Trust this address?" box (`trust.py`), where
+the user decides.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ class Service:
     suffix: str
     name: str  # who runs it
     what: str  # what it is
-    shared: bool = False  # customers get their own host under the suffix: named, never trusted
+    shared: bool = False  # customers get their own host under the suffix
 
     @property
     def label(self) -> str:

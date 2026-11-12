@@ -1,12 +1,12 @@
 # Well-known services, by host. Format:  <host-suffix> | <who runs it> | <what it is> [| shared]
 # A host matches an entry when it equals it or ends with "." + it.
 #
-# What this list is for (host reputation, user decision 2026-11-12):
-#   1. the panel and the report can say who a host belongs to ("api.together.xyz: Together AI");
-#   2. GuardDog's address-shape heuristic (an unusual ending such as .xyz) is shown as low
-#      instead of high when every address it matched is on this list and not marked shared.
+# What this list is for (host reputation, user decisions 2026-11-12): a name for a host.
+# The panel and the report say who runs an address ("api.together.xyz: Together AI"), and
+# the "Trust this address?" box shows it as a hint for the user's own decision.
 # It never changes a host's class (declared, undeclared, ...), the possible-exfil
-# correlation, or any other finding.
+# correlation, any finding or any score. (0.8.0 lowered one GuardDog heuristic from this
+# list by itself; the user chose to decide per address instead, 0.9.0.)
 #
 # Rules for adding a line (tests/test_known.py enforces the ones a test can):
 #   - one operator runs the whole suffix. Never a place where anyone can sign up and get a
@@ -15,8 +15,7 @@
 #     findings or context there; no suffix here may overlap its exfil_service, messaging,
 #     developer_hosted or analytics entries.
 #   - mark it `shared` when customers get their own host under the suffix
-#     (<name>.openai.azure.com). A shared entry is named in the panel but never lowers
-#     a finding.
+#     (<name>.openai.azure.com); the text should say so.
 #   - prefer the exact API host over a whole company domain.
 #   - "what it is" is a few plain words; it is shown to the user as written.
 

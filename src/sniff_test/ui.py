@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, replace
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
-from sniff_test import __version__
+from sniff_test import __version__, known
 from sniff_test.analyzers.correlate import SENSITIVE_NODES
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
 from sniff_test.models import STALE_YEARS, fix_phrase, years_since
@@ -129,10 +129,16 @@ CSS = """
   --mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
   /* neutrals tinted toward the brand hue (OKLCH 208°); the accent sits 65° from the
      "no concerns" green and at least 40° from every severity hue */
-  --bg:#f4f7f8; --card:#fff; --soft:#eaf2f3; --line:#d8e0e1; --fg:#141c1d; --muted:#5f6c6d;
+  --bg:#edf1f2; --card:#fff; --soft:#e6eeef; --line:#c9d3d5; --fg:#141c1d; --muted:#5a6768;
   --brand:#006b77; --brand-bg:#d8f5f9; --brand-fg:#fff;
-  --green:#2e7d32; --yellow:#856800; --orange:#c2560b; --red:#c62828; --grey:#788284;
-  --green-bg:#e9f4ea; --yellow-bg:#fbf4dc; --orange-bg:#fdeee2; --red-bg:#fbe7e6;
+  /* light mode, second pass (the user, 2026-11-12: "colors are a bit difficult to discern
+     and the cards look mostly the same"): the page a step darker than the cards and a
+     firmer card line; amber instead of olive for "look", on a tint you can see; deeper
+     tints for green/orange/red; `--*-edge` is the brighter hue for outlines, where text
+     contrast doesn't apply */
+  --green:#256b29; --yellow:#8a5a00; --orange:#b34a00; --red:#b71c1c; --grey:#788284;
+  --green-bg:#dcefdd; --yellow-bg:#ffe9a8; --orange-bg:#ffdcc2; --red-bg:#fbd5d2;
+  --yellow-edge:#d99a00; --orange-edge:#e0660a; --red-edge:#d32f2f;
   --priv:#6a4fb3; --priv-bg:#efeafa; --ai:#a3267f; --ai-bg:#fbeaf5;
   --dur-in:180ms; --dur-out:100ms; color-scheme:light; }
 @media (prefers-color-scheme: dark) { :root { --bg:#101516; --card:#191e1f; --soft:#202829;
@@ -140,6 +146,7 @@ CSS = """
   --brand:#66d0df; --brand-bg:#0b2e33; --brand-fg:#070b0c;
   --green:#6fcf74; --yellow:#e3c04f; --orange:#ff9f5a; --red:#ff7b72; --grey:#7e888a;
   --green-bg:#18291a; --yellow-bg:#2e2810; --orange-bg:#33210f; --red-bg:#351a19;
+  --yellow-edge:#e3c04f; --orange-edge:#ff9f5a; --red-edge:#ff7b72;
   --priv:#b9a4f0; --priv-bg:#251f38; --ai:#f07acb; --ai-bg:#33172b; color-scheme:dark; } }
 * { box-sizing:border-box; }
 body { background:var(--bg); color:var(--fg); font:400 var(--t-sm)/1.5 var(--font);
@@ -200,9 +207,9 @@ table.apps td.actcell .act { flex-wrap:nowrap; }
 .app:hover, .app:focus-within { box-shadow:0 0 0 3px var(--soft); }
 /* an outline only where it changes a decision: not on "no concerns found" */
 .app.green { border:1px solid var(--line); }
-.app.yellow { border:1px solid var(--yellow); box-shadow:inset 0 0 0 1px var(--yellow); }
-.app.orange { border:1px solid var(--orange); box-shadow:inset 0 0 0 1px var(--orange); }
-.app.red { border:1px solid var(--red); box-shadow:inset 0 0 0 1px var(--red); }
+.app.yellow { border:1px solid var(--yellow-edge); box-shadow:inset 0 0 0 1px var(--yellow-edge); }
+.app.orange { border:1px solid var(--orange-edge); box-shadow:inset 0 0 0 1px var(--orange-edge); }
+.app.red { border:1px solid var(--red-edge); box-shadow:inset 0 0 0 1px var(--red-edge); }
 .app.yellow:hover, .app.orange:hover, .app.red:hover { box-shadow:inset 0 0 0 1px currentColor,
   0 0 0 3px var(--soft); }
 .app-top { display:flex; gap:var(--s2); align-items:flex-start; justify-content:space-between; }
@@ -217,6 +224,8 @@ a.app-name::after { content:""; position:absolute; inset:0; border-radius:var(--
 .badge small { display:block; font-size:var(--t-xs); font-weight:600; letter-spacing:0.03em;
   text-transform:uppercase; color:var(--muted); }
 .badge.grey { color:var(--muted); }
+.badge.green { background:var(--green-bg); color:var(--green); }
+.badge.green small { color:inherit; }
 .badge.yellow { background:var(--yellow-bg); color:var(--yellow); }
 .badge.orange { background:var(--orange-bg); color:var(--orange); }
 .badge.red { background:var(--red-bg); color:var(--red); }
@@ -228,6 +237,12 @@ a.app-name::after { content:""; position:absolute; inset:0; border-radius:var(--
 .chip.priv { background:var(--priv-bg); color:var(--priv); }
 .chip.warn { background:var(--yellow-bg); color:var(--yellow); }
 .chip.bad { background:var(--red-bg); color:var(--red); }
+.trustbox { border:1px solid var(--line); border-radius:var(--r3); padding:var(--s2) var(--s3);
+  margin-top:var(--s2); background:var(--soft); }
+.trustbox.on { border-color:var(--green); background:var(--green-bg); }
+.trustbox p, .trustbox ul { margin:0 0 var(--s2); }
+.trustbox .row { display:flex; flex-wrap:wrap; gap:var(--s2); }
+.trustbox form { margin:0; }
 .act { position:relative; z-index:1; display:flex; gap:var(--s2); align-items:center; }
 .act form { margin:0; }
 button { font:500 var(--t-sm)/20px var(--font); padding:var(--s1) var(--s3);
@@ -615,6 +630,13 @@ def card_sentence(c: Card) -> str:
             )
     else:
         second = connection_sentence(rep)
+    t = rep.get("trust")
+    if t:  # never a silent change: the card says the score leans on the user's own list
+        n = len(t.get("addresses") or [])
+        second += (
+            f" The score counts {n} address{'es' * (n != 1)} you trust as fine "
+            f"(Barkley's own: {t.get('own_score')})."
+        )
     return f"{first} {second}"
 
 
@@ -1233,6 +1255,22 @@ def deep_html(
         f'<div class="st">{e(title, 200)}</div>{body}</div></div>'
     )
     return f'<div class="deepi" id="item-{e(item_id, 40)}">{inline}</div>{sheet}'
+
+
+TrustFn = Callable[[dict[str, Any]], str]
+
+
+def known_text(address: str) -> str:
+    """Who runs an address, from the shipped list of well-known services, or that we
+    don't know. A hint for the user's own decision; it never changes a score."""
+    svc = known.lookup(address)
+    if svc:
+        return f"Barkley knows this as {e(svc.label, 160)}."
+    return "Barkley doesn't know who runs this address."
+
+
+def address_line(address: str) -> str:
+    return f"<li><code>{e(address, 253)}</code> · {known_text(address)}</li>"
 
 
 def privacy_html(notes: list[privacy.Note]) -> str:
@@ -2049,6 +2087,25 @@ def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow
     return '<ul class="plain">' + "".join(items[-12:]) + "</ul>"
 
 
+def own_score_text(report: dict[str, Any]) -> str:
+    t = report.get("trust") or {}
+    return f"Barkley's own score for this scan: {e(t.get('own_score'))}."
+
+
+def trust_line(report: dict[str, Any]) -> str:
+    """Under the head: the shown score counts trusted addresses as fine; say so, with
+    Barkley's own score, every time."""
+    t = report.get("trust")
+    if not t:
+        return ""
+    n = len(t.get("addresses") or [])
+    return (
+        f'<div class="small">{icon("check", 14, "ok")} {e(report.get("score"))} with '
+        f"{n} address{'es' * (n != 1)} you trust. {own_score_text(report)} "
+        "The findings are still listed below.</div>"
+    )
+
+
 def render_app(
     base: str,
     sid: int,
@@ -2063,8 +2120,11 @@ def render_app(
     deep: DeepFn | None = None,
     again: str = "",
     refresh_url: str = "",
+    trust: TrustFn | None = None,
 ) -> bytes:
-    """One app's detail page. `update`, `ai_form` and `again` (the "sniff this version
+    """One app's detail page. `trust(finding)` is the server-built "Trust this address?"
+    block; `report` is the shown report (trust.view), so trusted findings sit in
+    `trusted_findings` and the score already leaves them out. `update`, `ai_form` and `again` (the "sniff this version
     again" / "other versions" text actions in the head) are server-built HTML snippets."""
     t = report.get("target", {})
     title = name or (t.get("repo") or t.get("input") or "?").rsplit("/", 1)[-1]
@@ -2089,7 +2149,7 @@ def render_app(
         f'<div class="muted small">Checked with Barkley {e(report.get("tool", {}).get("version"))}: '
         f"{e(_SOURCE.get(str(t.get('install_source')), t.get('install_source')))}"
         f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}.</div>"
-        f"{again}</div></section>"
+        f"{trust_line(report)}{again}</div></section>"
     )
     parts = [f'<div class="stack">{head}{update}</div>' if update else head]
     missing = [
@@ -2119,10 +2179,12 @@ def render_app(
     )
     parts.append(privacy_html(privacy.notes(report)))
     groups = scored_findings(report)
+    aside = report.get("trusted_findings") or []
+    expl = ai.get("findings", {})
+    items = (report.get("context") or {}).get("items") or {}
+    dfn = deep or (lambda _id: "")
+    tfn = trust or (lambda _f: "")
     if groups:
-        expl = ai.get("findings", {})
-        items = (report.get("context") or {}).get("items") or {}
-        dfn = deep or (lambda _id: "")
         parts.append(
             f'<section class="box"><h2>What we found ({len(groups)})</h2>'
             + "".join(
@@ -2131,7 +2193,8 @@ def render_app(
                     fs,
                     p,
                     next((expl[x["id"]] for x in fs if x["id"] in expl), ""),
-                    next((dfn(x["id"]) for x in fs if x["id"] in items), ""),
+                    next((dfn(x["id"]) for x in fs if x["id"] in items), "")
+                    + "".join(tfn(x) for x in fs),
                 )
                 for f, fs, p in groups
             )
@@ -2140,7 +2203,27 @@ def render_app(
     else:
         parts.append(
             f'<section class="box"><h2>What we found</h2><p class="ok">{icon("check", 16, "ok")} '
-            "Nothing smelled off.</p></section>"
+            f"{'Nothing else smelled off.' if aside else 'Nothing smelled off.'}</p></section>"
+        )
+    if aside:
+        n = len(aside)
+        parts.append(
+            f'<section class="box"><h2>Findings about addresses you trust ({n})</h2>'
+            '<p class="sub">Barkley found '
+            f"{'this' if n == 1 else 'these'} and still shows {'it' if n == 1 else 'them'}. "
+            f"{'It costs' if n == 1 else 'They cost'} no points because you marked the "
+            f"address trusted. {own_score_text(report)}</p>"
+            + "".join(
+                finding_html(
+                    f,
+                    [f],
+                    0,
+                    expl.get(f["id"], ""),
+                    (dfn(f["id"]) if f["id"] in items else "") + tfn(f),
+                )
+                for f in aside
+            )
+            + "</section>"
         )
     parts.append(
         '<section class="box"><h2>Where your data can go</h2><p class="sub">Left: what it can '

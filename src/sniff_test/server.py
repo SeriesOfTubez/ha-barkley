@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from typing import Any
 
-from sniff_test import __version__, doctor, memory, supervisor, ui, watch
+from sniff_test import __version__, doctor, memory, supervisor, trust, ui, watch
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import GitHubError, RateLimit, RateLimitError
@@ -688,7 +688,7 @@ def render_index(
             else f"Up to {parallel} scans run at once, as memory allows. "
         )
         + f'Scores never come from an AI. <a href="{base}/doctor">Diagnostics</a>: can each '
-        "tool run on this box?</p>"
+        f'tool run on this box? <a href="{base}/trusted">Addresses you trust</a>.</p>'
     )
     return ui.page("Barkley", "".join(out), refresh=5 if active else 0, base=base)
 
@@ -966,6 +966,7 @@ def render_scan(
         name=row.item.name if row else None,
         update=_update_box(base, row, token),
         again=_again_box(base, report, token),
+        trust=trust_block(base, sid, report, token),
         ai=have,
         ai_form=_ai_form(
             base,
@@ -1170,6 +1171,102 @@ def render_versions(
                    base=base)  # fmt: skip
 
 
+def trust_block(base: str, sid: int, report: dict[str, Any], token: str) -> ui.TrustFn:
+    """The "Trust this address?" block under a finding that is only about where an
+    address points, or the "you trust this" note with its undo. Server-built (it holds
+    the form token); every address is escaped and came from the scanner's own parse."""
+    repo = str(report.get("target", {}).get("repo") or "")
+    has_repo = bool(_REPO.match(repo))
+    trusted = {f["id"]: f for f in report.get("trusted_findings", [])}
+
+    def hidden(f: dict[str, Any]) -> str:
+        return (f'<input type=hidden name=token value="{token}">'
+                f'<input type=hidden name=scan value="{sid}">'
+                f'<input type=hidden name=finding value="{e(f["id"], 16)}">')  # fmt: skip
+
+    def block(f: dict[str, Any]) -> str:
+        addrs = [a for a in f.get("addresses") or [] if isinstance(a, str)]
+        if not addrs:
+            return ""
+        lines = "".join(ui.address_line(a) for a in addrs[:6])
+        if f["id"] in trusted:
+            scope = trusted[f["id"]].get("trusted")
+            undo = "".join(
+                f'<form method=post action="{base}/untrust"><input type=hidden name=token '
+                f'value="{token}"><input type=hidden name=scan value="{sid}">'
+                f'<input type=hidden name=address value="{e(a, 253)}">'
+                f'<input type=hidden name=repo value="{e(repo) if sc == "app" else ""}">'
+                f"<button>Stop trusting {e(a, 80)}"
+                f"{' (for every app)' if sc == 'all' else ''}</button></form>"
+                for a in addrs[:6]
+                if (sc := store_scope(report, a))
+            )
+            where = {"app": "for this app", "all": "for every app"}.get(scope, "")
+            return (f'<div class="trustbox on"><p class="small"><b>{ui.icon("check")} You trust '
+                    f"{'this address' if len(addrs) == 1 else 'these addresses'} {where}</b>, "
+                    "so this finding costs no points. A new or changed address is flagged "
+                    f'again.</p><ul class="plain small">{lines}</ul><div class="row">{undo}</div>'
+                    "</div>")  # fmt: skip
+        one = len(addrs) == 1
+        name = e(addrs[0], 80) if one else "these addresses"
+        buttons = (
+            (f'<form method=post action="{base}/trust">{hidden(f)}'
+             "<input type=hidden name=scope value=app><button>Trust for this app</button></form>"
+             if has_repo else "")
+            + f'<form method=post action="{base}/trust">{hidden(f)}'
+            "<input type=hidden name=scope value=all><button>Trust for every app</button></form>"
+        )  # fmt: skip
+        return (f'<div class="trustbox"><p class="small"><b>Trust {name}?</b> This finding is '
+                f"only about where {'this address points' if one else 'these addresses point'}"
+                ", not about what is sent. Check that "
+                f"{'it is an address' if one else 'they are addresses'} you expect this app to "
+                "use before you run it. If you mark "
+                f"{'it' if one else 'them'} trusted, this finding costs no points, now and in "
+                f"future sniffs, until the address changes.</p><ul class=\"plain small\">{lines}"
+                f'</ul><div class="row">{buttons}</div></div>')  # fmt: skip
+
+    def store_scope(rep: dict[str, Any], a: str) -> str:
+        return rep.get("trust", {}).get("scopes", {}).get(a, "")
+
+    return block
+
+
+def render_trusted(base: str, trusted: trust.Trusted, names: dict[str, str], token: str) -> bytes:
+    """Every address the user trusts, with an undo each. Addresses and repos were
+    validated when they were stored; still escaped."""
+
+    def row(a: str, repo: str) -> str:
+        return (f'<tr><td><code>{e(a, 253)}</code></td><td class="wrap">{ui.known_text(a)}</td>'
+                f'<td class="act"><form method=post action="{base}/untrust">'
+                f'<input type=hidden name=token value="{token}">'
+                f'<input type=hidden name=address value="{e(a, 253)}">'
+                f'<input type=hidden name=repo value="{e(repo)}">'
+                "<button>Stop trusting</button></form></td></tr>")  # fmt: skip
+
+    out = [f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
+           "<h1>Addresses you trust</h1>",
+           '<p class="muted">Some findings are only about where an address points: an '
+           "internet address written into the code as a number, or an address in a code "
+           "library that an automatic check finds suspicious-looking. When you mark such an "
+           "address trusted on an app's page, those findings stop costing points. Nothing "
+           "else is affected: a finding about what an app sends, or about a paste site, "
+           "tunnel or chat webhook, can't be switched off here. Barkley's own score stays "
+           "on each app's page.</p>"]  # fmt: skip
+    if not trusted:
+        out.append('<p class="muted">You haven\'t marked any address trusted.</p>')
+    if trusted.everywhere:
+        rows = "".join(row(a, "") for a in sorted(trusted.everywhere))
+        out.append(f"<h2>For every app</h2><table>{rows}</table>")
+    for repo in sorted(trusted.apps):
+        if trusted.apps[repo]:
+            title = names.get(repo) or repo
+            out.append(f"<h2>Only for {e(title, 80)} <span class=\"muted small\">{e(repo, 200)}"
+                       "</span></h2><table>"
+                       + "".join(row(a, repo) for a in sorted(trusted.apps[repo]))
+                       + "</table>")  # fmt: skip
+    return _page("Barkley · Addresses you trust", "".join(out), base)
+
+
 def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
     out = [f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
            "<h1>Diagnostics</h1>",
@@ -1273,6 +1370,7 @@ class Panel:
         memory_fn: Callable[[], memory.Memory] = memory.check,
     ):
         self.store = store
+        store.trust_overlay = True  # rows show scores with the user's trusted addresses
         self.worker = worker
         self.allow = allow
         self.token = secrets.token_urlsafe(24)
@@ -1474,7 +1572,7 @@ class Panel:
                     installed=scan.ref or "?",
                     available=None,
                     scan=scan,
-                    report=self.report(scan.id),
+                    report=self.shown_report(scan.id),
                     busy=busy.get(repo, ""),
                 )
             )
@@ -1512,6 +1610,36 @@ class Panel:
             self._reports[sid] = rep
         return self._reports[sid]
 
+    def shown_report(self, sid: int) -> dict[str, Any] | None:
+        """The report as the panel shows it (trust.view): findings whose addresses the
+        user trusts are set aside and the score counts the rest. The stored report, the
+        raw JSON link, the AI's input and diffs always use `report()`."""
+        rep = self.report(sid)
+        return trust.view(rep, self.store.trusted()) if rep is not None else None
+
+    def trust_finding(self, sid: int, finding_id: str, everywhere: bool) -> bool:
+        """Mark every address of one finding trusted, for its app or for every app.
+        Only addresses the scanner attached to that finding can be added."""
+        report = self.store.report(sid)
+        f = next((x for x in report.get("findings", []) if x.get("id") == finding_id), None)
+        addrs = [a for a in (f or {}).get("addresses") or [] if isinstance(a, str)]
+        repo = report.get("target", {}).get("repo")
+        if not addrs or not (everywhere or (repo and _REPO.match(str(repo)))):
+            return False
+        t = self.store.trusted()
+        if not all(t.add(a, None if everywhere else str(repo)) for a in addrs):
+            return False
+        self.store.set_trusted(t)
+        print(f"trusted by the user ({'every app' if everywhere else repo}): "
+              f"{', '.join(addrs)}", file=sys.stderr, flush=True)  # fmt: skip
+        return True
+
+    def untrust(self, address: str, repo: str | None) -> None:
+        t = self.store.trusted()
+        t.remove(address, repo)
+        self.store.set_trusted(t)
+        print(f"no longer trusted ({repo or 'every app'}): {address}", file=sys.stderr, flush=True)
+
     def rows(self, refresh: bool = False) -> tuple[InstalledState, list[Row]]:
         if self.installed_fn is None:
             return InstalledState(error="not running as a Home Assistant add-on"), []
@@ -1537,7 +1665,7 @@ class Panel:
         if self.installed_fn is None:
             return ""
         st, rows = self.rows(refresh)
-        html = render_installed(base, st, rows, self.token, self.report, v)
+        html = render_installed(base, st, rows, self.token, self.shown_report, v)
         if not st.error:
             html += self.not_installed_html(base, {r.item.repo.lower() for r in rows})
         return html
@@ -1619,6 +1747,7 @@ class Panel:
                         if m[2]:
                             body = json.dumps(report, indent=2).encode()
                             return self._send(200, body, "application/json")
+                        report = trust.view(report, panel.store.trusted())
                         row = panel.row_for(report.get("target", {}).get("repo"))
                         state, err = panel.ai_state(sid)
                         choices, choices_err = panel.ai_choices()
@@ -1666,6 +1795,9 @@ class Panel:
                             scans, busy, panel.token, err,
                         )  # fmt: skip
                         return self._send(200, page)
+                    if url.path == "/trusted":
+                        return self._send(200, render_trusted(
+                            base, panel.store.trusted(), panel.names(), panel.token))  # fmt: skip
                     if url.path == "/doctor":
                         checks = doctor.run_checks(addon=True)
                         if panel.watcher is not None:
@@ -1714,6 +1846,27 @@ class Panel:
                     else:
                         w.notify_test()
                     return self._redirect(f"{self._base()}/")
+                if path == "/trust":
+                    fid, scope = get("finding"), get("scope")
+                    if (not get("scan").isdigit() or not re.fullmatch(r"[0-9a-f]{16}", fid)
+                            or scope not in ("app", "all")):  # fmt: skip
+                        return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                    sid = int(get("scan"))
+                    try:
+                        if not panel.trust_finding(sid, fid, scope == "all"):
+                            return self._text(HTTPStatus.BAD_REQUEST,
+                                              "that finding has no address to trust")  # fmt: skip
+                    except StoreError as ex:
+                        return self._text(HTTPStatus.NOT_FOUND, str(ex))
+                    return self._redirect(f"{self._base()}/scan/{sid}")
+                if path == "/untrust":
+                    address, repo = get("address"), get("repo")
+                    if not trust.valid_address(address) or (repo and not _REPO.match(repo)):
+                        return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                    panel.untrust(address, repo or None)
+                    sid = get("scan")
+                    return self._redirect(f"{self._base()}/scan/{sid}" if sid.isdigit()
+                                          else f"{self._base()}/trusted")  # fmt: skip
                 if path == "/ai-entity":
                     value = get("entity")
                     choices, _err = panel.ai_choices(refresh=True)
