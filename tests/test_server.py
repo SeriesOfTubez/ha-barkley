@@ -282,8 +282,8 @@ def test_installed_grid_leads_with_what_needs_attention(addon):
     assert order[:2] == ["Never", "Unchecked"] or order[:2] == ["Unchecked", "Never"]
     assert order.index("Moved") < order.index("Fine")
     moved = _card(page, "Moved")
-    assert 'class="app grey"' not in moved and "Update v2" in moved
-    assert "Update needs a look" in moved and "diff?old=" in moved
+    assert 'class="app grey"' not in moved and "Update v2 needs a look" in moved
+    assert "Update v2 needs a look" in moved and "diff?old=" in moved
     unchecked = _card(page, "Unchecked")
     assert "app grey" in unchecked or 'class="app "' not in unchecked
     assert "Check update" in unchecked and 'name=to value="v2"' in unchecked

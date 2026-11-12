@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib import resources
 from typing import Any
 
 from sniff_test import __version__, doctor, memory, supervisor, ui, watch
@@ -61,10 +62,22 @@ def _need(job: Job) -> int:
     return _GITHUB_NEED.get(job.kind, 15)
 
 
+# No scripts, ever. font-src 'self' (2026-11-12) lets the panel serve its own two woff2
+# files (assets/fonts, vendored with provenance): fonts are data, not code.
 _CSP = (
-    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; "
+    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; "
     "form-action 'self'; base-uri 'none'; frame-ancestors 'self'"
 )
+_FONT_FILES = ("Geist-Variable.woff2", "GeistMono-Variable.woff2")
+
+
+def _font_bytes(name: str) -> bytes | None:
+    if name not in _FONT_FILES:
+        return None
+    try:
+        return (resources.files("sniff_test") / "assets" / "fonts" / name).read_bytes()
+    except OSError:
+        return None
 
 
 def e(text: Any, limit: int = 300) -> str:
@@ -331,8 +344,8 @@ class Worker:
 # --- HTML ------------------------------------------------------------------------------
 
 
-def _page(title: str, body: str) -> bytes:
-    return ui.page(title, body)
+def _page(title: str, body: str, base: str = "") -> bytes:
+    return ui.page(title, body, base=base)
 
 
 def _verdict(score: int, key: str) -> str:
@@ -422,8 +435,11 @@ def classify(
     return sorted(out, key=lambda r: order[r.group])
 
 
-def _action(base: str, r: Row, token: str, back: str = "") -> str:
+def _action(base: str, r: Row, token: str, back: str = "", primary: bool = False) -> str:
+    """The row's own button. Quiet in the list (one primary per view); `primary` on the
+    app's page, where checking its update is the one thing to do."""
     it = r.item
+    cls = "primary" if primary else ""
     hidden = (f'<input type=hidden name=token value="{token}">'
               f'<input type=hidden name=back value="{back}">'
               f'<input type=hidden name=repo value="{e(it.repo)}">'
@@ -435,11 +451,11 @@ def _action(base: str, r: Row, token: str, back: str = "") -> str:
         label = "Check again" if unfinished else "Check update"
         return (f'<form method=post action="{base}/update">{hidden}'
                 f'<input type=hidden name=to value="{e(it.available)}">'
-                f'<button class="primary">{label}</button></form>')  # fmt: skip
+                f'<button class="{cls}">{label}</button></form>')  # fmt: skip
     if not r.installed_scan or not r.installed_scan.complete:
         label = "Sniff again" if r.installed_scan else "Sniff it"
         return (f'<form method=post action="{base}/installed">{hidden}'
-                f'<button class="primary">{label}</button></form>')  # fmt: skip
+                f'<button class="{cls}">{label}</button></form>')  # fmt: skip
     return ""
 
 
@@ -454,7 +470,7 @@ def not_installed_cards_html(base: str, cards: list[ui.Card]) -> str:
     if not cards:
         return ""
     return (
-        f'<h2 style="margin-top:8px">Sniffed, not installed ({len(cards)})</h2>'
+        f"<h2>Sniffed, not installed ({len(cards)})</h2>"
         '<div class="grid">' + "".join(ui.card_html(base, c) for c in cards) + "</div>"
     )
 
@@ -493,20 +509,21 @@ def render_installed(
         )
         for r in rows
     ]
-    out = (
-        [ui.render_grid(base, cards, v)]
-        if rows
-        else ['<p class="muted">The Marketplace lists no installed integrations or cards.</p>']
-    )
     never = sum(1 for r in rows if not r.installed_scan)
-    if never:
-        out.append(
+    lead = ""
+    if never:  # the list's one primary action; nothing when everything is sniffed
+        lead = (
             f'<form method=post action="{base}/installed-all">'
             f'<input type=hidden name=token value="{token}">'
             f'<input type=hidden name=back value="{back}">'
             f'<button class="primary">Sniff the {never} not yet sniffed by Barkley '
             f"{e(__version__)}</button></form>"
         )
+    out = (
+        [ui.render_grid(base, cards, v, lead)]
+        if rows
+        else ['<p class="muted">The Marketplace lists no installed integrations or cards.</p>']
+    )
     skipped = ", ".join(f"{n} {e(c)}" for c, n in sorted(state.other.items()))
     age = int(time.time() - state.fetched) // 60 if state.fetched else 0
     out.append(
@@ -599,14 +616,7 @@ def render_index(
     against = f" against HA {e(ha)}" if ha else ""
     out = [
         f'<div class="head"><h1>{ui.logo_img()}Barkley</h1>'
-        f'<span class="muted small">Barkley {e(__version__)}{against}. '
-        + (
-            "Scans run one at a time. "
-            if parallel <= 1
-            else f"Up to {parallel} scans run at once, as memory allows. "
-        )
-        + "Scores never come from an AI. "
-        f'<a href="{base}/?{here}">↻ Refresh</a></span></div>',
+        f'<a class="small" href="{base}/?{here}">↻ Refresh</a></div>',
         status,
         _memory_banner(mem) if mem else "",
         _github_banner(github_wait),
@@ -670,10 +680,16 @@ def render_index(
         out.append("</table></div>")
     out.append("</details>")
     out.append(
-        f'<p class="muted small"><a href="{base}/doctor">Diagnostics</a>: can each tool run on '
-        "this box?</p>"
+        f'<p class="foot">Barkley {e(__version__)}{against}. '
+        + (
+            "Scans run one at a time. "
+            if parallel <= 1
+            else f"Up to {parallel} scans run at once, as memory allows. "
+        )
+        + f'Scores never come from an AI. <a href="{base}/doctor">Diagnostics</a>: can each '
+        "tool run on this box?</p>"
     )
-    return ui.page("Barkley", "".join(out), refresh=5 if active else 0)
+    return ui.page("Barkley", "".join(out), refresh=5 if active else 0, base=base)
 
 
 AUTO_NOTE = (
@@ -780,7 +796,7 @@ def _update_box(base: str, row: Row | None, token: str) -> str:
     else:
         parts.append('<p class="sub">Not checked yet. Checking scans the new version and '
                      "compares it with the one you have.</p>")  # fmt: skip
-    if not row.busy and (act := _action(base, row, token)):
+    if not row.busy and (act := _action(base, row, token, primary=True)):
         parts.append(f'<div class="act">{act}</div>')
     parts.append("</section>")
     return "".join(parts)
@@ -802,8 +818,7 @@ def _ai_picker(base: str, sid: int, token: str, entity: str,
         f"{e(name, 100)} ({e(eid, 120)})</option>"
         for eid, name in choices
     ]
-    return (f'<form method=post action="{base}/ai-entity" class="act tools" '
-            'style="margin-top:6px">'
+    return (f'<form method=post action="{base}/ai-entity" class="act tools mt2">'
             f'<input type=hidden name=token value="{token}">'
             f'<input type=hidden name=scan value="{sid}">'
             f'<select name=entity>{"".join(opts)}</select>'
@@ -821,7 +836,7 @@ def _mode_picker(base: str, sid: int, token: str, mode: str) -> str:
         f'<option value="{k}"{" selected" if k == mode else ""}>{e(v)}</option>'
         for k, v in AI_MODES.items()
     )
-    return (f'<form method=post action="{base}/ai-mode" class="act tools" style="margin-top:6px">'
+    return (f'<form method=post action="{base}/ai-mode" class="act tools mt2">'
             f'<input type=hidden name=token value="{token}">'
             f'<input type=hidden name=scan value="{sid}">'
             f"<select name=mode>{opts}</select><button>Save</button></form>"
@@ -842,12 +857,12 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
         picker += _mode_picker(base, sid, token, mode)
     if not entity:
         return (
-            '<div class="banner" style="margin-top:10px"><b>🤖 Explain this app with AI</b>'
-            '<p class="small" style="margin-top:6px">Barkley can ask your Home Assistant\'s '
+            '<div class="banner mt3"><b>🤖 Explain this app with AI</b>'
+            '<p class="small mt2">Barkley can ask your Home Assistant\'s '
             "AI to explain these findings in plain words. Choose which AI to use:</p>"
             f"{picker}</div>"
         )
-    form = (f'<form method=post action="{base}/explain" class="act" style="margin-top:8px">'
+    form = (f'<form method=post action="{base}/explain" class="act mt2">'
             f'<input type=hidden name=token value="{token}">'
             f'<input type=hidden name=scan value="{sid}">'
             f'<button class="ai">✦ {{label}}</button></form>')  # fmt: skip
@@ -857,10 +872,10 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
     change = (f"<details><summary>Change which AI explains, or how much "
               f"({e(AI_MODES.get(mode, mode))})</summary>{picker}</details>")  # fmt: skip
     if state == "running":
-        return ('<p class="muted small" style="margin-top:8px">Asking your AI… this page '
+        return ('<p class="muted small mt2">Asking your AI… this page '
                 "refreshes by itself.</p>")  # fmt: skip
     if error:
-        return (f'<div class="banner warn" style="margin-top:8px">The AI didn\'t answer: '
+        return (f'<div class="banner warn mt2">The AI didn\'t answer: '
                 f"{e(error, 400)}</div>" + form.replace("{label}", "Try again") + note
                 + change)  # fmt: skip
     if have:
@@ -932,7 +947,8 @@ def render_scan(
         report,
         rows,
         name=row.item.name if row else None,
-        update=_update_box(base, row, token) + _again_box(base, report, token),
+        update=_update_box(base, row, token),
+        again=_again_box(base, report, token),
         ai=have,
         ai_form=_ai_form(
             base,
@@ -965,17 +981,17 @@ def _again_box(base: str, report: dict[str, Any], token: str) -> str:
     if not (repo and _REPO.match(str(repo)) and (not ref or _REF.match(str(ref)))):
         return ""
     return (
-        f'<div class="box small again"><form method=post action="{base}/scan">'
+        f'<div class="again small"><form method=post action="{base}/scan">'
         f'<input type=hidden name=token value="{token}">'
         f'<input type=hidden name=repo value="{e(repo)}">'
         f'<input type=hidden name=ref value="{e(ref or "")}">'
-        "<button>Sniff this version again</button></form>"
-        '<span class="muted">Runs a fresh scan instead of reusing this one.</span> '
-        f"{_versions_link(base, repo)}</div>"
+        '<button class="link" title="Runs a fresh scan instead of reusing this one">'
+        "Sniff this version again</button></form>"
+        f'<span class="muted">·</span> {_versions_link(base, repo)}</div>'
     )
 
 
-def _search_box(base: str, q: str = "", kind: str = "") -> str:
+def _search_box(base: str, q: str = "", kind: str = "", primary: bool = False) -> str:
     opts = "".join(
         f'<option value="{v}"{" selected" if v == kind else ""}>{label}</option>'
         for v, label in (("", "Integrations and cards"), ("integration", "Integrations"),
@@ -985,7 +1001,8 @@ def _search_box(base: str, q: str = "", kind: str = "") -> str:
         f'<form method=get action="{base}/search" class="box tools search" role="search">'
         f'<input name=q value="{e(q, 100)}" maxlength=100 required '
         'placeholder="Find a Marketplace app to sniff before you install it">'
-        f"<select name=kind>{opts}</select><button class=primary>Search</button></form>"
+        f'<select name=kind>{opts}</select><button class="{"primary" if primary else ""}">'
+        "Search</button></form>"
     )
 
 
@@ -1006,7 +1023,7 @@ def render_search(
         '<p class="muted small">Searches the Marketplace catalog your Home Assistant already '
         "has. Sniffing checks exactly what the Marketplace would install, without installing "
         "anything.</p>",
-        _search_box(base, q, kind),
+        _search_box(base, q, kind, primary=True),
     ]
     if error:
         out.append(f'<div class="banner warn">Can\'t search the Marketplace: {e(error, 300)}</div>')
@@ -1029,7 +1046,7 @@ def render_search(
                    f'<input type=hidden name=repo value="{e(it.repo)}">'
                    f'<input type=hidden name=q value="{e(q, 100)}">'
                    f'<input type=hidden name=kind value="{e(kind)}">'
-                   '<button class="primary">Sniff it</button></form>')  # fmt: skip
+                   "<button>Sniff it</button></form>")  # fmt: skip
         tag = ' <span class="chip new">installed</span>' if it.installed else ""
         rows.append(
             f'<tr><td class="wrap"><b>{e(it.name, 100)}</b>{tag}<br>'
@@ -1043,7 +1060,7 @@ def render_search(
         out.append(f'<p class="muted small">{len(results)} best matches of {total} '
                    "integrations and cards.</p>")  # fmt: skip
         out.append('<table class="box">' + "".join(rows) + "</table>")
-    return _page("Barkley · search", "".join(out))
+    return _page("Barkley · search", "".join(out), base)
 
 
 def _versions_link(base: str, repo: str) -> str:
@@ -1118,7 +1135,8 @@ def render_versions(
                    "the default branch.</p>")  # fmt: skip
         out.append(f"<p>{action(None)}</p>")
     running = any(v in ("running", "queued", "waiting") for v in busy.values())
-    return ui.page(f"Barkley · versions of {name}", "".join(out), refresh=5 if running else 0)
+    return ui.page(f"Barkley · versions of {name}", "".join(out), refresh=5 if running else 0,
+                   base=base)  # fmt: skip
 
 
 def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
@@ -1138,7 +1156,7 @@ def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
             + "</td></tr>"
         )
     out.append("</table>")
-    return _page("Barkley diagnostics", "".join(out))
+    return _page("Barkley diagnostics", "".join(out), base)
 
 
 def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
@@ -1175,7 +1193,7 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any]) -> bytes:
                 f"{e(c['text'], 300)}</td></tr>"
             )
         out.append("</table>")
-    return _page("Barkley diff", "".join(out))
+    return _page("Barkley diff", "".join(out), base)
 
 
 # --- HTTP ------------------------------------------------------------------------------
@@ -1486,19 +1504,22 @@ class Panel:
                 path = self.headers.get("X-Ingress-Path", "")
                 return path if _INGRESS_PATH.match(path) else ""
 
-            def _send(self, status: int, body: bytes, ctype: str = "text/html") -> None:
+            def _send(
+                self, status: int, body: bytes, ctype: str = "text/html", cache: str = "no-store"
+            ) -> None:
                 self.send_response(status)
-                self.send_header("Content-Type", f"{ctype}; charset=utf-8")
+                charset = "" if ctype.startswith("font/") else "; charset=utf-8"
+                self.send_header("Content-Type", f"{ctype}{charset}")
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Content-Security-Policy", _CSP)
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("Referrer-Policy", "no-referrer")
-                self.send_header("Cache-Control", "no-store")
+                self.send_header("Cache-Control", cache)
                 self.end_headers()
                 self.wfile.write(body)
 
             def _text(self, status: int, msg: str) -> None:
-                self._send(status, _page("Barkley", f"<p>🐕 {e(msg)}</p>"))
+                self._send(status, _page("Barkley", f"<p>🐕 {e(msg)}</p>", self._base()))
 
             def _redirect(self, to: str) -> None:
                 self.send_response(HTTPStatus.SEE_OTHER)
@@ -1535,6 +1556,11 @@ class Panel:
                             status_html(base, jobs, panel.names(), v.qs()), v.qs(), auto,
                         )  # fmt: skip
                         return self._send(200, body)
+                    if m := re.fullmatch(r"/fonts/([A-Za-z-]+\.woff2)", url.path):
+                        if (font := _font_bytes(m[1])) is None:
+                            return self._text(HTTPStatus.NOT_FOUND, "no such font")
+                        return self._send(200, font, "font/woff2",
+                                          "public, max-age=31536000, immutable")  # fmt: skip
                     if m := re.fullmatch(r"/scan/(\d+)(\.json)?", url.path):
                         sid = int(m[1])
                         report = panel.store.report(sid)

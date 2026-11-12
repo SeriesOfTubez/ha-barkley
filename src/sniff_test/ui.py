@@ -59,195 +59,253 @@ def e(text: Any, limit: int = 300) -> str:
 # --- look --------------------------------------------------------------------------------
 
 CSS = """
-:root { --bg:#f7f8f6; --card:#fff; --fg:#1b1f1d; --muted:#66706b; --line:#e2e5e1;
-  --accent:#2f6b5a; --soft:#edf3f0;
-  --green:#2e7d32; --yellow:#9a7800; --orange:#c2560b; --red:#c62828; --grey:#8a938f;
+@font-face { font-family:"Geist"; src:url("__BASE__/fonts/Geist-Variable.woff2") format("woff2");
+  font-weight:100 900; font-display:swap; }
+@font-face { font-family:"Geist Mono"; src:url("__BASE__/fonts/GeistMono-Variable.woff2")
+  format("woff2"); font-weight:100 900; font-display:swap; }
+:root {
+  /* type: four sizes (meta · body · titles · page title), plus one for the score ring */
+  --t-xs:12px; --t-sm:13px; --t-md:15px; --t-lg:20px; --t-xl:24px;
+  /* spacing: the 4/8 scale; related things sit closer than unrelated ones */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s6:24px;
+  /* radius: chip · control · box · card; nested elements go one step smaller */
+  --r1:4px; --r2:6px; --r3:8px; --r4:12px;
+  --font:"Geist",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  /* neutrals tinted toward the brand hue (OKLCH 208°); the accent sits 65° from the
+     "no concerns" green and at least 40° from every severity hue */
+  --bg:#f4f7f8; --card:#fff; --soft:#eaf2f3; --line:#d8e0e1; --fg:#141c1d; --muted:#5f6c6d;
+  --brand:#006b77; --brand-bg:#d8f5f9; --brand-fg:#fff;
+  --green:#2e7d32; --yellow:#856800; --orange:#c2560b; --red:#c62828; --grey:#788284;
   --green-bg:#e9f4ea; --yellow-bg:#fbf4dc; --orange-bg:#fdeee2; --red-bg:#fbe7e6;
-  --priv:#6a4fb3; --priv-bg:#efeafa; --new:#0b6e99; --new-bg:#e2f1f8;
-  --ai:#a3267f; --ai-bg:#fbeaf5; color-scheme:light; }
-@media (prefers-color-scheme: dark) { :root { --bg:#121514; --card:#1a1e1c; --fg:#e4e8e6;
-  --muted:#95a09b; --line:#2a302d; --accent:#7cc4ad; --soft:#1d2a26;
-  --green:#6fcf74; --yellow:#e3c04f; --orange:#ff9f5a; --red:#ff7b72; --grey:#7b8580;
+  --priv:#6a4fb3; --priv-bg:#efeafa; --ai:#a3267f; --ai-bg:#fbeaf5;
+  --dur-in:180ms; --dur-out:100ms; color-scheme:light; }
+@media (prefers-color-scheme: dark) { :root { --bg:#101516; --card:#191e1f; --soft:#202829;
+  --line:#2c3536; --fg:#e2e9eb; --muted:#94a1a3;
+  --brand:#66d0df; --brand-bg:#0b2e33; --brand-fg:#070b0c;
+  --green:#6fcf74; --yellow:#e3c04f; --orange:#ff9f5a; --red:#ff7b72; --grey:#7e888a;
   --green-bg:#18291a; --yellow-bg:#2e2810; --orange-bg:#33210f; --red-bg:#351a19;
-  --priv:#b9a4f0; --priv-bg:#251f38; --new:#6cc4ea; --new-bg:#13293a;
-  --ai:#f07acb; --ai-bg:#33172b; color-scheme:dark; } }
+  --priv:#b9a4f0; --priv-bg:#251f38; --ai:#f07acb; --ai-bg:#33172b; color-scheme:dark; } }
 * { box-sizing:border-box; }
-body { background:var(--bg); color:var(--fg); font:14px/1.5 system-ui,-apple-system,
-  "Segoe UI",Roboto,sans-serif; margin:0 auto; max-width:1100px; padding:18px 16px 48px; }
-a { color:var(--accent); } h1 { font-size:1.35rem; margin:0; } h2 { font-size:1.05rem; margin:0 0 4px; }
-p { margin:0; } code { font:0.82rem ui-monospace,"SF Mono",Menlo,monospace; overflow-wrap:anywhere; }
-main { display:flex; flex-direction:column; gap:16px; }
-.muted { color:var(--muted); } .small { font-size:0.82rem; }
-.box { background:var(--card); border:1px solid var(--line); border-radius:10px;
-  padding:14px 16px; min-width:0; }
-.sub { color:var(--muted); font-size:0.85rem; margin-bottom:10px; }
-.head { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:baseline; }
-.head h1 { display:flex; align-items:center; gap:10px; }
+body { background:var(--bg); color:var(--fg); font:400 var(--t-sm)/1.5 var(--font);
+  margin:0 auto; max-width:1100px; padding:var(--s4) var(--s4) var(--s6); }
+a { color:var(--brand); }
+h1 { font-size:var(--t-lg); font-weight:600; letter-spacing:-0.01em; margin:0; }
+h2 { font-size:var(--t-md); font-weight:600; letter-spacing:-0.01em; margin:0 0 var(--s1); }
+h3 { font-size:var(--t-sm); font-weight:600; margin:0; }
+p { margin:0; }
+code { font:var(--t-xs)/1.5 var(--mono); overflow-wrap:anywhere; }
+b, strong { font-weight:600; }
+main { display:flex; flex-direction:column; gap:var(--s6); }
+.stack { display:flex; flex-direction:column; gap:var(--s3); }
+.muted { color:var(--muted); } .small { font-size:var(--t-xs); }
+.mt2 { margin-top:var(--s2); } .mt3 { margin-top:var(--s3); }
+.box { background:var(--card); border:1px solid var(--line); border-radius:var(--r4);
+  padding:var(--s4); min-width:0; }
+.sub { color:var(--muted); margin-bottom:var(--s2); }
+.head { display:flex; flex-wrap:wrap; gap:var(--s2) var(--s4); align-items:center; }
+.head h1 { display:flex; align-items:center; gap:var(--s2); }
 .head img.logo { display:block; flex:none; }
-.summary { display:flex; flex-wrap:wrap; gap:8px 22px; font-size:0.9rem; }
+.summary { display:flex; flex-wrap:wrap; gap:var(--s2) var(--s6); }
 .summary b { font-variant-numeric:tabular-nums; }
 a.sum { color:var(--fg); text-decoration:none; border-bottom:2px solid transparent; }
 a.sum:hover { border-bottom-color:var(--line); }
 a.sum.on { border-bottom-color:currentColor; font-weight:600; }
-.bar { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center;
+.bar { display:flex; flex-wrap:wrap; gap:var(--s2) var(--s4); align-items:center;
   justify-content:space-between; }
 .bar > :last-child { margin-left:auto; }
-.tablebox { padding:4px 8px; overflow-x:auto; }
+.lead { display:flex; flex-wrap:wrap; gap:var(--s2) var(--s3); align-items:center; }
+.lead form { margin:0; }
+details.legend-d summary { color:var(--muted); }
+details.legend-d .legend { margin-top:var(--s2); }
+button.link { border:0; background:none; padding:0; color:var(--brand); font-weight:400;
+  text-decoration:underline; line-height:inherit; }
+button.link:hover { background:none; color:var(--fg); }
+.foot { font-size:var(--t-xs); color:var(--muted); }
+.tablebox { padding:var(--s1) var(--s2); overflow-x:auto; }
 table.apps td { vertical-align:middle; }
 table.apps td.actcell { width:1%; white-space:nowrap; overflow-wrap:normal; }
 table.apps td.actcell .act { flex-wrap:nowrap; }
-.again { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; }
+.again { display:flex; flex-wrap:wrap; gap:var(--s2) var(--s3); align-items:center; }
 .again form { margin:0; }
-.status { display:flex; flex-direction:column; gap:4px; border-color:var(--accent); }
-.status .row { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; }
-.filters { display:flex; flex-wrap:wrap; gap:6px; }
-.pill { font-size:0.8rem; padding:4px 10px; border-radius:999px; border:1px solid var(--line);
-  background:var(--card); color:var(--fg); white-space:nowrap; text-decoration:none; }
+.status { display:flex; flex-direction:column; gap:var(--s1); }
+.status .row { display:flex; flex-wrap:wrap; gap:var(--s1) var(--s3); align-items:baseline; }
+.filters { display:flex; flex-wrap:wrap; gap:var(--s1); }
+.pill { font-size:var(--t-xs); line-height:16px; padding:var(--s1) var(--s3);
+  border-radius:var(--r2); border:1px solid var(--line); background:var(--card);
+  color:var(--fg); white-space:nowrap; text-decoration:none; }
 .pill.on { background:var(--fg); color:var(--card); border-color:var(--fg); }
-.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(236px,1fr)); gap:12px; }
-.app { position:relative; background:var(--card); border:2px dashed var(--grey);
-  border-radius:12px; padding:12px 14px; display:flex; flex-direction:column; gap:8px; min-width:0; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(236px,1fr)); gap:var(--s3); }
+.app { position:relative; background:var(--card); border:1px dashed var(--grey);
+  border-radius:var(--r4); padding:var(--s3) var(--s4); display:flex; flex-direction:column;
+  gap:var(--s2); min-width:0; }
 .app:hover, .app:focus-within { box-shadow:0 0 0 3px var(--soft); }
-.app.green { border:2px solid var(--green); } .app.yellow { border:2px solid var(--yellow); }
-.app.orange { border:2px solid var(--orange); } .app.red { border:2px solid var(--red); }
-.app-top { display:flex; gap:10px; align-items:flex-start; justify-content:space-between; }
-.app-name { font-weight:650; font-size:0.98rem; line-height:1.25; color:var(--fg);
+/* an outline only where it changes a decision: not on "no concerns found" */
+.app.green { border:1px solid var(--line); }
+.app.yellow { border:1px solid var(--yellow); box-shadow:inset 0 0 0 1px var(--yellow); }
+.app.orange { border:1px solid var(--orange); box-shadow:inset 0 0 0 1px var(--orange); }
+.app.red { border:1px solid var(--red); box-shadow:inset 0 0 0 1px var(--red); }
+.app.yellow:hover, .app.orange:hover, .app.red:hover { box-shadow:inset 0 0 0 1px currentColor,
+  0 0 0 3px var(--soft); }
+.app-top { display:flex; gap:var(--s2); align-items:flex-start; justify-content:space-between; }
+.app-name { font-weight:600; font-size:var(--t-md); line-height:1.25; color:var(--fg);
   text-decoration:none; overflow-wrap:anywhere; }
-a.app-name::after { content:""; position:absolute; inset:0; border-radius:10px; }
-.app-kind { font-size:0.76rem; color:var(--muted); overflow-wrap:anywhere; }
+a.app-name::after { content:""; position:absolute; inset:0; border-radius:var(--r4); }
+.app-kind { font-size:var(--t-xs); color:var(--muted); overflow-wrap:anywhere; }
 .badge { flex:none; display:inline-block; white-space:nowrap; overflow-wrap:normal;
-  min-width:44px; text-align:center; border-radius:8px; padding:3px 6px 4px;
-  font-weight:700; font-size:1.1rem; font-variant-numeric:tabular-nums; line-height:1.1;
-  background:var(--soft); color:var(--muted); text-decoration:none; }
-.badge small { display:block; font-size:0.6rem; font-weight:600; letter-spacing:0.03em;
-  text-transform:uppercase; }
-.badge.green { background:var(--green-bg); color:var(--green); }
+  min-width:44px; text-align:center; border-radius:var(--r3); padding:var(--s1) var(--s2);
+  font-weight:700; font-size:var(--t-lg); font-variant-numeric:tabular-nums; line-height:1.1;
+  background:var(--soft); color:var(--fg); text-decoration:none; }
+.badge small { display:block; font-size:var(--t-xs); font-weight:600; letter-spacing:0.03em;
+  text-transform:uppercase; color:var(--muted); }
+.badge.grey { color:var(--muted); }
 .badge.yellow { background:var(--yellow-bg); color:var(--yellow); }
 .badge.orange { background:var(--orange-bg); color:var(--orange); }
 .badge.red { background:var(--red-bg); color:var(--red); }
-.say { font-size:0.86rem; line-height:1.45; }
-.chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:auto; }
-.chip { font-size:0.72rem; padding:2px 7px; border-radius:5px; background:var(--soft);
-  color:var(--fg); white-space:nowrap; }
+.badge.yellow small, .badge.orange small, .badge.red small { color:inherit; }
+.say { line-height:1.45; }
+.chips { display:flex; flex-wrap:wrap; gap:var(--s1); margin-top:auto; }
+.chip { font-size:var(--t-xs); line-height:16px; padding:var(--s1) var(--s2);
+  border-radius:var(--r1); background:var(--soft); color:var(--fg); white-space:nowrap; }
 .chip.priv { background:var(--priv-bg); color:var(--priv); }
 .chip.warn { background:var(--yellow-bg); color:var(--yellow); }
 .chip.bad { background:var(--red-bg); color:var(--red); }
-.chip.new { background:var(--new-bg); color:var(--new); }
-.act { position:relative; z-index:1; display:flex; gap:6px; align-items:center; font-size:0.8rem; }
+.act { position:relative; z-index:1; display:flex; gap:var(--s2); align-items:center; }
 .act form { margin:0; }
-button { font:inherit; font-size:0.8rem; padding:4px 10px; border-radius:6px;
-  border:1px solid var(--line); background:var(--soft); color:var(--fg); cursor:pointer; }
-button.primary { background:var(--accent); color:var(--card); border-color:var(--accent); }
-.legend { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:0.78rem; color:var(--muted); }
-.sw { display:inline-block; width:12px; height:12px; border-radius:3px; border:2px solid;
-  vertical-align:-1px; margin-right:4px; }
-.banner { border-radius:8px; padding:10px 12px; border:1px solid var(--line); }
+button { font:500 var(--t-sm)/20px var(--font); padding:var(--s1) var(--s3);
+  border-radius:var(--r2); border:1px solid var(--line); background:var(--card);
+  color:var(--fg); cursor:pointer; }
+button:hover { background:var(--soft); }
+button.primary { background:var(--brand); color:var(--brand-fg); border-color:var(--brand); }
+button.primary:hover { filter:brightness(1.08); }
+.legend { display:flex; flex-wrap:wrap; gap:var(--s2) var(--s4); font-size:var(--t-xs);
+  color:var(--muted); }
+.sw { display:inline-block; width:12px; height:12px; border-radius:var(--r1);
+  border:1px solid; vertical-align:-1px; margin-right:var(--s1); }
+.banner { border-radius:var(--r3); padding:var(--s2) var(--s3); border:1px solid var(--line); }
 .banner.warn { background:var(--yellow-bg); color:var(--fg); border-color:var(--yellow); }
 .banner.bad { background:var(--red-bg); border-color:var(--red); }
-.crumb { font-size:0.85rem; }
-.dhead { display:grid; grid-template-columns:auto 1fr; gap:6px 18px; align-items:center; }
-.ring { width:84px; height:84px; } .ring text { font:700 24px system-ui,sans-serif; }
+.crumb { font-size:var(--t-xs); }
+.dhead { display:grid; grid-template-columns:auto 1fr; gap:var(--s2) var(--s4);
+  align-items:center; }
+.ring { width:84px; height:84px; }
+.ring text { font:700 var(--t-xl) var(--font); font-variant-numeric:tabular-nums; }
 .verdict { font-weight:600; }
-.inshort { font-size:0.97rem; line-height:1.55; max-width:76ch; }
-.two { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px;
+.inshort { font-size:var(--t-md); line-height:1.55; max-width:72ch; }
+.two { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:var(--s4);
   align-items:start; }
-.finding { border-top:1px solid var(--line); padding:12px 0 4px; display:grid;
-  grid-template-columns:6.4em 1fr; gap:4px 14px; }
-.finding:first-of-type { border-top:0; padding-top:4px; }
-.lvl { font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em;
-  padding:3px 0; color:var(--muted); }
+.finding { border-top:1px solid var(--line); padding:var(--s3) 0 var(--s1); display:grid;
+  grid-template-columns:6.5em 1fr; gap:var(--s1) var(--s4); }
+.finding:first-of-type { border-top:0; padding-top:var(--s1); }
+.lvl { font-size:var(--t-xs); font-weight:600; text-transform:uppercase; letter-spacing:0.05em;
+  padding:var(--s1) 0; color:var(--muted); }
 .lvl.critical { color:var(--red); } .lvl.high { color:var(--orange); }
 .lvl.medium { color:var(--yellow); } .lvl.p { color:var(--priv); }
-.finding h3 { margin:0; font-size:0.98rem; }
-.finding dl { margin:6px 0 0; display:grid; grid-template-columns:9.5em 1fr; gap:4px 12px;
-  font-size:0.88rem; }
+.finding h3 { font-size:var(--t-md); }
+.finding dl { margin:var(--s2) 0 0; display:grid; grid-template-columns:9.5em 1fr;
+  gap:var(--s1) var(--s3); }
 .finding dt { color:var(--muted); } .finding dd { margin:0; min-width:0; }
-.ai dd { border-left:3px solid var(--new); padding-left:8px; }
-.aib { display:inline-block; font-size:0.68rem; font-weight:700; letter-spacing:0.04em;
-  color:var(--card); background:var(--ai); border-radius:4px; padding:1px 5px; margin-right:6px;
-  vertical-align:1px; }
-.ai dt { color:var(--ai); font-weight:600; } .ai dd { border-left:3px solid var(--ai); }
-.aibox { border-left:3px solid var(--ai); background:var(--ai-bg); border-radius:0 8px 8px 0;
-  padding:8px 10px; margin-top:8px; }
+.aib { display:inline-block; font-size:var(--t-xs); line-height:16px; font-weight:600;
+  letter-spacing:0.04em; color:var(--card); background:var(--ai); border-radius:var(--r1);
+  padding:0 var(--s1); margin-right:var(--s1); vertical-align:1px; }
+.ai dt { color:var(--ai); font-weight:600; } .ai dd { border-left:2px solid var(--ai);
+  padding-left:var(--s2); }
+.aibox { border-left:2px solid var(--ai); background:var(--ai-bg);
+  border-radius:0 var(--r3) var(--r3) 0; padding:var(--s2) var(--s3); margin-top:var(--s2); }
 button.ai, .deepi button { color:var(--ai); border-color:var(--ai); background:var(--ai-bg);
-  font-weight:600; }
-.deepi { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; }
+  font-weight:500; }
+.deepi { margin-top:var(--s2); display:flex; flex-wrap:wrap; gap:var(--s1) var(--s2);
+  align-items:center; }
 .deepi form { margin:0; }
-a.aichip { display:inline-block; font-size:0.8rem; font-weight:600; color:var(--ai);
-  background:var(--ai-bg); border:1px solid var(--ai); border-radius:10px; padding:2px 10px;
-  text-decoration:none; }
+a.aichip { display:inline-block; font-size:var(--t-xs); line-height:16px; font-weight:500;
+  color:var(--ai); background:var(--ai-bg); border:1px solid var(--ai);
+  border-radius:var(--r2); padding:var(--s1) var(--s2); text-decoration:none; }
 a.aichip.warn { color:var(--orange); border-color:var(--orange); }
-div.modal { display:none !important; position:fixed; inset:0; z-index:50; overflow:auto; padding:24px 12px; }
+div.modal { display:none !important; position:fixed; inset:0; z-index:50; overflow:auto;
+  padding:var(--s6) var(--s3); }
 div.modal:target { display:block !important; }
 .modal .shade { position:fixed; inset:0; background:rgba(0,0,0,0.55); }
 .modal .sheet { position:relative; max-width:880px; margin:0 auto; background:var(--card);
-  color:var(--fg); border:1px solid var(--line); border-top:4px solid var(--ai);
-  border-radius:12px; padding:14px 18px 18px; font-size:0.9rem; }
-.sheet .sh { display:flex; align-items:center; gap:4px; color:var(--ai); }
-.sheet .sh .x { margin-left:auto; font-size:0.85rem; }
-.sheet .st { color:var(--muted); font-size:0.85rem; margin:2px 0 8px; }
-.modal .sheet h3 { font-size:0.9rem; margin:14px 0 4px; }
-.modal .sheet ul { list-style:disc; margin:2px 0 6px; padding-left:1.2em; display:flex;
-  flex-direction:column; gap:4px; }
+  color:var(--fg); border:1px solid var(--line); border-top:3px solid var(--ai);
+  border-radius:var(--r4); padding:var(--s4) var(--s6) var(--s6); }
+.sheet .sh { display:flex; align-items:center; gap:var(--s1); color:var(--ai); }
+.sheet .sh .x { margin-left:auto; font-size:var(--t-xs); }
+.sheet .st { color:var(--muted); font-size:var(--t-xs); margin:0 0 var(--s2); }
+.modal .sheet h3 { margin:var(--s4) 0 var(--s1); }
+.modal .sheet ul { list-style:disc; margin:0 0 var(--s2); padding-left:var(--s4);
+  display:flex; flex-direction:column; gap:var(--s1); }
 .modal .sheet li { display:list-item; }
-.sheet .cite { font-size:0.75rem; color:var(--muted); white-space:nowrap; }
-.sheet form { margin-top:10px; }
-pre.code { margin:4px 0 0; padding:6px 8px; background:var(--soft); border-radius:6px;
-  font:0.76rem/1.45 ui-monospace,"SF Mono",Menlo,monospace; white-space:pre-wrap;
+.sheet .cite { font-size:var(--t-xs); color:var(--muted); white-space:nowrap; }
+.sheet form { margin-top:var(--s3); }
+pre.code { margin:var(--s1) 0 0; padding:var(--s2) var(--s3); background:var(--soft);
+  border-radius:var(--r2); font:var(--t-xs)/1.5 var(--mono); white-space:pre-wrap;
   overflow-wrap:anywhere; max-height:420px; overflow:auto; }
-pre.code .nc { color:var(--muted); } pre.code .fn { color:var(--new); font-weight:600; }
-.tech { font-size:0.8rem; color:var(--muted); margin-top:6px; overflow-wrap:anywhere; }
-details summary { cursor:pointer; color:var(--muted); font-size:0.82rem; }
-.ev { display:block; white-space:pre-wrap; background:var(--soft); padding:6px 8px;
-  border-radius:6px; margin-top:4px; }
+pre.code .nc { color:var(--muted); } pre.code .fn { color:var(--brand); font-weight:600; }
+.tech { font-size:var(--t-xs); color:var(--muted); margin-top:var(--s2);
+  overflow-wrap:anywhere; }
+details summary { cursor:pointer; color:var(--muted); font-size:var(--t-xs); }
+.ev { display:block; white-space:pre-wrap; background:var(--soft); padding:var(--s2);
+  border-radius:var(--r2); margin-top:var(--s1); }
 @media (max-width:560px) { .finding { grid-template-columns:1fr; }
-  .finding dl { grid-template-columns:1fr; } .finding dt { margin-top:4px; } }
-.zones { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:10px; }
-.zone { border-radius:8px; padding:10px 12px; border:1px solid var(--line); min-width:0; }
-.zone h3 { margin:0 0 2px; font-size:0.88rem; }
-.zone .zs { font-size:0.76rem; color:var(--muted); margin-bottom:6px; }
-.zone ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px;
-  font-size:0.84rem; }
-.zone li > div { display:flex; gap:6px; justify-content:space-between; align-items:baseline; }
-.zone .p { font-size:0.74rem; color:var(--muted); white-space:nowrap; }
-.zone .u { font-size:0.74rem; color:var(--muted); display:block; overflow-wrap:anywhere; }
+  .finding dl { grid-template-columns:1fr; } .finding dt { margin-top:var(--s1); } }
+.zones { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:var(--s3); }
+.zone { border-radius:var(--r3); padding:var(--s3); border:1px solid var(--line); min-width:0; }
+.zone h3 { margin:0; }
+.zone .zs { font-size:var(--t-xs); color:var(--muted); margin-bottom:var(--s2); }
+.zone ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column;
+  gap:var(--s2); }
+.zone li > div { display:flex; gap:var(--s2); justify-content:space-between;
+  align-items:baseline; }
+.zone .p { font-size:var(--t-xs); color:var(--muted); white-space:nowrap; }
+.zone .u { font-size:var(--t-xs); color:var(--muted); display:block;
+  overflow-wrap:anywhere; }
 .zone.home { background:var(--soft); }
 .zone.dev, .zone.ana { border-color:var(--priv); }
-.lock { font-size:0.72rem; white-space:nowrap; } .lock.ok { color:var(--green); }
+.lock { font-size:var(--t-xs); white-space:nowrap; } .lock.ok { color:var(--green); }
 .lock.no { color:var(--orange); }
 .flowwrap { overflow-x:auto; }
-.flow text { fill:var(--fg); font:12px system-ui,sans-serif; }
-.flow .sm { fill:var(--muted); font-size:10.5px; }
+.flow text { fill:var(--fg); font:var(--t-xs) var(--font); }
+.flow .sm { fill:var(--muted); }
+.flow .nm { font-weight:600; }
 .flow-v { display:none; }
 @media (max-width:560px) { .flow-h { display:none; } .flow-v { display:block; } }
-.privbox { border:1px solid var(--priv); background:var(--priv-bg); border-radius:10px;
-  padding:12px 14px; }
+.privbox { border:1px solid var(--priv); background:var(--priv-bg); border-radius:var(--r4);
+  padding:var(--s3) var(--s4); }
 .privbox h2 { color:var(--priv); }
-ul.plain { margin:0; padding-left:1.1em; font-size:0.88rem; display:flex;
-  flex-direction:column; gap:3px; }
-table { border-collapse:collapse; width:100%; font-size:0.86rem; }
-td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);
+ul.plain { margin:0; padding-left:var(--s4); display:flex; flex-direction:column;
+  gap:var(--s1); }
+table { border-collapse:collapse; width:100%; }
+td, th { text-align:left; padding:var(--s2); border-bottom:1px solid var(--line);
   vertical-align:top; }
+th { font-weight:600; }
 td.wrap { overflow-wrap:anywhere; } td.nowrap { white-space:nowrap; }
 .tablebox table { min-width:0; }
-.tools form { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
-.tools input, .tools select { padding:6px; min-width:0; flex:1 1 180px; font:inherit;
-  background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:6px; }
+.tools form { display:flex; gap:var(--s2); flex-wrap:wrap; margin:var(--s2) 0; }
+input, select { padding:var(--s1) var(--s2); min-width:0; font:inherit; line-height:20px;
+  background:var(--card); color:var(--fg); border:1px solid var(--line);
+  border-radius:var(--r2); }
+.tools input, .tools select { flex:1 1 180px; }
 .tools select { flex:0 1 auto; }
-form.search { display:flex; gap:8px; flex-wrap:wrap; margin:0; }
-.sev-critical { color:var(--red); font-weight:600; } .sev-high { color:var(--orange); font-weight:600; }
+form.search { display:flex; gap:var(--s2); flex-wrap:wrap; margin:0; }
+.sev-critical { color:var(--red); font-weight:600; } .sev-high { color:var(--orange);
+  font-weight:600; }
 .sev-medium { color:var(--yellow); } .ok { color:var(--green); } .bad { color:var(--red); }
 """
 
 
-def page(title: str, body: str, refresh: int = 0) -> bytes:
-    """`refresh`: reload after N seconds (a meta tag, not a script: the CSP allows it)."""
+def page(title: str, body: str, refresh: int = 0, base: str = "") -> bytes:
+    """`refresh`: reload after N seconds (a meta tag, not a script: the CSP allows it).
+    `base`: the ingress path prefix, so the panel's own font files resolve from any page."""
     meta = f'<meta http-equiv="refresh" content="{int(refresh)}">' if refresh else ""
+    fonts = (
+        f'<link rel="preload" href="{base}/fonts/Geist-Variable.woff2" as="font" '
+        'type="font/woff2" crossorigin>'
+    )
     return (
         f"<!doctype html><html lang=en><head><meta charset=utf-8>{meta}"
         '<meta name=viewport content="width=device-width,initial-scale=1">'
-        f"<title>{e(title)}</title><style>{CSS}</style></head><body><main>"
-        f"{body}</main></body></html>"
+        f"<title>{e(title)}</title>{fonts}<style>{CSS.replace('__BASE__', base)}</style>"
+        f"</head><body><main>{body}</main></body></html>"
     ).encode()
 
 
@@ -503,11 +561,14 @@ def connection_sentence(rep: dict[str, Any]) -> str:
 
 
 def card_chips(c: Card) -> list[tuple[str, str]]:
+    """Each chip is there because it can change a decision; the sentence above already
+    says where the app connects, so no chip repeats that."""
     chips: list[tuple[str, str]] = []
     if c.available:
-        chips.append(("new", f"Update {c.available}"))
-    if c.group == "attention" and c.reasons and c.available:
-        chips.append(("warn", "Update needs a look"))
+        if c.group == "attention" and c.reasons:
+            chips.append(("warn", f"Update {c.available} needs a look"))
+        else:
+            chips.append(("", f"Update {c.available}"))
     if c.report and c.scan and c.scan.complete:
         for f, _fs, _p in scored_findings(c.report):
             if f["severity"] in ("critical", "high", "medium") and len(chips) < 4:
@@ -517,13 +578,6 @@ def card_chips(c: Card) -> list[tuple[str, str]]:
                     chips.append((cls, chip))
         for n in c.notes():
             chips.append(("priv", n.label))
-        net = internet(hosts(c.report))
-        if net:
-            chips.append(("", f"{len(net)} internet site{'s' * (len(net) != 1)}"))
-        elif any(h.cls == "local" for h in hosts(c.report)):
-            chips.append(("", "Own network only"))
-        else:
-            chips.append(("", "No internet sites"))
     return chips
 
 
@@ -658,7 +712,8 @@ def _pager(base: str, v: View, pages: int) -> str:
     return f'<nav class="filters pager" aria-label="pages">{"".join(links)}</nav>'
 
 
-def render_grid(base: str, cards: list[Card], v: View | None = None) -> str:
+def render_grid(base: str, cards: list[Card], v: View | None = None, lead: str = "") -> str:
+    """`lead`: the list's one primary action (server-built form HTML), shown in the bar."""
     v = v or View()
     counts = {k: sum(_keep(c, k) for c in cards) for k in FILTERS}
 
@@ -712,6 +767,7 @@ def render_grid(base: str, cards: list[Card], v: View | None = None) -> str:
     else:
         body = '<div class="grid">' + "".join(card_html(base, c) for c in window) + "</div>"
     legend = (
+        '<details class="legend-d"><summary>What the colours and scores mean</summary>'
         '<div class="legend">'
         + "".join(
             f'<span><span class="sw" style="border-color:var(--{b})"></span>{lo}–{hi} {BANDS[b][1]}</span>'
@@ -724,11 +780,13 @@ def render_grid(base: str, cards: list[Card], v: View | None = None) -> str:
         )
         + '<span><span class="sw" style="border-color:var(--grey);border-style:dashed"></span>'
         "not checked or unfinished</span>"
-        '<span><span class="chip priv">purple</span> privacy note (never scored)</span></div>'
+        '<span><span class="chip priv">purple</span> privacy note (never scored)</span>'
+        "</div></details>"
     )
+    left = f'<span class="lead">{lead}{showing}</span>' if (lead or showing) else ""
     return (
         f'<nav class="box summary" aria-label="filters">{"".join(summary)}</nav>'
-        f'<div class="bar">{showing}<span class="filters">{views}</span></div>'
+        f'<div class="bar">{left}<span class="filters">{views}</span></div>'
         f"{body}{_pager(base, v, pages)}{legend}"
     )
 
@@ -1216,9 +1274,9 @@ def _read_box(d: _Flow, item: tuple[str, str, bool], x: int, y: float, w: int) -
         else (("var(--yellow-bg)", "var(--yellow)") if sens else ("var(--soft)", "var(--line)"))
     )
     return (
-        f'<rect x="{x}" y="{y:.0f}" width="{w}" height="44" rx="8" fill="{fill}" stroke="{stroke}"/>'
-        f'<text x="{x + 12}" y="{y + 19:.0f}">{e(_clip(explain.data_label(label)))}</text>'
-        f'<text class="sm" x="{x + 12}" y="{y + 35:.0f}">{e(_clip(label, 30))}</text>'
+        f'<rect x="{x}" y="{y:.0f}" width="{w}" height="44" rx="6" fill="{fill}" stroke="{stroke}"/>'
+        f'<text x="{x + 12}" y="{y + 19:.0f}">{e(_clip(explain.data_label(label), 22))}</text>'
+        f'<text class="sm" x="{x + 12}" y="{y + 35:.0f}">{e(_clip(label, 24))}</text>'
     )
 
 
@@ -1226,20 +1284,19 @@ def _dest_box(item: tuple[str, str, str, str], x: int, y: float, w: int) -> str:
     _key, title, sub, style = item
     fill, stroke = _BOX_STYLE.get(style, ("var(--soft)", "var(--line)"))
     return (
-        f'<rect x="{x}" y="{y:.0f}" width="{w}" height="44" rx="8" fill="{fill}" stroke="{stroke}"/>'
-        f'<text x="{x + 12}" y="{y + 19:.0f}">{e(title, 60)}</text>'
-        f'<text class="sm" x="{x + 12}" y="{y + 35:.0f}">{e(_clip(sub, 32))}</text>'
+        f'<rect x="{x}" y="{y:.0f}" width="{w}" height="44" rx="6" fill="{fill}" stroke="{stroke}"/>'
+        f'<text x="{x + 12}" y="{y + 19:.0f}">{e(_clip(title, 26), 60)}</text>'
+        f'<text class="sm" x="{x + 12}" y="{y + 35:.0f}">{e(_clip(sub, 27))}</text>'
     )
 
 
 def _app_box(d: _Flow, name: str, x: int, cy: float) -> str:
-    # bold system-ui is ~0.62em per character; the box has ~154px for text
-    name_px = 12 if len(name) <= 19 else max(9.5, round(154 / (0.62 * min(len(name), 26)), 1))
+    # 12 px semibold Geist is about 7 px per character; the box has 154 px for text
     return (
-        f'<rect x="{x}" y="{cy - 28:.0f}" width="170" height="56" rx="10" fill="var(--card)" '
+        f'<rect x="{x}" y="{cy - 28:.0f}" width="170" height="56" rx="8" fill="var(--card)" '
         'stroke="var(--fg)" stroke-width="1.5"/>'
-        f'<text x="{x + 85}" y="{cy - 3:.0f}" text-anchor="middle" '
-        f'style="font-weight:650;font-size:{name_px}px">{e(_clip(name, 26))}</text>'
+        f'<text class="nm" x="{x + 85}" y="{cy - 3:.0f}" text-anchor="middle">'
+        f"{e(_clip(name, 21))}</text>"
         f'<text class="sm" x="{x + 85}" y="{cy + 13:.0f}" text-anchor="middle">{e(d.kind)}</text>'
     )
 
@@ -1692,8 +1749,10 @@ def render_app(
     ai_form: str = "",
     refresh: int = 0,
     deep: DeepFn | None = None,
+    again: str = "",
 ) -> bytes:
-    """One app's detail page. `update` and `ai_form` are server-built HTML snippets."""
+    """One app's detail page. `update`, `ai_form` and `again` (the "sniff this version
+    again" / "other versions" text actions in the head) are server-built HTML snippets."""
     t = report.get("target", {})
     title = name or (t.get("repo") or t.get("input") or "?").rsplit("/", 1)[-1]
     complete = bool(report.get("complete"))
@@ -1718,9 +1777,9 @@ def render_app(
         f'<div class="muted small">Checked with Barkley {e(report.get("tool", {}).get("version"))}: '
         f"{e(_SOURCE.get(str(t.get('install_source')), t.get('install_source')))}"
         f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}.</div>"
-        "</div></section>"
+        f"{again}</div></section>"
     )
-    parts = [head, update]
+    parts = [f'<div class="stack">{head}{update}</div>' if update else head]
     missing = [
         a for a in report.get("analyzers", []) if a.get("state") not in ("ok", "not_applicable")
     ]
@@ -1794,4 +1853,4 @@ def render_app(
         + f'</section><section class="box"><h2>History</h2>{history_html(base, sid, report, rows)}'
         f'<p class="tech"><a href="{base}/scan/{sid}.json">Technical report (raw JSON)</a></p></section></div>'
     )
-    return page(f"Barkley · {title}", "".join(parts), refresh)
+    return page(f"Barkley · {title}", "".join(parts), refresh, base)
