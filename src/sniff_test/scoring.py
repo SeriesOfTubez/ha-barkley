@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from sniff_test.models import Finding, Severity, Tag
+from sniff_test.models import RULE_FILE_NOT_CHECKED, Finding, Severity, Tag
 
 BASE_POINTS: dict[Severity, float] = {
     Severity.CRITICAL: 60,
@@ -21,6 +21,10 @@ PER_RULE_CAP = 2.0  # one rule can never cost more than 2x its base points
 CAP_CRITICAL = 39  # any critical finding -> BORK BORK BORK
 CAP_HIGH = 89  # any high finding -> at best Kinda Sus
 CAP_INCOMPLETE = 89  # a partial scan can never be a Good Boy
+# A file no code rule could read (models.RULE_FILE_NOT_CHECKED). Unlike an incomplete scan
+# this repeats on every sniff, so the scan stays complete (stored, reused, re-checked) and
+# the cap comes from the finding itself: anything that rescores stored findings keeps it.
+CAP_UNCHECKED = 89
 
 
 class Exposure(StrEnum):
@@ -107,6 +111,11 @@ def score(findings: list[Finding], complete: bool) -> ScoreResult:
         (Severity.CRITICAL in severities, CAP_CRITICAL, "critical finding present"),
         (Severity.HIGH in severities, CAP_HIGH, "high finding present"),
         (not complete, CAP_INCOMPLETE, "scan incomplete"),
+        (
+            any(f.rule_id == RULE_FILE_NOT_CHECKED for f in findings),
+            CAP_UNCHECKED,
+            "a file no code rule could read",
+        ),
     )
     final = raw
     caps: list[str] = []

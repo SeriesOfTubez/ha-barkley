@@ -47,6 +47,11 @@ class Tag(StrEnum):
     MALWARE = "malware"  # known-malicious package / payload pattern
 
 
+# A shipped code file no Semgrep rule could read at all. Scoring caps the score while one
+# is present (scoring.CAP_UNCHECKED): the scan is complete, but it can't be a Good Boy.
+RULE_FILE_NOT_CHECKED = "scan-file-not-checked"
+
+
 class AnalyzerState(StrEnum):
     OK = "ok"
     SKIPPED = "skipped"  # tool missing or not applicable-but-should-have-run

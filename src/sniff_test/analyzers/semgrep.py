@@ -15,6 +15,7 @@ from typing import Any
 
 from sniff_test.analyzers import py_tamper
 from sniff_test.models import (
+    RULE_FILE_NOT_CHECKED,
     AnalyzerResult,
     AnalyzerState,
     Category,
@@ -308,34 +309,113 @@ def _only_rebinds_names(f: Finding, root: Path, trees: dict[str, Any]) -> bool:
     return all(names_only(t) for t in targets)
 
 
-def _is_parse_error(err: dict[str, Any]) -> bool:
-    # Full failures are "Syntax error"; recovered ones are ["PartialParsing", spans].
+# Semgrep's error types for a file it gave up on entirely: no rule ran on it. A recovered
+# parse is ["PartialParsing", spans], and the spans say how much was skipped: a few
+# characters on real bundles (`n?.5:1`), but it can be the whole file (seen on 1.185:
+# one span from the first to the last byte, 0 results). Names read from
+# semgrep_output_v1 (1.185.0).
+_UNREAD_TYPES = {"Lexical error", "Syntax error", "Other syntax error", "AST builder error"}
+# A partial parse that skipped at least this share of the file counts as unread.
+_UNREAD_SHARE = 0.5
+# A file the engine dropped for a reason another run may not hit: the scan didn't finish.
+_GAVE_UP_TYPES = {"Fatal error", "Out of memory", "Stack overflow"}
+# Type declarations: nothing in them runs, in the browser or anywhere else.
+_DECLARATION_SUFFIXES = (".d.ts", ".d.mts", ".d.cts")
+
+
+def _error_type(err: dict[str, Any]) -> str:
     kind = err.get("type")
-    name = kind[0] if isinstance(kind, list) and kind else str(kind)
-    return "Syntax" in str(name) or name == "PartialParsing"
+    return str(kind[0] if isinstance(kind, list) and kind else kind)
+
+
+def _skipped_chars(err: dict[str, Any]) -> int | None:
+    """Characters a PartialParsing error skipped, or None when the spans don't say."""
+    kind = err.get("type")
+    spans = kind[1] if isinstance(kind, list) and len(kind) > 1 else None
+    if not isinstance(spans, list) or not spans:
+        return None
+    total = 0
+    for sp in spans:
+        try:
+            n = int(sp["end"]["offset"]) - int(sp["start"]["offset"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if n < 0:
+            return None
+        total += n
+    return total
+
+
+def _parse_failure(err: dict[str, Any], size: int | None = None) -> str | None:
+    """ "unread" (no rule ran on the file, or on most of it), "partial" (a gap; the rest
+    was checked) or None. `size` is the file's length in characters, when known."""
+    name = _error_type(err)
+    if name in _UNREAD_TYPES:
+        return "unread"
+    if name != "PartialParsing":
+        return None
+    skipped = _skipped_chars(err)
+    if skipped is None:  # no usable spans: we can't say the rest was read
+        return "unread"
+    if size is not None and skipped >= max(1, size) * _UNREAD_SHARE:
+        return "unread"
+    return "partial"
+
+
+def _chars(path: Path) -> int | None:
+    try:
+        return len(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return None
 
 
 def _parse_error_findings(errors: list[dict[str, Any]], root: Path) -> list[Finding]:
-    """Python that Semgrep can't parse can't be checked by it either; surface that."""
-    out: list[Finding] = []
-    seen: set[str] = set()
+    """Code Semgrep can't parse can't be checked by it either; surface that.
+
+    A file it couldn't read at all, or skipped most of, is `scan-file-not-checked` (medium,
+    and the score is capped: see scoring). A file it read with small gaps stays
+    `scan-parse-error` (low), as does a type-declaration file, which never runs.
+    """
+    worst: dict[str, tuple[str, str]] = {}  # rel -> (failure, suffix), "unread" wins
     for err in errors:
         path = err.get("path")
         suffix = Path(str(path)).suffix if path else ""
-        if not path or suffix not in {".py"} | _JS_SUFFIXES or not _is_parse_error(err):
+        if not path or suffix not in {".py"} | _JS_SUFFIXES:
+            continue
+        failure = _parse_failure(err, _chars(Path(path)))
+        if not failure:
             continue
         try:
             rel = Path(path).resolve().relative_to(root.resolve()).as_posix()
         except ValueError:
             rel = Path(path).name
-        if rel in seen:
+        if rel.endswith(_DECLARATION_SUFFIXES):
+            failure = "partial"
+        if rel not in worst or failure == "unread":
+            worst[rel] = (failure, suffix)
+    out: list[Finding] = []
+    for rel, (failure, suffix) in worst.items():
+        lang = "Python" if suffix == ".py" else "JavaScript"
+        if failure == "unread":
+            out.append(
+                Finding(
+                    rule_id=RULE_FILE_NOT_CHECKED,
+                    title=f"{lang} file could not be parsed at all",
+                    severity=Severity.MEDIUM,
+                    category=Category.CODE_EXEC,
+                    message=(
+                        "Semgrep could not parse this file, so its rules checked none (or "
+                        "almost none) of it. Review manually."
+                    ),
+                    file=rel,
+                    analyzer=NAME,
+                )
+            )
             continue
-        seen.add(rel)
         out.append(
             Finding(
                 rule_id="scan-parse-error",
-                title=f"{'Python' if suffix == '.py' else 'JavaScript'} file could not be "
-                "fully parsed",
+                title=f"{lang} file could not be fully parsed",
                 severity=Severity.LOW,
                 category=Category.CODE_EXEC,
                 message=(
@@ -347,6 +427,15 @@ def _parse_error_findings(errors: list[dict[str, Any]], root: Path) -> list[Find
             )
         )
     return out
+
+
+def _unfinished(errors: list[dict[str, Any]]) -> tuple[int, int]:
+    """(rule timeouts, files the engine gave up on): either leaves the scan incomplete."""
+    names = [_error_type(e) for e in errors]
+    return (
+        sum("Timeout" in n for n in names),
+        sum(n in _GAVE_UP_TYPES for n in names),
+    )
 
 
 def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
@@ -416,12 +505,15 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
     findings += py_tamper.find(root, flagged, trees)
     errors = data.get("errors", [])
     findings += _parse_error_findings(errors, root)
-    timeouts = [e for e in errors if "Timeout" in str(e.get("type"))]
     state = AnalyzerState.OK
     detail = f"{len(data.get('paths', {}).get('scanned', []))} files scanned"
+    timeouts, gave_up = _unfinished(errors)
     if timeouts:
         state = AnalyzerState.ERROR
-        detail += f"; {len(timeouts)} rule timeouts (scan incomplete)"
+        detail += f"; {timeouts} rule timeouts (scan incomplete)"
+    if gave_up:
+        state = AnalyzerState.ERROR
+        detail += f"; the engine gave up on {gave_up} files (scan incomplete)"
     return AnalyzerResult(
         NAME, state, findings=findings, detail=detail, tool_version=version, facts=facts
     )

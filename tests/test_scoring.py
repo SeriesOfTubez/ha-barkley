@@ -84,3 +84,21 @@ def test_supersedes_replaces_generic_rule_on_same_line():
     elsewhere = f(rule="card-eval", sev=Severity.HIGH, line=9)
     kept = {(x.rule_id, x.line) for x in _dedupe([generic, specific, elsewhere])}
     assert kept == {("card-eval-config", 5), ("card-eval", 9)}
+
+
+def test_a_file_no_rule_could_read_caps_the_score():
+    """Tool 0.10.2: the scan is complete (stored, reused, re-checked), yet it can't be a
+    Good Boy while a code file went unread. The cap follows the finding, so rescoring
+    stored findings (trust marks, advisory re-checks) keeps it."""
+    from sniff_test.models import RULE_FILE_NOT_CHECKED
+
+    s = score([f(rule=RULE_FILE_NOT_CHECKED, sev=Severity.MEDIUM)], complete=True)
+    assert (s.raw_score, s.score, s.verdict.key) == (92, 89, "kinda_sus")
+    assert s.caps == ["a file no code rule could read: capped at 89"]
+    # HACS 2.0.5 for real: 94 before (seven low parse gaps cost 4, the per-rule cap, and
+    # one other low 2), 86 after (six gaps still cost 4; the unread file costs 8)
+    other = f(rule="repo-release-extra-code", sev=Severity.LOW)
+    gaps = [f(rule="scan-parse-error", sev=Severity.LOW, line=i) for i in range(7)]
+    assert score([*gaps, other], complete=True).score == 94
+    s = score([*gaps[:6], other, f(rule=RULE_FILE_NOT_CHECKED, sev=Severity.MEDIUM)], complete=True)
+    assert s.score == 86 and s.caps == []

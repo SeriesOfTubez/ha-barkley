@@ -442,6 +442,15 @@ RULES: dict[str, Explanation] = {
         "coverage is never hidden.",
         "Partly unreadable",
     ),
+    "scan-file-not-checked": _E(
+        "A whole code file couldn't be read by our code checks",
+        "Our code scanner couldn't make sense of this file at all, so none of its checks "
+        "ran on it. The other checks (addresses it names, code libraries, the project's "
+        "history) still did.",
+        "Worth knowing. Nothing bad was found in it, but we couldn't look, so the score "
+        "can't go above 89 while a file like this is there.",
+        "File not checked",
+    ),
 }
 
 # GuardDog heuristics on dependencies. The rule id is built from GuardDog's rule name,

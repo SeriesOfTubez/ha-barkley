@@ -99,3 +99,10 @@ def test_can_do_counts_from_the_graph():
         "Makes web requests",
         "Uses 2 code packages (1 already part of Home Assistant)",
     ]
+
+
+def test_the_unread_file_rule_has_plain_text():
+    # its id is a constant in models, so the literal sweep above doesn't see it
+    from sniff_test.models import RULE_FILE_NOT_CHECKED
+
+    assert "89" in explain.RULES[RULE_FILE_NOT_CHECKED].worry
