@@ -77,9 +77,10 @@ def test_token_stealer_in_lit_bundle_is_caught(tmp_path):
 
 
 def test_normalize_js_rewrites_html_comment_tokens(tmp_path):
-    # Semgrep 1.181 treats `<!--` and `-->` as a line comment anywhere on a line. In
-    # context, lit-html's `/-->/g` made it drop all of mushroom.js v5.2.3 (0 matches,
-    # scan ok). Adding a space keeps code meaning and only pads strings/regexes.
+    # Semgrep (1.181, and still 1.185) treats `<!--` and `-->` as a line comment
+    # anywhere on a line. In context, lit-html's `/-->/g` made it drop all of
+    # mushroom.js v5.2.3 (0 matches, scan ok). Adding a space keeps code meaning and
+    # only pads strings/regexes.
     f = tmp_path / "b.js"
     f.write_text('F=/<!--/g,G=/-->/g;s="a-->b";x=a<!--b;while(n-->0);\n')
     assert normalize_js(tmp_path) == 1
@@ -95,8 +96,8 @@ def _card(tmp_path, name, js):
 
 
 def test_html_comment_evasion_is_caught(tmp_path):
-    # At module scope, `<!--` hides the rest of the line from Semgrep 1.181 (0 results,
-    # 0 errors; inside functions it parses fine). In an ES module it is `1 < !(--k)`,
+    # At module scope, `<!--` hides the rest of the line from Semgrep (1.181, 1.185:
+    # 0 results, 0 errors; inside functions it parses fine). In an ES module it is `1 < !(--k)`,
     # so the fetch really runs.
     card = _card(
         tmp_path,
@@ -128,7 +129,7 @@ def test_unparseable_js_is_reported_not_silent(tmp_path):
     card = tmp_path / "odd-card"
     (card / "dist").mkdir(parents=True)
     (card / "hacs.json").write_text('{"name": "Odd", "filename": "odd-card.js"}')
-    # Semgrep 1.181 can't parse class static blocks.
+    # Semgrep (1.181, and still 1.185) can't parse class static blocks.
     (card / "dist" / "odd-card.js").write_text("class A{static{this.x=1}}\n")
     r = scan(str(card), offline=True)
     assert [f.file for f in r.findings if f.rule_id == "scan-parse-error"] == ["odd-card.js"]

@@ -1,6 +1,7 @@
-"""`ha-monkeypatch` for the assignment forms Semgrep 1.181 doesn't match (parsed, never run).
+"""`ha-monkeypatch` for the assignment forms Semgrep doesn't match (parsed, never run).
 
-Checked 2026-11-09 with isolated cases: Semgrep matches `homeassistant.x = v`, tuple and
+Checked 2026-11-09 on Semgrep 1.181 with isolated cases, and again on 1.185 (2026-11-13:
+the same 7 of 22 forms seen): Semgrep matches `homeassistant.x = v`, tuple and
 annotated targets, and `setattr(homeassistant, ...)`, but not
 - chained assignments: `x = homeassistant.y = v`, `homeassistant.y = x = v`
 - augmented ones (`+=`), `for`/`with ... as` targets, `[homeassistant.y] = [v]`

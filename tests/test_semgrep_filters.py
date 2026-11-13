@@ -56,6 +56,32 @@ def test_semgrep_still_matches_the_shape_we_filter(tmp_path):
     )  # fmt: skip
     lines = sorted(r["start"]["line"] for r in json.loads(out.stdout)["results"])
     assert 6 in lines and 10 in lines
-    # Semgrep 1.181 doesn't match chained `x = homeassistant.helpers = v`; py_tamper
-    # (ast) covers it and the other missed forms (tests/test_py_tamper.py).
+    # Semgrep (1.181, and still 1.185) doesn't match chained
+    # `x = homeassistant.helpers = v`; py_tamper (ast) covers it and the other missed
+    # forms (tests/test_py_tamper.py).
     assert 8 not in lines
+
+
+@requires_semgrep
+def test_raw_fstring_beside_new_syntax_no_longer_hides_a_file(tmp_path):
+    """Semgrep 1.181 failed on any file with both an `rf"..."` string and Python 3.12
+    syntax (a `type` statement, `def g[T]`): "Syntax error", no rule ran on the file
+    (Spook v5.11.1's action_extraction.py and template_extraction.py). Fixed upstream in
+    1.183; the image ships 1.185. Two harmless lines must never hide a file again."""
+    import json
+    import subprocess
+
+    (tmp_path / "t.py").write_text(
+        'import homeassistant\n\nP = "x"\nR = rf"^{P}$"\n\ntype A = int\n\n\n'
+        "def g[T](x: T) -> T:\n    return x\n\n\ndef f(w):\n    homeassistant.a = w\n"
+    )
+    run = tmp_path / "run"
+    run.mkdir()
+    out = subprocess.run(
+        ["semgrep", "scan", "--config", str(semgrep.rules_dir() / "python" / "tamper.yaml"),
+         "--json", "--metrics=off", "--disable-version-check", str(tmp_path / "t.py")],
+        cwd=run, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    data = json.loads(out.stdout)
+    assert data["errors"] == []
+    assert [r["start"]["line"] for r in data["results"]] == [14]

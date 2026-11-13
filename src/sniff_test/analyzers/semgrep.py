@@ -35,7 +35,8 @@ _IGNORE_FILES = (".semgrepignore", ".gitignore")
 _JS_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx"}
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 # Rewrites applied to OUR extracted copy so Semgrep sees all of the code. Checked on
-# Semgrep 1.181 (2026-11-08): it treats `<!--` and `-->` as the start of a line comment
+# Semgrep 1.181 (2026-11-08) and again on 1.185 (2026-11-13, unchanged): it treats
+# `<!--` and `-->` as the start of a line comment
 # *anywhere* on a line (the classic-script HTML-comment rule, and wider than it), so in
 # `x = n-->0; fetch(u)` or `a<!--b; fetch(u)` the fetch is silently invisible: 0
 # results, 0 errors. HA loads cards as ES modules, where neither is a comment: `a<!--b`

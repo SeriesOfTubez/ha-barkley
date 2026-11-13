@@ -1,6 +1,6 @@
 [project]
 name = "ha-sniff-test"
-version = "0.10.0"
+version = "0.10.1"
 description = "🐕 Sniffs Home Assistant Marketplace (HACS) integrations and cards before they get into the house."
 readme = "README.md"
 requires-python = ">=3.13"

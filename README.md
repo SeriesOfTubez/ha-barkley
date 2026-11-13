@@ -164,7 +164,7 @@ Each image is signed with [Cosign](https://docs.sigstore.dev/) by that workflow.
 Assistant doesn't check app signatures, so this is for you to check if you want to:
 
 ```sh
-cosign verify ghcr.io/seriesoftubez/barkley:0.10.0 \
+cosign verify ghcr.io/seriesoftubez/barkley:0.10.1 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/SeriesOfTubez/ha-barkley/'
 ```

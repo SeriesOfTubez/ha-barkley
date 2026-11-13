@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from conftest import requires_semgrep
 
 from sniff_test import __version__
 
@@ -132,6 +133,18 @@ def test_ci_runs_the_semgrep_the_image_ships():
     ci = _yaml(WORKFLOWS / "ci.yaml")
     pinned = ci["jobs"]["test"]["env"]["SEMGREP_VERSION"]
     assert f"ARG SEMGREP_VERSION={pinned}" in (ADDON / "Dockerfile").read_text()
+
+
+@requires_semgrep
+def test_the_semgrep_on_this_machine_is_the_one_the_image_ships():
+    """The parse gaps and the noise set are verified per Semgrep version (1.185.0 on
+    2026-11-13). A different local Semgrep would test rules against another parser.
+    Note that `semgrep` runs the `pysemgrep` it finds on PATH: both must be the pin's."""
+    pinned = _yaml(WORKFLOWS / "ci.yaml")["jobs"]["test"]["env"]["SEMGREP_VERSION"]
+    out = subprocess.run(
+        ["semgrep", "--version"], capture_output=True, text=True, check=False
+    ).stdout.split()
+    assert out[-1:] == [pinned], f"install it: uv tool install --no-build semgrep=={pinned}"
 
 
 def test_license_and_security_policy():

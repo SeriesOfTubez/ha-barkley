@@ -24,7 +24,7 @@ jobs:
     name: Lint, tests and rule tests
     runs-on: ubuntu-24.04
     env:
-      SEMGREP_VERSION: 1.181.0
+      SEMGREP_VERSION: 1.185.0
       SEMGREP_SEND_METRICS: "off"
       SEMGREP_ENABLE_VERSION_CHECK: "0"
     steps:
