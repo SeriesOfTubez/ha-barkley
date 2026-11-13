@@ -142,7 +142,10 @@ osv-scanner and uv pinned, an ingress panel (`sniff-test serve`), and the scan s
 install now and diffs it against the stored scan of the installed tag. **Auto-sniff**
 watches the Marketplace: every install or update is scanned at the version that landed
 (reusing a scan sniffed from search), an update gets its diff, and a notification says
-what was found. Note that a new integration runs as soon as it's installed, so the
+what was found. **Advisories are asked again once a day** for what's installed: each scan
+keeps its resolved lockfiles, osv-scanner runs on them again (no code is fetched or
+scanned again), and a change becomes a new scan entry with a notification; the earlier
+entry is never edited. Note that a new integration runs as soon as it's installed, so the
 protection for a new install is sniffing it from search first. See
 [`addon/sniff_test/DOCS.md`](addon/sniff_test/DOCS.md).
 
@@ -161,7 +164,7 @@ Each image is signed with [Cosign](https://docs.sigstore.dev/) by that workflow.
 Assistant doesn't check app signatures, so this is for you to check if you want to:
 
 ```sh
-cosign verify ghcr.io/seriesoftubez/barkley:0.9.0 \
+cosign verify ghcr.io/seriesoftubez/barkley:0.10.0 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/SeriesOfTubez/ha-barkley/'
 ```

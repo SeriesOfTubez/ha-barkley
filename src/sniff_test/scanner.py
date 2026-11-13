@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from sniff_test import recheck
 from sniff_test.analyzers import (
     bytecode,
     correlate,
@@ -147,6 +148,7 @@ def scan(
         )
         # Built while the workspace still exists: it reads manifests and parses files.
         result.graph = graph.build(result)
+        result.inputs = recheck.capture(target, resolution) if not offline else None
         result.context = context.build(
             target.root,
             [finding_json(f) for f in findings],

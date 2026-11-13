@@ -391,15 +391,31 @@ def scan_lockfile(exe: str, lockfile: Path, work: Path) -> tuple[list[_Pkg] | No
 
 
 def run_python(resolution: Resolution | None, work: Path) -> AnalyzerResult:
-    name = f"{NAME}-python"
     if resolution is None or not resolution.lockfiles:
-        return AnalyzerResult(name, AnalyzerState.NOT_APPLICABLE, detail="nothing resolved")
+        return AnalyzerResult(
+            f"{NAME}-python", AnalyzerState.NOT_APPLICABLE, detail="nothing resolved"
+        )
+    return check_python(
+        resolution.lockfiles,
+        {p.name for p in resolution.packages.values() if p.ha_provided},
+        {r.name for r in resolution.requirements if r.name},
+        work,
+    )
+
+
+def check_python(
+    lockfiles: dict[str, Path], ha_provided: set[str], direct: set[str], work: Path
+) -> AnalyzerResult:
+    """osv-scanner on resolved lockfiles (platform -> pylock). Everything a check needs
+    besides the files is passed in, so a stored scan's advisories can be asked again
+    later from its saved lockfiles (recheck.py) with this same code."""
+    name = f"{NAME}-python"
     exe = shutil.which("osv-scanner")
     if not exe:
         return AnalyzerResult(name, AnalyzerState.SKIPPED, detail="osv-scanner not installed")
     merged: dict[tuple[str, str], _Pkg] = {}
     errors: list[str] = []
-    for plat, lockfile in sorted(resolution.lockfiles.items()):
+    for plat, lockfile in sorted(lockfiles.items()):
         pkgs, err = scan_lockfile(exe, lockfile, work)
         if pkgs is None:
             errors.append(f"{plat}: {err}")
@@ -407,13 +423,11 @@ def run_python(resolution: Resolution | None, work: Path) -> AnalyzerResult:
         for p in pkgs:
             p.name = normalize(p.name)
             merged.setdefault((p.name, p.version), p).platforms.add(plat)
-    ha_provided = {p.name for p in resolution.packages.values() if p.ha_provided}
-    direct = {r.name for r in resolution.requirements if r.name}
     findings = to_findings(
         list(merged.values()), "manifest.json", ha_provided, direct=direct, lookup=latest_release
     )
     state = AnalyzerState.ERROR if errors else AnalyzerState.OK
-    detail = f"{len(resolution.lockfiles)} lockfile(s) checked"
+    detail = f"{len(lockfiles)} lockfile(s) checked"
     if errors:
         detail += "; " + " | ".join(errors)
     return AnalyzerResult(name, state, findings, detail, tool_version=osv_version())
@@ -592,14 +606,22 @@ def _declares_npm_deps(source_root: Path) -> bool:
     )
 
 
+def npm_lockfiles(root: Path) -> list[Path]:
+    return [root / n for n in NPM_LOCKFILES if (root / n).is_file() and not (root / n).is_symlink()]
+
+
 def run_npm(target: Target, work: Path) -> AnalyzerResult:
-    name = f"{NAME}-npm"
     root = target.source_root
     if target.kind is not TargetKind.PLUGIN or root is None:
-        return AnalyzerResult(name, AnalyzerState.NOT_APPLICABLE)
-    lockfiles = [
-        root / n for n in NPM_LOCKFILES if (root / n).is_file() and not (root / n).is_symlink()
-    ]
+        return AnalyzerResult(f"{NAME}-npm", AnalyzerState.NOT_APPLICABLE)
+    return check_npm(root, work)
+
+
+def check_npm(root: Path, work: Path) -> AnalyzerResult:
+    """The card's lockfiles (and package.json) under `root`: the source tree at the
+    scanned ref, or the copies a stored scan saved (recheck.py)."""
+    name = f"{NAME}-npm"
+    lockfiles = npm_lockfiles(root)
     if not lockfiles:
         if not _declares_npm_deps(root):
             return AnalyzerResult(name, AnalyzerState.NOT_APPLICABLE, detail="no npm deps")

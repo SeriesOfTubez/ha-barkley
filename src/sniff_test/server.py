@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from typing import Any
 
-from sniff_test import __version__, doctor, memory, supervisor, trust, ui, watch
+from sniff_test import __version__, doctor, memory, recheck, supervisor, trust, ui, watch
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import GitHubError, RateLimit, RateLimitError
@@ -57,6 +57,8 @@ _GITHUB_NEED = {"scan": 10, "installed": 10, "update": 19, "auto": 19}
 
 def _need(job: Job) -> int:
     """GitHub requests this job may still make."""
+    if job.kind == "recheck":
+        return 0  # asks OSV and the package registries only, never GitHub
     if job.kind == "auto" and not job.prev:
         return _GITHUB_NEED["installed"]
     return _GITHUB_NEED.get(job.kind, 15)
@@ -91,11 +93,12 @@ def e(text: Any, limit: int = 300) -> str:
 @dataclass
 class Job:
     id: int
-    kind: str  # scan | installed | update | auto
+    kind: str  # scan | installed | update | auto | recheck
     repo: str
     ref: str | None
     to: str | None = None  # update: the version HACS would install now (None: work it out)
     prev: str | None = None  # auto: the version installed before an update (its diff base)
+    scan: int | None = None  # recheck: the stored scan whose advisories are asked again
     state: str = "queued"  # queued | running | waiting | done | failed | refused
     message: str = ""
     scan_ids: list[int] = field(default_factory=list)
@@ -104,6 +107,8 @@ class Job:
 
 
 ScanFn = Callable[[str, str | None], dict[str, Any]]
+# (stored report, saved lockfiles, scan id, when its code was sniffed) -> new report | None
+RecheckFn = Callable[[dict[str, Any], dict[str, Any], int, str], dict[str, Any] | None]
 
 
 class MemoryRefused(Exception):
@@ -141,7 +146,9 @@ class Worker:
         budget_fn: Callable[[], RateLimit | None] = lambda: None,
         sleep_fn: Callable[[float], None] = time.sleep,
         parallel: int = 1,
+        recheck_fn: RecheckFn = recheck.recheck,
     ):
+        self.recheck_fn = recheck_fn
         self.parallel = max(1, min(int(parallel), PARALLEL_MAX))
         self.store = store
         self.scan_fn = scan_fn
@@ -200,10 +207,16 @@ class Worker:
             self._slots.notify_all()
 
     def submit(
-        self, kind: str, repo: str, ref: str | None, to: str | None = None, prev: str | None = None
+        self,
+        kind: str,
+        repo: str,
+        ref: str | None,
+        to: str | None = None,
+        prev: str | None = None,
+        scan: int | None = None,
     ) -> Job:
         with self._lock:
-            job = Job(self._next, kind, repo, ref, to, prev)
+            job = Job(self._next, kind, repo, ref, to, prev, scan)
             self._next += 1
             self.jobs.insert(0, job)
             del self.jobs[_JOBS_KEPT:]
@@ -228,6 +241,50 @@ class Worker:
             if hit:
                 return hit.id
         return self._scan(repo, ref)
+
+    def _recheck(self, job: Job) -> None:
+        """Ask OSV again about a stored scan's packages (recheck.py). A change becomes a
+        new scan entry; the stored one is never edited. Only the newest scan of a version
+        is re-checked, so a new entry can't hide a later one."""
+        sid = int(job.scan or 0)
+        row = self.store.get(sid)
+        if row is None or not row.repo or not row.ref:
+            raise StoreError(f"no stored scan @{sid} to re-check")
+        newest = self.store.find(
+            row.repo, row.ref, exposure=row.exposure, tool_version=self.tool_version,
+            ha_version=row.ha_version,
+        )  # fmt: skip
+        job.scan_ids = [sid]
+        if row.tool_version != self.tool_version or not row.complete:
+            # its findings come from other rules, or it never finished: a fresh sniff's job
+            job.message = "not re-checked: only complete scans by this Barkley version are"
+            return
+        if newest is None or newest.id != sid:
+            job.message = "not re-checked: a newer scan of this version exists"
+            return
+        inputs = self.store.inputs(sid)
+        if inputs is None:
+            job.message = "not re-checked: this scan saved no package list"
+            return
+        if self.memory_fn().refuse:
+            raise MemoryRefused(self.memory_fn().message())
+        report = self.store.report(sid)
+        was = report.get("recheck") if isinstance(report.get("recheck"), dict) else {}
+        try:
+            new = self.recheck_fn(
+                report, inputs, sid, str(was.get("code_scanned_at") or row.scanned_at)
+            )
+        except recheck.RecheckError as ex:
+            self.store.note_recheck(sid, f"failed: {ex}")
+            raise
+        if new is None:
+            self.store.note_recheck(sid, "same")
+            job.message = "advisories unchanged"
+            return
+        new_id = self.store.save(new, inputs=inputs)
+        self.store.note_recheck(sid, f"changed:{new_id}")
+        job.scan_ids = [sid, new_id]
+        job.message = "advisories changed"
 
     def _log_incomplete(self, job: Job) -> None:
         """Analyzers that didn't finish go to the add-on's log as well as the page."""
@@ -278,6 +335,8 @@ class Worker:
         if job.kind == "scan":
             job.scan_ids = [self._scan(job.repo, job.ref)]
             job.message = "scanned"
+        elif job.kind == "recheck":
+            self._recheck(job)
         elif job.kind == "installed":  # an installed version: reuse a stored scan
             job.scan_ids = [self._stored_or_scan(job.repo, job.ref, self.exposure, self.ha_fn())]
             job.message = "sniffed"
@@ -555,7 +614,12 @@ def status_html(
     """The strip at the top: what's being sniffed now and what just finished."""
     now = time.time() if now is None else now
     active = [j for j in jobs if j.state in ("running", "waiting", "queued")]
-    recent = [j for j in jobs if j.finished and now - j.finished < STATUS_RECENT][-3:]
+    # A daily advisory re-check that found nothing new isn't news: it stays out of the strip.
+    recent = [
+        j for j in jobs
+        if j.finished and now - j.finished < STATUS_RECENT
+        and not (j.kind == "recheck" and j.state == "done" and len(j.scan_ids) < 2)
+    ][-3:]  # fmt: skip
     if not active and not recent:
         return ""
 
@@ -568,6 +632,8 @@ def status_html(
             what = "Sniffing" if j.kind != "update" else "Checking the update of"
             if j.kind == "auto":
                 what = "Auto-sniffing the update of" if j.prev else "Auto-sniffing"
+            if j.kind == "recheck":
+                what = "Re-checking the advisories of"
             lines.append(f'<b><span class="dot"></span>{what} {name(j)}…</b>')
         elif j.state == "waiting":
             lines.append(f"{ui.icon('clock', 14, 'muted')} {name(j)}: {e(j.message, 200)}")
@@ -582,6 +648,13 @@ def status_html(
             if j.kind in ("update", "auto") and len(j.scan_ids) == 2:
                 old, new = j.scan_ids
                 link = f'<a href="{base}/diff?old={old}&amp;new={new}">what the update changes</a>'
+            if j.kind == "recheck":
+                old, new = j.scan_ids
+                lines.append(
+                    f"{ui.icon('alert', 14, 'muted')} The known advisories of {name(j)} changed: "
+                    f'<a href="{base}/diff?old={old}&amp;new={new}">what changed</a>'
+                )
+                continue
             lines.append(f"{ui.icon('check', 14, 'ok')} {name(j)} is done: {link}")
         else:
             lines.append(f"{ui.icon('x', 14, 'bad')} {name(j)} {e(j.state)}: {e(j.message, 200)}")
@@ -634,10 +707,10 @@ def render_index(
         )
         for j in jobs:
             links = " ".join(f'<a href="{base}/scan/{i}">@{i}</a>' for i in j.scan_ids)
-            if j.kind in ("update", "auto") and len(j.scan_ids) == 2:
+            if j.kind in ("update", "auto", "recheck") and len(j.scan_ids) == 2:
                 old, new = j.scan_ids
                 links += f' · <a href="{base}/diff?old={old}&amp;new={new}">diff</a>'
-            kind = "auto-sniff" if j.kind == "auto" else j.kind
+            kind = {"auto": "auto-sniff", "recheck": "advisory re-check"}.get(j.kind, j.kind)
             out.append(
                 f'<tr><td class="nowrap">{e(kind)}</td><td class="wrap">{e(j.repo)}'
                 f"{'@' + e(j.prev) + ' → ' if j.prev else ''}{'@' + e(j.ref) if j.ref else ''}"
@@ -724,7 +797,9 @@ def render_auto(base: str, w: watch.Watcher, token: str, now: float | None = Non
         links = " ".join(f'<a href="{base}/scan/{i}">@{i}</a>' for i in ids)
         if len(ids) == 2:
             links += f' · <a href="{base}/diff?old={ids[0]}&amp;new={ids[1]}">diff</a>'
-        if x.get("action") == "available":
+        if x.get("action") == "advisories":
+            did = f"{e(x.get('version'))}: package advisories changed"
+        elif x.get("action") == "available":
             did = f"update {e(x.get('previous'))} → {e(x.get('version'))} waiting"
         elif x.get("previous"):
             did = f"updated {e(x.get('previous'))} → {e(x.get('version'))}"
@@ -756,7 +831,10 @@ def render_auto(base: str, w: watch.Watcher, token: str, now: float | None = Non
         "integration or card, Barkley sniffs that version (reusing a stored scan of that exact "
         "version, for example one you sniffed from search) and sends a notification: the app, "
         "its version, the verdict and score, what's worth a look, and for an update what "
-        "changes compared with the version you have.</p>"
+        "changes compared with the version you have. Once a day it also asks again whether "
+        "the packages of your installed apps (and of updates waiting) have new known "
+        "vulnerabilities or were found to be malicious, and tells you only when that "
+        "changed. That re-check doesn't fetch or scan the app's code again.</p>"
         f"<p>{AUTO_NOTE}</p>"
         '<div class="again">'
         f'<form method=post action="{base}/auto-scan">{hidden}'
@@ -920,8 +998,11 @@ def render_scan(
     ai_mode: str = "summary",
     item_states: dict[str, tuple[str, str]] | None = None,
     open_item: str = "",
+    rechecking: bool = False,
 ) -> bytes:
-    """`open_item`: the item whose AI sheet is open (`?open=`), kept open across refreshes."""
+    """`open_item`: the item whose AI sheet is open (`?open=`), kept open across refreshes.
+    `rechecking`: an advisory re-check of this scan is queued or running (the page then
+    reloads itself until it ends)."""
     repo = report.get("target", {}).get("repo")
     rows = store.history(repo, limit=200) if repo else []
     have = store.explanation(sid)
@@ -939,6 +1020,12 @@ def render_scan(
             snip = ai_context.snippet_of(report, item_id)
             if snip is None:
                 it = (report["context"].get("items") or {}).get(item_id) or {}
+                if it.get("kind") == "dependency" and it.get("unread"):
+                    return (f'<p class="small muted">{ui.icon("sparkle")} Explain in context: '
+                            "this package's advisory appeared after the code was sniffed, so "
+                            "Barkley hasn't looked for where the app uses "
+                            f"{e(it.get('package'), 120)}. Sniff this version again to include "
+                            "that.</p>")  # fmt: skip
                 if it.get("kind") == "dependency":  # nothing of the app's own to read
                     return (f'<p class="small muted">{ui.icon("sparkle")} Explain in context: we '
                             "couldn't find "
@@ -965,7 +1052,8 @@ def render_scan(
         rows,
         name=row.item.name if row else None,
         update=_update_box(base, row, token),
-        again=_again_box(base, report, token),
+        again=_again_box(base, report, token)
+        + _advisory_line(base, sid, report, store, token, rechecking),
         trust=trust_block(base, sid, report, token),
         ai=have,
         ai_form=_ai_form(
@@ -985,7 +1073,7 @@ def render_scan(
                 if v.get("claims") or v.get("questions")
             ],
         ),
-        refresh=5 if running else 0,
+        refresh=5 if running or rechecking else 0,
         deep=deep,
         refresh_url=_scan_url(base, sid, open_item, fresh=True) if open_item else "",
     )
@@ -1017,6 +1105,68 @@ def _again_box(base: str, report: dict[str, Any], token: str) -> str:
         '<button class="link" title="Runs a fresh scan instead of reusing this one">'
         "Sniff this version again</button></form>"
         f'<span class="muted">·</span> {_versions_link(base, repo)}</div>'
+    )
+
+
+def _utc(iso: str) -> str:
+    """'2026-11-13T02:10:00+00:00' -> '2026-11-13 02:10 UTC' (stored times are UTC)."""
+    return f"{iso[:10]} {iso[11:16]} UTC" if len(iso) >= 16 else iso
+
+
+def _advisory_line(
+    base: str, sid: int, report: dict[str, Any], store: Store, token: str, busy: bool = False
+) -> str:
+    """When this scan's package advisories were last asked about, from the store: the
+    entry it was re-checked from, the outcome of its own latest re-check, and the text
+    action that asks again. Nothing for a scan that saved no package list."""
+    bits = []
+    rc = report.get("recheck")
+    if isinstance(rc, dict) and str(rc.get("of", "")).isdigit():
+        of = int(rc["of"])
+        bits.append(
+            f"The known advisories for its packages changed, so this entry replaced "
+            f'<a href="{base}/scan/{of}">scan @{of}</a> on {e(_utc(str(rc.get("at", ""))))} '
+            f'(<a href="{base}/diff?old={of}&amp;new={sid}">what changed</a>). The code is as '
+            f"sniffed on {e(str(rc.get('code_scanned_at', ''))[:10])}; only the advisories "
+            "were asked again."
+        )
+    last = store.rechecks().get(sid)
+    if last:
+        when, result = e(_utc(last[0])), last[1]
+        if result == "same":
+            bits.append(f"Advisories asked again {when}: nothing changed.")
+        elif result.startswith("changed:") and result[8:].isdigit():
+            new = int(result[8:])
+            bits.append(f"An advisory re-check on {when} found changes: see "
+                        f'<a href="{base}/scan/{new}">scan @{new}</a>.')  # fmt: skip
+        elif result.startswith("failed"):
+            bits.append(f"The advisory re-check on {when} couldn't be done, so the advisories "
+                        f"shown are older ({e(result, 200)}).")  # fmt: skip
+    row = store.get(sid)
+    can = (
+        row is not None
+        and row.repo
+        and row.ref
+        and row.complete
+        and row.tool_version == __version__
+        and sid in store.has_inputs()
+        and not (last and last[1].startswith("changed:"))
+    )
+    if busy:
+        bits.append('<span class="dot"></span>Asking OSV again about its packages…')
+    elif can:
+        bits.append(
+            f'<form method=post action="{base}/recheck">'
+            f'<input type=hidden name=token value="{token}">'
+            f'<input type=hidden name=scan value="{sid}">'
+            '<button class="link" title="Asks OSV again about the packages this scan found. '
+            'The code is not fetched or scanned again.">Check advisories again</button></form>'
+        )
+    # `.again` is a flex row: each sentence is one item, so links stay inside their text
+    return (
+        '<div class="again small muted">' + "".join(f"<span>{b}</span>" for b in bits) + "</div>"
+        if bits
+        else ""
     )
 
 
@@ -1382,10 +1532,26 @@ def _side_words(base: str, side: dict[str, Any], sid: int) -> str:
     return f"<b>{e(side['ref'], 60)}</b> ({link})" if side.get("ref") else link
 
 
-def render_diff(base: str, old: int, new: int, d: dict[str, Any], name: str | None = None) -> bytes:
+def render_diff(
+    base: str,
+    old: int,
+    new: int,
+    d: dict[str, Any],
+    name: str | None = None,
+    recheck_of: bool = False,
+) -> bytes:
     """What an update changes, in plain words: the headline changes as a list with the
     same level labels as findings, the rest folded behind a disclosure; the diff's own
-    text stays available per line under "Technical details"."""
+    text stays available per line under "Technical details". `recheck_of`: the new side
+    is an advisory re-check of the old one (same version, same code), and says so."""
+    what = "What the advisory re-check changed" if recheck_of else "What the update changes"
+    how = (
+        "Same version and the same code: only the known advisories for its packages were "
+        "asked again. It lists what is listed now that wasn't before, and the other way "
+        "round."
+        if recheck_of
+        else "It lists what the new version does that the old one didn't, and the other way round."
+    )
     frm, to = d["from"], d["to"]
     changes = d.get("changes", [])
     head = [c for c in changes if c["rank"] >= HEADLINE_RANK][:HEADLINE_MAX]
@@ -1396,12 +1562,11 @@ def render_diff(base: str, old: int, new: int, d: dict[str, Any], name: str | No
         f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
         '<section class="box dhead"><div class="dscore">'
         f"{ui.ring(int(s_to or 0), ui.band(s_to))}</div>"
-        f"<div><h1>What the update changes: {e(title, 100)}</h1>"
+        f"<div><h1>{what}: {e(title, 100)}</h1>"
         f"<div>From {_side_words(base, frm, old)} to {_side_words(base, to, new)} · "
         f"{e(frm.get('repo'), 120)}</div>"
         f'<div class="muted small">Score {e(s_from)} → {e(s_to)}: each side\'s own score; '
-        "this comparison never scores. It lists what the new version does that the old one "
-        "didn't, and the other way round.</div></div></section>",
+        f"this comparison never scores. {how}</div></div></section>",
     ]
     for w in d.get("warnings", []):
         out.append(f'<div class="banner warn">{ui.icon("alert")} {e(w, 400)}</div>')
@@ -1849,6 +2014,11 @@ class Panel:
                             base, sid, report, panel.store, row, panel.token,
                             panel.ai_entity, state, err, choices, choices_err,
                             panel.ai_mode, panel.item_states(sid), open_item,
+                            rechecking=any(
+                                j.kind == "recheck" and j.scan == sid
+                                and j.state in ("queued", "running", "waiting")
+                                for j in list(panel.worker.jobs)
+                            ),
                         )  # fmt: skip
                         return self._send(200, page)
                     if url.path == "/search" and panel.catalog_fn is not None:
@@ -1907,7 +2077,9 @@ class Panel:
                         d = panel.diff(old, new)
                         repo = str((d.get("to") or {}).get("repo") or "")
                         name = panel.names().get(repo.lower()) if repo else None
-                        return self._send(200, render_diff(base, old, new, d, name))
+                        rc = panel.store.report(new).get("recheck")
+                        again = isinstance(rc, dict) and rc.get("of") == old
+                        return self._send(200, render_diff(base, old, new, d, name, again))
                 except StoreError as ex:
                     return self._text(HTTPStatus.NOT_FOUND, str(ex))
                 except (KeyError, ValueError):
@@ -1942,6 +2114,15 @@ class Panel:
                     else:
                         w.notify_test()
                     return self._redirect(f"{self._base()}/")
+                if path == "/recheck":
+                    if not get("scan").isdigit():
+                        return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                    sid = int(get("scan"))
+                    row = panel.store.get(sid)
+                    if row is None or not row.repo:
+                        return self._text(HTTPStatus.NOT_FOUND, f"no stored scan @{sid}")
+                    panel.worker.submit("recheck", row.repo, row.ref, scan=sid)
+                    return self._redirect(f"{self._base()}/scan/{sid}")
                 if path == "/trust":
                     fid, scope = get("finding"), get("scope")
                     if (not get("scan").isdigit() or not re.fullmatch(r"[0-9a-f]{16}", fid)

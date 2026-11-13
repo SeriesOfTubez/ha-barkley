@@ -62,6 +62,9 @@ PENDING_KEY = "auto_pending"  # settings: changes whose auto job hasn't ended (s
 AGE_OUT_DAYS = 7
 POLL = 600  # seconds between fallback reads of the installed list
 SWEEP_EVERY = 24 * 3600
+RECHECK_EVERY = 24 * 3600  # a stored scan's package advisories are asked again this often
+RECHECK_RETRY = 3600  # ...and this soon after a re-check that couldn't reach OSV
+RECHECK_PASS = 3600  # how often the watcher looks for scans that are due
 SETTLE = 3  # seconds after the Marketplace says an install ended, before the list is read
 _LOG_KEPT = 20
 _PENDING_KEPT = 20
@@ -228,6 +231,82 @@ def notification(
     return title, "\n\n".join(lines) + f"\n\n{link}: {where}.", plain
 
 
+def _package_findings(report: dict[str, Any]) -> dict[tuple[str, str], tuple[str, str]]:
+    """(rule, "name@version (ecosystem)") -> (finding id, severity) for osv's findings."""
+    out = {}
+    for f in report.get("findings", []):
+        if f.get("analyzer") == "osv" and f.get("evidence"):
+            key = (str(f.get("rule_id")), str(f["evidence"]).split(":", 1)[0])
+            out[key] = (str(f.get("id")), str(f.get("severity")))
+    return out
+
+
+def advisory_changes(old: dict[str, Any], new: dict[str, Any]) -> dict[str, int]:
+    """What an advisory re-check changed, as counts of packages: newly listed as
+    malicious, newly with known vulnerabilities, with different advisories than before,
+    and no longer with any."""
+    a, b = _package_findings(old), _package_findings(new)
+    added = [k for k in b if k not in a]
+    return {
+        "malicious": sum(1 for rule, _ in added if rule == "dep-malicious"),
+        "new": sum(1 for rule, _ in added if rule != "dep-malicious"),
+        "changed": sum(1 for k in b if k in a and a[k] != b[k]),
+        "gone": sum(1 for k in a if k not in b),
+    }
+
+
+def advisory_summary(n: dict[str, int]) -> str:
+    def pk(k: int) -> str:
+        return f"{k} package" + ("s" if k != 1 else "")
+
+    parts = []
+    if n["malicious"]:
+        parts.append(f"{pk(n['malicious'])} now listed as malicious")
+    if n["new"]:
+        parts.append(f"{pk(n['new'])} newly with known vulnerabilities")
+    if n["changed"]:
+        parts.append(f"{pk(n['changed'])} with different advisories than before")
+    if n["gone"]:
+        parts.append(f"{pk(n['gone'])} no longer with any")
+    return ", ".join(parts)
+
+
+def advisory_notification(
+    entry: dict[str, Any], report: dict[str, Any], panel: str
+) -> tuple[str, str, str]:
+    """(title, markdown, plain) for a stored scan whose package advisories changed.
+    Counts, scores and validated names only: package names come from the scanned repo's
+    lockfile and advisory text from OSV, so neither is ever put in a notification."""
+    repo, ver = entry["repo"], entry["version"]
+    kind = _KIND.get(str(entry.get("kind")), "App")
+    label, emoji = _VERDICT.get(str(report.get("verdict", {}).get("key")), ("?", ""))
+    score, was = int(report.get("score", 0)), entry.get("was")
+    moved = f" (it was {int(was)}/100)" if isinstance(was, int) and was != score else ""
+    lines = []
+    if entry.get("malicious"):
+        lines.append("A package this app uses is now listed as malicious.")
+    lines.append(
+        f"{kind} {repo} {ver}: the known advisories for the packages it uses changed since "
+        f"Barkley sniffed it. {emoji} {label}, {score}/100{moved}."
+    )
+    if entry.get("changes"):
+        lines.append(f"What changed: {entry['changes']}.")
+    lines.append("The app's code was not scanned again; only its packages were asked about.")
+    t = report.get("trust")
+    if t:
+        n = len(t.get("addresses") or [])
+        lines.append(
+            f"The score counts {n} address{'es' * (n != 1)} you trust as fine; "
+            f"Barkley's own score is {int(t.get('own_score') or 0)}."
+        )
+    ids = entry.get("scan_ids") or []
+    where = f"scan @{ids[-1]}, what changed @{ids[0]} → @{ids[-1]}" if len(ids) == 2 else "the app"
+    link = f"[Open Barkley]({panel})" if panel else "Open Barkley from the sidebar"
+    title = f"Barkley: {repo} {ver} (advisories changed)"
+    plain = " ".join(lines) + f" Open Barkley from the sidebar: {where}."
+    return title, "\n\n".join(lines) + f"\n\n{link}: {where}.", plain
+
+
 class Watcher:
     """The auto-sniff thread; also the panel's settings for it (store settings win over
     the app options, like the AI entity)."""
@@ -275,6 +354,10 @@ class Watcher:
         self.since = 0.0
         self.last_check = 0.0
         self.last_sweep = 0.0
+        self.last_recheck = 0.0
+        self.rechecked = 0  # advisory re-checks that ended, and how many found a change
+        self.recheck_changes = 0
+        self._rechecks: dict[int, dict[str, str]] = {}  # job id -> repo, kind, version
         self.last_event = ""
         self.events_seen = 0
         self.swept = 0
@@ -358,6 +441,11 @@ class Watcher:
             bits.append(f"last event: {self.last_event}")
         if self.last_check:
             bits.append(f"list read {int(self.now_fn() - self.last_check) // 60} min ago")
+        if self.rechecked:
+            bits.append(
+                f"advisories re-checked for {self.rechecked} scan(s) since the start, "
+                f"{self.recheck_changes} changed"
+            )
         if self.error:
             bits.append(f"last error: {self.error[:200]}")
         bits.append(
@@ -449,6 +537,8 @@ class Watcher:
             self.check()
         if now - self.last_sweep >= SWEEP_EVERY:
             self.sweep()
+        if self.enabled and now - self.last_recheck >= RECHECK_PASS:
+            self.recheck_due()
 
     # --- the work ----------------------------------------------------------------------
 
@@ -485,6 +575,100 @@ class Watcher:
         for c in changes:
             self._handle(c)
         return changes
+
+    def recheck_due(self) -> int:
+        """Queue an advisory re-check (recheck.py) for the stored scan of every installed
+        version, and of every update waiting, whose advisories were last asked about a
+        day ago or more. Reads the snapshot, not the Marketplace; asks GitHub nothing."""
+        now = self.now_fn()
+        self.last_recheck = now
+        snap = self._snapshot() or {}
+        if not snap:
+            return 0
+        checks, have = self.store.rechecks(), self.store.has_inputs()
+        ha = self.worker.ha_fn()
+        n = 0
+        for cur in snap.values():
+            if not isinstance(cur, dict) or not cur.get("repo"):
+                continue
+            repo = str(cur["repo"])
+            for ver in dict.fromkeys([cur.get("version"), cur.get("available")]):
+                if not ver:
+                    continue
+                row = self.store.find(
+                    repo, str(ver), exposure=self.worker.exposure,
+                    tool_version=self.worker.tool_version, ha_version=ha,
+                )  # fmt: skip
+                if row is None or row.id not in have:
+                    continue
+                last, result = checks.get(row.id, (row.scanned_at, ""))
+                try:
+                    age = now - datetime.fromisoformat(last).timestamp()
+                except ValueError:
+                    age = RECHECK_EVERY
+                if age < (RECHECK_RETRY if result.startswith("failed") else RECHECK_EVERY):
+                    continue
+                if self._active(repo, str(ver)):
+                    continue
+                job = self.worker.submit("recheck", repo, str(ver), scan=row.id)
+                with self._lock:
+                    self._rechecks[job.id] = {
+                        "repo": repo, "kind": str(cur.get("kind") or ""), "version": str(ver),
+                    }  # fmt: skip
+                n += 1
+        return n
+
+    def _recheck_done(self, job: Any, info: dict[str, str]) -> None:
+        """A daily advisory re-check ended: one log line always; a notification and an
+        entry in the recent list only when the advisories changed."""
+        repo, ver = info["repo"], info["version"]
+        ids = " → ".join(f"@{i}" for i in job.scan_ids) or "no scan"
+        if job.state != "done":
+            print(f"auto-sniff: advisories of {repo} {ver} not re-checked ({job.state}: "
+                  f"{str(job.message)[:200]}); {ids}", file=sys.stderr, flush=True)  # fmt: skip
+            return
+        self.rechecked += 1
+        if len(job.scan_ids) != 2:
+            print(f"auto-sniff: advisories of {repo} {ver}: {str(job.message)[:100]}; {ids}",
+                  file=sys.stderr, flush=True)  # fmt: skip
+            return
+        self.recheck_changes += 1
+        try:
+            old, new = (self.store.report(i) for i in job.scan_ids)
+        except StoreError as ex:
+            print(f"auto-sniff: advisories of {repo} {ver} changed, but {ex}", file=sys.stderr,
+                  flush=True)  # fmt: skip
+            return
+        counts = advisory_changes(old, new)
+        trusted = self.store.trusted()
+        shown = trust.view(new, trusted)
+        entry = {
+            "when": _now_iso(self.now_fn()),
+            "action": "advisories",
+            "repo": repo,
+            "kind": info["kind"],
+            "version": ver,
+            "previous": None,
+            "state": job.state,
+            "message": str(job.message)[:300],
+            "scan_ids": list(job.scan_ids),
+            "score": int(shown.get("score", 0)),
+            "was": int(trust.view(old, trusted).get("score", 0)),
+            "verdict": str(shown.get("verdict", {}).get("key", "")),
+            "complete": bool(shown.get("complete", True)),
+            "changes": advisory_summary(counts),
+            "malicious": counts["malicious"],
+        }
+        self._log(entry)
+        title, md, plain = advisory_notification(entry, shown, self.panel_path())
+        err = self._notify(title, md, plain, f"barkley_{repo.lower()}")
+        sent = (
+            f"notification failed: {err}" if err
+            else "notified bell" + (f" + notify.{self.notify_target}" if self.notify_target else "")
+        )  # fmt: skip
+        print(f"auto-sniff: advisories of {repo} {ver} changed: {entry['was']} → "
+              f"{entry['score']}/100, {entry['changes']}; {ids}; {sent}",
+              file=sys.stderr, flush=True)  # fmt: skip
 
     def _active(self, repo: str, ref: str) -> bool:
         return any(
@@ -596,7 +780,10 @@ class Watcher:
     def on_job_done(self, job: Any) -> None:
         """Worker hook: record the outcome of an auto job and notify."""
         with self._lock:
+            info = self._rechecks.pop(job.id, None)
             c = self._pending.pop(job.id, None)
+        if info is not None:
+            return self._recheck_done(job, info)
         if c is None:
             return
         self._forget(c)

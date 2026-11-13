@@ -58,6 +58,18 @@ while Barkley was stopped). When an integration or card is installed or updated:
   offering a new version of something you have, Barkley sniffs that version right away
   and tells you what it changes, so the heads-up comes before you click Update. The
   auto-sniff after the update then reuses those scans.
+- **Advisories are asked again once a day.** A scan is reused for as long as an app stays
+  at that version, but a vulnerability, or a package found to be malicious, can be
+  published after the scan. So each scan keeps the list of packages it resolved (the
+  lockfiles, stored beside the scan), and once a day Barkley asks OSV about exactly those
+  packages again, for every installed version and every update waiting. It takes seconds:
+  the app's code is not fetched or scanned again, and GitHub is not asked anything. When
+  nothing changed you hear nothing. When something did, the result is stored as a **new
+  entry** (the earlier one stays in the history as it was), the score is worked out again
+  by the same rules, and the notification gives the old and new score and counts of what
+  changed, with a link to the comparison. If OSV can't be reached nothing changes and
+  Barkley tries again an hour later. "Check advisories again" on an app's page does the
+  same on request.
 - It sends a **bell notification** in Home Assistant (always) and, if you picked one in
   the panel, a `notify.<target>` message (for example your phone through the companion
   app): the app and version, the verdict and score, up to three things worth a look in

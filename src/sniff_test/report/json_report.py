@@ -57,6 +57,9 @@ class ScanResult:
     graph: dict[str, Any] | None = None  # built by the scanner (see report.graph)
     context: dict[str, Any] | None = None  # code around items (report.context), 0.7.0
     ha_version: str | None = None  # HA release dependencies were resolved against
+    # The lockfiles a later advisory re-check needs (recheck.capture). Never in the report:
+    # they go beside it in the store.
+    inputs: dict[str, Any] | None = None
 
 
 def sanitize_untrusted(text: str | None, limit: int = _UNTRUSTED_MAX) -> str:

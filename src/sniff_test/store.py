@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import zlib
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass, replace
@@ -27,6 +28,8 @@ from typing import Any
 from sniff_test import trust
 
 STORE_VERSION = 1
+_INPUTS_KEY = "_recheck_inputs"  # recheck.KEY (not imported: the store stays a leaf)
+_INPUTS_MAX = 64 * 1024 * 1024  # never inflate more than this from a stored blob
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS scans (
@@ -105,6 +108,15 @@ CREATE TABLE IF NOT EXISTS finding_addresses (  -- (0.9.0) addresses a finding i
     finding_id TEXT NOT NULL,
     address    TEXT NOT NULL,   -- host or IP the user may mark trusted (see trust.py)
     PRIMARY KEY (scan_id, finding_id, address)
+);
+CREATE TABLE IF NOT EXISTS scan_inputs (  -- (0.10.0) the lockfiles of a scan, for re-checks
+    scan_id INTEGER PRIMARY KEY REFERENCES scans (id) ON DELETE CASCADE,
+    data    BLOB NOT NULL    -- zlib(JSON), recheck.capture(); text from the scan, only parsed
+);
+CREATE TABLE IF NOT EXISTS advisory_checks (  -- (0.10.0) the last advisory re-check of a scan
+    scan_id    INTEGER PRIMARY KEY REFERENCES scans (id) ON DELETE CASCADE,
+    checked_at TEXT NOT NULL,
+    result     TEXT NOT NULL  -- same | changed:<new scan id> | failed: <why>
 );
 CREATE TABLE IF NOT EXISTS edge_findings (
     scan_id    INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
@@ -197,8 +209,24 @@ class Store:
 
     # --- write ---------------------------------------------------------------------
 
-    def save(self, report: dict[str, Any], scanned_at: datetime | None = None) -> int:
-        """Store a report (as produced by `json_report.to_dict`). Returns the scan id."""
+    def save(
+        self,
+        report: dict[str, Any],
+        scanned_at: datetime | None = None,
+        inputs: dict[str, Any] | None = None,
+    ) -> int:
+        """Store a report (as produced by `json_report.to_dict`). Returns the scan id.
+        `inputs`: the scan's lockfiles for later advisory re-checks (recheck.capture); a
+        scan function may also hand them over under `_recheck_inputs`, which is taken out
+        here and never becomes part of the stored report."""
+        if _INPUTS_KEY in report:
+            inputs = inputs or report[_INPUTS_KEY]
+            report = {k: v for k, v in report.items() if k != _INPUTS_KEY}
+        blob = (
+            zlib.compress(json.dumps(inputs, separators=(",", ":")).encode(), 6)
+            if isinstance(inputs, dict) and inputs
+            else None
+        )
         try:
             t = report["target"]
             graph = report.get("graph") or {}
@@ -232,6 +260,8 @@ class Store:
                 row,
             )
             sid = int(cur.lastrowid or 0)
+            if blob is not None:
+                db.execute("INSERT INTO scan_inputs VALUES (?,?)", (sid, blob))
             db.executemany(
                 "INSERT OR IGNORE INTO findings VALUES (?,?,?,?,?,?,?)",
                 [
@@ -270,6 +300,43 @@ class Store:
                 [(sid, e["id"], fid) for e in edges for fid in e.get("finding_ids", [])],
             )
         return sid
+
+    def inputs(self, scan_id: int) -> dict[str, Any] | None:
+        """The lockfiles saved with a scan, or None (an older scan, nothing to resolve,
+        or a file too large to keep)."""
+        with self._connect() as db:
+            r = db.execute("SELECT data FROM scan_inputs WHERE scan_id = ?", (scan_id,)).fetchone()
+        if r is None:
+            return None
+        try:
+            d = zlib.decompressobj()
+            raw = d.decompress(r["data"], _INPUTS_MAX)
+            if d.unconsumed_tail:
+                return None
+            data = json.loads(raw)
+        except (zlib.error, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def has_inputs(self) -> set[int]:
+        with self._connect() as db:
+            return {int(r[0]) for r in db.execute("SELECT scan_id FROM scan_inputs")}
+
+    def note_recheck(self, scan_id: int, result: str, when: datetime | None = None) -> None:
+        """Remember the outcome of the latest advisory re-check of a scan."""
+        at = (when or datetime.now(UTC)).isoformat(timespec="seconds")
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO advisory_checks VALUES (?,?,?) ON CONFLICT (scan_id) DO UPDATE "
+                "SET checked_at = excluded.checked_at, result = excluded.result",
+                (scan_id, at, result[:300]),
+            )
+
+    def rechecks(self) -> dict[int, tuple[str, str]]:
+        """scan id -> (checked_at, result) of its latest advisory re-check."""
+        with self._connect() as db:
+            rows = db.execute("SELECT scan_id, checked_at, result FROM advisory_checks")
+            return {int(r[0]): (str(r[1]), str(r[2])) for r in rows}
 
     def setting(self, key: str) -> str | None:
         with self._connect() as db:
