@@ -93,6 +93,9 @@ rest in one line. It compares; it never changes how either scan is scored.
 - **Scanner evasion**: `<!--` and `-->` hide the rest of a line from Semgrep in JS but are
   ordinary code in the ES modules HA loads. Barkley rewrites them (with the same
   meaning) in its copy before scanning, and flags a real `<!--` in code.
+  It also rewrites two forms Semgrep misreads (`n?.5:1`, and `new as(...)` for a class
+  minified to the name `as`). A code file Semgrep still can't read at all is its own
+  finding, and the score can't pass 89 while one is there.
 - **Repo signals**: ownership transfers (proven from GitHub's redirect, or from the
   repo's own old links resolving to the same repository), scored by whether the people
   publishing releases changed; a first release by a new publisher; very new repos;
