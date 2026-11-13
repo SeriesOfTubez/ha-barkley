@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -145,11 +146,80 @@ def supervisor_checks(
     return out
 
 
-def run_checks(addon: bool = False) -> list[Check]:
-    """`addon`: also ask HA (through the Supervisor) for its version and HACS's list."""
-    checks = [_facts(), memory_check(), github_check()]
+def _semgrep_scan(sample: Path, run_dir: Path) -> Check:
+    sg = _run(
+        "semgrep scan (our rules, one-line sample)",
+        ["semgrep", "scan", "--config", str(rules_dir()), "--json", "--metrics=off",
+         "--disable-version-check", "--no-git-ignore", "--jobs", "1", str(sample)],
+        run_dir,
+        semgrep_env(),
+    )  # fmt: skip
+    try:
+        data = json.loads(sg.full_stdout)
+        errs = [e.get("message", e.get("type")) for e in data.get("errors", [])]
+        sg.summary += f"; {len(data.get('paths', {}).get('scanned', []))} file(s) scanned"
+        if errs:
+            sg.summary += f"; errors: {errs[:3]}"
+    except ValueError:
+        sg.summary += "; output is not JSON"
+    return sg
+
+
+def _guarddog_env() -> dict[str, str]:
+    gd_exe = shutil.which("guarddog")
+    return guarddog.tool_env(gd_exe) if gd_exe else _proc.tool_env()  # lists cached under /data
+
+
+def _guarddog_scan(sample: Path, run_dir: Path) -> Check:
+    gd_env = _guarddog_env()
+    gd_cmd = ["guarddog", "pypi", "scan", str(sample), "--output-format", "json"]
+    gd = _run("guarddog scan (one-line sample)", gd_cmd, run_dir, gd_env)
+    if not gd.ok and "sandbox" in gd.stderr.lower():
+        # What the analyzer does too: GuardDog only parses; the container is the
+        # outer sandbox. Reported, not hidden.
+        retry = _run("guarddog scan (one-line sample)", [*gd_cmd, "--no-sandbox"], run_dir,
+                     gd_env)  # fmt: skip
+        retry.summary += "; kernel sandbox unavailable here, ran with --no-sandbox"
+        gd = retry
+    return gd
+
+
+Step = tuple[str, Callable[[Path, Path], "Check | list[Check]"]]
+
+
+def steps(addon: bool = False) -> list[Step]:
+    """The checks in order, each with the name shown while it is still running. A step
+    gets the sample folder and an empty folder to run in. The first ones answer at once;
+    the tool runs take seconds each."""
+    out: list[Step] = [
+        ("environment", lambda s, r: _facts()),
+        ("memory guard", lambda s, r: memory_check()),
+        ("GitHub API", lambda s, r: github_check()),
+    ]
     if addon or supervisor.token():
-        checks += supervisor_checks()
+        out.append(("Home Assistant and the Marketplace list", lambda s, r: supervisor_checks()))
+    out += [
+        ("semgrep --version",
+         lambda s, r: _run("semgrep --version", ["semgrep", "--version"], r, semgrep_env())),
+        ("semgrep scan (our rules, one-line sample)", _semgrep_scan),
+        ("osv-scanner --version",
+         lambda s, r: _run("osv-scanner --version", ["osv-scanner", "--version"], r,
+                           _proc.tool_env())),
+        ("guarddog --version",
+         lambda s, r: _run("guarddog --version", ["guarddog", "--version"], r, _guarddog_env())),
+        ("guarddog scan (one-line sample)", _guarddog_scan),
+        ("uv --version", lambda s, r: _run("uv --version", ["uv", "--version"], r,
+                                           _proc.tool_env())),
+    ]  # fmt: skip
+    return out
+
+
+def run_checks(
+    addon: bool = False, on_step: Callable[[str, list[Check]], None] | None = None
+) -> list[Check]:
+    """`addon`: also ask HA (through the Supervisor) for its version and HACS's list.
+    `on_step(name, checks)` is called as each step ends, so a page can show progress."""
+    checks: list[Check] = []
     with tempfile.TemporaryDirectory(prefix="sniff-doctor-") as tmp:
         work = Path(tmp)
         sample = work / "sample"
@@ -158,39 +228,12 @@ def run_checks(addon: bool = False) -> list[Check]:
         (sample / ".semgrepignore").write_text("", encoding="utf-8")
         run_dir = work / "run"
         run_dir.mkdir()
-        checks.append(_run("semgrep --version", ["semgrep", "--version"], run_dir, semgrep_env()))
-        sg = _run(
-            "semgrep scan (our rules, one-line sample)",
-            ["semgrep", "scan", "--config", str(rules_dir()), "--json", "--metrics=off",
-             "--disable-version-check", "--no-git-ignore", "--jobs", "1", str(sample)],
-            run_dir,
-            semgrep_env(),
-        )  # fmt: skip
-        try:
-            data = json.loads(sg.full_stdout)
-            errs = [e.get("message", e.get("type")) for e in data.get("errors", [])]
-            sg.summary += f"; {len(data.get('paths', {}).get('scanned', []))} file(s) scanned"
-            if errs:
-                sg.summary += f"; errors: {errs[:3]}"
-        except ValueError:
-            sg.summary += "; output is not JSON"
-        checks.append(sg)
-        env = _proc.tool_env()
-        checks.append(_run("osv-scanner --version", ["osv-scanner", "--version"], run_dir, env))
-        gd_exe = shutil.which("guarddog")
-        gd_env = guarddog.tool_env(gd_exe) if gd_exe else env  # lists cached under /data
-        checks.append(_run("guarddog --version", ["guarddog", "--version"], run_dir, gd_env))
-        gd_cmd = ["guarddog", "pypi", "scan", str(sample), "--output-format", "json"]
-        gd = _run("guarddog scan (one-line sample)", gd_cmd, run_dir, gd_env)
-        if not gd.ok and "sandbox" in gd.stderr.lower():
-            # What the analyzer does too: GuardDog only parses; the container is the
-            # outer sandbox. Reported, not hidden.
-            retry = _run("guarddog scan (one-line sample)", [*gd_cmd, "--no-sandbox"], run_dir,
-                         gd_env)  # fmt: skip
-            retry.summary += "; kernel sandbox unavailable here, ran with --no-sandbox"
-            gd = retry
-        checks.append(gd)
-        checks.append(_run("uv --version", ["uv", "--version"], run_dir, env))
+        for name, fn in steps(addon):
+            got = fn(sample, run_dir)
+            got = got if isinstance(got, list) else [got]
+            checks += got
+            if on_step:
+                on_step(name, got)
     return checks
 
 

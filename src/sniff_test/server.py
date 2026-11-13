@@ -1267,11 +1267,94 @@ def render_trusted(base: str, trusted: trust.Trusted, names: dict[str, str], tok
     return _page("Barkley · Addresses you trust", "".join(out), base)
 
 
-def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
+class Diagnostics:
+    """The Diagnostics page's checks, run off the request thread: the tool runs take
+    about 15 s together, and the page used to stay blank for all of it. A visit starts a
+    run (unless one is going, or the last one just ended) and shows what is known so far;
+    the page reloads itself until the run ends."""
+
+    FRESH = 60.0  # a finished run this recent is shown again instead of starting another
+
+    def __init__(self, run: Callable[..., list[doctor.Check]] | None = None):
+        self._run = run
+        self._lock = threading.Lock()
+        self.checks: list[doctor.Check] = []
+        self.pending: list[str] = []
+        self.total = 0
+        self.running = False
+        self.started = 0.0
+        self.ended = 0.0
+
+    def start(self, force: bool = False) -> None:
+        with self._lock:
+            if self.running:
+                return
+            if not force and self.ended and time.monotonic() - self.ended < self.FRESH:
+                return
+            self.running = True
+            self.checks = []
+            self.pending = [name for name, _ in doctor.steps(addon=True)]
+            self.total = len(self.pending)
+            self.started = time.monotonic()
+        threading.Thread(target=self._work, name="diagnostics", daemon=True).start()
+
+    def _step(self, name: str, got: list[doctor.Check]) -> None:
+        with self._lock:
+            self.checks += got
+            if name in self.pending:
+                self.pending.remove(name)
+
+    def _work(self) -> None:
+        try:
+            # Looked up here, not at import, so the function can be replaced.
+            checks = (self._run or doctor.run_checks)(addon=True, on_step=self._step)
+        except Exception as ex:  # a failed run must end, and say why
+            failed = doctor.Check("diagnostics", False, f"{type(ex).__name__}: {ex}")
+            with self._lock:
+                checks = [*self.checks, failed]
+        with self._lock:
+            self.checks = list(checks)
+            self.pending = []
+            self.running = False
+            self.ended = time.monotonic()
+
+    def state(self) -> dict[str, Any]:
+        with self._lock:
+            now = time.monotonic()
+            return {
+                "checks": list(self.checks),
+                "pending": list(self.pending),
+                "total": self.total,
+                "running": self.running,
+                "age": int(now - self.ended) if self.ended else 0,
+                "took": round(self.ended - self.started) if self.ended else 0,
+            }
+
+
+def render_doctor(
+    base: str, checks: list[doctor.Check], state: dict[str, Any] | None = None
+) -> bytes:
+    """`state` (Diagnostics.state()): the steps still to come and whether a run is going.
+    While one is, the page reloads every 2 s and names what it is waiting for."""
+    state = state or {}
+    pending = list(state.get("pending") or [])
+    running = bool(state.get("running"))
     out = [f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
            "<h1>Diagnostics</h1>",
            f'<p class="muted">Barkley {e(__version__)}. Each tool runs on a one-line '
-           "sample written here, never on scanned code.</p><table>"]  # fmt: skip
+           "sample written here, never on scanned code.</p>"]  # fmt: skip
+    if running:
+        total = int(state.get("total") or 0)
+        out.append(
+            f'<p><span class="dot"></span>Running the checks: {total - len(pending)} of {total} '
+            "done. The tools take a few seconds each; this page updates by itself.</p>"
+        )
+    elif state:
+        age = int(state.get("age") or 0)
+        when = "just now" if age < 5 else f"{age} s ago"
+        out.append(f'<p class="muted">All checks ran {when}, in {int(state.get("took") or 0)} s. '
+                   f'<a href="{base}/doctor?again=1">Run them again</a></p>')  # fmt: skip
+    out.append("<table>")
     for c in checks:
         cls = "ok" if c.ok else "bad"
         out.append(
@@ -1284,8 +1367,14 @@ def render_doctor(base: str, checks: list[doctor.Check]) -> bytes:
             + (f"<br>stdout: <code>{e(c.stdout, 600)}</code>" if c.stdout and not c.ok else "")
             + "</td></tr>"
         )
+    for i, name in enumerate(pending if running else []):
+        out.append(
+            '<tr><td class="muted">' + ('<span class="dot"></span>' if i == 0 else "…") + "</td>"
+            f'<td class="wrap muted"><b>{e(name)}</b> {"running…" if i == 0 else "waiting"}'
+            "</td></tr>"
+        )
     out.append("</table>")
-    return _page("Barkley diagnostics", "".join(out), base)
+    return ui.page("Barkley diagnostics", "".join(out), refresh=2 if running else 0, base=base)
 
 
 def _side_words(base: str, side: dict[str, Any], sid: int) -> str:
@@ -1393,6 +1482,7 @@ class Panel:
         self._ai_lock = threading.Lock()
         self.ai_mode = "summary"
         self.watcher: watch.Watcher | None = None  # auto-sniff (set by `serve` in an add-on)
+        self.diagnostics = Diagnostics()
 
     def installed(self, refresh: bool = False) -> InstalledState:
         """HACS's installed list, cached; one websocket round trip at most every 5 minutes."""
@@ -1799,12 +1889,18 @@ class Panel:
                         return self._send(200, render_trusted(
                             base, panel.store.trusted(), panel.names(), panel.token))  # fmt: skip
                     if url.path == "/doctor":
-                        checks = doctor.run_checks(addon=True)
+                        # Never waits for the tools: the run goes on in its own thread.
+                        if "again=1" in url.query:
+                            panel.diagnostics.start(force=True)
+                            return self._redirect(f"{base}/doctor")
+                        panel.diagnostics.start()
+                        state = panel.diagnostics.state()
+                        checks = state["checks"]
                         if panel.watcher is not None:
                             ok, summary = panel.watcher.diagnostics()
                             checks.insert(3, doctor.Check("Auto-sniff (Marketplace events)", ok,
                                                           summary))  # fmt: skip
-                        return self._send(200, render_doctor(base, checks))
+                        return self._send(200, render_doctor(base, checks, state))
                     if url.path == "/diff":
                         q = urllib.parse.parse_qs(url.query)
                         old, new = int(q["old"][0]), int(q["new"][0])

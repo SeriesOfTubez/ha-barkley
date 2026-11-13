@@ -2,6 +2,7 @@
 
 import re
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -200,6 +201,61 @@ def test_scan_page_names_analyzers_that_did_not_finish(panel):
     assert "python-deps" not in page
 
 
+def doctor_done(base, tries=200):
+    """The Diagnostics page once its background run has ended."""
+    for _ in range(tries):
+        status, _, page = get(base + "/doctor")
+        if 'http-equiv="refresh"' not in page:
+            return status, page
+        time.sleep(0.02)
+    raise AssertionError("the diagnostics run never ended")
+
+
+def test_doctor_page_opens_at_once_and_fills_in_as_checks_end(panel, monkeypatch):
+    """The user's report: the link did nothing for 15 s. The page must answer while the
+    tools still run, name what it waits for, reload itself, and end without a refresh."""
+    _, _, base, _ = panel
+    go, calls = threading.Event(), []
+
+    def slow(addon=False, on_step=None):
+        calls.append(1)
+        first = server.doctor.Check("environment", True, "uid=0")
+        on_step("environment", [first])
+        assert go.wait(10)
+        return [first, server.doctor.Check("uv --version", True, "exit 0", "uv --version", 0, 0.1)]
+
+    monkeypatch.setattr(server.doctor, "run_checks", slow)
+    t0 = time.monotonic()
+    _, _, page = get(base + "/doctor")
+    assert time.monotonic() - t0 < 2
+    total = len(server.doctor.steps(addon=True))
+    assert '<meta http-equiv="refresh" content="2">' in page
+    assert f"Running the checks: 1 of {total} done" in page
+    assert "<b>environment</b> uid=0" in page
+    assert "<b>memory guard</b> running…" in page and "<b>uv --version</b> waiting" in page
+    get(base + "/doctor")  # a reload while it runs starts nothing new
+    go.set()
+    _, page = doctor_done(base)
+    assert "<b>uv --version</b> exit 0" in page and "running…" not in page
+    assert "All checks ran just now" in page and 'href="/doctor?again=1"' in page
+    get(base + "/doctor")  # fresh results are shown again, not rerun
+    assert len(calls) == 1
+    get(base + "/doctor?again=1")  # urllib follows the redirect back to /doctor
+    doctor_done(base)
+    assert len(calls) == 2
+
+
+def test_a_diagnostics_run_that_raises_still_ends(panel, monkeypatch):
+    _, _, base, _ = panel
+
+    def broken(**kw):
+        raise OSError("no <tmp>")
+
+    monkeypatch.setattr(server.doctor, "run_checks", broken)
+    _, page = doctor_done(base)
+    assert "FAIL" in page and "OSError: no &lt;tmp&gt;" in page
+
+
 def test_doctor_page_shows_failures_escaped(panel, monkeypatch):
     _, _, base, _ = panel
     checks = [
@@ -209,7 +265,7 @@ def test_doctor_page_shows_failures_escaped(panel, monkeypatch):
         ),
     ]
     monkeypatch.setattr(server.doctor, "run_checks", lambda **kw: checks)
-    status, _, page = get(base + "/doctor")
+    status, page = doctor_done(base)
     assert status == 200
     assert "FAIL" in page and "&lt;boom&gt;" in page
     assert "hassio-addons (enforce)" in page
@@ -484,8 +540,8 @@ def test_auto_jobs_show_in_the_jobs_table_and_doctor_names_the_watcher(auto, mon
     _, _, page = get(base + "/")
     assert '<td class="nowrap">auto-sniff</td><td class="wrap">acme/quiet@v1 → @v2</td>' in page
     assert f"diff?old={job.scan_ids[0]}&amp;new={job.scan_ids[1]}" in page
-    monkeypatch.setattr(server.doctor, "run_checks", lambda addon=False: [])
-    _, _, page = get(base + "/doctor")
+    monkeypatch.setattr(server.doctor, "run_checks", lambda **kw: [])
+    _, page = doctor_done(base)
     assert "Auto-sniff (Marketplace events)" in page and "auto-sniff on" in page
 
 
