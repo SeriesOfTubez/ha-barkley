@@ -44,7 +44,25 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 # is `a < !(--b)` and `n-->0` is `n-- > 0`. Inserting a space keeps the meaning in code
 # and only adds a space inside strings, regexes and comments, so it can't hide anything.
 # It also covers lit-html's `/-->/g`, which made Semgrep drop all of mushroom.js (M3).
-_JS_PARSE_FIXES = ((re.compile(r"<!--"), "< !--"), (re.compile(r"-->"), "-- >"))
+#
+# Two more, found on 1.185 (2026-11-13) and both meaning-preserving in code:
+# - `n?.5:1` (a conditional whose first branch is a decimal such as `.5`): Semgrep reads
+#   `?.` as optional chaining and skips a few characters (PartialParsing: Bubble-Card,
+#   Helios, Bambu Lab's card, HACS's chunks). ECMAScript says `?.` is never optional
+#   chaining before a digit, so `? .5` is the same expression.
+# - `new as(a, -1)`: a class minified to the name `as` (or `satisfies`), TypeScript's
+#   operator words. Together with an arrow function whose body is a function called on
+#   the spot (`t => function(){...}()`), neither of Semgrep's JavaScript parsers gets
+#   through and NO rule runs on the file ("Syntax error": HACS 2.0.5's 1.65 MB chunk
+#   1117, CodeMirror). `new (as)(a, -1)` constructs the same class and parses.
+# Like the first two, inside a string, regex or comment they only add a space or a pair
+# of brackets to our copy.
+_JS_PARSE_FIXES = (
+    (re.compile(r"<!--"), "< !--"),
+    (re.compile(r"-->"), "-- >"),
+    (re.compile(r"\?\.(?=[0-9])"), "? ."),
+    (re.compile(r"\bnew(\s+)(as|satisfies)(\s*)\("), r"new\1(\2)\3("),
+)
 
 
 def rules_dir() -> Path:

