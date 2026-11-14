@@ -108,6 +108,8 @@ def ai_task_entities(tok: str | None = None) -> list[tuple[str, str]]:
     req.add_header("Authorization", f"Bearer {tok}")
     req.add_header("Content-Type", "application/json")
     try:
+        # The host is the constant SUPERVISOR_HOST; the path is a constant of this module.
+        # nosemgrep: dynamic-urllib-use-detected
         with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310
             data = json.loads(r.read().decode("utf-8", "replace") or "[]")
     except (OSError, ValueError) as ex:
@@ -153,6 +155,8 @@ def ai_generate_data(
     req.add_header("Authorization", f"Bearer {tok}")
     req.add_header("Content-Type", "application/json")
     try:
+        # The host is the constant SUPERVISOR_HOST; the path is a constant of this module.
+        # nosemgrep: dynamic-urllib-use-detected
         with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
             answer = json.load(r)
     except urllib.error.HTTPError as ex:
@@ -181,6 +185,8 @@ def ha_version(tok: str | None = None) -> str | None:
     req = urllib.request.Request(f"http://{SUPERVISOR_HOST}/core/api/config")
     req.add_header("Authorization", f"Bearer {tok}")
     try:
+        # The host is the constant SUPERVISOR_HOST; the path is a constant of this module.
+        # nosemgrep: dynamic-urllib-use-detected
         with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 - fixed URL
             version = json.load(r).get("version")
     except (OSError, ValueError):
@@ -469,6 +475,8 @@ def _call(path: str, body: dict[str, Any] | None, tok: str, timeout: float, what
     if body is not None:
         req.add_header("Content-Type", "application/json")
     try:
+        # The host is the constant SUPERVISOR_HOST; the path is a constant of this module.
+        # nosemgrep: dynamic-urllib-use-detected
         with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 - fixed host
             raw = r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as ex:

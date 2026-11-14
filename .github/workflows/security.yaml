@@ -1,0 +1,326 @@
+# Security checks on Barkley's own code and image, on every push and pull request and
+# once a week (new CVEs appear in an image nobody changed):
+#   Secrets    Gitleaks over the whole history (.gitleaks.toml)
+#   SAST       Semgrep's registry rule sets, and CodeQL (Python and these workflows)
+#   SCA        Trivy on the lockfiles, plus a CycloneDX SBOM
+#   IaC        Checkov (.checkov.yaml) and Hadolint (.hadolint.yaml) on the Dockerfile
+#              and the workflows
+#   Container  the amd64 image built from the staged folder, then Trivy on it (CVEs
+#              with a fix, high and critical; misconfiguration), plus its SBOM
+# A finding fails the job. Accepted ones are listed with a reason in the config files
+# above or in .trivyignore, never switched off here.
+#
+# tests/fixtures, tests/rules and demo hold deliberately malicious or vulnerable sample
+# code (what the scanner must catch). The SAST, SCA and CodeQL steps leave them out;
+# Gitleaks reads everything.
+#
+# Tools are release binaries checked against a sha256, or exact versions. Dependabot
+# can't see them: bump them by hand (and the checksums with them). Semgrep is the
+# version the image ships (tests/test_publish.py compares the two pins); its registry
+# rules are fetched fresh on every run.
+#
+# Permissions: read-only by default. Each scanning job adds `security-events: write`,
+# the one permission that lets it put results under the repository's Security tab.
+# Code scanning exists only for public repositories on this plan, so the uploads and
+# CodeQL are skipped while the repository is private, and for pull requests from forks
+# (their token is read-only).
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "30 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SEMGREP_VERSION: 1.185.0
+  CHECKOV_VERSION: 3.4.5
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  HADOLINT_VERSION: 2.15.1
+  HADOLINT_SHA256: c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
+  SEMGREP_SEND_METRICS: "off"
+  SEMGREP_ENABLE_VERSION_CHECK: "0"
+
+jobs:
+  visibility:
+    name: Can results be uploaded?
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      public: ${{ steps.check.outputs.public }}
+      upload: ${{ steps.check.outputs.upload }}
+    steps:
+      - name: Public repository, and not a pull request from a fork
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          public=false
+          if [[ "$(gh api "repos/${GITHUB_REPOSITORY}" --jq .private)" == "false" ]]; then
+            public=true
+          fi
+          upload="${public}"
+          if [[ "${EVENT}" == "pull_request" && "${HEAD_REPO}" != "${GITHUB_REPOSITORY}" ]]; then
+            upload=false
+          fi
+          {
+            echo "public=${public}"
+            echo "upload=${upload}"
+          } >> "$GITHUB_OUTPUT"
+
+  scan:
+    name: Secrets, SAST, SCA, IaC
+    needs: visibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read # check out the code
+      security-events: write # upload results to code scanning
+    env:
+      UPLOAD: ${{ needs.visibility.outputs.upload }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # Gitleaks reads every commit
+          persist-credentials: false
+
+      - name: Secret scan (Gitleaks)
+        id: gitleaks
+        continue-on-error: true
+        run: |
+          curl -fsSL --retry 3 -o /tmp/gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --redact --no-banner --config .gitleaks.toml \
+            --report-format sarif --report-path gitleaks.sarif
+
+      - name: Upload Gitleaks results
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: always() && env.UPLOAD == 'true' && hashFiles('gitleaks.sarif') != ''
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+      - name: Fail on Gitleaks findings
+        if: steps.gitleaks.outcome == 'failure'
+        run: exit 1
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: SAST (Semgrep registry rules)
+        id: semgrep
+        continue-on-error: true
+        run: |
+          uv tool install --no-build "semgrep==${SEMGREP_VERSION}"
+          semgrep scan --config p/security-audit --config p/owasp-top-ten --config p/python \
+            --exclude tests/fixtures --exclude tests/rules --exclude demo \
+            --metrics off --error --quiet --sarif --output semgrep.sarif .
+
+      - name: Upload Semgrep results
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: always() && env.UPLOAD == 'true' && hashFiles('semgrep.sarif') != ''
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Fail on Semgrep findings
+        if: steps.semgrep.outcome == 'failure'
+        run: exit 1
+
+      - name: SCA (Trivy)
+        id: trivy_fs
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          skip-dirs: tests/fixtures,demo
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          format: sarif
+          output: trivy-fs.sarif
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: always() && env.UPLOAD == 'true' && hashFiles('trivy-fs.sarif') != ''
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+      - name: Fail on Trivy findings
+        if: steps.trivy_fs.outcome == 'failure'
+        run: exit 1
+
+      - name: SBOM (source)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          skip-dirs: tests/fixtures,demo
+          format: cyclonedx
+          output: sbom.cyclonedx.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.cyclonedx.json
+          retention-days: 90
+
+      - name: IaC scan (Checkov)
+        id: checkov
+        continue-on-error: true
+        run: |
+          uv tool install --no-build "checkov==${CHECKOV_VERSION}"
+          checkov -d . --config-file .checkov.yaml \
+            --output cli --output sarif --output-file-path .
+
+      - name: Upload Checkov results
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: always() && env.UPLOAD == 'true' && hashFiles('results_sarif.sarif') != ''
+        with:
+          sarif_file: results_sarif.sarif
+          category: checkov
+
+      - name: Fail on Checkov findings
+        if: steps.checkov.outcome == 'failure'
+        run: exit 1
+
+      - name: Dockerfile lint (Hadolint)
+        run: |
+          curl -fsSL --retry 3 -o /tmp/hadolint \
+            "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          echo "${HADOLINT_SHA256}  /tmp/hadolint" | sha256sum -c -
+          chmod +x /tmp/hadolint
+          /tmp/hadolint --config .hadolint.yaml addon/sniff_test/Dockerfile
+
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    needs: visibility
+    if: needs.visibility.outputs.public == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read # check out the code
+      security-events: write # upload results to code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          config: |
+            paths-ignore:
+              - tests/fixtures
+              - tests/rules
+              - demo
+
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  image:
+    name: Build the image and scan it
+    needs: [visibility, scan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read # check out the code
+      security-events: write # upload results to code scanning
+    env:
+      UPLOAD: ${{ needs.visibility.outputs.upload }}
+      IMAGE: barkley:scan
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build from the staged folder (what a release builds)
+        run: |
+          python3 scripts/stage_addon.py
+          docker build -t "${IMAGE}" --build-arg BUILD_ARCH=amd64 dist/addon/sniff_test
+
+      - name: Image CVEs (Trivy)
+        id: trivy_vuln
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE }}
+          scanners: vuln
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          format: sarif
+          output: trivy-image-vuln.sarif
+
+      - name: Upload image CVE results
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: always() && env.UPLOAD == 'true' && hashFiles('trivy-image-vuln.sarif') != ''
+        with:
+          sarif_file: trivy-image-vuln.sarif
+          category: trivy-image-vuln
+
+      - name: Fail on image CVEs
+        if: steps.trivy_vuln.outcome == 'failure'
+        run: exit 1
+
+      - name: Image configuration (Trivy)
+        id: trivy_config
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE }}
+          scanners: misconfig
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy-image-config.sarif
+
+      - name: Upload image configuration results
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: always() && env.UPLOAD == 'true' && hashFiles('trivy-image-config.sarif') != ''
+        with:
+          sarif_file: trivy-image-config.sarif
+          category: trivy-image-config
+
+      - name: Fail on image configuration findings
+        if: steps.trivy_config.outcome == 'failure'
+        run: exit 1
+
+      - name: SBOM (image)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE }}
+          format: cyclonedx
+          output: sbom-image.cyclonedx.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-image-${{ github.sha }}
+          path: sbom-image.cyclonedx.json
+          retention-days: 90

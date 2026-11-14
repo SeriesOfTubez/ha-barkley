@@ -1,0 +1,15 @@
+# Gitleaks reads every commit (.github/workflows/security.yaml). The default rules cover
+# credential-shaped secrets. The rule below covers what this repository once held
+# instead: working notes with one person's folder and device names. They were removed
+# before the history was published and must not come back.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "personal-path-or-device"
+description = "A home folder, a cloud-sync folder or a phone's notify service name: personal detail, not code"
+regex = '''/Users/[a-z]|One[D]rive|mobile_app_[a-z]+s_iphone'''
+
+  [[rules.allowlists]]
+  description = "The test that guards the same pattern states it"
+  paths = ['''^tests/test_publish\.py$''']

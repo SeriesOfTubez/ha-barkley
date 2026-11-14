@@ -176,6 +176,24 @@ To build it yourself instead: `uv run python scripts/stage_addon.py`, then
 `docker buildx build dist/addon/sniff_test`, or install the staged folder as a local
 app (see the app's documentation).
 
+### Checks on Barkley itself
+
+`.github/workflows/security.yaml` runs on every push and pull request, and once a
+week:
+
+| Kind | Tool | What it reads |
+|---|---|---|
+| Secrets | Gitleaks | every commit |
+| SAST | Semgrep's registry rules, CodeQL | the scanner's code and the workflows |
+| SCA | Trivy | the lockfile, plus an SBOM |
+| IaC | Checkov, Hadolint | the Dockerfile and the workflows |
+| Container | Trivy | the image built from the staged folder: CVEs that have a fix (high and critical), configuration, plus an SBOM |
+
+A finding fails the run. Anything accepted is written down with its reason:
+`.checkov.yaml`, `.hadolint.yaml`, `.trivyignore` (empty today). The malicious samples
+in `tests/` and `demo/` are left out of the code and dependency checks, since being
+caught is their job.
+
 ## Requirements
 
 Python 3.13, [uv](https://docs.astral.sh/uv/), and on `PATH`: `semgrep`, `osv-scanner`

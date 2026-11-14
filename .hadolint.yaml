@@ -1,0 +1,5 @@
+# DL3008 (pin apt package versions): Debian's version strings change with every point
+# release, and the image takes security upgrades at build time on purpose. The tools
+# that matter (Semgrep, GuardDog, osv-scanner, uv) are pinned in the Dockerfile.
+ignored:
+  - DL3008

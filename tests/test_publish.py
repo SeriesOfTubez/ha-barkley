@@ -108,6 +108,17 @@ def test_workflows_ask_for_the_least():
         "build": {"contents": "read", "id-token": "write", "packages": "write"},
         "manifest": {"id-token": "write", "packages": "write"},
     }
+    # The security workflow: each scanning job may upload results to code scanning,
+    # nothing more. No job there signs, pushes or reads a secret.
+    sec = _yaml(WORKFLOWS / "security.yaml")
+    scanning = {"contents": "read", "security-events": "write"}
+    assert {name: job.get("permissions") for name, job in sec["jobs"].items()} == {
+        "visibility": None,
+        "scan": scanning,
+        "codeql": scanning,
+        "image": scanning,
+    }
+    assert "secrets." not in (WORKFLOWS / "security.yaml").read_text()
 
 
 def test_build_workflow_matches_the_app():
@@ -133,6 +144,93 @@ def test_ci_runs_the_semgrep_the_image_ships():
     ci = _yaml(WORKFLOWS / "ci.yaml")
     pinned = ci["jobs"]["test"]["env"]["SEMGREP_VERSION"]
     assert f"ARG SEMGREP_VERSION={pinned}" in (ADDON / "Dockerfile").read_text()
+
+
+def test_security_workflow_runs_the_four_kinds_of_check():
+    """Secrets, SAST, SCA and container scanning (the owner's standard set, 2026-11-13),
+    each failing the job on a finding, none of them reading the hostile samples as if
+    they were Barkley's own code."""
+    text = (WORKFLOWS / "security.yaml").read_text()
+    sec = _yaml(WORKFLOWS / "security.yaml")
+    triggers = sec[True]  # YAML reads the key `on` as a boolean
+    assert {"push", "pull_request", "schedule"} <= set(triggers)
+    steps = {name: job["steps"] for name, job in sec["jobs"].items()}
+    runs = {name: "\n".join(s.get("run", "") for s in ss) for name, ss in steps.items()}
+    # Secrets: every commit, the repository's own rules.
+    assert "gitleaks detect --source ." in runs["scan"]
+    assert "--config .gitleaks.toml" in runs["scan"]
+    checkout = next(s for s in steps["scan"] if "actions/checkout" in s.get("uses", ""))
+    assert checkout["with"]["fetch-depth"] == 0
+    # SAST: registry rules, failing on a finding, metrics off.
+    for flag in ("--config p/security-audit", "--config p/owasp-top-ten", "--error"):
+        assert flag in runs["scan"], flag
+    assert "--metrics off" in runs["scan"]
+    for sample in ("tests/fixtures", "tests/rules", "demo"):
+        assert f"--exclude {sample}" in runs["scan"]
+        assert f"- {sample}" in text  # CodeQL's paths-ignore
+    # SCA and the image: Trivy fails on high and critical findings that have a fix.
+    trivy = [s for ss in steps.values() for s in ss if "trivy-action" in s.get("uses", "")]
+    gates = [s["with"] for s in trivy if s["with"].get("exit-code") == "1"]
+    assert sorted(w["scan-type"] for w in gates) == ["fs", "image", "image"]
+    assert all(w["severity"] == "HIGH,CRITICAL" for w in gates)
+    assert {w.get("scanners") for w in gates if w["scan-type"] == "image"} == {
+        "vuln",
+        "misconfig",
+    }
+    fs = next(w for w in gates if w["scan-type"] == "fs")
+    assert fs["skip-dirs"] == "tests/fixtures,demo"
+    # The image scanned is the one a release builds: the staged folder.
+    assert "python3 scripts/stage_addon.py" in runs["image"]
+    assert "dist/addon/sniff_test" in runs["image"]
+    # A step that may fail softly (so its results can be uploaded) has a hard gate after.
+    for name, ss in steps.items():
+        soft = [s["id"] for s in ss if s.get("continue-on-error")]
+        for step_id in soft:
+            assert f"steps.{step_id}.outcome == 'failure'" in text, (name, step_id)
+
+
+def test_security_workflow_tools_are_pinned():
+    sec = _yaml(WORKFLOWS / "security.yaml")
+    env = sec["env"]
+    ci = _yaml(WORKFLOWS / "ci.yaml")
+    assert env["SEMGREP_VERSION"] == ci["jobs"]["test"]["env"]["SEMGREP_VERSION"]
+    for tool in ("GITLEAKS", "HADOLINT"):
+        assert re.fullmatch(r"\d+\.\d+\.\d+", env[f"{tool}_VERSION"])
+        assert re.fullmatch(r"[0-9a-f]{64}", env[f"{tool}_SHA256"])
+    assert re.fullmatch(r"\d+\.\d+\.\d+", env["CHECKOV_VERSION"])
+    text = (WORKFLOWS / "security.yaml").read_text()
+    assert text.count("| sha256sum -c -") == 2  # both downloaded binaries are checked
+    assert "pip install" not in text
+    assert text.count("uv tool install --no-build") == 2  # wheels only
+
+
+def test_accepted_findings_carry_a_reason_and_dates():
+    """.trivyignore: one line per accepted CVE with why, when, and a review date at
+    most 90 days later. Checkov's skips are explained in .checkov.yaml."""
+    from datetime import date
+
+    for line in (ROOT / ".trivyignore").read_text().splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        m = re.fullmatch(
+            r"(CVE-\d{4}-\d+|GHSA(-[0-9a-z]{4}){3})  # (.{20,})\. "
+            r"Accepted: (\d{4}-\d\d-\d\d)  Review: (\d{4}-\d\d-\d\d)",
+            line,
+        )
+        assert m, line
+        accepted, review = date.fromisoformat(m[4]), date.fromisoformat(m[5])
+        assert 0 < (review - accepted).days <= 90, line
+    checkov = (ROOT / ".checkov.yaml").read_text()
+    skipped = _yaml(ROOT / ".checkov.yaml")["skip-check"]
+    for check in skipped:
+        before = checkov.split(f"  - {check}")[0].rstrip().splitlines()[-1]
+        assert before.strip().startswith("#"), check  # the reason sits above the id
+    assert _yaml(ROOT / ".hadolint.yaml") == {"ignored": ["DL3008"]}
+
+
+def test_dependabot_waits_a_week():
+    bot = _yaml(ROOT / ".github" / "dependabot.yml")
+    assert [u["cooldown"] for u in bot["updates"]] == [{"default-days": 7}] * 2
 
 
 @requires_semgrep

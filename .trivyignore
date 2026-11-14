@@ -1,0 +1,7 @@
+# Trivy findings accepted for now (.github/workflows/security.yaml reads this file for
+# the lockfile scan and the image scan).
+#
+# One line per entry:
+#   CVE-XXXX-XXXXX  # Reason. Accepted: YYYY-MM-DD  Review: YYYY-MM-DD
+# No entry without a reason, the date it was accepted and a review date at most 90 days
+# out. Prefer the fix: a newer pinned tool, or removing what isn't used.

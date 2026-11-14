@@ -1,0 +1,24 @@
+# Checkov on the Dockerfile and the workflows (.github/workflows/security.yaml).
+# A skipped check needs its reason here.
+framework:
+  - dockerfile
+  - github_actions
+compact: true
+quiet: true
+skip-path:
+  - dist
+  - .venv
+skip-check:
+  # HEALTHCHECK: Home Assistant's Supervisor starts and watches the container; the
+  # panel answers only the Supervisor's ingress address (172.30.32.2), so a check run
+  # from inside the container would be refused by design.
+  - CKV_DOCKER_2
+  # Non-root USER: the base image's s6-overlay must start as root (PID 1), as every
+  # Home Assistant app image does. The container has no host network, no mapped
+  # folders and no Supervisor role, and runs under the enforcing AppArmor profile in
+  # addon/sniff_test/apparmor.txt.
+  - CKV_DOCKER_3
+  # workflow_dispatch inputs: build.yaml has one boolean, `push`, default off, so a
+  # run by hand only builds. It can't change what is built: the context is the staged
+  # folder and the version comes from config.yaml.
+  - CKV_GHA_7
