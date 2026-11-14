@@ -41,6 +41,19 @@ from sniff_test.store import ScanRow, Store, StoreError
 
 SUPERVISOR_IP = "172.30.32.2"
 _INGRESS_PATH = re.compile(r"^/api/hassio_ingress/[A-Za-z0-9_-]+$")
+# A redirect target: one path on this panel, printable ASCII only. No line break (a
+# second header), no `//` or backslash at the start (browsers read `/\host` as another
+# site), no scheme.
+_LOCAL_PATH = re.compile(r"^/(?![/\\])[\x21-\x7e]*$")
+
+
+def local_path(to: str) -> str:
+    """`to` if it is a path on this panel, else "/". Every caller already builds its
+    target from checked pieces (the ingress base, digits, quoted values); this is the
+    backstop under them, so a future caller can't turn a form field into a header."""
+    return to if _LOCAL_PATH.match(to or "") else "/"
+
+
 _REPO = re.compile(r"^(?:https://github\.com/)?([A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100})/?$")
 _REF = re.compile(r"^[A-Za-z0-9_.+/-]{1,100}$")
 _LABEL = {v.key: v.label for _, v in VERDICTS}
@@ -1958,7 +1971,7 @@ class Panel:
 
             def _redirect(self, to: str) -> None:
                 self.send_response(HTTPStatus.SEE_OTHER)
-                self.send_header("Location", to or "/")
+                self.send_header("Location", local_path(to))
                 self.send_header("Content-Length", "0")
                 self.end_headers()
 

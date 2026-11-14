@@ -130,11 +130,20 @@ jobs:
             --exclude tests/fixtures --exclude tests/rules --exclude demo \
             --metrics off --error --sarif-output semgrep.sarif .
 
+      # Semgrep writes a finding silenced in the code (`nosemgrep`, with its reason
+      # beside it) into the SARIF as "suppressed", and code scanning would list it as
+      # an open alert. Leave those out of the upload.
+      - name: Keep suppressed findings out of the upload
+        if: always() && hashFiles('semgrep.sarif') != ''
+        run: |
+          jq 'del(.runs[].results[]? | select((.suppressions // []) | length > 0))' \
+            semgrep.sarif > semgrep.upload.sarif
+
       - name: Upload Semgrep results
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
-        if: always() && env.UPLOAD == 'true' && hashFiles('semgrep.sarif') != ''
+        if: always() && env.UPLOAD == 'true' && hashFiles('semgrep.upload.sarif') != ''
         with:
-          sarif_file: semgrep.sarif
+          sarif_file: semgrep.upload.sarif
           category: semgrep
 
       - name: Fail on Semgrep findings

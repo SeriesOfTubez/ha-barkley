@@ -561,3 +561,32 @@ def test_no_auto_box_outside_an_addon(panel):
     _, _, page = get(base + "/")
     assert "Auto-sniff" not in page
     assert post(base + "/auto-scan", {"token": token(base), "on": "0"})[0] == 400
+
+
+def test_a_redirect_target_is_one_local_path():
+    """The backstop under every `_redirect` (CodeQL py/http-response-splitting on the
+    first public run, 2026-11-14: no caller was exploitable, each builds its target from
+    checked pieces; this keeps a future one from turning a form field into a header)."""
+    from sniff_test.server import local_path
+
+    base = "/api/hassio_ingress/AbC_d-9"
+    for ok in (
+        "/",
+        "/scan/12",
+        f"{base}/scan/12?open=0123456789abcdef#ai-0123456789abcdef",
+        f"{base}/?f=updates&view=table&page=2",
+        "/search?q=printer+%0D%0Ax&kind=",  # quoted: the characters themselves never appear
+    ):
+        assert local_path(ok) == ok
+    for bad in (
+        "",
+        "scan/1",
+        "//evil.invalid/x",
+        "/\\evil.invalid/x",
+        "https://evil.invalid/",
+        "/scan/1\r\nSet-Cookie: a=b",
+        "/scan/1\nX: y",
+        "/scan/1 x",
+        "/scan/\u00e9",
+    ):
+        assert local_path(bad) == "/", bad
