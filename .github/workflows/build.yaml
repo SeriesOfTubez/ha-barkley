@@ -3,10 +3,10 @@
 #   ghcr.io/<owner>/barkley:<version>   (the multi-arch manifest config.yaml names)
 #
 # Runs when a GitHub release is published. The release tag must be the version in
-# addon/sniff_test/config.yaml ("0.10.2" or "v0.10.2"): the Supervisor pulls
+# addon/sniff_test/config.yaml ("0.10.3" or "v0.10.3"): the Supervisor pulls
 # <image>:<that version>, so a mismatch would publish an image nobody is offered.
 # A version that is already published is never overwritten (skip-existing): everyone
-# who installed 0.10.2 has the same bytes. "Run workflow" by hand only builds, as a
+# who installed 0.10.3 has the same bytes. "Run workflow" by hand only builds, as a
 # check, unless push is ticked.
 #
 # The build context is the staged folder (scripts/stage_addon.py: the app's files plus

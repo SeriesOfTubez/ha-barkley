@@ -26,9 +26,15 @@ ARG BUILD_ARCH
 
 ARG SEMGREP_VERSION=1.185.0
 ARG GUARDDOG_VERSION=3.2.0
-ARG OSV_SCANNER_VERSION=2.7.0
+ARG OSV_SCANNER_VERSION=2.7.1
 ARG UV_VERSION=0.13.7
 # Bumping UV_VERSION or OSV_SCANNER_VERSION: update the sha256 and asset ids in the RUN below.
+# osv-scanner 2.7.1 (2026-11-13): 2.7.0 was built with Go 1.27.0 and x/net 0.61, which
+# carry five high CVEs with fixes (one in crypto/x509's chain checks, and osv-scanner's
+# one job on the network is a TLS call to osv.dev). 2.7.1 is built with Go 1.27.3.
+
+# The base image's shell is bash; a pipe's left side failing must fail the RUN.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates \
@@ -39,14 +45,15 @@ RUN apt-get update \
 # asset endpoint served the same bytes), so each download retries and then falls back
 # to the API endpoint by asset id. The sha256 check decides either way.
 RUN set -eu; \
-    arch="${TARGETARCH:-$(echo "${BUILD_ARCH:-}" | sed 's/^aarch64$/arm64/')}"; \
+    arch="${TARGETARCH:-${BUILD_ARCH:-}}"; \
+    if [ "${arch}" = aarch64 ]; then arch=arm64; fi; \
     case "${arch}" in \
       amd64) a=x86_64; \
         uv_sha=287491da03f2a785c70fa75b13e1f849918c2f2b5415fe84876b8214eeb792f9; uv_id=704009859; \
-        osv_sha=160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b; osv_id=632251666 ;; \
+        osv_sha=fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8; osv_id=726165286 ;; \
       arm64) a=aarch64; \
         uv_sha=2d3ec076a0c4c0e8250bb6418c44080828b544f1a3be0b6e46adf9fb6923de45; uv_id=704009487; \
-        osv_sha=4061ef4c021ed3c47f203b818f337e351336cc5cd67c0274fc36bd1dfc728dd7; osv_id=632251568 ;; \
+        osv_sha=983d22fbad9724514e3fcc6acc83b5fa64c5ffa6b0d9f510028f22c1b223ff81; osv_id=726165576 ;; \
       *) echo "unsupported architecture '${arch}' (TARGETARCH/BUILD_ARCH)"; exit 1 ;; \
     esac; \
     get() { \
@@ -98,9 +105,16 @@ RUN uv venv --python /usr/bin/python3 /opt/sniff-test \
 FROM ghcr.io/home-assistant/base-debian:trixie
 ARG BUILD_VERSION=0.3.0
 ARG BUILD_ARCH
+# `upgrade`: the base image is rebuilt less often than Debian ships security fixes
+# (2026-11-13: zlib1g had two high CVEs fixed in trixie-security that the base lacked).
+# tempio is the base image's template tool (a Go binary, 6 MB). Nothing here calls it
+# (no script in the base's s6 or bashio files does either), and the copy in the base
+# is built with Go 1.26.5 and x/crypto 0.31: 24 high CVEs for a file nobody runs.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends python3 ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /usr/bin/tempio
 ENV UV_PYTHON_DOWNLOADS=never \
     UV_NO_CACHE=1 \
     SEMGREP_SEND_METRICS=off \
