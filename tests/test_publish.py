@@ -173,6 +173,11 @@ def test_security_workflow_runs_the_four_kinds_of_check():
     gates = [s["with"] for s in trivy if s["with"].get("exit-code") == "1"]
     assert sorted(w["scan-type"] for w in gates) == ["fs", "image", "image"]
     assert all(w["severity"] == "HIGH,CRITICAL" for w in gates)
+    # In SARIF mode trivy-action reports every severity, and fails on any, unless told
+    # to keep to the gate's (the first run on GitHub failed on medium findings).
+    assert all(w["limit-severities-for-sarif"] is True for w in gates)
+    assert all(s["with"]["version"] == "${{ env.TRIVY_VERSION }}" for s in trivy)
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", sec["env"]["TRIVY_VERSION"])
     assert {w.get("scanners") for w in gates if w["scan-type"] == "image"} == {
         "vuln",
         "misconfig",

@@ -7,8 +7,8 @@
 #              and the workflows
 #   Container  the amd64 image built from the staged folder, then Trivy on it (CVEs
 #              with a fix, high and critical; misconfiguration), plus its SBOM
-# A finding fails the job. Accepted ones are listed with a reason in the config files
-# above or in .trivyignore, never switched off here.
+# A finding fails the job and is printed in its log. Accepted ones are listed with a
+# reason in the config files above or in .trivyignore, never switched off here.
 #
 # tests/fixtures, tests/rules and demo hold deliberately malicious or vulnerable sample
 # code (what the scanner must catch). The SAST, SCA and CodeQL steps leave them out;
@@ -47,6 +47,7 @@ env:
   GITLEAKS_VERSION: 8.30.1
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
   HADOLINT_VERSION: 2.15.1
+  TRIVY_VERSION: v0.76.2
   HADOLINT_SHA256: c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
   SEMGREP_SEND_METRICS: "off"
   SEMGREP_ENABLE_VERSION_CHECK: "0"
@@ -127,7 +128,7 @@ jobs:
           uv tool install --no-build "semgrep==${SEMGREP_VERSION}"
           semgrep scan --config p/security-audit --config p/owasp-top-ten --config p/python \
             --exclude tests/fixtures --exclude tests/rules --exclude demo \
-            --metrics off --error --quiet --sarif --output semgrep.sarif .
+            --metrics off --error --sarif-output semgrep.sarif .
 
       - name: Upload Semgrep results
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
@@ -145,6 +146,7 @@ jobs:
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: fs
           scan-ref: .
           skip-dirs: tests/fixtures,demo
@@ -153,6 +155,7 @@ jobs:
           ignore-unfixed: true
           trivyignores: .trivyignore
           format: sarif
+          limit-severities-for-sarif: true
           output: trivy-fs.sarif
 
       - name: Upload Trivy results
@@ -164,11 +167,15 @@ jobs:
 
       - name: Fail on Trivy findings
         if: steps.trivy_fs.outcome == 'failure'
-        run: exit 1
+        run: |
+          trivy fs . --skip-dirs tests/fixtures,demo --severity HIGH,CRITICAL \
+            --ignore-unfixed --ignorefile .trivyignore || true
+          exit 1
 
       - name: SBOM (source)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: fs
           scan-ref: .
           skip-dirs: tests/fixtures,demo
@@ -266,6 +273,7 @@ jobs:
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: image
           image-ref: ${{ env.IMAGE }}
           scanners: vuln
@@ -274,6 +282,7 @@ jobs:
           ignore-unfixed: true
           trivyignores: .trivyignore
           format: sarif
+          limit-severities-for-sarif: true
           output: trivy-image-vuln.sarif
 
       - name: Upload image CVE results
@@ -285,19 +294,24 @@ jobs:
 
       - name: Fail on image CVEs
         if: steps.trivy_vuln.outcome == 'failure'
-        run: exit 1
+        run: |
+          trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --ignorefile .trivyignore "${IMAGE}" || true
+          exit 1
 
       - name: Image configuration (Trivy)
         id: trivy_config
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: image
           image-ref: ${{ env.IMAGE }}
           scanners: misconfig
           exit-code: "1"
           severity: HIGH,CRITICAL
           format: sarif
+          limit-severities-for-sarif: true
           output: trivy-image-config.sarif
 
       - name: Upload image configuration results
@@ -309,11 +323,14 @@ jobs:
 
       - name: Fail on image configuration findings
         if: steps.trivy_config.outcome == 'failure'
-        run: exit 1
+        run: |
+          trivy image --scanners misconfig --severity HIGH,CRITICAL "${IMAGE}" || true
+          exit 1
 
       - name: SBOM (image)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: image
           image-ref: ${{ env.IMAGE }}
           format: cyclonedx
