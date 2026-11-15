@@ -208,7 +208,7 @@ Assistant doesn't check app signatures, so there is nothing you have to do; if y
 like to check the signature yourself:
 
 ```sh
-cosign verify ghcr.io/seriesoftubez/barkley:0.10.3 \
+cosign verify ghcr.io/seriesoftubez/barkley:0.10.4 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/SeriesOfTubez/ha-barkley/'
 ```

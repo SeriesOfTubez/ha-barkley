@@ -98,6 +98,11 @@ def test_apparmor_profile_is_what_the_supervisor_loads():
         assert not any(r.startswith(forbidden) or f" {forbidden}" in r for r in rules), forbidden
     assert not any(r.startswith(("/tmp/", "/data/")) and "x" in r.split()[-1] for r in rules)
     assert "complain" not in heads[0]  # enforce (complain was only for the first on-box run)
+    # osv-scanner 2.7.1 opens `/` itself before it walks down to a lockfile; 0.10.3 lacked
+    # the rule and every advisory check failed on a real box (exit 127). Only the folder
+    # may be listed: a rule such as `/** r,` would open the whole image.
+    assert "/ r," in rules
+    assert not any(r.startswith(("/** ", "/{,**} ")) for r in rules)
 
 
 def test_panel_only_trusts_the_supervisor_by_default():

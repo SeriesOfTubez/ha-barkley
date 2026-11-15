@@ -184,6 +184,34 @@ def _guarddog_scan(sample: Path, run_dir: Path) -> Check:
     return gd
 
 
+_OSV_SAMPLE = "osv-scanner scan (empty sample lockfile)"
+
+
+def _osv_scan(sample: Path, run_dir: Path) -> Check:
+    """osv-scanner on a lockfile that names no package, called the way a scan calls it.
+    It has to find and read the file, and asks OSV nothing. `--version` alone passed on
+    a box where every scan's advisory check failed: 2.7.1 opens `/` before it reaches
+    the lockfile, and the AppArmor profile of 0.10.3 didn't let it."""
+    with tempfile.TemporaryDirectory(prefix="sniff-test-doctor-") as tmp:
+        lock = Path(tmp) / "pylock.toml"
+        lock.write_text('lock-version = "1.0"\ncreated-by = "barkley-doctor"\n')
+        config = Path(tmp) / "osv-empty-config.toml"
+        config.write_text("")
+        check = _run(
+            _OSV_SAMPLE,
+            ["osv-scanner", "scan", "source", "--config", str(config), "--lockfile", str(lock),
+             "--format", "json", "--no-resolve", "--verbosity", "error"],
+            run_dir,
+            _proc.tool_env(),
+        )  # fmt: skip
+    if check.returncode == 128:  # "No package sources found": it read the file
+        check.ok = True
+        check.summary = "exit 128: read the lockfile, which names no package (as expected)"
+    elif check.returncode is not None and check.returncode != 0:
+        check.summary += "; osv-scanner could not read a lockfile, so scans can't check advisories"
+    return check
+
+
 Step = tuple[str, Callable[[Path, Path], "Check | list[Check]"]]
 
 
@@ -205,6 +233,7 @@ def steps(addon: bool = False) -> list[Step]:
         ("osv-scanner --version",
          lambda s, r: _run("osv-scanner --version", ["osv-scanner", "--version"], r,
                            _proc.tool_env())),
+        (_OSV_SAMPLE, _osv_scan),
         ("guarddog --version",
          lambda s, r: _run("guarddog --version", ["guarddog", "--version"], r, _guarddog_env())),
         ("guarddog scan (one-line sample)", _guarddog_scan),
