@@ -80,8 +80,9 @@ model behind the entity you pick**, and they can be wrong.
 2 GB and refuses under 1 GB, so a scan can't push Home Assistant out of memory. A
 Diagnostics page shows each tool, the memory figure and the AppArmor profile in use.
 
-The app's own [documentation](addon/sniff_test/DOCS.md) has the details: every option,
-how auto-sniff and the AI features work, and what the app is allowed to do.
+The [wiki](https://github.com/SeriesOfTubez/ha-barkley/wiki) walks through every feature,
+page by page. The app's own [documentation](addon/sniff_test/DOCS.md) has the details:
+every option, how auto-sniff and the AI features work, and what the app is allowed to do.
 
 ## Install on Home Assistant
 
