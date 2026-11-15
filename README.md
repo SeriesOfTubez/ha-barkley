@@ -2,18 +2,86 @@
 
 # 🐕 Barkley
 
+[![Tests](https://github.com/SeriesOfTubez/ha-barkley/actions/workflows/ci.yaml/badge.svg)](https://github.com/SeriesOfTubez/ha-barkley/actions/workflows/ci.yaml)
+[![Security](https://github.com/SeriesOfTubez/ha-barkley/actions/workflows/security.yaml/badge.svg)](https://github.com/SeriesOfTubez/ha-barkley/actions/workflows/security.yaml)
+
 Every integration gets a sniff test before it gets into the house.
 
 Barkley is the dog behind a static security scanner for Home Assistant Marketplace
-(formerly HACS) custom integrations and frontend cards. Custom integrations run unsandboxed inside the HA
-Python process; cards run in the HA frontend origin and can read your tokens. Nobody
-reviews them before you install. Barkley does a first pass.
+(formerly HACS) custom integrations and frontend cards. Custom integrations run
+unsandboxed inside the HA Python process; cards run in the HA frontend origin and can
+read your tokens. Nobody reviews them before you install. Barkley does a first pass, as
+an app (add-on) in your Home Assistant sidebar or from the command line.
 
 > **Status:** young, and built by one person. Barkley is a first pass, not a substitute
 > for reading the code: a clean sniff means the checks below found nothing, not that
 > the code is safe. Other tools exist for this job (HA Security Sandbox, Marketplace
 > Guard); Barkley's difference is depth: dependencies resolved the way HA installs
 > them, data-flow rules, release and publisher history, and the diff of an update.
+> This project was built with AI assistance: see
+> [AI-assisted development](#ai-assisted-development) for what that means and what is
+> checked before anything ships.
+
+## What Barkley does
+
+**Sniff before you install.** Search the whole Marketplace catalog from Barkley's panel
+and sniff an app at exactly the version the Marketplace would install, or pick one of
+its 10 newest releases, betas included. The code is downloaded and read; it is never
+run, built or installed.
+
+**See what you already have.** Barkley asks the Marketplace what is installed and leads
+with what needs a look: an update that brings something important, or a scan that isn't
+a Good Boy. Updates you haven't checked come next, and everything that is fine folds
+into one line. The counts at the top are filters, and the list shows as cards or a table.
+
+**Auto-sniff, on by default.** When the Marketplace installs or updates an integration
+or card, Barkley sniffs the version that landed and sends a notification (the bell, and
+your phone if you pick a notify service). When the Marketplace starts *offering* an
+update, Barkley sniffs that version right away, so the heads-up comes before you click
+Update. Notifications carry scores, counts and the app's name, never text taken from the
+scanned code. One thing to know: Home Assistant runs a new integration as soon as it is
+installed, so the protection for a brand-new install is sniffing it from search first.
+
+**"What would updating change?"** Barkley compares the version you run with the one you
+would get and puts the few changes that matter first: new findings, new data flows, new
+publishers, new hosts nobody declared. The comparison never changes a score.
+
+**Advisories asked again every day.** A scan keeps the exact package list it resolved,
+and once a day Barkley asks the advisory database about it again, without fetching or
+scanning any code. A newly published vulnerability in a dependency of something you
+installed months ago becomes a new scan entry and a notification. Earlier entries are
+never edited.
+
+**A page per app, in plain English.** The score and verdict, "In short", every finding
+explained in plain words, a diagram of where data can
+flow, the addresses and ports the app talks to, privacy notes (telemetry, analytics,
+unencrypted connections), what the app hooks into in Home Assistant, and the scan
+history of that app.
+
+**The developer's security habits.** Whether the project runs security scanners in its
+own workflows, has Dependabot or Renovate and a security policy, how many dependency
+updates are waiting, and open issues that look security-related. It is context from
+public signs and never changes the score.
+
+**Addresses you trust.** Barkley can't know every host an app legitimately uses. For
+findings that are only about where an address points, you can mark the address trusted,
+for one app or for all. Barkley's own score always stays visible next to yours, and
+findings about *what* is sent can't be switched off.
+
+**AI explanations, if you want them.** Pick one of your Home Assistant AI Task entities
+and Barkley can explain an app's findings, or (in deep mode) read the code around one
+finding and answer with statements that must cite the lines they rest on. Nothing is
+sent until you click, and only findings and code from the public project are sent, never
+anything from your Home Assistant. The AI never sets, clears or changes a score or a
+finding: scoring is done by fixed rules. **The explanations are only as good as the
+model behind the entity you pick**, and they can be wrong.
+
+**Built for a small box.** Barkley checks free memory before every scan, warns under
+2 GB and refuses under 1 GB, so a scan can't push Home Assistant out of memory. A
+Diagnostics page shows each tool, the memory figure and the AppArmor profile in use.
+
+The app's own [documentation](addon/sniff_test/DOCS.md) has the details: every option,
+how auto-sniff and the AI features work, and what the app is allowed to do.
 
 ## Install on Home Assistant
 
@@ -23,37 +91,8 @@ Barkley runs as an app (add-on), so it needs Home Assistant OS or Supervised.
    `https://github.com/SeriesOfTubez/ha-barkley`.
 2. Install **Barkley**, start it, and open it from the sidebar.
 
-The app store downloads a prebuilt image (amd64 or aarch64, about 200 MB). What the
-app can do on your box, and why, is in its
-[documentation](addon/sniff_test/DOCS.md#permissions).
-
-## Command line
-
-```sh
-uv run sniff-test scan https://github.com/owner/repo            # latest release, as HACS installs it
-uv run sniff-test scan owner/repo --ref v1.2.3                  # a specific tag
-uv run sniff-test scan ./path/to/repo                           # local checkout
-uv run sniff-test scan owner/repo --exposure public             # HA reachable from the internet
-uv run sniff-test scan owner/repo --json -o report.json         # machine-readable report
-uv run sniff-test scan owner/repo --ha-version 2026.10.2        # resolve deps for a specific HA release
-uv run sniff-test scan ./path/to/repo --offline                 # no PyPI/OSV lookups (marked incomplete)
-
-uv run sniff-test diff old.json new.json                        # what an update changes (reports from scan -o)
-uv run sniff-test diff owner/repo --from v1.2.3                 # scan v1.2.3 and what HACS installs now, compare
-uv run sniff-test diff owner/repo --from v1.2.3 --to v1.3.0 -v  # two tags; -v lists every change
-uv run sniff-test diff owner/repo --from v1.2.3 --ha-version auto  # old side: the HA of its time
-uv run sniff-test releases owner/repo                           # release timeline: HACS default, publishers, handovers
-
-uv run sniff-test scan owner/repo --store scans.db              # also keep the scan in a SQLite scan store
-uv run sniff-test diff owner/repo --from v1.2.3 --store scans.db  # reuse a matching stored scan, store new ones
-uv run sniff-test diff @3 @7 --store scans.db                   # compare two stored scans
-uv run sniff-test history --store scans.db                      # list stored scans (or set SNIFF_TEST_STORE)
-uv run sniff-test serve --store scans.db --allow 127.0.0.1      # the add-on's web panel (HA ingress)
-```
-
-`diff` puts the few changes that matter first (new findings, new data flows, evidence
-going from possible to proven, new publishers, new undeclared hosts) and summarizes the
-rest in one line. It compares; it never changes how either scan is scored.
+The app store downloads a prebuilt image (amd64 or aarch64, about 200 MB). Plan for
+0.5 to 1 GB of free memory while a scan runs.
 
 ## What gets checked
 
@@ -132,25 +171,26 @@ them, so a manifest can't smuggle in installer options like `-e` or `--index-url
 Lockfiles are scanned in isolation with Barkley's own osv-scanner config, so a planted
 `osv-scanner.toml` can't hide a malicious package.
 
-In the app, every process runs under Barkley's own AppArmor profile
-(`addon/sniff_test/apparmor.txt`): it can run only the tools the image ships, write only
-under `/data` and `/tmp`, and open only network sockets (no raw sockets, no
-capabilities). A hole in one of the parsers that read hostile code is confined to that.
+## How Barkley itself is secured
 
-## Home Assistant add-on (app)
+A security tool that reads hostile code should be held to its own standard. Three
+layers, each of which you can check in this repository.
 
-`addon/sniff_test/` is the add-on: a Debian-based image with Semgrep, GuardDog,
-osv-scanner and uv pinned, an ingress panel (`sniff-test serve`), and the scan store in
-`/data/sniff-test.db`. "What would updating change?" scans the release HACS would
-install now and diffs it against the stored scan of the installed tag. **Auto-sniff**
-watches the Marketplace: every install or update is scanned at the version that landed
-(reusing a scan sniffed from search), an update gets its diff, and a notification says
-what was found. **Advisories are asked again once a day** for what's installed: each scan
-keeps its resolved lockfiles, osv-scanner runs on them again (no code is fetched or
-scanned again), and a change becomes a new scan entry with a notification; the earlier
-entry is never edited. Note that a new integration runs as soon as it's installed, so the
-protection for a new install is sniffing it from search first. See
-[`addon/sniff_test/DOCS.md`](addon/sniff_test/DOCS.md).
+### The app on your box
+
+- **One permission.** The app asks for the Home Assistant API and nothing else: no host
+  network, no open port, no Supervisor role, and no access to your configuration folder,
+  so `secrets.yaml` and the auth storage are out of its reach. What it uses the API for
+  is a fixed list of calls, named one by one in the
+  [documentation](addon/sniff_test/DOCS.md#permissions).
+- **Its own AppArmor profile, enforcing** (`addon/sniff_test/apparmor.txt`, Home
+  Assistant security rating 8). Every process in the container can run only the tools
+  the image ships, write only under `/data` and `/tmp`, and open only ordinary network
+  sockets (no raw sockets, no capabilities). Nothing downloaded is executable. A hole
+  in one of the parsers that read hostile code is confined to that.
+- **The panel** answers only Home Assistant's ingress, which handles the login, and it
+  ships no JavaScript at all: its content security policy allows no scripts, only the
+  page's own styles, images and fonts.
 
 ### Where the image comes from
 
@@ -164,7 +204,8 @@ signature is checked before the build, the workflow's actions are pinned to comm
 and a version that is already published is never overwritten.
 
 Each image is signed with [Cosign](https://docs.sigstore.dev/) by that workflow. Home
-Assistant doesn't check app signatures, so this is for you to check if you want to:
+Assistant doesn't check app signatures, so there is nothing you have to do; if you'd
+like to check the signature yourself:
 
 ```sh
 cosign verify ghcr.io/seriesoftubez/barkley:0.10.4 \
@@ -176,10 +217,10 @@ To build it yourself instead: `uv run python scripts/stage_addon.py`, then
 `docker buildx build dist/addon/sniff_test`, or install the staged folder as a local
 app (see the app's documentation).
 
-### Checks on Barkley itself
+### Checks on every change
 
 `.github/workflows/security.yaml` runs on every push and pull request, and once a
-week:
+week. The `main` branch only takes changes that passed it and the tests.
 
 | Kind | Tool | What it reads |
 |---|---|---|
@@ -193,6 +234,55 @@ A finding fails the run. Anything accepted is written down with its reason:
 `.checkov.yaml`, `.hadolint.yaml`, `.trivyignore` (empty today). The malicious samples
 in `tests/` and `demo/` are left out of the code and dependency checks, since being
 caught is their job.
+
+## AI-assisted development
+
+Barkley was built with AI pair-programming assistance (Claude, via Claude Code) under
+human direction and review; most of the code and docs are AI-generated. If that's a
+dealbreaker for you, that's a reasonable position, and this project isn't for you.
+Here's what's in place either way, so you can judge for yourself rather than take it on
+faith:
+
+- **Security scanning runs on every push and pull request** (the table above, and the
+  badge at the top of this page).
+- **Those scans have already changed real decisions.** Before the first release Trivy
+  found 31 high CVEs in the image: osv-scanner moved up a version, a base-image binary
+  nothing used was removed, and the image now takes Debian's security fixes at build
+  time.
+- **The detection rules are tested**: each rule has annotated test code, the planted
+  malware in `tests/fixtures/` must be caught on every run, and a new rule is tried on
+  real integrations and cards for noise before its severity is settled.
+- **All source is here to read**; nothing is obfuscated or minified. Issues and pull
+  requests are welcome, especially reports of a missed detection or a false alarm. AI
+  assistance doesn't put the code beyond scrutiny: it means you get to scrutinize it.
+
+## Command line
+
+```sh
+uv run sniff-test scan https://github.com/owner/repo            # latest release, as HACS installs it
+uv run sniff-test scan owner/repo --ref v1.2.3                  # a specific tag
+uv run sniff-test scan ./path/to/repo                           # local checkout
+uv run sniff-test scan owner/repo --exposure public             # HA reachable from the internet
+uv run sniff-test scan owner/repo --json -o report.json         # machine-readable report
+uv run sniff-test scan owner/repo --ha-version 2026.10.2        # resolve deps for a specific HA release
+uv run sniff-test scan ./path/to/repo --offline                 # no PyPI/OSV lookups (marked incomplete)
+
+uv run sniff-test diff old.json new.json                        # what an update changes (reports from scan -o)
+uv run sniff-test diff owner/repo --from v1.2.3                 # scan v1.2.3 and what HACS installs now, compare
+uv run sniff-test diff owner/repo --from v1.2.3 --to v1.3.0 -v  # two tags; -v lists every change
+uv run sniff-test diff owner/repo --from v1.2.3 --ha-version auto  # old side: the HA of its time
+uv run sniff-test releases owner/repo                           # release timeline: HACS default, publishers, handovers
+
+uv run sniff-test scan owner/repo --store scans.db              # also keep the scan in a SQLite scan store
+uv run sniff-test diff owner/repo --from v1.2.3 --store scans.db  # reuse a matching stored scan, store new ones
+uv run sniff-test diff @3 @7 --store scans.db                   # compare two stored scans
+uv run sniff-test history --store scans.db                      # list stored scans (or set SNIFF_TEST_STORE)
+uv run sniff-test serve --store scans.db --allow 127.0.0.1      # the add-on's web panel (HA ingress)
+```
+
+`diff` puts the few changes that matter first (new findings, new data flows, evidence
+going from possible to proven, new publishers, new undeclared hosts) and summarizes the
+rest in one line. It compares; it never changes how either scan is scored.
 
 ## Requirements
 
