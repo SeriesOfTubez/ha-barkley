@@ -491,13 +491,13 @@ class _Tree:
                 return cand
         return None
 
-    def py_files(self) -> list[str]:
+    def py_files(self, limit: int = MAX_PY_FILES) -> list[str]:
         out = []
         try:
             for p in sorted(self.root.rglob("*.py")):
                 if not p.is_symlink() and p.is_file():
                     out.append(p.relative_to(self.root).as_posix())
-                if len(out) >= MAX_PY_FILES:
+                if len(out) >= limit:
                     break
         except OSError:
             pass

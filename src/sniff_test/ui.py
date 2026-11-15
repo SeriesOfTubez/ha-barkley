@@ -1193,8 +1193,8 @@ def more_note(snip: dict[str, Any], missing: dict[str, Any] | None) -> str:
         )
     if missing.get("why") == "too big":
         return (
-            " This app's Python is over 1 MB packed, so Barkley kept no copy of it and the "
-            "AI can't ask to see more than these lines."
+            " This app's Python is too big for Barkley to keep a copy (over 1 MB compressed, "
+            "or more than 3,000 files), so the AI can't ask to see more than these lines."
         )
     return (
         " Barkley has no copy of this version's code (it keeps one for the installed "

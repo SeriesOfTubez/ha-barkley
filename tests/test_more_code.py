@@ -11,7 +11,7 @@ from test_server import get, post, token
 from test_store import report
 from test_watch import Fakes, _scan
 
-from sniff_test import server, sources, watch
+from sniff_test import server, sources, ui, watch
 from sniff_test.report import ai_context, context
 from sniff_test.store import Store
 from sniff_test.supervisor import Installed
@@ -154,6 +154,10 @@ def test_source_capture_indexes_names_and_respects_the_cap(tmp_path, monkeypatch
     monkeypatch.setattr(sources, "MAX_PACKED", 100)
     src, note = sources.capture_root(root)
     assert src is None and note["kept"] is False and note["why"] == "too big"
+    monkeypatch.setattr(sources, "MAX_PACKED", 1_000_000)
+    monkeypatch.setattr(sources, "MAX_FILES", 3)  # four files here
+    src, note = sources.capture_root(root)
+    assert src is None and note == {"kept": False, "why": "too big", "files": 4}
 
 
 def test_source_is_stored_once_per_content_and_goes_with_its_last_scan(tmp_path):
@@ -351,6 +355,10 @@ def test_no_ask_means_one_round_and_no_source_means_no_menu(tmp_path):
     sid = _saved(tmp_path, store, with_source=False)
     _, _, page = get(f"{base}/scan/{sid}")
     assert "Barkley has no copy of this version" in page
+    big = {"lang": "python"}
+    assert "over 1 MB compressed" in ui.more_note(big, {"kept": False, "why": "too big"})
+    assert ui.more_note(big, {"kept": False, "why": "cards"}) == ""
+    assert ui.more_note({"lang": "text"}, None) == ""
     _click(base, sid)
     _wait(httpd, sid)
     assert len(calls) == 1 and "need_1" not in calls[0][1] and "LIST " not in calls[0][0]

@@ -50,8 +50,8 @@ To do this without downloading anything on your click, Barkley keeps a compresse
 of an integration's Python files beside its scan: one copy per version, for the
 installed version and an update that is waiting. Copies of older versions are deleted
 (their scans stay), a copy of an app you only sniffed from search goes when its scan
-ages out, and an app whose Python is over 1 MB compressed gets no copy; its sheet then
-says the AI can't ask for more. Dashboard cards get no copy: their bundles are minified.
+ages out, and an app whose Python is over 1 MB compressed (or more than 3,000 files) gets no
+copy; its sheet then says the AI can't ask for more. Dashboard cards get no copy: their bundles are minified.
 
 ### A finding about replaced Home Assistant code
 

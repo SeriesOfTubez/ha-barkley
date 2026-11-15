@@ -33,6 +33,7 @@ from sniff_test.report import context
 KEY = "_app_source"  # how a scan function hands the source to Store.save; never stored in a report
 VERSION = 1
 MAX_PACKED = 1_000_000  # bytes, zlib level 6
+MAX_FILES = 3_000  # Python files read; more than that and nothing is kept
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,79}(\.[A-Za-z_][A-Za-z0-9_]{0,79})?")
 _PATH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./\-]{0,199}")
 
@@ -74,7 +75,10 @@ def capture_root(root: Path) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     tree = context._Tree(root)
     files: dict[str, dict[str, Any]] = {}
     index: list[list[Any]] = []
-    for rel in tree.py_files():
+    rels = tree.py_files(MAX_FILES + 1)
+    if len(rels) > MAX_FILES:
+        return None, {"kept": False, "why": "too big", "files": len(rels)}
+    for rel in rels:
         text = tree.text(rel)
         if text is None:
             continue

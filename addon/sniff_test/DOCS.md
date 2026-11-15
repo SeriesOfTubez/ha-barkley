@@ -138,7 +138,8 @@ own words), Barkley adds that code (at most 150 more lines) and asks again. Your
 click covers both requests; the sheet says what was asked for and shows the added code.
 For this, Barkley keeps a compressed copy of an integration's Python files in its
 store: one per version, for the installed version and a waiting update, never over 1 MB
-per app (a bigger app gets no copy, and the sheet says the AI can't ask for more).
+per app (a bigger app, or one with more than 3,000 Python files, gets no copy, and the
+sheet says the AI can't ask for more).
 
 For the finding "Changes how Home Assistant itself works" the page also says what is
 replaced and whose code that is ("What it replaces"). Barkley reads that from the
