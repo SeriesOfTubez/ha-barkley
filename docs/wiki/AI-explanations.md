@@ -44,7 +44,9 @@ and anything that isn't on the list is ignored: code from a scanned project can 
 text aimed at the AI, and that text must not decide what Barkley reads. Barkley adds
 the code it picked (at most 150 more lines) and asks again. Your one click covers both
 requests, the sheet says what the AI asked for, and the added code is shown under "The
-code it reads". There is never a third request.
+code it reads". When the AI asks for something that isn't on the list, the sheet says
+how many such asks were ignored and shows what they were (each cut to 60 characters).
+There is never a third request.
 
 To do this without downloading anything on your click, Barkley keeps a compressed copy
 of an integration's Python files beside its scan: one copy per version, for the
