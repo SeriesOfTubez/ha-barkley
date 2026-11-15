@@ -31,12 +31,12 @@ function legit(hass) {
   hass.callApi("GET", "states");
 }
 
-// (M6) Relative prefixes built into URLs stay same-origin (Bambu Lab v2.3.0's card).
+// (M6) Relative prefixes built into URLs stay same-origin (seen in a real card).
 function legitBuilt(n, t) {
   var i;
   // Only the token read is reported; no card-token-exfil on this line.
   // ruleid: card-access-token-use
-  return t.prev=0,i="/api/bambu_lab/file_cache/".concat(n.thumbnail_path),t.next=4,fetch(i,{headers:{Authorization:"Bearer ".concat(this._hass.auth.data.access_token)}});
+  return t.prev=0,i="/api/printer_hub/file_cache/".concat(n.thumbnail_path),t.next=4,fetch(i,{headers:{Authorization:"Bearer ".concat(this._hass.auth.data.access_token)}});
 }
 
 function legitPlus(hass, n) {

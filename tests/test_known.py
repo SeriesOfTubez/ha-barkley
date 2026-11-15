@@ -10,18 +10,16 @@ from sniff_test.deps.uv import Artifact
 from sniff_test.models import Severity, Tag
 from sniff_test.report import explain
 
-PKG = python_deps.ResolvedPackage("chromadb-client", "1.5.3", {"x86_64", "aarch64"})
-ART = Artifact("https://x", "chromadb_client-1.5.3-py3-none-any.whl", None, "wheel")
+PKG = python_deps.ResolvedPackage("vector-client", "1.5.3", {"x86_64", "aarch64"})
+ART = Artifact("https://x", "vector_client-1.5.3-py3-none-any.whl", None, "wheel")
 RULE = "threat-network-exfiltration"
 
 
-def _hit(
-    code, match, loc="chromadb/utils/embedding_functions/together_ai_embedding_function.py:13"
-):
+def _hit(code, match, loc="vectors/embed/remote_embedding.py:13"):
     return {"location": loc, "code": code, "match": match, "message": "m"}
 
 
-# GuardDog 3.2's real output for chromadb-client 1.5.3 (hass-agent-llm v0.9.5's dependency)
+# GuardDog 3.2's real output for a dependency of a real integration (names changed)
 TOGETHER = _hit('ENDPOINT = "https://api.together.xyz/v1/embeddings"', "https://api.together.xyz/")
 
 
@@ -61,7 +59,7 @@ def test_no_listed_service_is_a_place_where_anyone_can_receive_data():
     }  # fmt: skip
 
 
-def test_the_real_chromadb_hit_stays_high_and_carries_its_address():
+def test_a_real_hit_on_a_known_service_stays_high_and_carries_its_address():
     """0.8.0 lowered this by itself from the list; the user chose to decide per address
     (0.9.0). The finding is as it was, plus the address the panel can offer to trust."""
     [f] = _findings(TOGETHER)

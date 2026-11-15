@@ -79,7 +79,7 @@ def test_token_stealer_in_lit_bundle_is_caught(tmp_path):
 def test_normalize_js_rewrites_html_comment_tokens(tmp_path):
     # Semgrep (1.181, and still 1.185) treats `<!--` and `-->` as a line comment
     # anywhere on a line. In context, lit-html's `/-->/g` made it drop all of
-    # mushroom.js v5.2.3 (0 matches, scan ok). Adding a space keeps code meaning and
+    # a real card's bundle (0 matches, scan ok). Adding a space keeps code meaning and
     # only pads strings/regexes.
     f = tmp_path / "b.js"
     f.write_text('F=/<!--/g,G=/-->/g;s="a-->b";x=a<!--b;while(n-->0);\n')

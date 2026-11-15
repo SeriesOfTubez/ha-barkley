@@ -11,3 +11,7 @@ __pycache__/
 # The session handoff: working notes about one person's box. It lives in the folder
 # and is never committed (tests/test_publish.py checks).
 /HANDOFF.md
+
+# A local helper that renders panel pages from real scan reports for before/after
+# screenshots. It lists real apps as inputs, so it is not part of the repository.
+/scripts/render_pages.py
