@@ -118,14 +118,18 @@ def test_the_flagged_statements_function_is_cut_to_fit_not_left_out(tmp_path):
 
 def test_a_monkeypatch_item_says_what_is_replaced_and_whose_it_is(tmp_path):
     ctx = context.build(_pkg(tmp_path), [PATCH], None)
-    assert ctx["version"] == 4
+    assert ctx["version"] == 5
     assert ctx["items"][PATCH["id"]]["patch"] == {
         "object": "homeassistant.components.camera.media.VodSource",
         "origin": "Home Assistant's built-in camera integration",
         "attr": "_files",
         "replacement": "_files",
         "replacement_at": ["__init__.py", 28],
-    }
+        # (0.12.0) no Home Assistant version given: nothing compared, and it says so
+        "compare": {"state": "none", "why": "offline"},
+        "inside": {"lines": [28, 30], "findings": [], "more_findings": 0,
+                   "addresses": 0, "ports": 0},
+    }  # fmt: skip
     assert context.origin("ssl.SSLContext") == "Python's standard library"
     assert context.origin("homeassistant.core.HomeAssistant") == "Home Assistant's own code"
     assert context.origin("self.hass.auth") == "the running Home Assistant"

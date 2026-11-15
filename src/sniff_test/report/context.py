@@ -34,7 +34,7 @@ import ast
 import io
 import re
 import tokenize
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -43,10 +43,12 @@ import jsbeautifier
 
 from sniff_test.analyzers import py_tamper
 from sniff_test.analyzers.endpoints import UNEXPLAINED
+from sniff_test.report import compare
 
 # 2: long lines reformatted (0.7.2); 3: dependency items (0.7.4); 4: imports, constants,
-# referenced functions and classes, `patch` on a monkeypatch item, `source` (0.11.0)
-CONTEXT_VERSION = 4
+# referenced functions and classes, `patch` on a monkeypatch item, `source` (0.11.0);
+# 5: `patch.compare` and `patch.inside`, `readme` (0.12.0)
+CONTEXT_VERSION = 5
 MAX_LINES = 150  # per snippet, without the header lines
 MAX_CHARS = 16_000  # per snippet
 HEADER_LINES = 40  # more lines per snippet for imports and module-level constants
@@ -135,15 +137,23 @@ def build(
     findings: list[dict[str, Any]],
     graph: dict[str, Any] | None,
     source_root: Path | None = None,
+    *,
+    places: list[tuple[str, str, int]] | None = None,
+    ha_version: str | None = None,
+    ha_source: Callable[[str], str | None] | None = None,
 ) -> dict:
-    """The report's `context` section: {"version", "snippets": {sid: …}, "items": {id: …}}.
-    source_root: the repo at the ref, where a card's own (unbundled) source lives."""
+    """The report's `context` section: {"version", "snippets": {sid: …}, "items": {id: …},
+    "readme": …}. source_root: the repo at the ref, where a card's own (unbundled) source
+    and the README live. places: (kind, file, line) of every address and port the scan
+    listed. ha_version, ha_source(path): the scan's Home Assistant release and a reader for
+    one file of it (report.compare); without them nothing is compared and the item says so."""
     tree = _Tree(root)
     src = _Tree(source_root) if source_root is not None else tree
     snippets: dict[str, dict[str, Any]] = {}
     by_key: dict[str, str] = {}
     out_items: dict[str, dict[str, Any]] = {}
     patches = {f["id"] for f in findings if f.get("rule_id") == py_tamper.RULE_ID}
+    budget = [compare.MAX_FETCH]  # Home Assistant files this scan may still ask GitHub for
     total = 0
     for it in items(findings, graph):
         if len(out_items) >= MAX_ITEMS:
@@ -177,10 +187,64 @@ def build(
         else:
             out_items[it.id] = {"kind": it.kind, "file": it.file, "line": it.line, "snippet": sid}
             if it.kind == "finding" and it.id in patches:
-                fact = patch_fact(tree, it.file, it.line)
+                fact, repl = _patch(tree, it.file, it.line)
                 if fact:
                     out_items[it.id]["patch"] = fact
-    return {"version": CONTEXT_VERSION, "snippets": snippets, "items": out_items}
+                    cmp = compare.compare(fact, repl, ha_version, ha_source, budget)
+                    if cmp:
+                        fact["compare"] = cmp
+                    if repl:
+                        a, b = _span(repl[2])
+                        fact["inside"] = compare.inside(
+                            repl[0], a, b, it.id, findings, places or []
+                        )
+    out = {"version": CONTEXT_VERSION, "snippets": snippets, "items": out_items}
+    doc = readme(source_root)
+    if doc:
+        out["readme"] = doc
+    return out
+
+
+# --- what the app says it does (0.12.0) -------------------------------------------------------
+
+README_LINES = 80
+README_CHARS = 6_000
+README_LINE = 300  # characters kept of one line (badge and image lines run long)
+_README_NAMES = ("readme.md", "readme.rst", "readme.txt")
+
+
+def readme(source_root: Path | None) -> dict[str, Any] | None:
+    """The head of the repository's README: what the app says it does. Written by whoever
+    published the app, so it is untrusted like the code: shown escaped, sent to the AI only
+    inside a nonce-delimited block, and never evidence of what the code does."""
+    if source_root is None:
+        return None
+    try:
+        names = {p.name.lower(): p.name for p in source_root.iterdir() if not p.is_symlink()}
+    except OSError:
+        return None
+    name = next((names[n] for n in _README_NAMES if n in names), None)
+    if name is None or not re.fullmatch(r"[A-Za-z0-9_.\-]{1,40}", name):
+        return None
+    text = _read(source_root, name)
+    if not text or not text.strip():
+        return None
+    lines = text.splitlines()
+    code: list[str] = []
+    chars = 0
+    for raw in lines[:README_LINES]:
+        line = _clean(raw).rstrip()
+        if len(line) > README_LINE:
+            line = line[:README_LINE] + " …"
+        if chars + len(line) > README_CHARS:
+            break
+        chars += len(line) + 1
+        code.append(line)
+    while code and not code[-1].strip():
+        code.pop()
+    if not code:
+        return None
+    return {"file": name, "start": 1, "code": code, "total": len(lines)}
 
 
 # --- what a monkeypatch replaces (0.11.0) -----------------------------------------------------
@@ -208,13 +272,22 @@ def patch_fact(tree: _Tree, rel: str, line: int) -> dict[str, Any] | None:
     """For a `ha-monkeypatch` finding: what is replaced, whose it is, and with what. Read
     from the syntax tree the way analyzers.py_tamper resolves the object (imports, local
     shadowing); nothing is run. None when the line holds no such assignment."""
+    return _patch(tree, rel, line)[0]
+
+
+def _patch(
+    tree: _Tree, rel: str, line: int
+) -> tuple[dict[str, Any] | None, tuple[str, list[str], ast.AST] | None]:
+    """(the patch fact, the replacement when the app defines it as a function: its file,
+    that file's lines and the function's node)."""
     py = tree.py(rel)
     if py is None:
-        return None
+        return None, None
     hits = {ln: res for ln, res in py_tamper.check_tree(py.tree)}
     resolved = hits.get(line)
     if resolved is None:
-        return None
+        return None, None
+    repl = None
     fact: dict[str, Any] = {"object": resolved[:200], "origin": origin(resolved)}
     for node in ast.walk(py.tree):
         if not isinstance(node, ast.Assign) or node.lineno != line:
@@ -230,8 +303,10 @@ def patch_fact(tree: _Tree, rel: str, line: int) -> dict[str, Any] | None:
             hit = _resolve_def(tree, py, node.value.id)
             if hit is not None:
                 fact["replacement_at"] = [hit[0].rel, _span(hit[1])[0]]
+                if isinstance(hit[1], ast.FunctionDef | ast.AsyncFunctionDef):
+                    repl = (hit[0].rel, hit[0].lines, hit[1])
         break
-    return fact
+    return fact, repl
 
 
 # --- where the app uses a dependency (0.7.4) --------------------------------------------------

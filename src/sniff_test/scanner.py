@@ -154,6 +154,11 @@ def scan(
             [finding_json(f) for f in findings],
             result.graph,
             source_root=target.source_root,
+            places=[(f.kind, f.file, f.line) for f in facts if f.file and f.line],
+            # (0.12.0) the original of a Home Assistant function the app replaces: one file
+            # of HA's own source at this scan's release (deps.ha_env.source_file)
+            ha_version=env.version if env else None,
+            ha_source=(lambda path: ha_env.source_file(env.version, path)) if env else None,
         )
         # (0.11.0) the app's own Python, so the AI can be shown more of it on request
         result.source, result.context["source"] = sources.capture(target)

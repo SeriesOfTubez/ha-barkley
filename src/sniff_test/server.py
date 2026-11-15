@@ -65,7 +65,9 @@ _JOBS_KEPT = 20
 # before they start and wait out a rate limit inside. The one GitHub request outside a
 # job is the versions page's release list (cached 10 min; a limit there says "try later").
 # Without a token GitHub allows 60/hour and counts even 304 answers.
-_GITHUB_NEED = {"scan": 10, "installed": 10, "update": 19, "auto": 19}
+# (0.12.0) + 2 per scan: Home Assistant's original of a function the app replaces
+# (report.compare.MAX_FETCH; cached per HA release, so usually none are made).
+_GITHUB_NEED = {"scan": 12, "installed": 12, "update": 23, "auto": 23}
 
 
 def _need(job: Job) -> int:
@@ -1071,6 +1073,8 @@ def render_scan(
                                 snip=snip, entity=ai_entity,
                                 asking=(item_asked or {}).get(item_id),
                                 more=ui.more_note(snip, src_note),
+                                also=ui.also_note(ai_context.comparison_of(report, item_id),
+                                                  ai_context.readme_of(report, item_id)),
                                 open_url=_scan_url(base, sid, item_id) if running else "",
                                 close_url=e(f"{base}/scan/{sid}") if running else "")  # fmt: skip
 
@@ -1793,6 +1797,7 @@ class Panel:
                       f"{2 if extra else 1} round(s), menu {len(entries)}, asked {len(picked)}, "
                       f"refused {len(refused)}{' ' + repr(refused) if refused else ''}): "
                       f"{len(accepted['claims'])} claim(s), "
+                      f"{'a' if accepted.get('alignment') else 'no'} README opinion, "
                       f"{len(accepted['questions'])} question(s), {len(accepted['dropped'])} "
                       f"dropped {sorted(set(accepted['dropped']))}", file=sys.stderr,
                       flush=True)  # fmt: skip

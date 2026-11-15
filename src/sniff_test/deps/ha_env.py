@@ -346,6 +346,41 @@ def load(version: str | None = None, gh: GitHub | None = None) -> HAEnv:
     return _from_dir(version, d)
 
 
+_SOURCE_PATH = re.compile(r"^homeassistant(?:/[a-z0-9_]+)+\.py$")
+MAX_SOURCE_BYTES = 2_000_000
+
+
+def source_file(version: str, path: str, gh: GitHub | None = None) -> str | None:
+    """One file of Home Assistant's own source at a release, as text (0.12.0): the original
+    of a function an app replaces, for report.compare. None when that release has no such
+    file. Home Assistant's code, not scanned code; still only ever read as text.
+
+    Cached beside the release's other files (a miss too), so one GitHub request per file
+    and release. A rate limit goes through (the job waits); any other failure raises
+    HAEnvError and nothing is cached, so the next scan asks again."""
+    if not valid_version(version) or not _SOURCE_PATH.match(path) or len(path) > 200:
+        raise HAEnvError(f"not a Home Assistant source path: {path!r}")
+    cached = cache_root() / "ha" / version / "src" / path
+    missing = cached.with_name(cached.name + ".missing")
+    if cached.is_file():
+        return cached.read_text(encoding="utf-8")
+    if missing.is_file():
+        return None
+    try:
+        text = (gh or GitHub.from_env()).file_at(*HA_REPO, path, version)
+    except RateLimitError:
+        raise
+    except GitHubError as e:
+        raise HAEnvError(f"could not fetch Home Assistant {version} {path}: {e}") from e
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    if text is None:
+        atomic_write(missing, "")
+        return None
+    text = text[:MAX_SOURCE_BYTES]
+    atomic_write(cached, text)
+    return text
+
+
 _RELEASES_TTL = 24 * 3600
 
 

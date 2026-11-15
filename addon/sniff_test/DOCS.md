@@ -161,7 +161,20 @@ sheet says the AI can't ask for more).
 
 For the finding "Changes how Home Assistant itself works" the page also says what is
 replaced and whose code that is ("What it replaces"). Barkley reads that from the
-code's import lines; no AI is involved.
+code's import lines; no AI is involved. When a function of Home Assistant's own source
+is replaced by a function of the app, Barkley also reads that one file of Home Assistant
+(at your version, from Home Assistant's repository on GitHub) during the scan and
+compares the two line by line: "How it differs from the original" gives the counts and
+the comparison, or says why there is none. "The rest of the replacement" says whether
+the scan has anything else on the replacement's lines. Neither changes the score, and
+neither says the code is safe.
+
+On a finding in the app's own code, the AI is also sent the first lines of the app's
+README (at most 80) and may add one sentence saying the code is consistent with it. It
+is shown apart, as the AI's opinion, only if it cites README lines and code lines and
+gives no verdict. A README is written by the app's author, so matching it is not the
+same as safe; the score does not change. Findings about data leaving your Home
+Assistant never get this opinion.
 
 The AI answers in short statements, and each must cite the lines it rests on.
 Barkley shows a statement only if the cited lines are in the code it sent, they are

@@ -60,6 +60,35 @@ replaced, whose code that is, and where the replacement is defined, under **What
 replaces**. Barkley reads this from the code's import lines during the scan; no AI is
 involved.
 
+When what is replaced is a function in Home Assistant's own source and the replacement is
+a function of the app, Barkley also compares the two. During the scan it reads that one
+file of Home Assistant, at your Home Assistant version, from Home Assistant's repository
+on GitHub, and compares the functions line by line. **How it differs from the original**
+gives the count of lines only in the replacement and only in the original, and the
+comparison itself opens underneath. No AI is involved. When there is no comparison the
+page says why (for example GitHub did not answer, or the replacement is not a function);
+that is never counted for or against the app. **The rest of the replacement** says
+whether the scan has any other finding, address or port on the replacement's own lines.
+That sentence describes what Barkley's rules look for; it is not a statement that the
+code is safe. The score is the same with or without a comparison.
+
+On such a finding, "Explain in context" also sends the comparison, so the AI can say
+what the replacement does differently and cite the lines.
+
+### The AI's opinion on the README
+
+For a finding in the app's own code, "Explain in context" also sends the first lines of
+the repository's README (at most 80), as what the app's author says the app does. The AI
+may then add one sentence saying that the code is consistent with the README. Barkley
+shows it only if it cites README lines and lines of the app's code, and gives no verdict:
+a sentence that calls the code safe, fine, expected or the like is dropped. It is shown
+apart from the statements, under **The AI's opinion: consistent with the README**.
+
+Read it for what it is. The README is written by the same person as the code, so code
+that matches it does what the author says, which is not the same as safe. The finding
+and the score do not change. Findings about data leaving your Home Assistant, or about
+where it goes, never get this opinion, and neither do addresses, ports or packages.
+
 ### How answers are checked
 
 The AI answers in short statements, and each must cite the lines it rests on. Barkley
