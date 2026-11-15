@@ -224,6 +224,25 @@ def test_menu_offers_what_the_snippet_lacks_most_useful_first(tmp_path):
     assert len(ai_context.menu(snip, many)) == ai_context.MAX_MENU
 
 
+def test_a_short_class_on_the_menu_brings_its_methods(tmp_path):
+    """Seen on hass-reolink-thumbs: the AI asked for `ThumbnailView` and `ThumbnailView.get`,
+    so one of its three picks added nothing."""
+    snip, src = _snip_and_source(tmp_path)
+    index = [
+        ["View", "view.py", 18, 50, "class"],
+        ["View.__init__", "view.py", 25, 27, "method"],
+        ["View.get", "view.py", 29, 50, "method"],
+        ["Big", "big.py", 1, 125, "class"],
+        ["Big.run", "big.py", 60, 90, "method"],
+    ]
+    entries = ai_context.menu(snip, {**src, "index": index})
+    assert [m["name"] for m in entries] == ["View", "Big", "Big.run"]
+    assert [m["n"] for m in entries] == [1, 2, 3]
+    block = ai_context.menu_block(entries, "abc")
+    assert "1. view.py: View (class, 33 lines, with its methods)" in block
+    assert "2. big.py: Big (class, 125 lines)" in block  # may be cut: its methods stay
+
+
 def test_only_picks_from_the_menu_count(tmp_path):
     snip, src = _snip_and_source(tmp_path)
     entries = ai_context.menu(snip, src)

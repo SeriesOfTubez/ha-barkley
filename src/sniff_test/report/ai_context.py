@@ -48,6 +48,8 @@ MAX_QUESTION = 300
 MAX_RANGE = 25  # lines one citation may span
 MAX_NEEDS = 3  # names the AI may ask to see
 MAX_MENU = 40  # names offered
+# a class this short always arrives whole, even as the last of MAX_NEEDS picks
+WHOLE_CLASS = context.MORE_LINES // MAX_NEEDS
 
 _RULES = """\
 You are reading a little code from a Home Assistant custom integration or dashboard card, \
@@ -302,9 +304,26 @@ def menu(snip: dict[str, Any], source: dict[str, Any] | None) -> list[dict[str, 
         rank = 0 if mentioned and kind != "constant" else 1 if mentioned else 2 if f in have else 3
         ranked.append((rank, i, {"name": name, "file": f, "start": a, "end": b, "kind": kind,
                                  "lines": b - a + 1}))  # fmt: skip
+    # A class picked from the menu arrives whole when it is short, so its methods are not
+    # listed beside it (asking for both spent a pick on code the class already brings); the
+    # class takes the place of its best-ranked method.
+    whole = {(e["file"], e["name"]): k for k, (_r, _i, e) in enumerate(ranked)
+             if e["kind"] == "class" and e["lines"] <= WHOLE_CLASS}  # fmt: skip
+    kept = []
+    for rank, i, entry in ranked:
+        k = whole.get((entry["file"], entry["name"].rpartition(".")[0]))
+        if k is None or not entry["name"].rpartition(".")[0]:
+            kept.append([rank, i, entry])
+        else:
+            ranked[k] = (min(ranked[k][0], rank), ranked[k][1], ranked[k][2])
+    for row in kept:
+        k = whole.get((row[2]["file"], row[2]["name"]))
+        if k is not None:
+            row[0] = ranked[k][0]
+            row[2]["whole"] = True
     # within "the rest", code before constants: a cut list should lose constants first
-    ranked.sort(key=lambda r: (r[0], r[0] >= 2 and r[2]["kind"] == "constant", r[1]))
-    out = [entry for _rank, _i, entry in ranked[:MAX_MENU]]
+    kept.sort(key=lambda r: (r[0], r[0] >= 2 and r[2]["kind"] == "constant", r[1]))
+    out = [entry for _rank, _i, entry in kept[:MAX_MENU]]
     for n, entry in enumerate(out, 1):
         entry["n"] = n
     return out
@@ -313,7 +332,8 @@ def menu(snip: dict[str, Any], source: dict[str, Any] | None) -> list[dict[str, 
 def menu_block(entries: list[dict[str, Any]], nonce: str) -> str:
     out = [f"<<<LIST {nonce} (untrusted names from the scanned repository)"]
     for m in entries:
-        out.append(f"{m['n']}. {m['file']}: {m['name']} ({m['kind']}, {m['lines']} lines)")
+        note = ", with its methods" if m.get("whole") else ""
+        out.append(f"{m['n']}. {m['file']}: {m['name']} ({m['kind']}, {m['lines']} lines{note})")
     out.append(f"LIST {nonce}>>>")
     return "\n".join(out)
 
