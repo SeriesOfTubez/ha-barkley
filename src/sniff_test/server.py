@@ -1040,7 +1040,8 @@ def render_scan(
     deep = None
     if ai_mode == "deep" and ai_entity and report.get("context"):
         answers = store.item_explanations(sid)
-        src_note = (report["context"].get("source") or {}) if store.source(sid) is None else None
+        # asked of the index only: the page is rendered often, the copy is unpacked on a click
+        src_note = None if store.has_source(sid) else (report["context"].get("source") or {})
 
         def deep(item_id: str) -> str:
             snip = ai_context.snippet_of(report, item_id)

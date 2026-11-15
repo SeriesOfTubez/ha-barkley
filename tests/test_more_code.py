@@ -168,6 +168,7 @@ def test_source_is_stored_once_per_content_and_goes_with_its_last_scan(tmp_path)
     c = store.save(report(ref="v1"))
     assert sources.KEY not in store.report(a)  # never part of the stored report
     assert store.source(a) == src == store.source(b) and store.source(c) is None
+    assert store.has_source(a) and not store.has_source(c)
     size = store.source_bytes()
     assert 0 < size < 2000  # one copy for both scans
     store.link_source(c, a)  # an advisory re-check's new entry reads the same code

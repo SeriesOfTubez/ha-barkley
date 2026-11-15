@@ -368,6 +368,13 @@ class Store:
             return None
         return data if isinstance(data, dict) else None
 
+    def has_source(self, scan_id: int) -> bool:
+        with self._connect() as db:
+            return (
+                db.execute("SELECT 1 FROM scan_sources WHERE scan_id = ?", (scan_id,)).fetchone()
+                is not None
+            )
+
     def source_scans(self) -> list[tuple[int, str | None, str | None]]:
         """(scan id, repo, ref) of every scan that has stored source."""
         with self._connect() as db:
