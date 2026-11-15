@@ -101,6 +101,12 @@ profile sniff_test flags=(attach_disconnected,mediate_deleted) {
   # GuardDog's lists), HOME; and one temp workspace per scan. Never executable.
   /data/{,**} rwk,
   /tmp/{,**} rwk,
+  # osv-scanner 2.7.1 reaches a lockfile by opening `/` as a directory and walking down
+  # from it (`/`, `tmp`, the scan's folder, the file), where 2.7.0 opened the path
+  # directly (strace, 2026-11-14). Without this it reads no lockfile at all ("could not
+  # determine extractor suitable to this file", exit 127; seen on a box running 0.10.3).
+  # Listing `/` shows the names of the top-level folders, nothing in them.
+  / r,
 
   # What the tools read: TLS roots (urllib, curl, uv, osv-scanner), the OS id (uv),
   # terminfo (bashio's shell), MIME types (urllib).

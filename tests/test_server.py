@@ -475,6 +475,30 @@ def test_an_incomplete_scan_offers_to_scan_again(addon):
     assert "Sniff again" in page
 
 
+def test_one_button_sniffs_every_unfinished_scan_again(addon):
+    """Found on a real box: after a run in which every scan ended unfinished, each app had
+    to be clicked on its own, because the one button only counted apps never sniffed."""
+    store, scan_fn, base, httpd, _ = addon
+    _seed(store)
+    for repo, ref, kind in (("acme/new", "v1", "integration"), ("acme/never", "v3", "plugin")):
+        bad = report(repo=repo, ref=ref, kind=kind)
+        bad["complete"] = False
+        store.save(bad)
+    _, _, page = get(base + "/?refresh=1")
+    assert "Sniff the 2 unfinished again" in page and "not yet sniffed" not in page
+    panel = httpd.panel
+    job = server.Job(98, "installed", "acme/never", "v3", state="queued")
+    panel.worker.jobs.insert(0, job)  # already waiting: not counted, not queued twice
+    _, _, page = get(base + "/")
+    assert "Sniff the 1 unfinished again" in page
+    assert post(base + "/installed-all", {"token": token(base)})[0] == 303
+    _worker(httpd).wait()
+    assert scan_fn.calls == [("acme/new", "v1")]  # the complete ones are left alone
+    panel.worker.jobs.remove(job)
+    _, _, page = get(base + "/?refresh=1")
+    assert "Sniff the 1 unfinished again" in page  # acme/never is still unfinished
+
+
 # --- auto-sniff: the panel's box and settings -------------------------------------------
 
 

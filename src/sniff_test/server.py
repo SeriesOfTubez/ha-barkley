@@ -582,14 +582,24 @@ def render_installed(
         for r in rows
     ]
     never = sum(1 for r in rows if not r.installed_scan)
+    # An unfinished scan is never reused, so it needs another run too; one that is
+    # already queued or running isn't counted again.
+    again = sum(1 for r in rows if r.installed_scan and not r.installed_scan.complete
+                and not r.busy)  # fmt: skip
     lead = ""
-    if never:  # the list's one primary action; nothing when everything is sniffed
+    if never or again:  # the list's one primary action; nothing when everything is sniffed
+        if never and again:
+            label = (f"Sniff the {never} not yet sniffed by Barkley {e(__version__)} "
+                     f"and the {again} unfinished")  # fmt: skip
+        elif never:
+            label = f"Sniff the {never} not yet sniffed by Barkley {e(__version__)}"
+        else:
+            label = f"Sniff the {again} unfinished again"
         lead = (
             f'<form method=post action="{base}/installed-all">'
             f'<input type=hidden name=token value="{token}">'
             f'<input type=hidden name=back value="{back}">'
-            f'<button class="primary">Sniff the {never} not yet sniffed by Barkley '
-            f"{e(__version__)}</button></form>"
+            f'<button class="primary">{label}</button></form>'
         )
     out = (
         [ui.render_grid(base, cards, v, lead)]
@@ -2209,8 +2219,11 @@ class Panel:
                     tv = panel.worker.tool_version
                     stored = {(r.repo or "").lower() + "@" + (r.ref or "")
                               for r in panel.store.history(limit=10000)
-                              if r.tool_version == tv}  # fmt: skip
+                              if r.tool_version == tv and r.complete}  # fmt: skip
+                    busy = panel.busy()  # a second click queues nothing twice
                     for it in st.items:
+                        if it.repo.lower() in busy:
+                            continue
                         if f"{it.repo.lower()}@{it.installed}" not in stored:
                             panel.worker.submit("installed", it.repo, it.installed)
                     return self._redirect(home)
