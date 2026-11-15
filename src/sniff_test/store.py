@@ -15,6 +15,7 @@ schedule). In the add-on the file lives in `/data`, which is included in backups
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import zlib
@@ -30,6 +31,7 @@ from sniff_test import trust
 STORE_VERSION = 1
 _INPUTS_KEY = "_recheck_inputs"  # recheck.KEY (not imported: the store stays a leaf)
 _INPUTS_MAX = 64 * 1024 * 1024  # never inflate more than this from a stored blob
+_SOURCE_KEY = "_app_source"  # sources.KEY (not imported, same reason)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS scans (
@@ -117,6 +119,15 @@ CREATE TABLE IF NOT EXISTS advisory_checks (  -- (0.10.0) the last advisory re-c
     scan_id    INTEGER PRIMARY KEY REFERENCES scans (id) ON DELETE CASCADE,
     checked_at TEXT NOT NULL,
     result     TEXT NOT NULL  -- same | changed:<new scan id> | failed: <why>
+);
+CREATE TABLE IF NOT EXISTS sources (  -- (0.11.0) an app version's own Python, once per content
+    hash    TEXT PRIMARY KEY,   -- sha256 of the JSON before compression
+    data    BLOB NOT NULL,      -- zlib(JSON), sources.capture(); text from the scan, never run
+    created TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scan_sources (  -- (0.11.0) which stored source a scan reads from
+    scan_id INTEGER PRIMARY KEY REFERENCES scans (id) ON DELETE CASCADE,
+    hash    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS edge_findings (
     scan_id    INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
@@ -214,14 +225,25 @@ class Store:
         report: dict[str, Any],
         scanned_at: datetime | None = None,
         inputs: dict[str, Any] | None = None,
+        source: dict[str, Any] | None = None,
     ) -> int:
         """Store a report (as produced by `json_report.to_dict`). Returns the scan id.
+        `source`: the app's own Python (sources.capture), kept once per content and linked
+        to the scan; like the inputs it may ride along under `_app_source`.
         `inputs`: the scan's lockfiles for later advisory re-checks (recheck.capture); a
         scan function may also hand them over under `_recheck_inputs`, which is taken out
         here and never becomes part of the stored report."""
         if _INPUTS_KEY in report:
             inputs = inputs or report[_INPUTS_KEY]
             report = {k: v for k, v in report.items() if k != _INPUTS_KEY}
+        if _SOURCE_KEY in report:
+            source = source or report[_SOURCE_KEY]
+            report = {k: v for k, v in report.items() if k != _SOURCE_KEY}
+        src_raw = (
+            json.dumps(source, separators=(",", ":"), sort_keys=True).encode()
+            if isinstance(source, dict) and source
+            else None
+        )
         blob = (
             zlib.compress(json.dumps(inputs, separators=(",", ":")).encode(), 6)
             if isinstance(inputs, dict) and inputs
@@ -262,6 +284,13 @@ class Store:
             sid = int(cur.lastrowid or 0)
             if blob is not None:
                 db.execute("INSERT INTO scan_inputs VALUES (?,?)", (sid, blob))
+            if src_raw is not None:
+                digest = hashlib.sha256(src_raw).hexdigest()
+                db.execute(
+                    "INSERT OR IGNORE INTO sources VALUES (?,?,?)",
+                    (digest, zlib.compress(src_raw, 6), row[0]),
+                )
+                db.execute("INSERT INTO scan_sources VALUES (?,?)", (sid, digest))
             db.executemany(
                 "INSERT OR IGNORE INTO findings VALUES (?,?,?,?,?,?,?)",
                 [
@@ -317,6 +346,60 @@ class Store:
         except (zlib.error, ValueError):
             return None
         return data if isinstance(data, dict) else None
+
+    def source(self, scan_id: int) -> dict[str, Any] | None:
+        """The app's own Python kept for a scan (sources.capture), or None: a card, an
+        older scan, an app over the size cap, or a version whose copy was dropped."""
+        with self._connect() as db:
+            r = db.execute(
+                "SELECT s.data FROM sources s JOIN scan_sources l ON l.hash = s.hash "
+                "WHERE l.scan_id = ?",
+                (scan_id,),
+            ).fetchone()
+        if r is None:
+            return None
+        try:
+            d = zlib.decompressobj()
+            raw = d.decompress(r["data"], _INPUTS_MAX)
+            if d.unconsumed_tail:
+                return None
+            data = json.loads(raw)
+        except (zlib.error, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def source_scans(self) -> list[tuple[int, str | None, str | None]]:
+        """(scan id, repo, ref) of every scan that has stored source."""
+        with self._connect() as db:
+            return [
+                (int(r[0]), r[1], r[2])
+                for r in db.execute(
+                    "SELECT l.scan_id, s.repo, s.ref FROM scan_sources l "
+                    "JOIN scans s ON s.id = l.scan_id ORDER BY l.scan_id"
+                )
+            ]
+
+    def link_source(self, scan_id: int, like: int) -> None:
+        """Scan `scan_id` reads the same code as scan `like` (an advisory re-check's new
+        entry: the code is the old entry's)."""
+        with self._connect() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO scan_sources "
+                "SELECT ?, hash FROM scan_sources WHERE scan_id = ?",
+                (scan_id, like),
+            )
+
+    def drop_source(self, scan_id: int) -> None:
+        """Forget a scan's source (the scan stays); copies nothing points at are deleted."""
+        with self._connect() as db:
+            db.execute("DELETE FROM scan_sources WHERE scan_id = ?", (scan_id,))
+            db.execute("DELETE FROM sources WHERE hash NOT IN (SELECT hash FROM scan_sources)")
+
+    def source_bytes(self) -> int:
+        with self._connect() as db:
+            return int(
+                db.execute("SELECT COALESCE(SUM(LENGTH(data)), 0) FROM sources").fetchone()[0]
+            )
 
     def has_inputs(self) -> set[int]:
         with self._connect() as db:
@@ -435,7 +518,9 @@ class Store:
 
     def delete(self, scan_id: int) -> bool:
         with self._connect() as db:
-            return db.execute("DELETE FROM scans WHERE id = ?", (scan_id,)).rowcount > 0
+            gone = db.execute("DELETE FROM scans WHERE id = ?", (scan_id,)).rowcount > 0
+            db.execute("DELETE FROM sources WHERE hash NOT IN (SELECT hash FROM scan_sources)")
+            return gone
 
     # --- read ----------------------------------------------------------------------
 

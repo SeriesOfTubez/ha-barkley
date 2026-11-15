@@ -124,11 +124,25 @@ in the request.
 
 Each finding, each port, and each address the app's docs don't explain gets an
 **Explain in context** button. During the scan, Barkley keeps the code around it:
-the function it's in, the functions that use a flagged address, and one step into the
-functions those call (in the same file or a sibling module of the app). That is at most
-150 lines, and you can open it under "The code it reads" before you click. When you
+the function it's in, the functions that use a flagged address, the functions and
+classes of the app that it calls or refers to (in the same file or a sibling module),
+starting with the ones named on the flagged line, and the import lines and constants
+behind the names used. That is at most 150 lines of code plus 40 of imports and
+constants, and you can open it under "The code it reads" before you click. When you
 click, that code and the question go to your AI; nothing is sent before. It is the
 app's own public code, never anything from your Home Assistant.
+
+For integrations the AI may ask once to see more of the app's code. It can only pick
+from a list of names Barkley offers (at most three picks; never a file path, never its
+own words), Barkley adds that code (at most 150 more lines) and asks again. Your one
+click covers both requests; the sheet says what was asked for and shows the added code.
+For this, Barkley keeps a compressed copy of an integration's Python files in its
+store: one per version, for the installed version and a waiting update, never over 1 MB
+per app (a bigger app gets no copy, and the sheet says the AI can't ask for more).
+
+For the finding "Changes how Home Assistant itself works" the page also says what is
+replaced and whose code that is ("What it replaces"). Barkley reads that from the
+code's import lines; no AI is involved.
 
 The AI answers in short statements, and each must cite the lines it rests on.
 Barkley shows a statement only if the cited lines are in the code it sent, they are

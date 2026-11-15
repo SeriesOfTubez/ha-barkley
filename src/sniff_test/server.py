@@ -34,7 +34,7 @@ from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import GitHubError, RateLimit, RateLimitError
 from sniff_test.releases import ReleasesError
 from sniff_test.report import ai as report_ai
-from sniff_test.report import ai_context
+from sniff_test.report import ai_context, context
 from sniff_test.report.json_report import sanitize_untrusted
 from sniff_test.scoring import VERDICTS
 from sniff_test.store import ScanRow, Store, StoreError
@@ -295,6 +295,7 @@ class Worker:
             job.message = "advisories unchanged"
             return
         new_id = self.store.save(new, inputs=inputs)
+        self.store.link_source(new_id, sid)  # the same code: only the advisories were asked again
         self.store.note_recheck(sid, f"changed:{new_id}")
         job.scan_ids = [sid, new_id]
         job.message = "advisories changed"
@@ -1022,6 +1023,7 @@ def render_scan(
     item_states: dict[str, tuple[str, str]] | None = None,
     open_item: str = "",
     rechecking: bool = False,
+    item_asked: dict[str, list[str]] | None = None,
 ) -> bytes:
     """`open_item`: the item whose AI sheet is open (`?open=`), kept open across refreshes.
     `rechecking`: an advisory re-check of this scan is queued or running (the page then
@@ -1038,6 +1040,7 @@ def render_scan(
     deep = None
     if ai_mode == "deep" and ai_entity and report.get("context"):
         answers = store.item_explanations(sid)
+        src_note = (report["context"].get("source") or {}) if store.source(sid) is None else None
 
         def deep(item_id: str) -> str:
             snip = ai_context.snippet_of(report, item_id)
@@ -1065,6 +1068,8 @@ def render_scan(
             return ui.deep_html(form, item_id=item_id, title=ai_context.title(report, item_id),
                                 answer=answers.get(item_id), state=state, error=err,
                                 snip=snip, entity=ai_entity,
+                                asking=(item_asked or {}).get(item_id),
+                                more=ui.more_note(snip, src_note),
                                 open_url=_scan_url(base, sid, item_id) if running else "",
                                 close_url=e(f"{base}/scan/{sid}") if running else "")  # fmt: skip
 
@@ -1667,6 +1672,7 @@ class Panel:
         self.ai_fn: AiFn = supervisor.ai_generate_data
         self._ai: dict[int, tuple[str, str]] = {}  # scan id -> (running|failed, error)
         self._ai_items: dict[tuple[int, str], tuple[str, str]] = {}  # (scan, item) -> same
+        self._ai_asked: dict[tuple[int, str], list[str]] = {}  # second round: what it asked for
         self._ai_lock = threading.Lock()
         self.ai_mode = "summary"
         self.watcher: watch.Watcher | None = None  # auto-sniff (set by `serve` in an add-on)
@@ -1747,23 +1753,57 @@ class Panel:
         def run() -> None:
             started = time.monotonic()
             try:
-                instructions, structure = ai_context.build_request(report, item_id)
+                # Round one: the stored snippet, and (integrations with stored source) a
+                # menu of names the AI may ask to see. Round two, inside the same click,
+                # only if it picked something from that menu. Never a third.
+                snip = ai_context.snippet_of(report, item_id) or {}
+                source = self.store.source(sid)
+                entries = ai_context.menu(snip, source)
+                instructions, structure = ai_context.build_request(report, item_id, entries)
                 data = self.ai_fn(entity, instructions, structure, ai_context.TASK_NAME)
                 accepted = ai_context.accept(report, item_id, data)
+                picked, refused = ai_context.needs(data, entries)
+                extra = (
+                    context.more(snip, (source or {}).get("files") or {},
+                                 [(m["file"], m["start"], m["end"]) for m in picked])
+                    if picked
+                    else None
+                )  # fmt: skip
+                if extra:
+                    asked = [f"{m['file']}: {m['name']}" for m in picked]
+                    with self._ai_lock:
+                        self._ai_asked[key] = asked
+                    try:
+                        full = context.merged(snip, extra)
+                        instructions, structure = ai_context.build_request(
+                            report, item_id, snip=full
+                        )
+                        again = self.ai_fn(entity, instructions, structure, ai_context.TASK_NAME)
+                        accepted = ai_context.accept(report, item_id, again, snip=full)
+                    except Exception as ex:  # the first answer stands; the page says why
+                        accepted["second_failed"] = str(ex)[:300]
+                    accepted["asked"] = asked
+                    accepted["more"] = extra
+                if refused:
+                    accepted["refused"] = refused
                 self.store.save_item_explanation(sid, item_id, entity, accepted)
-                print(f"explain @{sid} {item_id} ({time.monotonic() - started:.0f} s): "
+                print(f"explain @{sid} {item_id} ({time.monotonic() - started:.0f} s, "
+                      f"{2 if extra else 1} round(s), menu {len(entries)}, asked {len(picked)}, "
+                      f"refused {refused}): "
                       f"{len(accepted['claims'])} claim(s), "
                       f"{len(accepted['questions'])} question(s), {len(accepted['dropped'])} "
                       f"dropped {sorted(set(accepted['dropped']))}", file=sys.stderr,
                       flush=True)  # fmt: skip
                 with self._ai_lock:
                     self._ai_items.pop(key, None)
+                    self._ai_asked.pop(key, None)
             except Exception as ex:  # shown on the page; never affects the scan
                 print(f"explain @{sid} {item_id} failed after {time.monotonic() - started:.0f} s: "
                       f"{type(ex).__name__}: {ex}",
                       file=sys.stderr, flush=True)  # fmt: skip
                 with self._ai_lock:
                     self._ai_items[key] = ("failed", str(ex))
+                    self._ai_asked.pop(key, None)
 
         threading.Thread(target=run, name=f"explain-{sid}-{item_id}", daemon=True).start()
         return True
@@ -1771,6 +1811,11 @@ class Panel:
     def item_states(self, sid: int) -> dict[str, tuple[str, str]]:
         with self._ai_lock:
             return {item: st for (s, item), st in self._ai_items.items() if s == sid}
+
+    def item_asked(self, sid: int) -> dict[str, list[str]]:
+        """Items whose reading is in its second round, with what the AI asked to see."""
+        with self._ai_lock:
+            return {item: list(a) for (s, item), a in self._ai_asked.items() if s == sid}
 
     def catalog(self) -> tuple[list[supervisor.CatalogItem], str]:
         """The Marketplace catalog, cached for 10 minutes (one websocket round trip)."""
@@ -2037,6 +2082,7 @@ class Panel:
                             base, sid, report, panel.store, row, panel.token,
                             panel.ai_entity, state, err, choices, choices_err,
                             panel.ai_mode, panel.item_states(sid), open_item,
+                            item_asked=panel.item_asked(sid),
                             rechecking=any(
                                 j.kind == "recheck" and j.scan == sid
                                 and j.state in ("queued", "running", "waiting")

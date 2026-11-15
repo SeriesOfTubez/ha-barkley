@@ -60,6 +60,7 @@ class ScanResult:
     # The lockfiles a later advisory re-check needs (recheck.capture). Never in the report:
     # they go beside it in the store.
     inputs: dict[str, Any] | None = None
+    source: dict[str, Any] | None = None  # (0.11.0) sources.capture(); kept beside the scan
 
 
 def sanitize_untrusted(text: str | None, limit: int = _UNTRUSTED_MAX) -> str:
