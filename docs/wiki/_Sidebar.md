@@ -1,0 +1,16 @@
+**[Barkley](Home)**
+
+- [Installing and updating](Installing-and-updating)
+- [The list](The-list)
+- [An app's page](An-apps-page)
+- [Checks and scoring](Checks-and-scoring)
+- [Sniff before you install](Sniff-before-you-install)
+- [Update comparison](Update-comparison)
+- [Auto-sniff and notifications](Auto-sniff-and-notifications)
+- [Advisory re-checks](Advisory-re-checks)
+- [Addresses you trust](Addresses-you-trust)
+- [AI explanations](AI-explanations)
+- [Options](Options)
+- [Diagnostics and troubleshooting](Diagnostics-and-troubleshooting)
+- [Permissions and security](Permissions-and-security)
+- [FAQ](FAQ)
