@@ -1786,11 +1786,12 @@ class Panel:
                     accepted["asked"] = asked
                     accepted["more"] = extra
                 if refused:
-                    accepted["refused"] = refused
+                    accepted["refused"] = len(refused)
+                    accepted["refused_asks"] = refused
                 self.store.save_item_explanation(sid, item_id, entity, accepted)
                 print(f"explain @{sid} {item_id} ({time.monotonic() - started:.0f} s, "
                       f"{2 if extra else 1} round(s), menu {len(entries)}, asked {len(picked)}, "
-                      f"refused {refused}): "
+                      f"refused {len(refused)}{' ' + repr(refused) if refused else ''}): "
                       f"{len(accepted['claims'])} claim(s), "
                       f"{len(accepted['questions'])} question(s), {len(accepted['dropped'])} "
                       f"dropped {sorted(set(accepted['dropped']))}", file=sys.stderr,

@@ -1330,9 +1330,15 @@ def deep_html(
             )
         refused = int(answer.get("refused") or 0)
         if refused:
+            asks = [a for a in answer.get("refused_asks") or [] if isinstance(a, str)][:3]
+            named = (
+                ": " + ", ".join(f"<code>{e(a, 60)}</code>" for a in asks) + "." if asks else "."
+            )
+            one = refused == 1
             out.append(
-                f'<p class="tech">It also asked for {refused} thing{"s" if refused != 1 else ""} '
-                "that wasn't on Barkley's list; that was ignored.</p>"
+                f'<p class="tech">It also asked for {refused} thing{"" if one else "s"} that '
+                f"{'was' if one else 'were'}n't on Barkley's list, so "
+                f"{'it was' if one else 'they were'} ignored{named}</p>"
             )
         dropped = answer.get("dropped") or []
         if dropped:
