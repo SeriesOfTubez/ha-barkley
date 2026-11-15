@@ -105,7 +105,7 @@ def github_check(budget: RateLimit | None = None, fetch: bool = True) -> Check:
     if budget is None:
         return Check("GitHub API", True, "budget unknown (GitHub unreachable?)")
     when = time.strftime("%H:%M UTC", time.gmtime(budget.reset_at))
-    token = "with a token" if budget.authenticated else "no token: 60/hour, ~8 scans"
+    token = "with a token" if budget.authenticated else "no token: 60/hour, about 6 scans"
     return Check(
         "GitHub API",
         budget.remaining > 0,

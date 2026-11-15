@@ -997,8 +997,39 @@ def _where(fs: list[dict[str, Any]]) -> str:
     return shown + more + times
 
 
+def patch_html(patch: Any) -> str:
+    """What a monkeypatch finding replaces and whose code that is (report.context
+    .patch_fact: read from the app's imports during the scan, no AI). Names are the
+    scanned code's, so escaped."""
+    if not isinstance(patch, dict) or not patch.get("object"):
+        return ""
+    obj = str(patch["object"])
+    what = f"<code>{e(obj.rsplit('.', 1)[-1], 100)}</code>"
+    if patch.get("attr"):
+        what = f"<code>{e(patch['attr'], 100)}</code> of {what}"
+    text = f"{what}, which is part of {e(patch.get('origin'), 200)}"
+    if "." in obj:
+        text += f" (<code>{e(obj, 200)}</code>)"
+    text += "."
+    if patch.get("replacement"):
+        text += f" The replacement is this app's <code>{e(patch['replacement'], 100)}</code>"
+        at = patch.get("replacement_at")
+        if isinstance(at, list) and len(at) == 2:
+            text += f", defined at <code>{e(at[0], 200)}:{int(at[1])}</code>"
+        text += "."
+    return (
+        f"<dt>What it replaces</dt><dd>{text} "
+        '<span class="muted">Read from the code\'s imports by Barkley, not by AI.</span></dd>'
+    )
+
+
 def finding_html(
-    f: dict[str, Any], fs: list[dict[str, Any]], points: int, ai: str = "", deep: str = ""
+    f: dict[str, Any],
+    fs: list[dict[str, Any]],
+    points: int,
+    ai: str = "",
+    deep: str = "",
+    fact: str = "",
 ) -> str:
     ex = explain.explain(f["rule_id"])
     where = _where(fs)
@@ -1035,6 +1066,7 @@ def finding_html(
         f"<dt>What it means</dt><dd>{e(ex.means, 800)}</dd>"
         f"<dt>Should you worry?</dt><dd>{e(ex.worry, 600)}</dd>"
         + (f"<dt>Where we saw it</dt><dd>{where}</dd>" if where else "")
+        + fact
         + dep_html
         + ai_html
         + f'</dl>{deep}<div class="tech">{" · ".join(tech)}</div>{code}</div></div>'
@@ -1147,6 +1179,34 @@ def code_html(snip: dict[str, Any]) -> str:
 AI_BADGE = f'<span class="aib">{icon("sparkle", 12)} AI</span>'
 
 
+def more_note(snip: dict[str, Any], missing: dict[str, Any] | None) -> str:
+    """One sentence for the sheet on whether the AI can ask to see more code (0.11.0).
+    `missing`: None when the scan has stored source, else the report's `context.source`
+    note ({} for a scan from before 0.11.0)."""
+    if snip.get("lang") != "python" or (missing or {}).get("why") in ("cards", "no Python"):
+        return ""  # cards and non-Python files: never offered
+    if missing is None:
+        return (
+            " If the AI asks to see more, Barkley adds up to 150 lines of this app's code, "
+            "which the AI can only pick by name from a list Barkley offers, and asks once "
+            "more. Your one click covers both."
+        )
+    if missing.get("why") == "too big":
+        return (
+            " This app's Python is too big for Barkley to keep a copy (over 1 MB compressed, "
+            "or more than 3,000 files), so the AI can't ask to see more than these lines."
+        )
+    return (
+        " Barkley has no copy of this version's code (it keeps one for the installed "
+        "version and a waiting update, for scans made by 0.11.0 or later), so the AI can't "
+        "ask to see more than these lines."
+    )
+
+
+def _names(labels: list[Any]) -> str:
+    return ", ".join(f"<code>{e(x, 200)}</code>" for x in labels[:3])
+
+
 def deep_html(
     form: str,
     *,
@@ -1159,6 +1219,8 @@ def deep_html(
     entity: str,
     open_url: str = "",
     close_url: str = "",
+    asking: list[str] | None = None,
+    more: str = "",
 ) -> str:
     """One item's "Explain in context": a compact chip or button where the item is, and
     a full-width sheet (`#ai-<id>`, opened with CSS :target, no script) with the answer
@@ -1170,17 +1232,29 @@ def deep_html(
     Only the query (`?open=<id>`) tells the server which sheet is open, so a fragment-only
     Close kept `?open=` in the address and the next refresh reopened the sheet (the user's
     report, 2026-11-12), and a fragment-only open would stop the plain reload (a page at a
-    fragment never reloads)."""
+    fragment never reloads).
+    `asking`: while the second round runs, what the AI asked to see. `more`: more_note()."""
     from sniff_test.report.context import line_count
 
     mid = f"ai-{e(item_id, 40)}"
     to = open_url or f"#{mid}"
     lines = line_count(snip)
     nseg = len(snip.get("segments", []))
+    extra = (answer or {}).get("more") if isinstance((answer or {}).get("more"), dict) else None
+    added = line_count(extra) if extra else 0
     parts_txt = f", {nseg} parts" if nseg > 1 else ""
+    if added:
+        parts_txt += f", plus {added} it asked for"
     sent = (
         f"<details{'' if answer else ' open'}><summary>The code it reads ({lines} line"
-        f"{'s' if lines != 1 else ''}{parts_txt})</summary>{code_html(snip)}</details>"
+        f"{'s' if lines != 1 else ''}{parts_txt})</summary>{code_html(snip)}"
+        + (
+            f'<p class="small">Added because the AI asked to see '
+            f"{_names((answer or {}).get('asked') or [])}:</p>{code_html(extra)}"
+            if extra
+            else ""
+        )
+        + "</details>"
     )
     if state == "running":
         inline = (f'<a class="aichip" href="{to}">{icon("sparkle")} AI is reading the code… '
@@ -1189,7 +1263,14 @@ def deep_html(
             '<p class="small"><b>Reading the code…</b> This can take a few minutes, depending '
             "on your AI. You don't have to wait here: close this and carry on. The answer is "
             "saved, and this item's chip on the page changes to the AI's reading when it's "
-            "ready. While it works, this page refreshes by itself.</p>" + sent
+            "ready. While it works, this page refreshes by itself.</p>"
+            + (
+                f'<p class="small"><b>Second round.</b> The AI asked to see more code: '
+                f"{_names(asking)}. Barkley added it and asked again.</p>"
+                if asking
+                else ""
+            )
+            + sent
         )
     elif error:
         inline = f'<a class="aichip warn" href="{to}">{icon("sparkle")} The AI didn\'t answer</a>'
@@ -1203,7 +1284,7 @@ def deep_html(
         body = (
             f'<p class="small">Explain in context sends these {lines} lines of the app\'s own '
             f"code (public on GitHub, no Home Assistant data) to the AI behind "
-            f"<code>{e(entity, 120)}</code>. Nothing is sent until you click.</p>"
+            f"<code>{e(entity, 120)}</code>. Nothing is sent until you click.{more}</p>"
             + form.replace("{label}", f"{icon('sparkle', 16)} Explain in context")
             + sent
         )
@@ -1217,6 +1298,20 @@ def deep_html(
         inline = (f'<a class="aichip" href="{to}">{icon("sparkle")} AI\'s reading of the code: '
                   f"{summary}</a>")  # fmt: skip
         out = []
+        asked = answer.get("asked") or []
+        if asked and answer.get("second_failed"):
+            out.append(
+                f'<p class="small">The AI asked to see more code ({_names(asked)}). Barkley '
+                "added it and asked again, but the second answer didn't arrive "
+                f"({e(answer.get('second_failed'), 200)}), so this is its first reading, made "
+                "without that code.</p>"
+            )
+        elif asked:
+            out.append(
+                f'<p class="small">The AI asked to see more code before answering: '
+                f"{_names(asked)}. Barkley added it and asked again; this is the second "
+                "answer.</p>"
+            )
         if claims:
             out.append(
                 "<ul>"
@@ -1232,6 +1327,18 @@ def deep_html(
                     f"<li>{_ai_text(q['text'], 300)}{_cite(q['cites'])}</li>" for q in questions
                 )
                 + "</ul>"
+            )
+        refused = int(answer.get("refused") or 0)
+        if refused:
+            asks = [a for a in answer.get("refused_asks") or [] if isinstance(a, str)][:3]
+            named = (
+                ": " + ", ".join(f"<code>{e(a, 60)}</code>" for a in asks) + "." if asks else "."
+            )
+            one = refused == 1
+            out.append(
+                f'<p class="tech">It also asked for {refused} thing{"" if one else "s"} that '
+                f"{'was' if one else 'were'}n't on Barkley's list, so "
+                f"{'it was' if one else 'they were'} ignored{named}</p>"
             )
         dropped = answer.get("dropped") or []
         if dropped:
@@ -2195,6 +2302,10 @@ def render_app(
                     next((expl[x["id"]] for x in fs if x["id"] in expl), ""),
                     next((dfn(x["id"]) for x in fs if x["id"] in items), "")
                     + "".join(tfn(x) for x in fs),
+                    next(
+                        (patch_html(items[x["id"]].get("patch")) for x in fs if x["id"] in items),
+                        "",
+                    ),
                 )
                 for f, fs, p in groups
             )
@@ -2220,6 +2331,7 @@ def render_app(
                     0,
                     expl.get(f["id"], ""),
                     (dfn(f["id"]) if f["id"] in items else "") + tfn(f),
+                    patch_html((items.get(f["id"]) or {}).get("patch")),
                 )
                 for f in aside
             )

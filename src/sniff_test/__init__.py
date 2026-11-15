@@ -1,3 +1,3 @@
 """Barkley: a security scanner for Home Assistant Marketplace (HACS) items."""
 
-__version__ = "0.10.4"
+__version__ = "0.11.0"

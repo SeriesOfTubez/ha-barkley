@@ -13,7 +13,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.markup import escape
 
-from sniff_test import __version__, recheck, releases
+from sniff_test import __version__, recheck, releases, sources
 from sniff_test.deps import ha_env
 from sniff_test.deps.ha_env import valid_version
 from sniff_test.diff import diff as diff_reports
@@ -265,7 +265,7 @@ def _load_or_scan(
         return None
     report = to_dict(result)
     if store is not None:
-        sid = store.save(report, inputs=result.inputs)
+        sid = store.save(report, inputs=result.inputs, source=result.source)
         if not args.json:
             err.print(f"🐕 stored as scan #{sid}")
     return report
@@ -357,7 +357,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         result = scan(repo, ref=ref, exposure=Exposure(args.exposure), jobs=args.jobs,
                       ha_version=ha_fn())  # fmt: skip
         # the lockfiles for later advisory re-checks ride along; Store.save takes them out
-        return {**to_dict(result), recheck.KEY: result.inputs}
+        return {**to_dict(result), recheck.KEY: result.inputs, sources.KEY: result.source}
 
     allow = set(args.allow or [server.SUPERVISOR_IP])
     # The installed list needs HA (through the Supervisor); outside an add-on there's none.
@@ -486,7 +486,7 @@ def main(argv: list[str] | None = None) -> int:
 
     report = to_dict(result)
     if store is not None:
-        sid = store.save(report, inputs=result.inputs)
+        sid = store.save(report, inputs=result.inputs, source=result.source)
         if not args.json:
             err.print(f"🐕 stored as scan #{sid} in {escape(str(store.path))}")
     if args.output:

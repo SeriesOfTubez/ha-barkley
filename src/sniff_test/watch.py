@@ -906,4 +906,15 @@ class Watcher:
                 flush=True,
             )
         self.swept += n
+        self._drop_old_sources(items)
         return n
+
+    def _drop_old_sources(self, items: list[Installed]) -> None:
+        """(0.11.0) The stored code of an installed app is kept for the installed version
+        and a waiting update only; older versions' scans stay, their code goes. Scans of
+        apps that aren't installed keep theirs until the age-out above deletes them."""
+        keep = {it.repo.lower(): {it.installed, it.available} for it in items}
+        for sid, repo, ref in self.store.source_scans():
+            versions = keep.get((repo or "").lower())
+            if versions is not None and ref not in versions:
+                self.store.drop_source(sid)

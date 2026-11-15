@@ -8,21 +8,39 @@ repos that changed hands.
 ## How it works
 
 - Open **Barkley** in the sidebar (HA ingress; HA handles the login).
-- **Sniff it:** scan a repo at the release HACS would install, or at a tag.
-- **What would updating change?** Give the tag you have installed. The app scans the
-  release HACS would install now, reuses the stored scan of your installed tag (or
-  scans it), and shows what the update changes, most important first: new publishers,
-  new data flows, new hosts, new findings. The diff never changes a score.
-- **Installed through HACS:** the panel asks HACS what you have installed, with the
-  version you run and the one HACS would install now (it follows your "show beta"
-  switch). It leads with what needs a look (a checked update that brings a new
-  publisher or new findings, or a scan that isn't Good Boy), then updates you haven't
-  checked yet. **Check update** runs the update diff, reusing stored scans. Items that
-  are up to date fold into one line. The list is refreshed at most every 5 minutes.
-- **The list:** the counts at the top are filters (worth a look, no concerns, privacy
-  notes, updates). Switch between cards and a table; long lists are split into pages. A
-  status box at the top shows what's being sniffed, and the page reloads itself every
-  5 seconds while anything runs.
+- **What you have installed:** the first page asks the Marketplace what you have
+  installed, with the version you run and the one the Marketplace would install now. It
+  leads with what needs a look (a checked update that brings something important, or a
+  scan that scored under 90 or didn't finish), then updates you haven't checked yet,
+  then checked updates that change nothing important. Items that are up to date and
+  fine fold into one line. The installed list is read again at most every 5 minutes.
+- **Sniff it / Sniff again** on an app scans the version you have installed.
+  **Check update** scans the offered version and shows what the update would change,
+  most important first: new publishers, new data flows, new hosts, new findings. Stored
+  scans are reused on both sides, and the comparison never changes a score.
+- **One button for the rest:** "Sniff the N not yet sniffed" scans every installed app
+  that has no scan by this version of Barkley (after an update of Barkley, that is all
+  of them). "Sniff the N unfinished again" repeats every scan that didn't finish. Apps
+  already queued or running are skipped.
+- **The list:** the counts at the top are filters (worth a look, no concerns found,
+  with privacy notes, updates waiting, not checked). Switch between cards and a table;
+  long lists are split into pages. A status box at the top shows what's being sniffed,
+  and the page reloads itself every 5 seconds while anything runs. A button brings you
+  back to the page, filter and view you clicked it on.
+- **Check any repository** (further down the first page): sniff a repository by name, at
+  the release the Marketplace would install or at a tag you give. Its second form,
+  **What would updating change?**, takes a repository and the tag you have installed
+  and compares that tag with the release the Marketplace would install now.
+- **Addresses you trust:** a few findings are only about where an address points (an
+  internet address written into the code as a number, or an address in a code library
+  that an automatic check finds suspicious-looking). Such a finding offers **Trust for
+  this app** and **Trust for every app**. The finding stays listed, under "Findings
+  about addresses you trust", and stops costing points until the address changes;
+  Barkley's own score is always shown beside yours, and the stored scan is never
+  changed. Findings about what an app sends, and paste sites, tunnels and chat
+  webhooks, can't be trusted away. Only your own clicks create a trust mark; no list
+  and no AI does. **Stop trusting** on the app's page, or the "Addresses you trust"
+  page (linked at the foot of the first page), undoes it.
 - **Find an app to sniff before you install it:** search the Marketplace catalog.
   **Other versions** lists the 10 newest releases, betas included, so you can sniff the
   exact version you plan to pick.
@@ -124,11 +142,26 @@ in the request.
 
 Each finding, each port, and each address the app's docs don't explain gets an
 **Explain in context** button. During the scan, Barkley keeps the code around it:
-the function it's in, the functions that use a flagged address, and one step into the
-functions those call (in the same file or a sibling module of the app). That is at most
-150 lines, and you can open it under "The code it reads" before you click. When you
+the function it's in, the functions that use a flagged address, the functions and
+classes of the app that it calls or refers to (in the same file or a sibling module),
+starting with the ones named on the flagged line, and the import lines and constants
+behind the names used. That is at most 150 lines of code plus 40 of imports and
+constants, and you can open it under "The code it reads" before you click. When you
 click, that code and the question go to your AI; nothing is sent before. It is the
 app's own public code, never anything from your Home Assistant.
+
+For integrations the AI may ask once to see more of the app's code. It can only pick
+from a list of names Barkley offers (at most three picks; never a file path, never its
+own words), Barkley adds that code (at most 150 more lines) and asks again. Your one
+click covers both requests; the sheet says what was asked for and shows the added code.
+For this, Barkley keeps a compressed copy of an integration's Python files in its
+store: one per version, for the installed version and a waiting update, never over 1 MB
+per app (a bigger app, or one with more than 3,000 Python files, gets no copy, and the
+sheet says the AI can't ask for more).
+
+For the finding "Changes how Home Assistant itself works" the page also says what is
+replaced and whose code that is ("What it replaces"). Barkley reads that from the
+code's import lines; no AI is involved.
 
 The AI answers in short statements, and each must cite the lines it rests on.
 Barkley shows a statement only if the cited lines are in the code it sent, they are
@@ -200,6 +233,8 @@ app's page like any other app's.
    1 GB of disk), then start it and open it from the sidebar.
 
 To update, stage again, stream the archive again, then use Rebuild on the app's page.
+When the version in `config.yaml` changed, Home Assistant refuses Rebuild: reload the
+store (`ha store reload`) and use Update instead.
 
 ## Building the image elsewhere
 

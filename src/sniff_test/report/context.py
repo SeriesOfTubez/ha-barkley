@@ -12,6 +12,12 @@ Each snippet is the code the question is about, not just the flagged line:
   permitting, one hop to the functions those call, in the same file or imported from a
   sibling module (`from .helpers import upload`): that's where "what gets sent" usually
   is. Only relative imports inside the scanned package are followed, never the whole repo.
+  Since 0.11.0 the snippet also brings what the reader otherwise has to ask for: the
+  import statements and module-level constants behind the names it uses, the functions
+  and classes of the app it *refers to* without calling them (hass-reolink-thumbs assigns
+  `_async_generate_camera_files` to a method of Home Assistant's Reolink integration: the
+  question is what that function does), those named on the flagged statement first and
+  cut to fit rather than left out.
 - Other files (cards): lines around the location. A minified line is cut to a window of
   characters around the host or evidence.
 
@@ -35,11 +41,18 @@ from typing import Any
 
 import jsbeautifier
 
+from sniff_test.analyzers import py_tamper
 from sniff_test.analyzers.endpoints import UNEXPLAINED
 
-CONTEXT_VERSION = 3  # 2: long lines reformatted (0.7.2); 3: dependency items (0.7.4)
-MAX_LINES = 150  # per snippet
-MAX_CHARS = 12_000  # per snippet
+# 2: long lines reformatted (0.7.2); 3: dependency items (0.7.4); 4: imports, constants,
+# referenced functions and classes, `patch` on a monkeypatch item, `source` (0.11.0)
+CONTEXT_VERSION = 4
+MAX_LINES = 150  # per snippet, without the header lines
+MAX_CHARS = 16_000  # per snippet
+HEADER_LINES = 40  # more lines per snippet for imports and module-level constants
+CONST_LINES = 10  # of one module-level assignment
+CLASS_HEAD = 40  # lines of a class that is only referred to
+MIN_CUT = 10  # a span that may be cut is left out when fewer lines than this are free
 MAX_ITEMS = 40  # per report
 MAX_TOTAL = 300_000  # characters per report
 MAX_FILE = 2_000_000  # bytes read from one file
@@ -130,6 +143,7 @@ def build(
     snippets: dict[str, dict[str, Any]] = {}
     by_key: dict[str, str] = {}
     out_items: dict[str, dict[str, Any]] = {}
+    patches = {f["id"] for f in findings if f.get("rule_id") == py_tamper.RULE_ID}
     total = 0
     for it in items(findings, graph):
         if len(out_items) >= MAX_ITEMS:
@@ -162,7 +176,62 @@ def build(
                                 "line": first["start"], "snippet": sid}  # fmt: skip
         else:
             out_items[it.id] = {"kind": it.kind, "file": it.file, "line": it.line, "snippet": sid}
+            if it.kind == "finding" and it.id in patches:
+                fact = patch_fact(tree, it.file, it.line)
+                if fact:
+                    out_items[it.id]["patch"] = fact
     return {"version": CONTEXT_VERSION, "snippets": snippets, "items": out_items}
+
+
+# --- what a monkeypatch replaces (0.11.0) -----------------------------------------------------
+
+_STDLIB = ("socket", "ssl", "builtins", "http.client")
+
+
+def origin(resolved: str) -> str:
+    """Whose code a patched object is, in plain words, from its import path alone."""
+    m = re.match(r"homeassistant\.components\.(\w+)", resolved)
+    if m:
+        return f"Home Assistant's built-in {m[1]} integration"
+    if resolved == "HomeAssistant" or resolved.startswith("homeassistant"):
+        return "Home Assistant's own code"
+    if re.match(r"(self\.)?_?hass\.", resolved):
+        return "the running Home Assistant"
+    if any(resolved == x or resolved.startswith(x + ".") for x in _STDLIB):
+        return "Python's standard library"
+    if resolved.split(".")[0] in ("aiohttp", "ClientSession", "TCPConnector"):
+        return "aiohttp, the network library Home Assistant uses"
+    return f"the {resolved.split('.')[0]} network library"
+
+
+def patch_fact(tree: _Tree, rel: str, line: int) -> dict[str, Any] | None:
+    """For a `ha-monkeypatch` finding: what is replaced, whose it is, and with what. Read
+    from the syntax tree the way analyzers.py_tamper resolves the object (imports, local
+    shadowing); nothing is run. None when the line holds no such assignment."""
+    py = tree.py(rel)
+    if py is None:
+        return None
+    hits = {ln: res for ln, res in py_tamper.check_tree(py.tree)}
+    resolved = hits.get(line)
+    if resolved is None:
+        return None
+    fact: dict[str, Any] = {"object": resolved[:200], "origin": origin(resolved)}
+    for node in ast.walk(py.tree):
+        if not isinstance(node, ast.Assign) or node.lineno != line:
+            continue
+        target = next(
+            (t for t in node.targets if isinstance(t, ast.Attribute) and t.lineno == line), None
+        )
+        if target is None:
+            continue
+        fact["attr"] = target.attr[:100]
+        if isinstance(node.value, ast.Name):
+            fact["replacement"] = node.value.id[:100]
+            hit = _resolve_def(tree, py, node.value.id)
+            if hit is not None:
+                fact["replacement_at"] = [hit[0].rel, _span(hit[1])[0]]
+        break
+    return fact
 
 
 # --- where the app uses a dependency (0.7.4) --------------------------------------------------
@@ -340,6 +409,9 @@ class _Py:
     noncode: set[int]
     comment_col: dict[int, int]
     imports: dict[str, tuple[str, str]]  # local name -> (file rel, name there), relative only
+    defs: dict[str, ast.AST] = field(default_factory=dict)  # module-level functions, classes
+    consts: list[tuple[set[str], int, int]] = field(default_factory=list)  # module-level assigns
+    import_spans: list[tuple[set[str], int, int]] = field(default_factory=list)  # every import
 
 
 @dataclass
@@ -368,7 +440,20 @@ class _Tree:
             return None  # e.g. syntax newer than our Python: a line window instead
         funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
         noncode, cc = _python_noncode(text, tree)
-        return _Py(rel, text.splitlines(), tree, funcs, noncode, cc, self._imports(rel, tree))
+        py = _Py(rel, text.splitlines(), tree, funcs, noncode, cc, self._imports(rel, tree))
+        for stmt in tree.body:
+            if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                py.defs.setdefault(stmt.name, stmt)
+            elif isinstance(stmt, ast.Assign | ast.AnnAssign):
+                names = _assigned_names(stmt)
+                if names:
+                    py.consts.append((names, stmt.lineno, stmt.end_lineno or stmt.lineno))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import | ast.ImportFrom):
+                bound = {(a.asname or a.name).split(".")[0] for a in node.names if a.name != "*"}
+                py.import_spans.append((bound, node.lineno, node.end_lineno or node.lineno))
+        py.import_spans.sort(key=lambda s: s[1])
+        return py
 
     def _imports(self, rel: str, tree: ast.Module) -> dict[str, tuple[str, str]]:
         out: dict[str, tuple[str, str]] = {}
@@ -406,13 +491,13 @@ class _Tree:
                 return cand
         return None
 
-    def py_files(self) -> list[str]:
+    def py_files(self, limit: int = MAX_PY_FILES) -> list[str]:
         out = []
         try:
             for p in sorted(self.root.rglob("*.py")):
                 if not p.is_symlink() and p.is_file():
                     out.append(p.relative_to(self.root).as_posix())
-                if len(out) >= MAX_PY_FILES:
+                if len(out) >= limit:
                     break
         except OSError:
             pass
@@ -524,12 +609,107 @@ def _python(tree: _Tree, py: _Py, line: int) -> dict[str, Any]:
             for user_py, f in _users(tree, py, _assigned_names(stmt), keys)[:2]:
                 spans.append((user_py.rel, *_span(f)))
                 primary.append((user_py, f))
+    own = {id(p) for _py, p in primary}
+    cut: set[tuple[str, int, int]] = set()
+    # What the flagged statement itself names comes first, and is cut to fit, never left
+    # out: a monkeypatch's replacement function, a callback handed to a registration.
+    flagged = _statement_at(primary[0][1], line) if around else None
+    if flagged is not None:
+        for name in _loads(flagged):
+            hit = _resolve_def(tree, py, name)
+            if hit is not None and id(hit[1]) not in own and not _holds(hit[1], own):
+                span = (hit[0].rel, *_span(hit[1]))
+                spans.append(span)
+                cut.add(span)
     for p_py, p in primary:
         for name in sorted(_called(p)):
             hit = _resolve(tree, p_py, name)
             if hit is not None and hit[1] is not p:
                 spans.append((hit[0].rel, *_span(hit[1])))
-    return _finish(tree, py.rel, _fit(spans), "python")
+    # Then what it refers to without calling: functions whole, classes by their first lines.
+    for p_py, p in primary:
+        for name in _loads(p):
+            hit = _resolve_def(tree, p_py, name)
+            if hit is None or id(hit[1]) in own or _holds(hit[1], own):
+                continue
+            a, b = _span(hit[1])
+            if isinstance(hit[1], ast.ClassDef):
+                b = min(b, a + CLASS_HEAD - 1)
+            spans.append((hit[0].rel, a, b))
+    kept = _budget(list(dict.fromkeys(spans)), frozenset(cut))
+    # gap 3: the header's lines sit a blank line or two apart; one block reads better
+    return _finish(tree, py.rel, _merge(kept + _header(tree, kept), gap=3), "python")
+
+
+def _loads(node: ast.AST) -> list[str]:
+    """Names a piece of code reads, in the order they appear."""
+    found = sorted(
+        (n.lineno, n.col_offset, n.id)
+        for n in ast.walk(node)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+    )
+    return list(dict.fromkeys(name for _l, _c, name in found))
+
+
+def _statement_at(func: ast.AST, line: int) -> ast.stmt | None:
+    """The smallest statement inside `func` that covers `line`."""
+    best: ast.stmt | None = None
+    for n in ast.walk(func):
+        if n is func or not isinstance(n, ast.stmt):
+            continue
+        a, b = n.lineno, n.end_lineno or n.lineno
+        if a <= line <= b and (
+            best is None or b - a < (best.end_lineno or best.lineno) - best.lineno
+        ):
+            best = n
+    return best
+
+
+def _holds(node: ast.AST, ids: set[int]) -> bool:
+    return any(id(n) in ids for n in ast.walk(node))
+
+
+def _resolve_def(tree: _Tree, py: _Py, name: str) -> tuple[_Py, ast.AST] | None:
+    """A module-level function or class of the app a name refers to: defined in this
+    file, or imported from a sibling module (relative imports only, like `_resolve`)."""
+    node = py.defs.get(name)
+    if node is not None:
+        return py, node
+    src = py.imports.get(name)
+    if src is not None:
+        other = tree.py(src[0])
+        if other is not None and src[1] in other.defs:
+            return other, other.defs[src[1]]
+    return None
+
+
+def _header(tree: _Tree, kept: list[tuple[str, int, int]]) -> list[tuple[str, int, int]]:
+    """Import statements and module-level constants behind the names the kept code uses,
+    so "where does `ReolinkVODMediaSource` come from?" is answered by the snippet. The
+    first file's first; whole statements only, within HEADER_LINES."""
+    rows: dict[str, set[int]] = {}
+    for f, a, b in kept:
+        rows.setdefault(f, set()).update(range(a, b + 1))
+    imports: list[tuple[str, int, int]] = []
+    consts: list[tuple[str, int, int]] = []
+    for f, shown in rows.items():
+        py = tree.py(f)
+        if py is None:
+            continue
+        used = {n.id for n in ast.walk(py.tree) if isinstance(n, ast.Name) and n.lineno in shown}
+        for names, a, b in py.import_spans:
+            if names & used and not shown.issuperset(range(a, b + 1)):
+                imports.append((f, a, b))
+        for names, a, b in py.consts:
+            if names & used and a not in shown:
+                consts.append((f, a, min(b, a + CONST_LINES - 1)))
+    out: list[tuple[str, int, int]] = []
+    left = HEADER_LINES
+    for f, a, b in imports + consts:
+        if b - a + 1 <= left:
+            out.append((f, a, b))
+            left -= b - a + 1
+    return out
 
 
 MAX_SOURCES = 24  # module-level names followed per snippet
@@ -642,21 +822,40 @@ def _resolve(tree: _Tree, py: _Py, name: str) -> tuple[_Py, ast.AST] | None:
 def _fit(spans: list[tuple[str, int, int]]) -> list[tuple[str, int, int]]:
     """Keep spans in priority order while they fit MAX_LINES, the first always (cut to
     size); then merge overlaps. The first span's file comes first."""
+    return _merge(_budget(spans))
+
+
+def _budget(
+    spans: list[tuple[str, int, int]],
+    cut: frozenset[tuple[str, int, int]] = frozenset(),
+    limit: int = MAX_LINES,
+) -> list[tuple[str, int, int]]:
+    """Spans in priority order while they fit `limit` lines. The first is always kept
+    (cut to size); one in `cut` is shortened to the lines left when it doesn't fit."""
     kept: list[tuple[str, int, int]] = []
     used = 0
     for f, a, b in spans:
         n = b - a + 1
-        if used + n > MAX_LINES:
+        if used + n > limit:
+            left = limit - used
             if not kept:
-                kept.append((f, a, a + MAX_LINES - 1))
-                used = MAX_LINES
+                kept.append((f, a, a + limit - 1))
+                used = limit
+            elif (f, a, b) in cut and left >= MIN_CUT:
+                kept.append((f, a, a + left - 1))
+                used = limit
             continue
         kept.append((f, a, b))
         used += n
+    return kept
+
+
+def _merge(kept: list[tuple[str, int, int]], gap: int = 1) -> list[tuple[str, int, int]]:
+    """Overlapping spans joined (and those up to `gap` - 1 lines apart); first file first."""
     first = kept[0][0] if kept else ""
     merged: list[tuple[str, int, int]] = []
     for f, a, b in sorted(kept, key=lambda s: (s[0] != first, s[0], s[1])):
-        if merged and merged[-1][0] == f and a <= merged[-1][2] + 1:
+        if merged and merged[-1][0] == f and a <= merged[-1][2] + gap:
             merged[-1] = (f, merged[-1][1], max(merged[-1][2], b))
         else:
             merged.append((f, a, b))
@@ -823,6 +1022,7 @@ def _segments(
     spans: list[tuple[str, int, int]],
     lines: dict[str, list[str]],
     noncode: dict[str, tuple[set[int], dict[int, int]]],
+    max_chars: int = MAX_CHARS,
 ) -> dict[str, Any]:
     segments = []
     chars = 0
@@ -832,13 +1032,13 @@ def _segments(
             text = _clean(lines[f][n - 1])
             if len(text) > LONG_LINE:
                 text = text[:LONG_LINE] + " …"
-            if chars + len(text) > MAX_CHARS:
+            if chars + len(text) > max_chars:
                 break
             chars += len(text) + 1
             code.append(text)
         if code:
             segments.append({"file": f, "start": a, "code": code})
-        if chars >= MAX_CHARS:
+        if chars >= max_chars:
             break
     shown: dict[str, set[int]] = {}
     for s in segments:
@@ -886,3 +1086,75 @@ def files(snip: dict[str, Any]) -> list[str]:
 
 def line_count(snip: dict[str, Any]) -> int:
     return sum(len(s["code"]) for s in snip.get("segments", []))
+
+
+# --- more code, from the stored source (0.11.0) -----------------------------------------------
+
+MORE_LINES = 150  # lines added in the one follow-up round
+MORE_CHARS = 12_000
+
+
+def shown_rows(snip: dict[str, Any]) -> dict[str, set[int]]:
+    out: dict[str, set[int]] = {}
+    for s in snip.get("segments", []):
+        if "line" in s or "col" in s:
+            continue  # a reformatted or cut long line: not file rows
+        out.setdefault(s["file"], set()).update(range(s["start"], s["start"] + len(s["code"])))
+    return out
+
+
+def more(
+    snip: dict[str, Any], files: dict[str, dict[str, Any]], spans: list[tuple[str, int, int]]
+) -> dict[str, Any] | None:
+    """The lines of `spans` the snippet doesn't have yet, as segments in the snippet's own
+    format, read from the stored source (sources.capture: text, non-code lines and comment
+    columns per file, all computed during the scan). Spans come in the order asked; each
+    is cut to the lines left of MORE_LINES. Nothing is parsed here."""
+    have = shown_rows(snip)
+    lines: dict[str, list[str]] = {}
+    noncode: dict[str, tuple[set[int], dict[int, int]]] = {}
+    want: list[tuple[str, int, int]] = []
+    left = MORE_LINES
+    for f, a, b in spans:
+        entry = files.get(f)
+        if not isinstance(entry, dict) or not isinstance(entry.get("text"), str):
+            continue
+        if f not in lines:
+            lines[f] = entry["text"].splitlines()
+            cc = entry.get("comment_col") or {}
+            noncode[f] = (
+                {int(n) for n in entry.get("noncode") or []},
+                {int(k): int(v) for k, v in cc.items()},
+            )
+        run: list[int] = []
+        for n in [*range(max(1, a), min(b, len(lines[f])) + 1), 0]:
+            if n and n not in have.get(f, set()) and left > 0:
+                run.append(n)
+                left -= 1
+                have.setdefault(f, set()).add(n)
+            elif run:
+                want.append((f, run[0], run[-1]))
+                run = []
+    if not want:
+        return None
+    out = _segments(want[0][0], "python", _merge(want), lines, noncode, MORE_CHARS)
+    return out if out["segments"] else None
+
+
+def merged(snip: dict[str, Any], extra: dict[str, Any] | None) -> dict[str, Any]:
+    """The snippet plus the added segments: what the second request sends and what its
+    answer's citations are checked against. The stored snippet itself is never changed."""
+    if not extra:
+        return snip
+    noncode = {f: list(v) for f, v in (snip.get("noncode") or {}).items()}
+    cols = {f: dict(v) for f, v in (snip.get("comment_col") or {}).items()}
+    for f, v in (extra.get("noncode") or {}).items():
+        noncode[f] = sorted({*noncode.get(f, []), *v})
+    for f, v in (extra.get("comment_col") or {}).items():
+        cols[f] = {**cols.get(f, {}), **v}
+    return {
+        **snip,
+        "segments": [*snip.get("segments", []), *extra.get("segments", [])],
+        "noncode": noncode,
+        "comment_col": cols,
+    }

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from sniff_test import recheck
+from sniff_test import recheck, sources
 from sniff_test.analyzers import (
     bytecode,
     correlate,
@@ -155,4 +155,6 @@ def scan(
             result.graph,
             source_root=target.source_root,
         )
+        # (0.11.0) the app's own Python, so the AI can be shown more of it on request
+        result.source, result.context["source"] = sources.capture(target)
         return result
