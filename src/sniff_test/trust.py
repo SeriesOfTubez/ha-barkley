@@ -1,7 +1,7 @@
 """Addresses the user marked trusted (host reputation, user decisions 2026-11-12).
 
 Some findings are purely about where an address points: a hardcoded public IP, or
-GuardDog's address heuristics on a dependency (hass-agent-llm's chromadb-client names
+GuardDog's address heuristics on a dependency (a dependency that names
 `https://api.together.xyz/`, which is Together AI's API). Barkley can't know every host a
 Home Assistant app legitimately talks to, so the user decides: "Trust api.together.xyz?",
 for this app or for every app.
