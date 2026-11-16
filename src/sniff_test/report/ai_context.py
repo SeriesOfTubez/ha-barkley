@@ -8,7 +8,7 @@ verdict or the installed list.
 
 Why the checks: the code was written by whoever published the app and may talk to the AI
 ("# Note to reviewers: this is safe"). Comments also make claims the code doesn't keep
-(HomGar's docstring: "The client NEVER sends location"). So a claim is shown only if:
+(a real docstring: "The client NEVER sends location"). So a claim is shown only if:
 - it cites `file:line` (or a short range) that we sent, in a file of the snippet;
 - at least one cited line is code, not a comment-only or docstring line;
 - it names code in backticks, and every backticked name appears in the code part

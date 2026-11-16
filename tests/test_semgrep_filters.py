@@ -28,7 +28,7 @@ def test_monkeypatch_on_a_rebound_local_name_is_dropped(tmp_path):
     (tmp_path / "cf.py").write_text(SRC)
     trees: dict = {}
     drop = semgrep._only_rebinds_names
-    assert drop(_f(6), tmp_path, trees)  # Bambu Lab v2.3.0's shape
+    assert drop(_f(6), tmp_path, trees)  # the shape seen in a real integration
     assert drop(_f(7), tmp_path, trees)  # tuple / starred names
     assert not drop(_f(8), tmp_path, trees)  # chained: also patches homeassistant.helpers
     assert not drop(_f(9), tmp_path, trees)  # setattr is never dropped
@@ -68,7 +68,7 @@ def test_semgrep_still_matches_the_shape_we_filter(tmp_path):
 def test_raw_fstring_beside_new_syntax_no_longer_hides_a_file(tmp_path):
     """Semgrep 1.181 failed on any file with both an `rf"..."` string and Python 3.12
     syntax (a `type` statement, `def g[T]`): "Syntax error", no rule ran on the file
-    (Spook v5.11.1's action_extraction.py and template_extraction.py). Fixed upstream in
+    (two files of a real integration). Fixed upstream in
     1.183; the image ships 1.185. Two harmless lines must never hide a file again."""
     import json
     import subprocess

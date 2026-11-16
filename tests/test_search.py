@@ -9,13 +9,13 @@ from sniff_test import server, supervisor
 from sniff_test.store import Store
 
 RAW = [
-    {"full_name": "greghesp/ha-bambulab", "category": "integration", "name": "Bambu Lab",
-     "description": "Bambu Lab printers", "stars": 900, "downloads": 50000, "installed": True},
+    {"full_name": "acme/printer-hub", "category": "integration", "name": "Printer Hub",
+     "description": "A hub for printers", "stars": 900, "downloads": 50000, "installed": True},
     {"full_name": "acme/printer-card", "category": "plugin", "name": "Printer Card",
      "description": f"Shows a printer {HOSTILE}", "stars": 5, "downloads": 10, "installed": False},
-    {"full_name": "acme/bambu-extras", "category": "integration", "name": "Extras",
-     "description": "Bambu add-ons", "stars": 1, "downloads": 1, "topics": ["bambu"]},
-    {"full_name": "acme/theme", "category": "theme", "name": "Bambu Theme"},  # not scannable
+    {"full_name": "acme/hub-extras", "category": "integration", "name": "Extras",
+     "description": "Hub add-ons", "stars": 1, "downloads": 1, "topics": ["hub"]},
+    {"full_name": "acme/theme", "category": "theme", "name": "Hub Theme"},  # not scannable
     {"full_name": "../../etc", "category": "integration", "name": "Bad"},  # invalid repo
 ]  # fmt: skip
 
@@ -23,20 +23,20 @@ RAW = [
 def test_catalog_keeps_only_scannable_valid_repos():
     items = supervisor.parse_catalog(RAW)
     assert [i.repo for i in items] == [
-        "greghesp/ha-bambulab", "acme/printer-card", "acme/bambu-extras"
+        "acme/printer-hub", "acme/printer-card", "acme/hub-extras"
     ]  # fmt: skip
     assert items[1].kind == "card" and not items[1].installed
 
 
 def test_search_ranks_name_over_description():
     items = supervisor.parse_catalog(RAW)
-    assert [i.repo for i in supervisor.search(items, "bambu")] == [
-        "greghesp/ha-bambulab", "acme/bambu-extras"
+    assert [i.repo for i in supervisor.search(items, "hub")] == [
+        "acme/printer-hub", "acme/hub-extras"
     ]  # fmt: skip
     assert [i.repo for i in supervisor.search(items, "printer", kind="card")] == [
         "acme/printer-card"
     ]
-    assert supervisor.search(items, "bambu nothing") == []
+    assert supervisor.search(items, "hub nothing") == []
     assert supervisor.search(items, "   ") == []
 
 

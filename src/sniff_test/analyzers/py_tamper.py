@@ -12,8 +12,8 @@ annotated targets, and `setattr(homeassistant, ...)`, but not
 This walks every store-context attribute and every `setattr(obj, ...)` call, resolves the
 object's first name through the file's imports, and matches the rule's own object regex.
 A name the enclosing function rebinds (a parameter or a local assignment) is that local
-object, not the import, the same scoping Python uses (the Bambu Lab v2.3.0 false
-positive was Semgrep ignoring that). Lines Semgrep already flagged are skipped.
+object, not the import, the same scoping Python uses (a false positive on a real
+integration was Semgrep ignoring that). Lines Semgrep already flagged are skipped.
 """
 
 from __future__ import annotations

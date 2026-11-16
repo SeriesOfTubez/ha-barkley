@@ -260,13 +260,13 @@ def test_a_claim_may_name_the_function_it_cites_the_body_of(tmp_path):
 
 
 def test_follows_derived_constants_and_own_absolute_imports(tmp_path):
-    """Daikin One's shape: BASE -> LOGIN = urljoin(BASE, …), imported absolutely."""
+    """A real shape: BASE -> LOGIN = urljoin(BASE, …), imported absolutely."""
     root = _pkg(
-        tmp_path / "custom_components" / "daikinone",
+        tmp_path / "custom_components" / "climateone",
         {
             "client/wire.py": 'BASE = "https://api.example.invalid"\n'
             'LOGIN = urljoin(BASE, "/login")\n',
-            "client/transport.py": "from custom_components.daikinone.client.wire import LOGIN\n"
+            "client/transport.py": "from custom_components.climateone.client.wire import LOGIN\n"
             "\n\nasync def login(s):\n    return await s.post(LOGIN)\n",
             "other.py": "from custom_components.someone_else.wire import BASE\n"
             "\n\ndef nope():\n    return BASE\n",
@@ -278,7 +278,7 @@ def test_follows_derived_constants_and_own_absolute_imports(tmp_path):
 
 
 def test_attribute_derived_names_follow_only_the_flagged_keyword(tmp_path):
-    """EG4's shape: BRAND = Config(base_url="…"); DOMAIN = BRAND.domain is everywhere."""
+    """A real shape: BRAND = Config(base_url="…"); DOMAIN = BRAND.domain is everywhere."""
     root = _pkg(
         tmp_path,
         {

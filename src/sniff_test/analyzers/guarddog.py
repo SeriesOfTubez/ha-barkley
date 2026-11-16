@@ -16,8 +16,9 @@ threat rules still fire at full severity in case a popular package is hijacked.
 
 Host reputation (0.9.0, user decision 2026-11-12): `threat-network-exfiltration` and
 `threat-network-outbound-shady-links` fire on how an address looks (an ending such as
-.xyz, a named service, a public IP), not on a data flow. chromadb-client names
-`https://api.together.xyz/v1/embeddings`, Together AI's API, and that alone is a high
+.xyz, a named service, a public IP), not on a data flow. A dependency that names
+`https://api.together.xyz/v1/embeddings`, Together AI's API, gets a high finding for
+that alone.
 finding. The finding stays as it is; when every address behind it can be read with
 certainty (`_addresses`), the finding carries them, and the panel lets the user mark
 them trusted. 0.8.0 lowered such findings by itself from a shipped list of known

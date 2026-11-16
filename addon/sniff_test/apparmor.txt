@@ -21,8 +21,8 @@
 #   proxy, and the ingress panel on 8099; UDP and netlink for DNS. No raw sockets.
 # - No capabilities, no mount, no ptrace.
 #
-# Grounded in an strace of doctor, the four fixtures and two real scans (Bambu Lab
-# v2.3.0, Mushroom v5.2.3) in the arm64 image on 2026-11-11, then one logging-only run
+# Grounded in an strace of doctor, the four fixtures and two real scans (an
+# integration and a card) in the arm64 image on 2026-11-11, then one logging-only run
 # of 0.7.7 on the user's HA OS box (Diagnostics, 16 re-sniffs, two sniffs from search, a
 # test notification, Explain in context): 9,304 would-be denials, all of them reads, in
 # three groups, each allowed below with its cause. 0.7.8 enforces. HA OS 18.4 runs

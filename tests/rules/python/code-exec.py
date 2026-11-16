@@ -73,7 +73,7 @@ def own_package(module):
     return import_module(f"{__package__}.{module}")
 
 
-# (M6) Text that mentions pip install can't run it (HomGar v3.1.2, EG4 v3.5.0).
+# (M6) Text that mentions pip install can't run it (seen in two real integrations).
 def needs_paho():
     # ok: py-runtime-pip
     raise RuntimeError("paho-mqtt required: pip install paho-mqtt>=1.6.0")

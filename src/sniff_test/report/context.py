@@ -6,17 +6,17 @@ Python is parsed with `ast` and `tokenize`; nothing is ever run or imported.
 
 Each snippet is the code the question is about, not just the flagged line:
 - Python: the enclosing function. A module-level line brings the functions that use the
-  names it assigns: in the same file (HomGar's `TELEMETRY_URL = "https://…/ping"` at
-  `telemetry.py:36` brings `async_maybe_ping`, which posts to it), else in files that
+  names it assigns: in the same file (`TELEMETRY_URL = "https://…/ping"` in a
+  `telemetry.py` brings `async_maybe_ping`, which posts to it), else in files that
   import the name with a relative import (`from .const import TELEMETRY`). Then, budget
   permitting, one hop to the functions those call, in the same file or imported from a
   sibling module (`from .helpers import upload`): that's where "what gets sent" usually
   is. Only relative imports inside the scanned package are followed, never the whole repo.
   Since 0.11.0 the snippet also brings what the reader otherwise has to ask for: the
   import statements and module-level constants behind the names it uses, the functions
-  and classes of the app it *refers to* without calling them (hass-reolink-thumbs assigns
-  `_async_generate_camera_files` to a method of Home Assistant's Reolink integration: the
-  question is what that function does), those named on the flagged statement first and
+  and classes of the app it *refers to* without calling them (an app assigns a function of
+  its own to a method of one of Home Assistant's built-in integrations: the question is
+  what that function does), those named on the flagged statement first and
   cut to fit rather than left out.
 - Other files (cards): lines around the location. A minified line is cut to a window of
   characters around the host or evidence.
@@ -104,8 +104,8 @@ def items(findings: Iterable[dict[str, Any]], graph: dict[str, Any] | None) -> l
             continue
         seen_rules.add(f["rule_id"])
         if f.get("file") and f.get("line") and f.get("category") != "dependency":
-            # Every occurrence on the same line (a minified bundle: Bambu's 5 token uses
-            # are all on line 87) gets its own window.
+            # Every occurrence on the same line (a minified bundle: five token uses, all
+            # on one line) gets its own window.
             same = [
                 x.get("evidence") or ""
                 for x in findings
@@ -794,7 +794,7 @@ def _module_derived(py: _Py, names: set[str], keys: frozenset[str]) -> set[str]:
     """Module-level names assigned from `names` (`LOGIN = urljoin(BASE, "/login")`).
 
     A name reached only through an attribute (`DOMAIN = CURRENT_BRAND.domain`) counts
-    only if the attribute is one of `keys`, the keywords on the flagged line (EG4's
+    only if the attribute is one of `keys`, the keywords on the flagged line (such as
     `default_base_url="https://…"`): else every user of `DOMAIN` would come along.
     """
     out = set()
@@ -839,9 +839,9 @@ def _users(
     tree: _Tree, py: _Py, names: set[str], keys: frozenset[str] = frozenset()
 ) -> list[tuple[_Py, ast.AST]]:
     """Functions using a module-level name, following it the way code does: through
-    module-level names derived from it (Daikin's `DAIKIN_API_URL_BASE` is only used by
-    `DAIKIN_API_URL_LOGIN = urljoin(DAIKIN_API_URL_BASE, …)`) and through relative imports,
-    re-exports included (EG4's `const/__init__.py` re-exports `BRAND_EG4` from
+    module-level names derived from it (`API_URL_BASE` is only used by
+    `API_URL_LOGIN = urljoin(API_URL_BASE, …)`) and through relative imports,
+    re-exports included (a `const/__init__.py` that re-exports a name from
     `const/brand.py`). Breadth first, nearest users first; bounded by MAX_SOURCES."""
     if not names:
         return []
@@ -985,9 +985,9 @@ def reformat(line: str) -> list[str] | None:
     changed anything but whitespace (then the raw window is used: the AI must read the
     shipped code, never our rewrite of it). The whole line is formatted, from its real
     start, because a window cut at an arbitrary character can begin inside a string, and
-    the formatter then reads strings as code (it turned "/api/bambu_lab/print_history"
-    into " / api / bambu_lab / print_history "). Formatting only: jsbeautifier tokenizes
-    text and runs nothing. Bambu's 209 KB line takes 0.2 s."""
+    the formatter then reads strings as code (it turned "/api/some_domain/print_history"
+    into " / api / some_domain / print_history "). Formatting only: jsbeautifier tokenizes
+    text and runs nothing. A 209 KB line takes 0.2 s."""
     key = hash(line)
     if key in _formatted_cache:
         return _formatted_cache[key]
@@ -1016,7 +1016,7 @@ def _formatted_line_of(formatted: list[str], nonspace: int) -> int:
 
 def find_hint(target: str, hint: str) -> int:
     """Where `hint` is in `target`, -1 if nowhere. Evidence is stored cut, with "…" at
-    either end (`…tch("/api/bambu_lab/print_history",…`), so the marks are dropped and,
+    either end (`…tch("/api/some_domain/print_history",…`), so the marks are dropped and,
     failing a full match, shorter pieces from its start are tried."""
     for piece in (p.strip() for p in hint.split("…")):
         if len(piece) < 8:

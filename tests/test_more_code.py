@@ -229,7 +229,7 @@ def test_menu_offers_what_the_snippet_lacks_most_useful_first(tmp_path):
 
 
 def test_a_short_class_on_the_menu_brings_its_methods(tmp_path):
-    """Seen on hass-reolink-thumbs: the AI asked for `ThumbnailView` and `ThumbnailView.get`,
+    """Seen in a real run: the AI asked for `ThumbnailView` and `ThumbnailView.get`,
     so one of its three picks added nothing."""
     snip, src = _snip_and_source(tmp_path)
     index = [

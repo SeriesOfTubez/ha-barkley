@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from real_cases import case
 
 from sniff_test.analyzers import repo_signals
 from sniff_test.analyzers.semgrep import normalize_js
@@ -196,7 +197,7 @@ def _card_pair(tmp_path, released: str, committed: str):
 
 
 def test_our_html_comment_rewrite_is_not_a_release_mismatch(tmp_path):
-    """power-flow-card-plus v0.4.0 and Helios 2026.9.6 ship the committed bundle byte
+    """Two real cards ship the committed bundle byte
     for byte, but semgrep rewrites `-->` in our copy before repo signals ran."""
     js = "for(;n-->0;)x();const t=/-->/g;"
     assert _card_pair(tmp_path, js, js) == []
@@ -218,22 +219,19 @@ def test_local_scan_is_not_applicable(tmp_path):
 
 
 @pytest.mark.network
-@pytest.mark.parametrize(
-    ("source", "how"),
-    [
-        ("custom-components/alexa_media_player", "redirect"),
-        ("alandtse/alexa_media_player", "same repo id"),
-    ],
-)
-def test_alexa_media_player_is_flagged_as_transferred(source, how):
+@pytest.mark.parametrize(("which", "how"), [(0, "redirect"), (1, "same repo id")])
+def test_a_real_transferred_repository_is_flagged(which, how):
+    """Asked for under its old name (GitHub redirects) and under its new one (old links in
+    its own files resolve to the same repository id)."""
     from sniff_test.fetch.hacs import fetch_remote
 
+    names = case("BARKLEY_TEST_TRANSFERRED", 2)
     with tempfile.TemporaryDirectory() as d:
-        t = fetch_remote(source, Path(d))
+        t = fetch_remote(names[which], Path(d))
         r, _ = repo_signals.run(t)
     f = _by_rule(r)["repo-transferred"]
-    assert f"custom-components/alexa_media_player ({how})" in f.evidence
-    assert f.severity is Severity.LOW  # alandtse has published every release since 2019
+    assert f"{names[0]} ({how})" in f.evidence
+    assert f.severity is Severity.LOW  # one publisher for every release in years
 
 
 def _tag_check(tmp_path, status, **kw):

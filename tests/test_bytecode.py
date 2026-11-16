@@ -83,7 +83,7 @@ def test_timestamp_pyc_is_stale_after_install(pkg):
 
 
 def test_other_python_versions_are_ignored(pkg):
-    # hacs/integration 2.0.5 ships two stale cpython-312 pycs like these.
+    # A real integration ships two stale cpython-312 pycs like these.
     (pkg / "__pycache__" / "mod.cpython-312.pyc").write_bytes(pyc(PY312, 0b01))
     (pkg / "__pycache__" / "mod.cpython-314.pyc").write_bytes(pyc(PY312, 0b01))  # wrong magic
     (pkg / "__pycache__" / "mod.cpython-314.opt-1.pyc").write_bytes(pyc(PY314, 0b01))
