@@ -31,7 +31,7 @@ available on the box the panel warns; under 1 GB it refuses to start a scan. Pla
 
 ## Scans wait: GitHub's hourly limit
 
-Without a token GitHub allows 60 requests an hour, and a sniff may need up to ten. When the
+Without a token GitHub allows 60 requests an hour, and a sniff may need up to twelve. When the
 budget is used up Barkley waits for the reset and then carries on. A rate limit is never
 treated as a scan result. A token with no scopes (the `github_token` option) raises the
 limit to 5,000.

@@ -152,7 +152,8 @@ app's own public code, never anything from your Home Assistant.
 
 For integrations the AI may ask once to see more of the app's code. It can only pick
 from a list of names Barkley offers (at most three picks; never a file path, never its
-own words), Barkley adds that code (at most 150 more lines) and asks again. Your one
+own words), Barkley adds that code (at most 150 more lines) and asks again. The sheet
+shows the checked statements of both readings together. Your one
 click covers both requests; the sheet says what was asked for and shows the added code.
 For this, Barkley keeps a compressed copy of an integration's Python files in its
 store: one per version, for the installed version and a waiting update, never over 1 MB
@@ -161,7 +162,19 @@ sheet says the AI can't ask for more).
 
 For the finding "Changes how Home Assistant itself works" the page also says what is
 replaced and whose code that is ("What it replaces"). Barkley reads that from the
-code's import lines; no AI is involved.
+code's import lines; no AI is involved. When a function of Home Assistant's own source
+is replaced by a function of the app, Barkley also reads that one file of Home Assistant
+(at your version, from Home Assistant's repository on GitHub) during the scan and
+compares the two line by line: "How it differs from the original" gives the counts and
+the comparison, or says why there is none. "The rest of the replacement" says whether
+the scan has anything else on the replacement's lines. Neither changes the score, and
+neither says the code is safe.
+
+On that finding, the AI is also sent the first lines of the app's
+README (at most 80) and may add one sentence saying the code is consistent with it. It
+is shown apart, as the AI's opinion, only if it cites README lines and code lines and
+gives no verdict. A README is written by the app's author, so matching it is not the
+same as safe; the score does not change. No other finding gets this opinion.
 
 The AI answers in short statements, and each must cite the lines it rests on.
 Barkley shows a statement only if the cited lines are in the code it sent, they are

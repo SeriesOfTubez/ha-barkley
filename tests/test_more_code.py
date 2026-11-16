@@ -118,14 +118,18 @@ def test_the_flagged_statements_function_is_cut_to_fit_not_left_out(tmp_path):
 
 def test_a_monkeypatch_item_says_what_is_replaced_and_whose_it_is(tmp_path):
     ctx = context.build(_pkg(tmp_path), [PATCH], None)
-    assert ctx["version"] == 4
+    assert ctx["version"] == 5
     assert ctx["items"][PATCH["id"]]["patch"] == {
         "object": "homeassistant.components.camera.media.VodSource",
         "origin": "Home Assistant's built-in camera integration",
         "attr": "_files",
         "replacement": "_files",
         "replacement_at": ["__init__.py", 28],
-    }
+        # (0.12.0) no Home Assistant version given: nothing compared, and it says so
+        "compare": {"state": "none", "why": "offline"},
+        "inside": {"lines": [28, 30], "findings": [], "more_findings": 0,
+                   "addresses": 0, "ports": 0},
+    }  # fmt: skip
     assert context.origin("ssl.SSLContext") == "Python's standard library"
     assert context.origin("homeassistant.core.HomeAssistant") == "Home Assistant's own code"
     assert context.origin("self.hass.auth") == "the running Home Assistant"
@@ -360,11 +364,13 @@ def test_one_click_runs_the_second_round_with_what_the_ai_picked(tmp_path):
     assert "thumbs.py:14| def _name(day):" in second[0]
     assert "thumbs.py:14|" not in first[0] and "thumbs.py:10|     def url(self, day):" in first[0]
     _, _, page = get(f"{base}/scan/{sid}")
-    assert "asked to see more code before answering: <code>thumbs.py: _name</code>" in page
+    assert "asked to see more (<code>thumbs.py: _name</code>), and read again" in page
+    assert "The statements below are from both readings; the questions are from the second" in page
     # cites an added line, and the name is on it: shown
     assert "The link&#x27;s name is a hash made by <code>hashlib.sha256</code>." in page
     assert "is harmless" not in page and "keeps files under" not in page
-    assert "It swaps" not in page  # the second answer is the one shown
+    # the first reading's checked statement stays, before the second's
+    assert page.index("It swaps <code>_files</code> in.") < page.index("The link&#x27;s name")
     assert "plus 2 it asked for" in page and "Added because the AI asked to see" in page
     assert "asked for 1 thing that wasn't on Barkley's list" in page
     assert "<script" not in page

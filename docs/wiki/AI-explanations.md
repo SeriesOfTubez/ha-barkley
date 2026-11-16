@@ -42,8 +42,9 @@ from a list of names Barkley offers (functions, classes, methods and constants o
 app, at most 40 names, three picks). It can't name a file path or ask in its own words,
 and anything that isn't on the list is ignored: code from a scanned project can contain
 text aimed at the AI, and that text must not decide what Barkley reads. Barkley adds
-the code it picked (at most 150 more lines) and asks again. Your one click covers both
-requests, the sheet says what the AI asked for, and the added code is shown under "The
+the code it picked (at most 150 more lines) and asks again. The sheet then shows the
+checked statements of both readings together, and the questions of the second. Your one
+click covers both requests, the sheet says what the AI asked for, and the added code is shown under "The
 code it reads". When the AI asks for something that isn't on the list, the sheet says
 how many such asks were ignored and shows what they were (each cut to 60 characters).
 There is never a third request.
@@ -61,6 +62,36 @@ For the finding "Changes how Home Assistant itself works", the page says what is
 replaced, whose code that is, and where the replacement is defined, under **What it
 replaces**. Barkley reads this from the code's import lines during the scan; no AI is
 involved.
+
+When what is replaced is a function in Home Assistant's own source and the replacement is
+a function of the app, Barkley also compares the two. During the scan it reads that one
+file of Home Assistant, at your Home Assistant version, from Home Assistant's repository
+on GitHub, and compares the functions line by line. **How it differs from the original**
+gives the count of lines only in the replacement and only in the original, and the
+comparison itself opens underneath. No AI is involved. When there is no comparison the
+page says why (for example GitHub did not answer, or the replacement is not a function);
+that is never counted for or against the app. **The rest of the replacement** says
+whether the scan has any other finding, address or port on the replacement's own lines.
+That sentence describes what Barkley's rules look for; it is not a statement that the
+code is safe. The score is the same with or without a comparison.
+
+On such a finding, "Explain in context" also sends the comparison, so the AI can say
+what the replacement does differently and cite the lines.
+
+### The AI's opinion on the README
+
+For the finding "Changes how Home Assistant itself works", "Explain in context" also
+sends the first lines of the repository's README (at most 80), as what the app's author
+says the app does. The AI
+may then add one sentence saying that the code is consistent with the README. Barkley
+shows it only if it cites README lines and lines of the app's code, and gives no verdict:
+a sentence that calls the code safe, fine, expected or the like is dropped. It is shown
+apart from the statements, under **The AI's opinion: consistent with the README**.
+
+Read it for what it is. The README is written by the same person as the code, so code
+that matches it does what the author says, which is not the same as safe. The finding
+and the score do not change. No other finding gets this opinion: not one about data
+leaving your Home Assistant or where it goes, and no address, port or package.
 
 ### How answers are checked
 

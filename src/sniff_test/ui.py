@@ -317,6 +317,8 @@ pre.code { margin:var(--s1) 0 0; padding:var(--s2) var(--s3); background:var(--s
   border-radius:var(--r2); font:var(--t-xs)/1.5 var(--mono); white-space:pre-wrap;
   overflow-wrap:anywhere; max-height:420px; overflow:auto; }
 pre.code .nc { color:var(--muted); } pre.code .fn { color:var(--brand); font-weight:600; }
+pre.code .add { color:var(--green); } pre.code .del { color:var(--red); }
+.sheet .opinion { border-left:3px solid var(--ai); padding-left:var(--s3); }
 .tech { font-size:var(--t-xs); color:var(--muted); margin-top:var(--s2);
   overflow-wrap:anywhere; }
 details summary { cursor:pointer; color:var(--muted); font-size:var(--t-xs); }
@@ -1020,7 +1022,104 @@ def patch_html(patch: Any) -> str:
     return (
         f"<dt>What it replaces</dt><dd>{text} "
         '<span class="muted">Read from the code\'s imports by Barkley, not by AI.</span></dd>'
+        + compare_html(patch)
     )
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def diff_html(cmp: dict[str, Any]) -> str:
+    """Barkley's line-by-line comparison as escaped text: original line number, replacement
+    line number, the line; removed lines red with "-", added lines green with "+"."""
+    out = []
+    for i, hunk in enumerate(cmp.get("hunks") or []):
+        if i:
+            out.append('<span class="nc">…</span>')
+        for row in hunk:
+            if not isinstance(row, list) or len(row) != 4:
+                continue
+            tag, old, new, text = row
+            line = (f"{int(old) if old else '':>5} {int(new) if new else '':>5} "
+                    f"{e(tag, 1)} {e(text, 400)}")  # fmt: skip
+            cls = {"+": "add", "-": "del"}.get(tag)
+            out.append(f'<span class="{cls}">{line}</span>' if cls else line)
+    return '<pre class="code">' + "\n".join(out) + "</pre>"
+
+
+def compare_html(patch: dict[str, Any]) -> str:
+    """Under "What it replaces": Barkley's comparison of the replaced Home Assistant function
+    with the replacement (report.compare; made during the scan, no AI), or why there is
+    none; then what else of the scan sits on the replacement's lines. Says what was
+    compared and checked, never that the code is safe."""
+    from sniff_test.report import compare
+
+    out = ""
+    cmp = patch.get("compare")
+    if isinstance(cmp, dict) and cmp.get("state") == "ok":
+        a, b = (int(x) for x in cmp["original"])
+        added, removed = int(cmp.get("added") or 0), int(cmp.get("removed") or 0)
+        if added or removed:
+            result = (f"{_plural(added, 'line')} only in the replacement, "
+                      f"{_plural(removed, 'line')} only in the original")  # fmt: skip
+        else:
+            result = "the two are the same, line for line"
+        cut = (
+            " The comparison is long: its last changes are left out here." if cmp.get("cut") else ""
+        )
+        out += (
+            "<dt>How it differs from the original</dt><dd>Barkley compared the replacement "
+            f"with <code>{e(cmp.get('name'), 200)}</code> in Home Assistant "
+            f"{e(cmp.get('ha_version'), 20)} (<code>{e(cmp.get('file'), 200)}</code>, lines "
+            f"{a}–{b}), line by line: {result}."
+            + (
+                f"<details><summary>Show the comparison</summary>{diff_html(cmp)}"
+                '<p class="tech">Left number: the line in Home Assistant\'s file. Right number: '
+                "the line in the app's file. Red lines with − are only in the original, green "
+                f"lines with + only in the replacement.{cut} A line that is only wrapped "
+                "differently counts as removed and added.</p></details>"
+                if added or removed
+                else ""
+            )
+            + ' <span class="muted">Compared by Barkley, not by AI.</span></dd>'
+        )
+    elif isinstance(cmp, dict):
+        why = compare.WHY.get(str(cmp.get("why")), "it couldn't be made")
+        again = (" Sniffing this version again tries once more."
+                 if cmp.get("why") == "unreachable" else "")  # fmt: skip
+        out += (
+            "<dt>How it differs from the original</dt><dd>Barkley has no comparison with "
+            f"Home Assistant's original: {e(why, 200)}.{again}</dd>"
+        )
+    inside = patch.get("inside")
+    if isinstance(inside, dict) and isinstance(inside.get("lines"), list):
+        a, b = (int(x) for x in inside["lines"][:2])
+        at = patch.get("replacement_at")
+        where = f" of <code>{e(at[0], 200)}</code>" if isinstance(at, list) and at else ""
+        rules = [str(r) for r in inside.get("findings") or []]
+        n_f = len(rules) + int(inside.get("more_findings") or 0)
+        n_a, n_p = int(inside.get("addresses") or 0), int(inside.get("ports") or 0)
+        if not (n_f or n_a or n_p):
+            found = ("Barkley's other checks found nothing there: no other finding, and no "
+                     "address or port in its list.")  # fmt: skip
+        else:
+            bits = []
+            if n_f:
+                titles = ", ".join(e(explain.explain(r).title, 120) for r in rules)
+                bits.append(f"{_plural(n_f, 'other finding')} ({titles})")
+            if n_a:
+                bits.append(_plural(n_a, "address") if n_a == 1 else f"{n_a} addresses")
+            if n_p:
+                bits.append(_plural(n_p, "port"))
+            found = f"This scan also has there: {', '.join(bits)}."
+        out += (
+            f"<dt>The rest of the replacement</dt><dd>The replacement is lines {a}–{b}"
+            f"{where}. {found} "
+            '<span class="muted">That covers what Barkley\'s rules look for and nothing '
+            "more; it isn't a statement that the code is safe.</span></dd>"
+        )
+    return out
 
 
 def finding_html(
@@ -1030,7 +1129,10 @@ def finding_html(
     ai: str = "",
     deep: str = "",
     fact: str = "",
+    means: str | None = None,
 ) -> str:
+    """`means`: text for "What it means" in place of the rule's general one (a
+    monkeypatch whose target the scan resolved: explain.patch_means)."""
     ex = explain.explain(f["rule_id"])
     where = _where(fs)
     tech = [e(f["rule_id"]), e(f["severity"])]
@@ -1063,7 +1165,7 @@ def finding_html(
     return (
         f'<div class="finding"><div class="lvl {e(f["severity"])}">{e(explain.level(f["severity"]))}</div>'
         f"<div><h3>{e(ex.title)}</h3><dl{' class=ai' if ai else ''}>"
-        f"<dt>What it means</dt><dd>{e(ex.means, 800)}</dd>"
+        f"<dt>What it means</dt><dd>{e(means or ex.means, 800)}</dd>"
         f"<dt>Should you worry?</dt><dd>{e(ex.worry, 600)}</dd>"
         + (f"<dt>Where we saw it</dt><dd>{where}</dd>" if where else "")
         + fact
@@ -1203,6 +1305,25 @@ def more_note(snip: dict[str, Any], missing: dict[str, Any] | None) -> str:
     )
 
 
+def also_note(cmp: dict[str, Any] | None, doc: dict[str, Any] | None) -> str:
+    """What an "Explain in context" request carries besides the code (0.12.0), as one
+    escaped sentence for the sheet, or ""."""
+    bits = []
+    if cmp:
+        bits.append(
+            "Barkley's comparison with the original in Home Assistant "
+            f"{e(cmp.get('ha_version'), 20)} (shown on the page under “How it differs from "
+            "the original”)"
+        )
+    if doc:
+        n = len(doc.get("code") or [])
+        bits.append(
+            f"the first {n} line{'' if n == 1 else 's'} of the app's "
+            f"<code>{e(doc.get('file'), 40)}</code>, as what its author says the app does"
+        )
+    return f"Also sent: {' and '.join(bits)}." if bits else ""
+
+
 def _names(labels: list[Any]) -> str:
     return ", ".join(f"<code>{e(x, 200)}</code>" for x in labels[:3])
 
@@ -1221,6 +1342,7 @@ def deep_html(
     close_url: str = "",
     asking: list[str] | None = None,
     more: str = "",
+    also: str = "",
 ) -> str:
     """One item's "Explain in context": a compact chip or button where the item is, and
     a full-width sheet (`#ai-<id>`, opened with CSS :target, no script) with the answer
@@ -1233,7 +1355,8 @@ def deep_html(
     Close kept `?open=` in the address and the next refresh reopened the sheet (the user's
     report, 2026-11-12), and a fragment-only open would stop the plain reload (a page at a
     fragment never reloads).
-    `asking`: while the second round runs, what the AI asked to see. `more`: more_note()."""
+    `asking`: while the second round runs, what the AI asked to see. `more`: more_note().
+    `also`: also_note(), what else the request carries (the comparison, the README)."""
     from sniff_test.report.context import line_count
 
     mid = f"ai-{e(item_id, 40)}"
@@ -1254,6 +1377,7 @@ def deep_html(
             if extra
             else ""
         )
+        + (f'<p class="small">{also}</p>' if also else "")
         + "</details>"
     )
     if state == "running":
@@ -1306,11 +1430,17 @@ def deep_html(
                 f"({e(answer.get('second_failed'), 200)}), so this is its first reading, made "
                 "without that code.</p>"
             )
-        elif asked:
+        elif asked and answer.get("both"):
+            out.append(
+                f'<p class="small">The AI read the code, asked to see more ({_names(asked)}), '
+                "and read again with that code added. The statements below are from both "
+                "readings; the questions are from the second.</p>"
+            )
+        elif asked:  # an answer saved before both readings were kept: only the second
             out.append(
                 f'<p class="small">The AI asked to see more code before answering: '
-                f"{_names(asked)}. Barkley added it and asked again; this is the second "
-                "answer.</p>"
+                f"{_names(asked)}. Barkley added it and asked again; only that second "
+                "answer is shown.</p>"
             )
         if claims:
             out.append(
@@ -1327,6 +1457,17 @@ def deep_html(
                     f"<li>{_ai_text(q['text'], 300)}{_cite(q['cites'])}</li>" for q in questions
                 )
                 + "</ul>"
+            )
+        opinion = answer.get("alignment")
+        if isinstance(opinion, dict) and opinion.get("text"):
+            out.append(
+                "<h3>The AI's opinion: consistent with the README</h3>"
+                f'<p class="opinion">{_ai_text(opinion["text"], 400)}'
+                f"{_cite(opinion.get('cites') or [])}</p>"
+                "<p class=\"tech\">This is the AI's opinion, not one of Barkley's checks. The "
+                "README is written by the app's author, like the code, so code that matches "
+                "it does what the author says, which is not the same as safe. The finding and "
+                "the score are unchanged.</p>"
             )
         refused = int(answer.get("refused") or 0)
         if refused:
@@ -2306,6 +2447,14 @@ def render_app(
                         (patch_html(items[x["id"]].get("patch")) for x in fs if x["id"] in items),
                         "",
                     ),
+                    next(
+                        (
+                            explain.patch_means(items[x["id"]].get("patch"))
+                            for x in fs
+                            if x["id"] in items and items[x["id"]].get("patch")
+                        ),
+                        None,
+                    ),
                 )
                 for f, fs, p in groups
             )
@@ -2332,6 +2481,7 @@ def render_app(
                     expl.get(f["id"], ""),
                     (dfn(f["id"]) if f["id"] in items else "") + tfn(f),
                     patch_html((items.get(f["id"]) or {}).get("patch")),
+                    explain.patch_means((items.get(f["id"]) or {}).get("patch")),
                 )
                 for f in aside
             )

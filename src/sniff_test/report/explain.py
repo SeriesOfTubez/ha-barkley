@@ -651,3 +651,33 @@ def _join(items: list[str]) -> str:
     if len(items) <= 2:
         return " and ".join(items)
     return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def patch_means(patch: object) -> str | None:
+    """ "What it means" for a `ha-monkeypatch` finding once the scan knows what is replaced
+    (report.context.patch_fact), in place of the general text about logins, network and
+    encryption: that text describes the whole rule, this names the one thing replaced. Only
+    for Home Assistant's own source; None otherwise (the general text stays). Text only:
+    the finding, its severity and the score are the same. The names come from the scanned
+    code; callers escape the result."""
+    if not isinstance(patch, dict):
+        return None
+    obj, attr, origin = (str(patch.get(k) or "") for k in ("object", "attr", "origin"))
+    if not obj.startswith("homeassistant.") or not attr:
+        return None
+    what = f"{attr} of {obj.rsplit('.', 1)[-1]}"
+    if origin.startswith("Home Assistant's built-in "):
+        name = origin.removeprefix("Home Assistant's built-in ").removesuffix(" integration")
+        return (
+            f"While it runs, the app swaps {what}, a part of {origin}, for its own code. From "
+            f"then on Home Assistant runs the app's version wherever that part is used, with "
+            f"everything the {name} integration can reach: its devices, their logins and "
+            "their data. What the replacement does with that is what matters. An update of "
+            "Home Assistant that changes the original can also break it."
+        )
+    return (
+        f"While it runs, the app swaps {what}, a part of Home Assistant's own code, for its "
+        "own code. From then on Home Assistant and every other app run the app's version "
+        "wherever that part is used. That is a way to hide traffic, grab passwords on the "
+        "way, or switch off security checks, so what the replacement does is what matters."
+    )

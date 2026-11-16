@@ -112,9 +112,9 @@ def test_waiting_rows_and_banner_on_the_panel(tmp_path):
 
 
 def test_budget_is_sized_per_job_kind(tmp_path):
-    ten = RateLimit(10, 60, time.time() + 60, authenticated=False)
+    ten = RateLimit(12, 60, time.time() + 60, authenticated=False)
     w, slept, _ = _worker(tmp_path, lambda r, ref: report(repo=r, ref=ref), [ten, ten])
-    w.submit("installed", "acme/acme", "v1")  # a sniff fits in 10
+    w.submit("installed", "acme/acme", "v1")  # a sniff fits in 12
     w.submit("update", "acme/acme", "v1", to="v2")  # two scans don't: waits first
     w.wait()
     assert [j.state for j in w.jobs] == ["done", "done"]
