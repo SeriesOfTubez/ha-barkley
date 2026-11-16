@@ -1784,7 +1784,11 @@ class Panel:
                             report, item_id, snip=full
                         )
                         again = self.ai_fn(entity, instructions, structure, ai_context.TASK_NAME)
-                        accepted = ai_context.accept(report, item_id, again, snip=full)
+                        # Both readings count: the first one's checked statements stay
+                        # (they cite code that was sent both times).
+                        accepted = ai_context.combine(
+                            accepted, ai_context.accept(report, item_id, again, snip=full)
+                        )
                     except Exception as ex:  # the first answer stands; the page says why
                         accepted["second_failed"] = str(ex)[:300]
                     accepted["asked"] = asked

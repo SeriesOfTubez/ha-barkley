@@ -152,7 +152,8 @@ app's own public code, never anything from your Home Assistant.
 
 For integrations the AI may ask once to see more of the app's code. It can only pick
 from a list of names Barkley offers (at most three picks; never a file path, never its
-own words), Barkley adds that code (at most 150 more lines) and asks again. Your one
+own words), Barkley adds that code (at most 150 more lines) and asks again. The sheet
+shows the checked statements of both readings together. Your one
 click covers both requests; the sheet says what was asked for and shows the added code.
 For this, Barkley keeps a compressed copy of an integration's Python files in its
 store: one per version, for the installed version and a waiting update, never over 1 MB

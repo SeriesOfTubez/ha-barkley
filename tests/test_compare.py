@@ -511,3 +511,26 @@ def test_fixes_from_the_first_real_run(tmp_path):
     shown = got["claims"][0]["text"]
     assert len(shown) <= ai_context.MAX_CLAIM + 2 and shown.endswith(" …")
     assert "homeassistant" not in shown  # no half citation left in the text
+
+
+def test_two_readings_are_put_together():
+    one = {"text": "It swaps `_files`.", "cites": [["__init__.py", 18, 20]]}
+    two = {"text": "The name is a hash.", "cites": [["thumbs.py", 15, 15]]}
+    first = {
+        "claims": [one],
+        "questions": [{"text": "What is `_name`?", "cites": []}],
+        "dropped": ["no citation"],
+        "alignment": {"text": "first opinion", "cites": []},
+    }
+    second = {"claims": [{**one, "text": "it swaps `_files`"}, two], "questions": [],
+              "dropped": ["names no code"]}  # fmt: skip
+    got = ai_context.combine(first, second)
+    assert got["claims"] == [one, two]  # the first reading's first, no repeat
+    assert got["questions"] == []  # the first reading's question was answered by asking
+    assert got["dropped"] == ["no citation", "names no code"] and got["both"] is True
+    assert got["alignment"]["text"] == "first opinion"  # the second gave none
+    second["alignment"] = {"text": "second opinion", "cites": []}
+    assert ai_context.combine(first, second)["alignment"]["text"] == "second opinion"
+    many = {"claims": [{"text": f"claim {i}", "cites": []} for i in range(6)]}
+    more = {"claims": [{"text": f"other {i}", "cites": []} for i in range(6)]}
+    assert len(ai_context.combine(many, more)["claims"]) == ai_context.MAX_SHOWN_CLAIMS

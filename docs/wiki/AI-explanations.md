@@ -42,8 +42,9 @@ from a list of names Barkley offers (functions, classes, methods and constants o
 app, at most 40 names, three picks). It can't name a file path or ask in its own words,
 and anything that isn't on the list is ignored: code from a scanned project can contain
 text aimed at the AI, and that text must not decide what Barkley reads. Barkley adds
-the code it picked (at most 150 more lines) and asks again. Your one click covers both
-requests, the sheet says what the AI asked for, and the added code is shown under "The
+the code it picked (at most 150 more lines) and asks again. The sheet then shows the
+checked statements of both readings together, and the questions of the second. Your one
+click covers both requests, the sheet says what the AI asked for, and the added code is shown under "The
 code it reads". When the AI asks for something that isn't on the list, the sheet says
 how many such asks were ignored and shows what they were (each cut to 60 characters).
 There is never a third request.

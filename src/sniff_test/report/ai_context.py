@@ -762,3 +762,35 @@ def accept(
             else:
                 out[key].append(ok)
     return out
+
+
+MAX_SHOWN_CLAIMS = 10  # statements kept when two readings are put together
+
+
+def combine(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    """The two readings of one click as one answer. In a real run the second answer
+    carried on from the first ("the rest of the differences are…") and, shown alone,
+    left one statement where the first reading had several. So: the checked statements
+    of both, the first reading's first, without repeats; the questions of the second
+    (the first reading's are what made it ask for more code); the README opinion of the
+    second, else of the first; and everything that was left out, from both."""
+
+    def key(c: dict[str, Any]) -> str:
+        return re.sub(r"\W+", " ", str(c.get("text", "")).lower()).strip()
+
+    claims: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for c in [*first.get("claims", []), *second.get("claims", [])]:
+        if key(c) not in seen:
+            seen.add(key(c))
+            claims.append(c)
+    out: dict[str, Any] = {
+        "claims": claims[:MAX_SHOWN_CLAIMS],
+        "questions": list(second.get("questions", [])),
+        "dropped": [*first.get("dropped", []), *second.get("dropped", [])],
+        "both": True,
+    }
+    opinion = second.get("alignment") or first.get("alignment")
+    if opinion:
+        out["alignment"] = opinion
+    return out

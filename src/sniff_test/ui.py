@@ -1430,11 +1430,17 @@ def deep_html(
                 f"({e(answer.get('second_failed'), 200)}), so this is its first reading, made "
                 "without that code.</p>"
             )
-        elif asked:
+        elif asked and answer.get("both"):
+            out.append(
+                f'<p class="small">The AI read the code, asked to see more ({_names(asked)}), '
+                "and read again with that code added. The statements below are from both "
+                "readings; the questions are from the second.</p>"
+            )
+        elif asked:  # an answer saved before both readings were kept: only the second
             out.append(
                 f'<p class="small">The AI asked to see more code before answering: '
-                f"{_names(asked)}. Barkley added it and asked again; this is the second "
-                "answer.</p>"
+                f"{_names(asked)}. Barkley added it and asked again; only that second "
+                "answer is shown.</p>"
             )
         if claims:
             out.append(
