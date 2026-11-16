@@ -482,3 +482,32 @@ def test_the_page_shows_the_comparison_and_the_sheet_the_labelled_opinion(tmp_pa
     assert store.report(sid)["score"] == 75 and 'aria-label="Score 75 of 100"' in page
     assert store.report(sid)["findings"] == rep["findings"]  # nothing cleared or changed
     httpd.shutdown()
+
+
+def test_fixes_from_the_first_real_run(tmp_path):
+    """Three things the first real run on 0.12.0 showed."""
+    rep = _report(tmp_path)
+    # 1. the model was told only the changes, and asked what the rest of the original does
+    text, _ = ai_context.build_request(rep, PATCH["id"])
+    assert "every line of the two functions that is not listed is the same in both" in text
+    # 2. picks written as ": 4" were refused although 4 is a number on the menu
+    menu = [{"n": n, "name": f"f{n}", "file": "a.py"} for n in range(1, 7)]
+    picked, refused = ai_context.needs(
+        {"need_1": ": 4", "need_2": "(5)", "need_3": "a.py line 4"}, menu
+    )
+    assert [m["n"] for m in picked] == [4, 5] and refused == ["a.py line 4"]
+    # 3. a statement longer than 400 characters lost half a citation to the cut
+    long = (
+        "The replacement also adds `url` to the list, "
+        + "and that is all it adds, " * 16
+        + f"which the original does not have (__init__.py:30, {HA_PATH}:18)."
+    )
+    assert len(long) > ai_context.MAX_CLAIM
+    got = ai_context.accept(rep, PATCH["id"], {"claim_1": long})
+    assert got["dropped"] == [] and got["claims"][0]["cites"] == [
+        ["__init__.py", 30, 30],
+        [HA_PATH, 18, 18],
+    ]
+    shown = got["claims"][0]["text"]
+    assert len(shown) <= ai_context.MAX_CLAIM + 2 and shown.endswith(" …")
+    assert "homeassistant" not in shown  # no half citation left in the text

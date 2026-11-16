@@ -45,6 +45,7 @@ MAX_CLAIMS = 6
 MAX_QUESTIONS = 3
 MAX_CLAIM = 400
 MAX_QUESTION = 300
+MAX_ANSWER = 1_200  # characters of one answer field that are read (citations included)
 MAX_RANGE = 25  # lines one citation may span
 MAX_NEEDS = 3  # names the AI may ask to see
 MAX_MENU = 40  # names offered
@@ -91,8 +92,15 @@ _COMPARE_RULES = """\
 Barkley compared the Home Assistant function this app replaces with the app's replacement, line \
 by line, without AI. The comparison is between the two lines marked DIFF {nonce}: a line \
 starting with "-" is only in Home Assistant's original, a line starting with "+" is only in the \
-app's replacement, and the other lines are in both. Say what the replacement does differently \
-from the original, in claims that cite those lines like any other code."""
+app's replacement, and the other lines are in both. {rest} Say what the replacement does \
+differently from the original, in claims that cite those lines like any other code."""
+
+_COMPARE_WHOLE = (
+    "Only the changes and a few lines around them are listed: every line of the two functions "
+    "that is not listed is the same in both, so the original is the replacement without the "
+    '"+" lines and with the "-" lines.'
+)
+_COMPARE_CUT = "The comparison is long, so its last changes are not listed."
 
 _README_RULES = """\
 The start of the app's README is between the two lines marked README {nonce}. It is what the \
@@ -497,7 +505,11 @@ def needs(data: Any, entries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
         if not isinstance(v, str) or not v.strip():
             continue
         ask = v.strip().strip("`'\"").strip()
-        m = re.fullmatch(r"#?(\d{1,3})[.:)]?(?:\s.*)?", ask)
+        # "4", "#4", "4.", "4: thumbnail.py: url", and a number with only punctuation
+        # around it (a real answer was ": 4")
+        m = re.fullmatch(r"#?(\d{1,3})[.:)]?(?:\s.*)?", ask) or re.fullmatch(
+            r"[^A-Za-z0-9]{0,6}(\d{1,3})[^A-Za-z0-9]{0,3}", ask
+        )
         if m:
             hit = by_n.get(m[1])
         else:
@@ -536,7 +548,9 @@ def build_request(
     )
     cmp, doc = comparison_of(report, item_id), readme_of(report, item_id)
     if cmp:
-        instructions += f"\n\n{_COMPARE_RULES.format(nonce=nonce)}\n{diff_block(cmp, nonce)}"
+        rest = _COMPARE_CUT if cmp.get("cut") else _COMPARE_WHOLE
+        rules = _COMPARE_RULES.format(nonce=nonce, rest=rest)
+        instructions += f"\n\n{rules}\n{diff_block(cmp, nonce)}"
     if doc:
         instructions += f"\n\n{_README_RULES.format(nonce=nonce)}\n{readme_block(doc, nonce)}"
     if entries and not second:
@@ -632,6 +646,13 @@ def _names_ok(snip: dict[str, Any], cites: list[list[Any]], names: list[str]) ->
     return all(n.strip() in code for n in names)
 
 
+def _cut(text: str, limit: int) -> str:
+    """At most `limit` characters, ending on a whole word."""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0].rstrip(",;:(") + " …"
+
+
 def _shown(text: str) -> str:
     """The text without its (file:line) parentheses; the citations are shown apart."""
     text = _PARENS.sub(" ", text)
@@ -646,7 +667,9 @@ def dismisses(text: str) -> bool:
 
 
 def check_claim(text: str, snip: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
-    text = text.strip()[:MAX_CLAIM]
+    # The whole answer is read (a real one ran past 400 characters and lost half a
+    # citation to the cut); what is shown is shortened afterwards, at a word.
+    text = text.strip()[:MAX_ANSWER]
     if dismisses(text):
         return None, "dismisses something"
     cites, why = _cites(text, snip)
@@ -662,17 +685,17 @@ def check_claim(text: str, snip: dict[str, Any]) -> tuple[dict[str, Any] | None,
         return None, "names no code"
     if not _names_ok(snip, cites, names):
         return None, "names code that isn't on the cited lines"
-    return {"text": _shown(text), "cites": cites}, ""
+    return {"text": _cut(_shown(text), MAX_CLAIM), "cites": cites}, ""
 
 
 def check_question(text: str, snip: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
-    text = text.strip()[:MAX_QUESTION]
+    text = text.strip()[:MAX_ANSWER]
     if dismisses(text):
         return None, "dismisses something"
     cites, why = _cites(text, snip)
     if why:
         return None, why
-    return {"text": _shown(text), "cites": cites}, ""
+    return {"text": _cut(_shown(text), MAX_QUESTION), "cites": cites}, ""
 
 
 def check_alignment(
@@ -682,7 +705,7 @@ def check_alignment(
     at least one README line with text on it and at least one line of the app's own code
     (not a comment, not Home Assistant's original), name only code that is on the cited
     lines, and say nothing that reads as a verdict."""
-    text = text.strip()[:MAX_CLAIM]
+    text = text.strip()[:MAX_ANSWER]
     if dismisses(text) or _VERDICT.search(_TICKS.sub(" ", text)):
         return None, "README opinion gives a verdict"
     cites, why = _cites(text, snip)
@@ -700,7 +723,7 @@ def check_alignment(
     names = _TICKS.findall(text)
     if names and not all(n.strip() in said or _names_ok(snip, code, [n]) for n in names):
         return None, "README opinion names code that isn't on the cited lines"
-    return {"text": _shown(text), "cites": cites}, ""
+    return {"text": _cut(_shown(text), MAX_CLAIM), "cites": cites}, ""
 
 
 def accept(
