@@ -77,9 +77,9 @@ def _built(tmp_path, fetch=None, version="2026.11.1", findings=None, places=None
 
 
 def test_the_import_path_names_the_file_and_the_name_inside_it():
-    assert compare.locate("homeassistant.components.reolink.media_source.Vod", "_gen") == (
-        ["homeassistant/components/reolink/media_source.py",
-         "homeassistant/components/reolink/media_source/__init__.py"],
+    assert compare.locate("homeassistant.components.camera.media_source.Vod", "_gen") == (
+        ["homeassistant/components/camera/media_source.py",
+         "homeassistant/components/camera/media_source/__init__.py"],
         ["Vod", "_gen"],
     )  # fmt: skip
     assert compare.locate("homeassistant.helpers.aiohttp_client", "async_get_clientsession") == (
