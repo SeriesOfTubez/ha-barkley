@@ -169,12 +169,11 @@ the comparison, or says why there is none. "The rest of the replacement" says wh
 the scan has anything else on the replacement's lines. Neither changes the score, and
 neither says the code is safe.
 
-On a finding in the app's own code, the AI is also sent the first lines of the app's
+On that finding, the AI is also sent the first lines of the app's
 README (at most 80) and may add one sentence saying the code is consistent with it. It
 is shown apart, as the AI's opinion, only if it cites README lines and code lines and
 gives no verdict. A README is written by the app's author, so matching it is not the
-same as safe; the score does not change. Findings about data leaving your Home
-Assistant never get this opinion.
+same as safe; the score does not change. No other finding gets this opinion.
 
 The AI answers in short statements, and each must cite the lines it rests on.
 Barkley shows a statement only if the cited lines are in the code it sent, they are

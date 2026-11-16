@@ -79,8 +79,9 @@ what the replacement does differently and cite the lines.
 
 ### The AI's opinion on the README
 
-For a finding in the app's own code, "Explain in context" also sends the first lines of
-the repository's README (at most 80), as what the app's author says the app does. The AI
+For the finding "Changes how Home Assistant itself works", "Explain in context" also
+sends the first lines of the repository's README (at most 80), as what the app's author
+says the app does. The AI
 may then add one sentence saying that the code is consistent with the README. Barkley
 shows it only if it cites README lines and lines of the app's code, and gives no verdict:
 a sentence that calls the code safe, fine, expected or the like is dropped. It is shown
@@ -88,8 +89,8 @@ apart from the statements, under **The AI's opinion: consistent with the README*
 
 Read it for what it is. The README is written by the same person as the code, so code
 that matches it does what the author says, which is not the same as safe. The finding
-and the score do not change. Findings about data leaving your Home Assistant, or about
-where it goes, never get this opinion, and neither do addresses, ports or packages.
+and the score do not change. No other finding gets this opinion: not one about data
+leaving your Home Assistant or where it goes, and no address, port or package.
 
 ### How answers are checked
 

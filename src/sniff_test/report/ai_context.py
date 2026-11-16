@@ -122,7 +122,7 @@ _VERDICT = re.compile(
     re.I,
 )
 ALIGN_FIELD = "consistent_with_readme"
-# Never for findings about data leaving the box or where it goes (user decision 2026-11-15).
+# A second guard: never for findings about data leaving the box or where it goes.
 _NO_ALIGNMENT_CATEGORIES = {"exfil", "endpoint"}
 _NO_ALIGNMENT_TAGS = {"exfil", "malware"}
 _CITE = re.compile(r"([\w][\w./\-]*\.\w+(?:#L\d+)?):(\d+)(?:\s*[-\u2013]\s*(\d+))?")
@@ -156,11 +156,14 @@ def comparison_of(report: dict[str, Any], item_id: str) -> dict[str, Any] | None
 
 def readme_of(report: dict[str, Any], item_id: str) -> dict[str, Any] | None:
     """The README excerpt, when the AI may give its "consistent with the README" opinion
-    on this item: a finding in the app's own code that is not about data leaving the box
-    or where it goes. Addresses, ports and packages never get it."""
+    on this item: only the finding that an app replaces part of Home Assistant, once the
+    scan knows what is replaced (user decision 2026-11-15). Never a finding about data
+    leaving the box or where it goes, and never an address, a port or a package."""
     it = item_of(report, item_id) or {}
     doc = (report.get("context") or {}).get("readme")
     if it.get("kind") != "finding" or not isinstance(doc, dict) or not doc.get("code"):
+        return None
+    if not isinstance(it.get("patch"), dict):
         return None
     f = next((x for x in report.get("findings", []) if x.get("id") == item_id), None)
     if f is None or f.get("category") in _NO_ALIGNMENT_CATEGORIES:

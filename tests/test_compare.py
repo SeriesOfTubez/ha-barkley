@@ -369,6 +369,16 @@ def test_no_readme_opinion_for_findings_about_data_leaving_the_box(tmp_path, fin
     assert "alignment" not in got and got["dropped"] == []
 
 
+def test_only_the_replaced_home_assistant_code_finding_gets_the_readme_opinion(tmp_path):
+    other = {**PATCH, "id": "e" * 16, "rule_id": "py-eval-exec", "category": "code_exec",
+             "line": 30}  # fmt: skip
+    rep = report(findings=[PATCH, other], score=50)
+    rep["context"] = _built(tmp_path, findings=rep["findings"])
+    assert ai_context.readme_of(rep, PATCH["id"]) and ai_context.readme_of(rep, other["id"]) is None
+    text, structure = ai_context.build_request(rep, other["id"])
+    assert ai_context.ALIGN_FIELD not in structure and "<<<README" not in text
+
+
 def test_no_readme_no_opinion(tmp_path):
     rep = report(findings=[PATCH], score=75)
     rep["context"] = _built(tmp_path / "bare", readme=None)
