@@ -58,8 +58,8 @@ exfil_service dnslog.cn
 exfil_service webhook-test.com
 exfil_service typedwebhook.tools
 #
-# developer_hosted: serverless / free app hosting. Legitimate uses exist (iCloud3's opt-in
-# analytics runs on workers.dev), so these are graph context only, but they count as
+# developer_hosted: serverless / free app hosting. Legitimate uses exist (one integration's
+# opt-in analytics runs on workers.dev), so these are graph context only, but they count as
 # undeclared destinations for the possible-exfil correlation.
 developer_hosted workers.dev
 developer_hosted pages.dev

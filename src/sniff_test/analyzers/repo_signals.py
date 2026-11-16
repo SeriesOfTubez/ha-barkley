@@ -6,8 +6,8 @@ Facts checked against the real GitHub API (2026-11-08):
   and then the repo under its new `full_name`. There is no timestamp and no public
   transfer history (REST or GraphQL), so a transfer can be proven but not dated.
 - Under its new name the repo looks untouched. Old links in the repo's own files
-  (alexa_media_player's CHANGELOG links custom-components/alexa_media_player 1,392
-  times) still prove it: those URLs resolve to the same repository id.
+  (one integration's CHANGELOG links its former owner/name 1,392 times) still prove
+  it: those URLs resolve to the same repository id.
 - Release objects carry `author` (who published it; `type: "Bot"` for workflows) and
   per-asset `uploader`. These are the maintainer signal.
 

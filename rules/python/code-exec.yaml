@@ -94,8 +94,8 @@ rules:
       - pattern: subprocess.$F([..., "=~/(^|[^A-Za-z0-9_])(pip3?|uv pip)\s+install(\s|$)/", ...], ...)
       - pattern: asyncio.create_subprocess_exec(..., "=~/(^|[^A-Za-z0-9_])(pip3?|uv pip)\s+install(\s|$)/", ...)
       # A command string passed to anything (os.system, a wrapper like self._run), except
-      # text that can't run: an exception being raised, print, logger calls (HomGar's
-      # `raise RuntimeError("... pip install paho-mqtt")`, EG4's `_LOGGER.warning(...)`).
+      # text that can't run: an exception being raised, print, logger calls (such as
+      # `raise RuntimeError("... pip install paho-mqtt")` or `_LOGGER.warning(...)`).
       - patterns:
           - pattern: $F(..., "=~/(^|[^A-Za-z0-9_])(pip3?|uv pip)\s+install(\s|$)/", ...)
           - pattern-not-inside: raise $E("=~/(^|[^A-Za-z0-9_])(pip3?|uv pip)\s+install(\s|$)/", ...)

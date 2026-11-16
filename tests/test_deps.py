@@ -588,7 +588,7 @@ def test_load_records_the_release_date_and_skips_it_on_error(tmp_path, monkeypat
     assert ha_env.load("2026.11.0", g).released_at == "2026-11-04T17:32:55Z"
 
 
-# --- bun.lock (0.7.3: Plotly's card pins with bun and was told it had no lockfile) ---------
+# --- bun.lock (0.7.3: a card that pins with bun was told it had no lockfile) ---------
 
 BUN_LOCK = """{
   // bun.lock is JSONC: comments and trailing commas

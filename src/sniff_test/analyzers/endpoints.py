@@ -2,8 +2,8 @@
 
 Every host literal becomes a neutral inventory fact (the network ring of the hooks
 graph), classified as declared, infrastructure, local, undeclared and so on. Only three
-things are findings, because the rest proved to be noise on real repos (Bubble-Card
-ships 14 donation/doc links; iCloud3 pings a dict of public DNS servers):
+things are findings, because the rest proved to be noise on real repos (one card ships
+14 donation/doc links; one integration pings a dict of public DNS servers):
 
 - `endpoint-exfil-host` (high): a paste site, request catcher, OOB interaction server
   or tunnel; or a chat webhook URL that carries its credential (Discord webhook token,

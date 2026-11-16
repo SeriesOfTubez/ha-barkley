@@ -5,6 +5,7 @@ import sqlite3
 
 import pytest
 from conftest import requires_semgrep
+from real_cases import case
 
 from sniff_test import __version__, cli
 from sniff_test.diff import diff
@@ -195,16 +196,17 @@ def test_cli_scan_store_then_diff_stored_fixture_pair(tmp_path, fixtures, monkey
 
 @pytest.mark.network
 @requires_semgrep
-def test_card_mod_handover_from_stored_scans(tmp_path, monkeypatch):
-    """The M5 done criterion: two stored scans of card-mod, diffed from the store."""
+def test_a_publisher_handover_from_stored_scans(tmp_path, monkeypatch):
+    """The M5 done criterion: two stored scans of a real card, diffed from the store."""
+    repo, old_tag, new_tag, publisher, _before = case("BARKLEY_TEST_HANDOVER", 5)
     db = tmp_path / "s.db"
-    for tag in ("v3.4.5", "v4.0.0-beta.1"):
-        rc = cli.main(["scan", "thomasloven/lovelace-card-mod", "--ref", tag, "--store", str(db)])
+    for tag in (old_tag, new_tag):
+        rc = cli.main(["scan", repo, "--ref", tag, "--store", str(db)])
         assert rc == 0
     new, old = (r.id for r in Store(db).history())
     monkeypatch.setattr(cli, "scan", lambda *a, **k: pytest.fail("scanned again"))
     out = tmp_path / "d.json"
-    args = ["diff", "thomasloven/lovelace-card-mod", "--from", "v3.4.5", "--to", "v4.0.0-beta.1"]
+    args = ["diff", repo, "--from", old_tag, "--to", new_tag]
     assert cli.main([*args, "--store", str(db), "--json", "-o", str(out)]) == 0
     by_id = tmp_path / "e.json"
     args = ["diff", f"@{old}", f"@{new}", "--store", str(db), "--json", "-o", str(by_id)]
@@ -212,4 +214,4 @@ def test_card_mod_handover_from_stored_scans(tmp_path, monkeypatch):
     for path in (out, by_id):
         top = json.loads(path.read_text())["changes"][0]
         assert top["kind"] == "new_publisher"
-        assert "dcapslock" in top["text"]
+        assert publisher in top["text"]

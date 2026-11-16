@@ -8,6 +8,7 @@ import urllib.error
 
 import pytest
 from conftest import requires_semgrep
+from real_cases import case
 from test_repo_signals import LONG_HISTORY, FakeGitHub, _target
 from test_store import report
 
@@ -218,11 +219,12 @@ def test_a_rate_limit_on_any_github_request_of_a_real_scan_aborts_it(monkeypatch
             raise RateLimitError(url, 0.0, authenticated=bool(self.token))
         return real(self, url, accept)
 
+    repo, ref = case("BARKLEY_TEST_SCAN", 2)
     monkeypatch.setattr(GitHub, "_request", counting)
-    scan("ReikanYsora/Helios", ref="2026.9.6", ha_version="2026.11.0")
+    scan(repo, ref=ref, ha_version="2026.11.0")
     total = calls["n"]
     assert total >= 5
     for n in range(1, total + 1):
         calls.update(n=0, fail_at=n)
         with pytest.raises(RateLimitError):
-            scan("ReikanYsora/Helios", ref="2026.9.6", ha_version="2026.11.0")
+            scan(repo, ref=ref, ha_version="2026.11.0")

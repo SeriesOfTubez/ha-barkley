@@ -11,32 +11,31 @@ from sniff_test import scoring, trust, ui, watch
 from sniff_test.models import Category, Finding, Severity
 from sniff_test.store import Store
 
-# hass-agent-llm v0.9.5 as scanned: two GuardDog highs on chromadb-client, score 50
+# A real integration as scanned: two GuardDog highs on one dependency, score 50
 ADDR = {
     "id": "a" * 16,
     "rule_id": "dep-guarddog-network-exfiltration",
-    "title": "Suspicious code in dependency chromadb-client",
+    "title": "Suspicious code in dependency vector-client",
     "severity": "high",
     "category": "dependency",
     "file": "manifest.json",
     "line": None,
-    "evidence": "chromadb-client==1.5.3 together_ai_embedding_function.py:13: "
-    "https://api.together.xyz/",
+    "evidence": "vector-client==1.5.3 remote_embedding.py:13: https://api.together.xyz/",
     "message": "GuardDog heuristic matched",
     "addresses": ["api.together.xyz"],
 }
 PIP = {
     "id": "b" * 16,
     "rule_id": "dep-guarddog-process-download-exec",
-    "title": "Suspicious code in dependency chromadb-client",
+    "title": "Suspicious code in dependency vector-client",
     "severity": "high",
     "category": "dependency",
     "file": "manifest.json",
     "line": None,
-    "evidence": "chromadb-client==1.5.3 chromadb/__init__.py:143: check_call(",
+    "evidence": "vector-client==1.5.3 vectors/__init__.py:143: check_call(",
     "message": "GuardDog heuristic matched",
 }
-REPO = "aradlein/hass-agent-llm"
+REPO = "acme/agent"
 
 
 def _report(findings=(ADDR, PIP), repo=REPO, score=50):
@@ -206,7 +205,7 @@ def test_the_card_and_the_notification_say_the_score_counts_trusted_addresses(pa
     _, _, index = get(base + "/")
     assert "<b>75</b>" in index and "<b>50</b>" not in index  # the stored-scans table
     shown_row = store.get(sid)
-    c = ui.Card(repo=REPO, name="hass-agent-llm", kind="integration", installed="v0.9.5",
+    c = ui.Card(repo=REPO, name="Agent", kind="integration", installed="v0.9.5",
                 available=None, scan=shown_row,
                 report=trust.view(store.report(sid), store.trusted()))  # fmt: skip
     assert "The score counts 1 address you trust as fine (Barkley's own: 50)." in (

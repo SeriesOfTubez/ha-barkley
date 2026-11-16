@@ -5,6 +5,7 @@ import json
 
 import pytest
 from conftest import requires_semgrep
+from real_cases import case
 
 from sniff_test import cli
 from sniff_test.diff import diff, match_findings, publisher_changes
@@ -105,18 +106,18 @@ def _prov(*releases):
 
 def test_new_publisher_from_provenance():
     prov = _prov(
-        ("v4.0.0-beta.1", "2025-10-12", "dcapslock"),
-        ("v3.4.5", "2025-07-02", "thomasloven"),
-        ("v3.4.4", "2025-01-06", "thomasloven"),
+        ("v4.0.0-beta.1", "2025-10-12", "bob"),
+        ("v3.4.5", "2025-07-02", "alice"),
+        ("v3.4.4", "2025-01-06", "alice"),
     )
     old = _report(ref="v3.4.5", provenance=prov)
     new = _report(ref="v4.0.0-beta.1", provenance=prov)
     [c] = publisher_changes(old, new)
     assert c.kind == "new_publisher"
-    assert "dcapslock" in c.text and "none of the 2 release(s) up to v3.4.5" in c.text
+    assert "bob" in c.text and "none of the 2 release(s) up to v3.4.5" in c.text
     # A later release by the same new maintainer is not "new" again.
     later = _prov(
-        ("v4.2.1", "2026-02-08", "dcapslock"),
+        ("v4.2.1", "2026-02-08", "bob"),
         *[(r["tag"], r["published_at"][:10], r["publisher"]) for r in prov["releases"]],
     )
     assert (
@@ -179,23 +180,12 @@ def test_cli_rejects_missing_report(tmp_path):
 
 @pytest.mark.network
 @requires_semgrep
-def test_card_mod_handover_surfaces_new_publisher(tmp_path):
+def test_a_real_handover_surfaces_the_new_publisher(tmp_path):
+    repo, old_tag, new_tag, publisher, before = case("BARKLEY_TEST_HANDOVER", 5)
     out = tmp_path / "d.json"
-    rc = cli.main(
-        [
-            "diff",
-            "thomasloven/lovelace-card-mod",
-            "--from",
-            "v3.4.5",
-            "--to",
-            "v4.0.0-beta.1",
-            "--json",
-            "-o",
-            str(out),
-        ]
-    )
+    rc = cli.main(["diff", repo, "--from", old_tag, "--to", new_tag, "--json", "-o", str(out)])
     assert rc == 0
     d = json.loads(out.read_text())
     top = d["changes"][0]
     assert top["kind"] == "new_publisher"
-    assert "dcapslock" in top["text"] and "thomasloven" in top["text"]
+    assert publisher in top["text"] and before in top["text"]

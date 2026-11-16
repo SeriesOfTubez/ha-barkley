@@ -43,12 +43,12 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 # results, 0 errors. HA loads cards as ES modules, where neither is a comment: `a<!--b`
 # is `a < !(--b)` and `n-->0` is `n-- > 0`. Inserting a space keeps the meaning in code
 # and only adds a space inside strings, regexes and comments, so it can't hide anything.
-# It also covers lit-html's `/-->/g`, which made Semgrep drop all of mushroom.js (M3).
+# It also covers lit-html's `/-->/g`, which made Semgrep drop a whole card bundle (M3).
 #
 # Two more, found on 1.185 (2026-11-13) and both meaning-preserving in code:
 # - `n?.5:1` (a conditional whose first branch is a decimal such as `.5`): Semgrep reads
-#   `?.` as optional chaining and skips a few characters (PartialParsing: Bubble-Card,
-#   Helios, Bambu Lab's card, HACS's chunks). ECMAScript says `?.` is never optional
+#   `?.` as optional chaining and skips a few characters (PartialParsing, seen in
+#   four real bundles). ECMAScript says `?.` is never optional
 #   chaining before a digit, so `? .5` is the same expression.
 # - `new as(a, -1)`: a class minified to the name `as` (or `satisfies`), TypeScript's
 #   operator words. Together with an arrow function whose body is a function called on
@@ -91,7 +91,7 @@ def normalize_js(root: Path, pristine: dict[str, str] | None = None) -> int:
     The rewrite is in place, so the sha256 of each changed file's original bytes goes
     into `pristine` (root-relative path). Anything comparing bytes with what HACS
     installs (repo_signals.compare_card_asset) must use those: comparing our rewritten
-    copy made identical bundles look different (power-flow-card-plus v0.4.0, Helios).
+    copy made identical bundles look different (seen on two real cards).
     """
     changed = 0
     for p in root.rglob("*"):
@@ -291,7 +291,7 @@ def _only_rebinds_names(f: Finding, root: Path, trees: dict[str, Any]) -> bool:
 
     After `from homeassistant import config_entries`, Semgrep resolves a later local
     `config_entries = hass.config_entries.async_entries(DOMAIN)` to
-    `homeassistant.config_entries` and matches `$OBJ.$ATTR = $V` (Bambu Lab v2.3.0).
+    `homeassistant.config_entries` and matches `$OBJ.$ATTR = $V` (seen on a real integration).
     Rebinding a name changes nothing outside the function. We parse the file (never
     run it) and drop the hit only when every assignment starting on that line targets
     bare names; chained `x = homeassistant.y = v` keeps it, as does a parse failure.
