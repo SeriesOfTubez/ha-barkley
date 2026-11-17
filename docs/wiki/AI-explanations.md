@@ -45,11 +45,14 @@ card it is the lines around the finding in the bundle.
 
 For integrations, the AI may ask once to see more of the app's code. It can only pick
 from a list of names Barkley offers (functions, classes, methods and constants of the
-app, at most 40 names, three picks). It can't name a file path or ask in its own words,
-and anything that isn't on the list is ignored: code from a scanned project can contain
-text aimed at the AI, and that text must not decide what Barkley reads. Barkley adds
-the code it picked (at most 150 more lines) and asks again. The sheet then shows the
-checked statements of both readings together, and the questions of the second. Your one
+app, at most 40 names, three picks). It can't name a file path, and anything that isn't
+on the list is ignored: code from a scanned project can contain text aimed at the AI, and
+that text must not decide what Barkley reads. When the AI writes its pick as a sentence,
+only the names in backticks or quotes that are on the list count. Barkley adds the code
+it picked (at most 150 more lines) and asks again. The sheet then shows the checked
+statements of both readings together, and the questions of the second. A statement of
+the second reading that says again what one of the first said (the same code names, on
+overlapping lines) is shown once, and the sheet says how many it left out. Your one
 click covers both requests, the sheet says what the AI asked for, and the added code is shown under "The
 code it reads". When the AI asks for something that isn't on the list, the sheet says
 how many such asks were ignored and shows what they were (each cut to 60 characters).

@@ -1488,6 +1488,13 @@ def deep_html(
                 f"{'was' if one else 'were'}n't on Barkley's list, so "
                 f"{'it was' if one else 'they were'} ignored{named}</p>"
             )
+        repeats = answer.get("repeats")
+        if isinstance(repeats, int) and repeats > 0:
+            out.append(
+                f'<p class="tech">{repeats} statement{"s" if repeats != 1 else ""} of the second '
+                f"reading repeated {'one' if repeats == 1 else 'ones'} above in other words, "
+                f"so {'it is' if repeats == 1 else 'they are'} not shown again.</p>"
+            )
         dropped = answer.get("dropped") or []
         if dropped:
             why = ", ".join(e(w, 60) for w in sorted(set(dropped)))

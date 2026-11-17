@@ -489,7 +489,11 @@ def needs(data: Any, entries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
     """(the menu entries the answer asked for, the asks that were refused). An ask counts
     only when it resolves to one entry of the menu: its number, its "file: name" as
     listed (with or without the bracketed part after it), or a name only one entry has.
-    Anything else is refused and kept as a short, plain-character string to show."""
+    (0.13.0) An ask written as a sentence counts for the names in backticks or quotes in
+    it that resolve the same way (a real one: "I need to see the `<Class>` class and its
+    `connect`", both on the menu); at most MAX_NEEDS picks in all. An ask with no letter
+    or digit ("--", a filler for an unused field) is not an ask. Anything else is refused
+    and kept as a short, plain-character string to show."""
     picked: list[dict[str, Any]] = []
     refused: list[str] = []
     if not isinstance(data, dict):
@@ -500,9 +504,17 @@ def needs(data: Any, entries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
     for m in entries:
         for key in {m["name"], m["name"].rpartition(".")[2]}:
             by_name.setdefault(key, []).append(m)
+
+    def resolve(text: str) -> dict[str, Any] | None:
+        plain = re.sub(r"\s*\(.*$", "", text).replace("`", "").strip()
+        hit = by_label.get(re.sub(r"\s*:\s*", ":", plain))
+        if hit is None and len(by_name.get(plain, [])) == 1:
+            hit = by_name[plain][0]
+        return hit
+
     for i in range(1, MAX_NEEDS + 1):
         v = data.get(f"need_{i}")
-        if not isinstance(v, str) or not v.strip():
+        if not isinstance(v, str) or not re.search(r"[A-Za-z0-9]", v):
             continue
         ask = v.strip().strip("`'\"").strip()
         # "4", "#4", "4.", "4: thumbnail.py: url", and a number with only punctuation
@@ -510,17 +522,16 @@ def needs(data: Any, entries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
         m = re.fullmatch(r"#?(\d{1,3})[.:)]?(?:\s.*)?", ask) or re.fullmatch(
             r"[^A-Za-z0-9]{0,6}(\d{1,3})[^A-Za-z0-9]{0,3}", ask
         )
-        if m:
-            hit = by_n.get(m[1])
-        else:
-            plain = re.sub(r"\s*\(.*$", "", ask).replace("`", "").strip()
-            hit = by_label.get(re.sub(r"\s*:\s*", ":", plain))
-            if hit is None and len(by_name.get(plain, [])) == 1:
-                hit = by_name[plain][0]
-        if hit is None:
+        hits = [by_n.get(m[1])] if m else [resolve(ask)]
+        if hits == [None] and not m:  # a sentence: the quoted names in it
+            quoted = re.findall(r"`([^`\n]{1,120})`|'([^'\n]{1,120})'|\"([^\"\n]{1,120})\"", v)
+            hits = [resolve(next(x for x in q if x)) for q in quoted] or [None]
+        found = [h for h in hits if h is not None]
+        if not found:
             refused.append(_ASK_SAFE.sub("?", ask)[:MAX_ASK])
-        elif hit not in picked:
-            picked.append(hit)
+        for hit in found:
+            if hit not in picked and len(picked) < MAX_NEEDS:
+                picked.append(hit)
     return picked, refused
 
 
@@ -767,25 +778,55 @@ def accept(
 MAX_SHOWN_CLAIMS = 10  # statements kept when two readings are put together
 
 
+def _claim_names(c: dict[str, Any]) -> set[str]:
+    return {
+        re.sub(r"\(\)$", "", n.strip().strip("'\"").strip())
+        for n in _TICKS.findall(str(c.get("text", "")))
+    } - {""}
+
+
+def _restates(b: dict[str, Any], a: dict[str, Any]) -> bool:
+    """(0.13.0) Statement `b` of the second reading says again what `a` of the first said:
+    every code name in `b` is in `a`, and they cite overlapping lines of the same file. On a
+    real run four of ten merged statements were such restatements, in other words."""
+    nb = _claim_names(b)
+    if not nb or not nb <= _claim_names(a):
+        return False
+    return any(
+        fb == fa and int(sb) <= int(ea) and int(sa) <= int(eb)
+        for fb, sb, eb in b.get("cites") or []
+        for fa, sa, ea in a.get("cites") or []
+    )
+
+
 def combine(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
     """The two readings of one click as one answer. In a real run the second answer
     carried on from the first ("the rest of the differences are…") and, shown alone,
     left one statement where the first reading had several. So: the checked statements
     of both, the first reading's first, without repeats; the questions of the second
     (the first reading's are what made it ask for more code); the README opinion of the
-    second, else of the first; and everything that was left out, from both."""
+    second, else of the first; and everything that was left out, from both. (0.13.0) A
+    statement of the second reading that restates one of the first (`_restates`) is
+    shown once, and counted in `repeats`."""
 
     def key(c: dict[str, Any]) -> str:
         return re.sub(r"\W+", " ", str(c.get("text", "")).lower()).strip()
 
     claims: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for c in [*first.get("claims", []), *second.get("claims", [])]:
-        if key(c) not in seen:
-            seen.add(key(c))
-            claims.append(c)
+    repeats = 0
+    firsts = list(first.get("claims", []))
+    for c in [*firsts, *second.get("claims", [])]:
+        if key(c) in seen:
+            continue
+        if c not in firsts and any(_restates(c, a) for a in firsts):
+            repeats += 1
+            continue
+        seen.add(key(c))
+        claims.append(c)
     out: dict[str, Any] = {
         "claims": claims[:MAX_SHOWN_CLAIMS],
+        "repeats": repeats,
         "questions": list(second.get("questions", [])),
         "dropped": [*first.get("dropped", []), *second.get("dropped", [])],
         "both": True,

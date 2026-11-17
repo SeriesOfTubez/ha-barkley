@@ -154,3 +154,26 @@ def test_an_address_past_the_twelve_shown_still_has_its_sheet(tmp_path):
     for eid in [TELE, *(h for h, _ in hosts)]:
         assert page.count(f'id="ai-{eid}"') == 1
     httpd.shutdown()
+
+
+def test_the_sheet_says_how_many_restatements_it_left_out():
+    from sniff_test import ui
+
+    snip = {"file": "a.py", "lang": "python", "segments": [{"file": "a.py", "start": 1,
+            "code": ["x = 1"]}]}  # fmt: skip
+    claim = {"text": "`x` is one.", "cites": [["a.py", 1, 1]]}
+    ans = {"claims": [claim], "questions": [], "dropped": [], "both": True, "repeats": 4,
+           "entity_id": "ai_task.t", "created": "2026-11-17T00:50"}  # fmt: skip
+    html = ui.deep_html("<form>{label}</form>", item_id="d4" * 8, title="t", answer=ans,
+                        state="", error="", snip=snip, entity="ai_task.t")  # fmt: skip
+    assert "4 statements of the second reading repeated ones above in other words" in html
+    assert "so they are not shown again" in html
+    ans["repeats"] = 1
+    html = ui.deep_html("<form>{label}</form>", item_id="d4" * 8, title="t", answer=ans,
+                        state="", error="", snip=snip, entity="ai_task.t")  # fmt: skip
+    assert "1 statement of the second reading repeated one above" in html
+    assert "so it is not shown again" in html
+    ans["repeats"] = 0
+    html = ui.deep_html("<form>{label}</form>", item_id="d4" * 8, title="t", answer=ans,
+                        state="", error="", snip=snip, entity="ai_task.t")  # fmt: skip
+    assert "repeated" not in html
