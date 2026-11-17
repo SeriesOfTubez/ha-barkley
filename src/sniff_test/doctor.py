@@ -228,7 +228,9 @@ def _osv_scan(sample: Path, run_dir: Path) -> Check:
     It has to find and read the file, and asks OSV nothing. `--version` alone passed on
     a box where every scan's advisory check failed: 2.7.1 opens `/` before it reaches
     the lockfile, and the AppArmor profile of 0.10.3 didn't let it."""
-    with tempfile.TemporaryDirectory(prefix="sniff-test-doctor-") as tmp:
+    # Inside the run folder's workspace, as in a scan: the tool sandbox lets osv-scanner
+    # read only its own scan's folder.
+    with tempfile.TemporaryDirectory(prefix="osv-sample-", dir=run_dir) as tmp:
         lock = Path(tmp) / "pylock.toml"
         lock.write_text('lock-version = "1.0"\ncreated-by = "barkley-doctor"\n')
         config = Path(tmp) / "osv-empty-config.toml"
