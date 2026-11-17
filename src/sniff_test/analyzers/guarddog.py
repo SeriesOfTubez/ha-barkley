@@ -44,6 +44,7 @@ from sniff_test.analyzers.semgrep import neutralize_ignores
 from sniff_test.deps.uv import Artifact
 from sniff_test.models import AnalyzerResult, AnalyzerState, Category, Finding, Severity, Tag
 from sniff_test.paths import cache_root
+from sniff_test.report import fingerprint
 from sniff_test.trust import valid_address
 
 NAME = "guarddog"
@@ -215,6 +216,20 @@ def _platforms_for(art: Artifact, pkg: ResolvedPackage) -> frozenset[str]:
     return frozenset(pkg.platforms)
 
 
+def _file_hash(art: Artifact, where: str) -> str:
+    """sha256 of the file GuardDog flagged, inside the unpacked archive ("" if unknown)."""
+    if art.local is None or not where:
+        return ""
+    rel = where.rsplit(":", 1)[0] if where.rsplit(":", 1)[-1].isdigit() else where
+    base = art.local.resolve()
+    path = (base / rel).resolve() if not Path(rel).is_absolute() else Path(rel).resolve()
+    try:
+        path.relative_to(base)
+    except ValueError:
+        return ""
+    return fingerprint.file_content(path)
+
+
 def to_findings(data: dict, pkg: ResolvedPackage, art: Artifact) -> list[Finding]:
     out: list[Finding] = []
     for rule, hits in sorted((data.get("results") or {}).items()):
@@ -243,6 +258,9 @@ def to_findings(data: dict, pkg: ResolvedPackage, art: Artifact) -> list[Finding
                 ),
                 file="manifest.json",
                 evidence=f"{pkg.name}=={pkg.version} {where}: {match}",
+                # (0.14.0) the package and the flagged file's content, not its version:
+                # an accepted hit stays accepted until that file changes
+                fingerprint=fingerprint.other(rule, pkg.name, _file_hash(art, where)),
                 tags=frozenset({Tag.POSSIBLE}) if rule in _EXFIL else frozenset(),
                 analyzer=NAME,
                 platforms=_platforms_for(art, pkg),

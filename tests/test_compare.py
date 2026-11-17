@@ -4,6 +4,8 @@ consistent with the README, as a labelled opinion, and never for data leaving th
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 from test_more_code import INIT, PATCH, THUMBS, _click, _pkg, _serve, _wait
 from test_server import get
@@ -95,8 +97,9 @@ def test_the_import_path_names_the_file_and_the_name_inside_it():
 
 
 def test_home_assistants_python_314_except_form_is_read():
-    with pytest.raises(SyntaxError):
-        compile(HA_FILE, "media.py", "exec", flags=0x400)  # ast.PyCF_ONLY_AST: parse, never run
+    if sys.version_info < (3, 14):  # an older Python needs the retry (brackets put back)
+        with pytest.raises(SyntaxError):
+            compile(HA_FILE, "media.py", "exec", flags=0x400)  # PyCF_ONLY_AST: never run
     tree = compare.parse(HA_FILE)
     node = compare.find_function(tree, ["VodSource", "_files"])
     assert compare.span(node) == (15, 18)  # the file's own line numbers

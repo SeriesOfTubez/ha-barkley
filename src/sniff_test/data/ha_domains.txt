@@ -1,5 +1,7 @@
 # Home Assistant's built-in integration domains (homeassistant/components).
 # Source: home-assistant/core at 2026.11.2 (1562 domains), plus any listed before.
+# python: 3.14.10 (that release's .python-version; tests/test_publish.py checks
+# Barkley's own Python is not older)
 # A nested manifest with one of these domains is never counted as the app's own.
 3_day_blinds
 abode

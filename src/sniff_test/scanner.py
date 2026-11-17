@@ -33,7 +33,7 @@ from sniff_test.models import (
     Target,
     TargetKind,
 )
-from sniff_test.report import context, graph
+from sniff_test.report import context, fingerprint, graph
 from sniff_test.report.json_report import ScanResult, finding_json
 from sniff_test.scoring import Exposure, apply_exposure, score
 from sniff_test.workspace import workspace
@@ -115,6 +115,40 @@ def _label_test_code(findings: list[Finding], target: Target) -> list[Finding]:
     ]
 
 
+_DEP_RULES = ("dep-vuln", "dep-malicious", "dep-build-tool-vuln")
+
+
+def _fingerprints(findings: list[Finding], target: Target) -> list[Finding]:
+    """(0.14.0) report/fingerprint.py, for every finding that doesn't have one yet (the
+    JavaScript ones come from semgrep.py, GuardDog's from guarddog.py)."""
+    texts: dict[str, str | None] = {}
+    out = []
+    for f in findings:
+        if f.fingerprint:
+            out.append(f)
+            continue
+        if f.rule_id in _DEP_RULES:
+            fp = fingerprint.dependency(f.rule_id, f.evidence or f.message)
+        elif f.file and f.file.endswith(".py"):
+            if f.file not in texts:
+                p = (target.root / f.file).resolve()
+                try:
+                    p.relative_to(target.root.resolve())
+                    texts[f.file] = p.read_text("utf-8", "replace") if p.is_file() else None
+                except (OSError, ValueError):
+                    texts[f.file] = None
+            text = texts[f.file]
+            fp = (
+                fingerprint.python(f.rule_id, text, f.line)
+                if text is not None
+                else fingerprint.other(f.rule_id, f.evidence, f.message)
+            )
+        else:
+            fp = fingerprint.other(f.rule_id, f.evidence, f.message)
+        out.append(dataclasses.replace(f, fingerprint=fp))
+    return out
+
+
 def scan(
     source: str,
     ref: str | None = None,
@@ -158,6 +192,7 @@ def scan(
         if target.kind is TargetKind.INTEGRATION:
             findings = _label_test_code(findings, target)
         findings = apply_exposure(_dedupe(findings), exposure)
+        findings = _fingerprints(findings, target)
         complete = all(r.state in (AnalyzerState.OK, AnalyzerState.NOT_APPLICABLE) for r in results)
         result = ScanResult(
             target=target,

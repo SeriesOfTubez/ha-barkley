@@ -113,3 +113,17 @@ def test_a_sandboxed_tool_cannot_get_out(ws, tmp_path_factory):
         "read outside": "blocked", "write outside": "blocked", "write workspace": "allowed",
         "parent environ": "blocked", "exec from workspace": "blocked",
     }  # fmt: skip
+
+
+def test_landlock_structs_match_the_kernel_layout():
+    """struct landlock_path_beneath_attr is packed (12 bytes, parent_fd at 8);
+    struct landlock_net_port_attr is two u64 (16 bytes). Python 3.14 changed how ctypes
+    picks a layout for _pack_, so the sizes are pinned here."""
+    import ctypes
+
+    from sniff_test import sandbox
+
+    assert ctypes.sizeof(sandbox._PathBeneath) == 12
+    assert sandbox._PathBeneath.parent_fd.offset == 8
+    assert ctypes.sizeof(sandbox._NetPort) == 16
+    assert sandbox._NetPort.port.offset == 8

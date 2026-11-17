@@ -117,6 +117,30 @@ def _facts() -> Check:
     return Check("environment", True, "; ".join(lines))
 
 
+def python_check() -> Check:
+    """(0.14.0) Barkley parses apps written for HA's Python; an older one can't read newer
+    syntax. HA's version is the one shipped with the built-in domain list."""
+    import re
+    import sys
+    from importlib import resources
+
+    mine = ".".join(str(x) for x in sys.version_info[:3])
+    text = (resources.files("sniff_test") / "data" / "ha_domains.txt").read_text("utf-8")
+    m = re.search(r"^# python: (\d+)\.(\d+)\.(\d+)", text, re.M)
+    src = re.search(r"^# Source: home-assistant/core at (\S+)", text, re.M)
+    if not m:
+        return Check("Barkley's Python", True, f"{mine} (HA's not recorded)")
+    ha = tuple(int(x) for x in m.groups())
+    ok = sys.version_info[:3] >= ha
+    where = f"HA {src.group(1)} runs {'.'.join(m.groups())}" if src else "HA's"
+    return Check(
+        "Barkley's Python",
+        ok,
+        f"{mine}; {where}" + ("" if ok else ": older, so files using newer syntax are "
+                              "skipped by the parse-only checks"),
+    )  # fmt: skip
+
+
 def memory_check(mem: memory.Memory | None = None) -> Check:
     """The scan guard: warn under ~2 GB available, refuse under ~1 GB."""
     mem = mem or memory.check()
@@ -259,6 +283,7 @@ def steps(addon: bool = False) -> list[Step]:
     the tool runs take seconds each."""
     out: list[Step] = [
         ("environment", lambda s, r: _facts()),
+        ("Barkley's Python", lambda s, r: python_check()),
         ("memory guard", lambda s, r: memory_check()),
         ("tool sandbox", lambda s, r: sandbox_check()),
         ("GitHub API", lambda s, r: github_check()),

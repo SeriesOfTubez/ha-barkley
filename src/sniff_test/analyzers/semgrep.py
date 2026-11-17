@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import dataclasses
 import hashlib
 import json
 import os
@@ -29,6 +30,7 @@ from sniff_test.models import (
     Target,
     TargetKind,
 )
+from sniff_test.report import fingerprint
 
 NAME = "semgrep"
 _EVIDENCE_MAX = 300
@@ -542,12 +544,18 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
         if (fact := to_fact(r, root, target.domain)) is not None:
             facts.append(fact)
         else:
-            findings.append(f := to_finding(r, root))
-            if f.rule_id == js_wrapper.RULE and f.file:
+            f = to_finding(r, root)
+            if f.file and Path(f.file).suffix in js_wrapper._JS:
                 raw = (root / f.file).read_bytes()
                 start = js_wrapper.char_offset(raw, r["start"]["offset"])
                 end = js_wrapper.char_offset(raw, r["end"]["offset"])
-                token_hits.append(js_wrapper.Hit(f, root / f.file, start, end))
+                text = raw.decode("utf-8", "replace")
+                f = dataclasses.replace(
+                    f, fingerprint=fingerprint.javascript(f.rule_id, text, start, end)
+                )
+                if f.rule_id == js_wrapper.RULE:
+                    token_hits.append(js_wrapper.Hit(f, root / f.file, start, end))
+            findings.append(f)
     if token_hits:  # (0.14.0) same-origin URLs the rule can't prove (js_wrapper)
         runner = js_wrapper.semgrep_runner(exe, root, run_dir, _tool_env(), _proc.run)
         card = target.kind is TargetKind.PLUGIN

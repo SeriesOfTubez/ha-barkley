@@ -85,11 +85,17 @@ class Policy:
 
 
 class _PathBeneath(ctypes.Structure):
+    # The kernel's struct landlock_path_beneath_attr is __attribute__((packed)): 12 bytes,
+    # parent_fd at offset 8. ctypes packs only with the "ms" layout (gcc-sysv refuses
+    # _pack_), which gives exactly that here; Python 3.14 wants it named.
+    # tests/test_sandbox.py checks the size and offsets.
+    _layout_ = "ms"
     _pack_ = 1
     _fields_ = (("allowed_access", ctypes.c_uint64), ("parent_fd", ctypes.c_int32))
 
 
 class _NetPort(ctypes.Structure):
+    _layout_ = "gcc-sysv"
     _fields_ = (("allowed_access", ctypes.c_uint64), ("port", ctypes.c_uint64))
 
 

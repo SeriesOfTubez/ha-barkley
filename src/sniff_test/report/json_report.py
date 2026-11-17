@@ -88,6 +88,7 @@ def finding_json(f: Finding) -> dict[str, Any]:
         **({"dependency": dependency_json(f.dependency)} if f.dependency else {}),
         # hosts/IPs the user may mark trusted in the panel (lowercase, validated shape)
         **({"addresses": list(f.addresses)} if f.addresses else {}),
+        **({"fingerprint": f.fingerprint} if f.fingerprint else {}),
     }
 
 

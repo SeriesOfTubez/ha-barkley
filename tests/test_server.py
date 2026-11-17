@@ -232,7 +232,8 @@ def test_doctor_page_opens_at_once_and_fills_in_as_checks_end(panel, monkeypatch
     assert '<meta http-equiv="refresh" content="2">' in page
     assert f"Running the checks: 1 of {total} done" in page
     assert "<b>environment</b> uid=0" in page
-    assert "<b>memory guard</b> running…" in page and "<b>uv --version</b> waiting" in page
+    # the step after "environment" runs next (since 0.14.0: Barkley's Python)
+    assert "<b>Barkley&#x27;s Python</b> running…" in page and "<b>uv --version</b> waiting" in page
     get(base + "/doctor")  # a reload while it runs starts nothing new
     go.set()
     _, page = doctor_done(base)

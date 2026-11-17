@@ -171,6 +171,8 @@ class Finding:
     # address behind the finding could be read with certainty. The panel lets the user
     # mark these addresses trusted; a finding without them can never be switched off.
     addresses: tuple[str, ...] = ()
+    # (0.14.0) report/fingerprint.py: stays the same while the flagged code does
+    fingerprint: str | None = None
 
     @property
     def id(self) -> str:

@@ -1,4 +1,5 @@
-"""Regenerate src/sniff_test/data/ha_domains.txt: Home Assistant's built-in integration domains.
+"""Regenerate src/sniff_test/data/ha_domains.txt: Home Assistant's built-in integration domains
+(and the release's Python version, in a header line).
 
     GITHUB_TOKEN=$(gh auth token) uv run python scripts/ha_domains.py [TAG]
 
@@ -30,12 +31,15 @@ def main() -> None:
     if tree.get("truncated"):
         sys.exit("tree truncated")
     names = {x["path"] for x in tree["tree"] if x["type"] == "tree" and _DOMAIN.match(x["path"])}
+    py = gh.get_text(f"/repos/home-assistant/core/contents/.python-version?ref={tag}").strip()
     old = set()
     if OUT.exists():
         old = {ln for ln in OUT.read_text("utf-8").splitlines() if ln and not ln.startswith("#")}
     header = (
         "# Home Assistant's built-in integration domains (homeassistant/components).\n"
         f"# Source: home-assistant/core at {tag} ({len(names)} domains), plus any listed before.\n"
+        f"# python: {py} (that release's .python-version; tests/test_publish.py checks\n"
+        "# Barkley's own Python is not older)\n"
         "# A nested manifest with one of these domains is never counted as the app's own.\n"
     )
     OUT.write_text(header + "\n".join(sorted(names | old)) + "\n", "utf-8")
