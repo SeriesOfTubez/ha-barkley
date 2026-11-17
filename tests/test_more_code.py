@@ -419,3 +419,25 @@ def test_a_failed_second_round_keeps_the_first_answer_and_says_so(tmp_path):
     assert len(calls) == 2 and "It swaps <code>_files</code> in." in page
     assert "the second answer didn't arrive (the model timed out)" in page
     httpd.shutdown()
+
+
+def test_a_pick_written_as_a_sentence_counts_for_the_menu_names_in_it(tmp_path):
+    """(0.13.0) A real answer asked "I need to see the `<Class>` class and its `connect`"
+    for two entries that were on the menu, and filled the other fields with "--"."""
+    snip, src = _snip_and_source(tmp_path)
+    entries = ai_context.menu(snip, src)
+    url = next(m for m in entries if m["name"] == "_unrelated")
+    name = next(m for m in entries if m["name"] == "_name")
+    asks = {"need_1": "I need to see `_unrelated` and its helper `_name`", "need_2": "--",
+            "need_3": " -- "}  # fmt: skip
+    assert ai_context.needs(asks, entries) == ([url, name], [])
+    assert ai_context.needs({"need_1": "show me 'thumbs.py: _name' please"}, entries) == (
+        [name],
+        [],
+    )
+    # names that aren't on the menu still count for nothing, and a sentence with none is refused
+    got = ai_context.needs({"need_1": "the `os.environ` and `/config/.storage/auth`"}, entries)
+    assert got[0] == [] and len(got[1]) == 1
+    # never more than MAX_NEEDS picks, however many names one sentence holds
+    names = " ".join(f"`{m['file']}: {m['name']}`" for m in entries[:6])
+    assert len(ai_context.needs({"need_1": names}, entries)[0]) == ai_context.MAX_NEEDS

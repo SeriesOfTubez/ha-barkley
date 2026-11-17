@@ -149,11 +149,15 @@ behind the names used. That is at most 150 lines of code plus 40 of imports and
 constants, and you can open it under "The code it reads" before you click. When you
 click, that code and the question go to your AI; nothing is sent before. It is the
 app's own public code, never anything from your Home Assistant.
+A privacy note shows the button, or the reading, of the address or port behind it:
+the same reading as under "Where it connects", not a second one. A note whose addresses
+are all named in the app's documentation or manifest has none, and says so.
 
 For integrations the AI may ask once to see more of the app's code. It can only pick
-from a list of names Barkley offers (at most three picks; never a file path, never its
-own words), Barkley adds that code (at most 150 more lines) and asks again. The sheet
-shows the checked statements of both readings together. Your one
+from a list of names Barkley offers (at most three picks; never a file path; in a pick
+written as a sentence only the listed names count), Barkley adds that code (at most 150
+more lines) and asks again. The sheet shows the checked statements of both readings
+together; one that repeats an earlier one in other words is shown once. Your one
 click covers both requests; the sheet says what was asked for and shows the added code.
 For this, Barkley keeps a compressed copy of an integration's Python files in its
 store: one per version, for the installed version and a waiting update, never over 1 MB

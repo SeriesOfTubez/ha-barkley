@@ -534,3 +534,31 @@ def test_two_readings_are_put_together():
     many = {"claims": [{"text": f"claim {i}", "cites": []} for i in range(6)]}
     more = {"claims": [{"text": f"other {i}", "cites": []} for i in range(6)]}
     assert len(ai_context.combine(many, more)["claims"]) == ai_context.MAX_SHOWN_CLAIMS
+
+
+def test_restatements_of_the_first_reading_are_shown_once():
+    """(0.13.0) A real two-round reading showed ten statements, four of them the first
+    reading's again in other words (the same code names, overlapping cited lines)."""
+
+    def c(text, *cites):
+        return {"text": text, "cites": [["t.py", a, b] for a, b in cites]}
+
+    first = {"claims": [
+        c("It posts to `URL`, which is `https://x.invalid/ping`.", (36, 36)),
+        c("`send` posts JSON with `session.post` (`TIMEOUT`).", (246, 250), (38, 38)),
+        c("Five items: `uid`, `ver`, `ha_ver`, `share_a`, `share_b`.", (70, 76)),
+        c("`uid` is made with `uuid4()` once and kept.", (227, 230)),
+        c("`ver` and `ha_ver` are `\"unknown\"` when unreadable.", (336, 346), (327, 333)),
+        c("With `share_b`, a `models` list is added.", (77, 78)),
+    ]}  # fmt: skip
+    second = {"claims": [
+        c("The app posts to `URL`, set to `https://x.invalid/ping`.", (36, 36), (246, 248)),
+        c("The message has `uid`, `ver`, `ha_ver`, `share_a` and `share_b`.", (70, 76)),
+        c("`uid` is a random ID from `uuid4()`, saved and reused.", (227, 230)),
+        c("`ha_ver` is the version, or `unknown`.", (327, 333)),
+        c("`uid` is also written to `store` at start.", (300, 302)),  # new lines: kept
+        c("`URL` is read again in `send`.", (500, 501)),  # same name, other lines: kept
+    ]}  # fmt: skip
+    got = ai_context.combine(first, second)
+    assert got["claims"] == [*first["claims"], *second["claims"][4:]]
+    assert got["repeats"] == 4
