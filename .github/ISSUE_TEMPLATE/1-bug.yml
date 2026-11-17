@@ -1,0 +1,72 @@
+name: Bug report
+description: Barkley crashed, errored, or did something it shouldn't.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. If Barkley scored an app wrong or missed something
+        in its code, use **Scan result** instead. If it's a way to hide code from
+        Barkley or escape its container, report it privately (see SECURITY.md).
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you run Barkley
+      options:
+        - Home Assistant app (add-on)
+        - Standalone container
+        - Command line (sniff-test)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Barkley version
+      description: Shown on the app's info page, or `sniff-test --version`.
+      placeholder: "0.14.0"
+    validations:
+      required: true
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      description: Leave blank for the command line.
+      placeholder: "2026.11.1"
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the app you were sniffing if it matters (repo URL and version).
+      placeholder: |
+        1. Open Barkley from the sidebar
+        2. Search for ...
+        3. Click Sniff
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        The app's Log tab, or the command's output. Formatted as code automatically.
+        Remove tokens and hostnames you don't want public first.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the open and closed issues and this isn't already reported.
+          required: true
+        - label: I'm on the newest release (only the newest is supported).
+          required: true
+        - label: The logs above contain no tokens, passwords or private addresses.
+          required: true

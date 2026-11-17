@@ -1,0 +1,76 @@
+name: Scan result
+description: A false positive, a missed pattern, or a score that looks wrong.
+title: "[Scan]: "
+labels: ["rules"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For results Barkley got wrong on an ordinary pattern. If the code is built to
+        **hide** from Barkley (a construct that makes a rule or the dependency
+        resolution skip code Home Assistant would still run), don't post it here:
+        report it privately (see SECURITY.md).
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What's wrong
+      options:
+        - False positive (flagged code that is fine)
+        - Missed (didn't flag code that should be)
+        - Score or verdict looks wrong
+        - Finding explanation is wrong or unclear
+    validations:
+      required: true
+  - type: input
+    id: repo
+    attributes:
+      label: App scanned
+      description: Repository URL of the integration or card.
+      placeholder: https://github.com/owner/repo
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: App version scanned
+      description: The release or tag Barkley sniffed.
+      placeholder: v1.2.3
+    validations:
+      required: true
+  - type: input
+    id: barkley-version
+    attributes:
+      label: Barkley version
+      placeholder: "0.14.0"
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Rule or finding
+      description: The rule ID if shown (for example `ha-exfil-taint`), or the finding's title.
+  - type: textarea
+    id: location
+    attributes:
+      label: Where in the code
+      description: File and line, or a short excerpt. A permalink to the line works best.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it's wrong
+      description: >-
+        For a false positive, what the code actually does. For a miss, what it does and
+        why that matters.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the open and closed issues and this isn't already reported.
+          required: true
+        - label: This isn't a way to hide code from Barkley (those go to private reporting).
+          required: true
