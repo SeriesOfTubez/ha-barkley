@@ -222,8 +222,9 @@ def _culprit_finding(c: _Culprit, plats: set[str]) -> Finding:
 def run(target: Target, work: Path, env: HAEnv | None) -> tuple[AnalyzerResult, Resolution | None]:
     if target.kind is not TargetKind.INTEGRATION:
         return AnalyzerResult(NAME, AnalyzerState.NOT_APPLICABLE), None
-    raw = manifest_requirements(target)
-    parsed = [reqs.parse(r) for r in raw or []]
+    raw = list(manifest_requirements(target) or [])
+    raw += [r for r in target.runtime_requirements if r not in raw]  # (0.14.0) see Target
+    parsed = [reqs.parse(r) for r in raw]
     resolution = Resolution(requirements=parsed)
     plain = [r for r in parsed if r.kind is reqs.ReqKind.PLAIN]
     if not plain:

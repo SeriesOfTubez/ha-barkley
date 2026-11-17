@@ -13,7 +13,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from sniff_test.analyzers import _proc, py_tamper
+from sniff_test.analyzers import _proc, py_precision, py_tamper
+from sniff_test.analyzers.py_resolve import Resolver
 from sniff_test.models import (
     RULE_FILE_NOT_CHECKED,
     AnalyzerResult,
@@ -328,6 +329,35 @@ def _only_rebinds_names(f: Finding, root: Path, trees: dict[str, Any]) -> bool:
     return all(names_only(t) for t in targets)
 
 
+def _precise(findings: list[Finding], root: Path, target: Target) -> list[Finding]:
+    """(0.14.0) analyzers/py_precision: whose config entries, which .storage file, which
+    packages. Fixed-list package installs go to Target.runtime_requirements."""
+    res = Resolver(root)
+    out: list[Finding] = []
+    for f in findings:
+        if py_precision.entry_finding_dropped(f, res, target.domain):
+            continue
+        if f.rule_id == "ha-raw-storage-access":
+            level = py_precision.storage_level(f, res, target.domain)
+            if (
+                level is None
+                and f.file
+                and res.tree(f.file) is None
+                and _is_own_storage(f, target.domain)
+            ):
+                level = py_precision.own_storage(f)  # unparseable file: the old text check
+            out.append(level or f)
+            continue
+        if (listed := py_precision.pip_listed(f, res)) is not None:
+            out.append(listed[0])
+            for spec in listed[1]:
+                if spec not in target.runtime_requirements:
+                    target.runtime_requirements.append(spec)
+            continue
+        out.append(f)
+    return out
+
+
 # Semgrep's error types for a file it gave up on entirely: no rule ran on it. A recovered
 # parse is ["PartialParsing", spans], and the spans say how much was skipped: a few
 # characters on real bundles (`n?.5:1`), but it can be the whole file (seen on 1.185:
@@ -508,11 +538,8 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
         else:
             findings.append(to_finding(r, root))
     trees: dict[str, Any] = {}
-    findings = [
-        f
-        for f in findings
-        if not _is_own_storage(f, target.domain) and not _only_rebinds_names(f, root, trees)
-    ]
+    findings = [f for f in findings if not _only_rebinds_names(f, root, trees)]
+    findings = _precise(findings, root, target)
     # The assignment forms the ha-monkeypatch rule can't see (chained, `+=`, aliased
     # from-imports, ...), from the same parsed trees. Skips lines Semgrep kept.
     flagged = {(f.file, f.line) for f in findings if f.rule_id == py_tamper.RULE_ID and f.file}

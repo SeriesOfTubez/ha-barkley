@@ -4,8 +4,9 @@ Free Semgrep follows taint only inside one function, so `read secrets in helper 
 in helper B` is invisible to `ha-exfil-taint`. This joins what the per-file analyzers
 saw, at the level of the whole item:
 
-  a high sensitive-access finding (secrets, auth, other integrations' credentials,
-  stored tokens) that no proven taint path already explains
+  a high sensitive-access finding that reads a credential (secrets, auth tokens, other
+  integrations' credentials, the Supervisor token, stored tokens: CREDENTIAL_SOURCES)
+  that no proven taint path already explains
   + code that can send data out (inventory: HTTP client, sockets, websockets, fetch)
   + somewhere unexplained to send it (an undeclared or developer-hosted host, a public
     IP, a known drop/tunnel host or a credential-bearing webhook)
@@ -35,13 +36,33 @@ SENSITIVE_NODES: dict[str, tuple[str, str]] = {
     "ha-read-secrets": ("data", "secrets.yaml"),
     "ha-read-auth-storage": ("data", "auth and credential storage"),
     "ha-raw-storage-access": ("data", ".storage files"),
-    "ha-auth-internals": ("auth", "users and tokens"),
+    "ha-auth-internals": ("auth", "login tokens"),
+    "ha-auth-change-users": ("auth", "user accounts"),
+    "ha-auth-list-users": ("auth", "the user list"),
     "ha-foreign-entry-data": ("data", "other integrations' credentials"),
+    "ha-foreign-entry-options": ("data", "other integrations' settings"),
+    "ha-own-storage-path": ("data", ".storage files"),
     "ha-bulk-location-read": ("data", "household locations"),
     "ha-supervisor-token": ("auth", "Supervisor token"),
     "card-read-tokens": ("auth", "stored HA tokens"),
     "card-access-token-use": ("auth", "user's access token"),
 }
+
+# (0.14.0) Only these sources pair with an outside host into `possible-exfil`: what they
+# read is a credential, a token or a secret. Listing or changing users, other apps'
+# settings, locations and .storage paths are what an app can do, not something to steal
+# (a real integration lists users for its panel's picker and also talks to its cloud).
+CREDENTIAL_SOURCES = frozenset(
+    {
+        "ha-read-secrets",
+        "ha-read-auth-storage",
+        "ha-auth-internals",
+        "ha-foreign-entry-data",
+        "ha-supervisor-token",
+        "card-read-tokens",
+        "card-access-token-use",
+    }
+)
 
 
 def function_spans(path: Path) -> list[tuple[int, int]] | None:
@@ -106,7 +127,7 @@ def correlate(findings: list[Finding], facts: list[Fact], root: Path) -> list[Fi
         for f in findings
         if f.category is Category.SENSITIVE_ACCESS
         and f.severity >= Severity.HIGH
-        and f.rule_id in SENSITIVE_NODES
+        and f.rule_id in CREDENTIAL_SOURCES
         and f.id not in explained
     ]
     outbound = [f for f in facts if f.attrs.get("outbound")]

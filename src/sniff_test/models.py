@@ -261,3 +261,7 @@ class Target:
     # root-relative path -> sha256 of the bytes as installed, for files our analyzers
     # rewrote in place (semgrep.normalize_js). Byte comparisons must use these.
     pristine_sha256: dict[str, str] = field(default_factory=dict)
+    # (0.14.0) requirements the code installs itself from a fixed list (a literal
+    # `async_process_requirements(hass, DOMAIN, ["x==1"])`): resolved and checked with
+    # the manifest's (analyzers/py_precision.pip_listed)
+    runtime_requirements: list[str] = field(default_factory=list)

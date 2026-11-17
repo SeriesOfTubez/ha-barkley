@@ -301,6 +301,62 @@ def _integration_tree(target: Target) -> Path | None:
     return None
 
 
+_ADDRESSY = re.compile(r"://|@|/|\b\d{1,3}(?:\.\d{1,3}){3}\b")
+
+
+def _addressy(value: str) -> bool:
+    """A URL, an address or a host name: not something a release may quietly fill in."""
+    from sniff_test.analyzers.endpoints import _bare_ref
+
+    return bool(_ADDRESSY.search(value)) or _bare_ref(value, "", 0) is not None
+
+
+def _const_assign(st: Any) -> tuple[str, str] | None:
+    import ast
+
+    target = value = None
+    if isinstance(st, ast.Assign) and len(st.targets) == 1:
+        target, value = st.targets[0], st.value
+    elif isinstance(st, ast.AnnAssign) and st.value is not None:
+        target, value = st.target, st.value
+    if (
+        isinstance(target, ast.Name)
+        and isinstance(value, ast.Constant)
+        and isinstance(value.value, str)
+    ):
+        return target.id, value.value
+    return None
+
+
+def injected_constants(released: Path, tagged: Path) -> list[str] | None:
+    """(0.14.0) Names of the module constants a release filled in, when that is the only
+    difference: every changed top-level statement is `NAME = "<value>"` that was
+    `NAME = ""` at the tag, and no value is a URL, host or IP (a real integration puts
+    its service's project key in at release time to keep it out of the public source).
+    None when anything else differs or a file doesn't parse. Parse only; values are
+    never shown."""
+    import ast
+
+    from sniff_test.analyzers.py_resolve import parse
+
+    try:
+        a = parse(released.read_text(encoding="utf-8", errors="replace"))
+        b = parse(tagged.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return None
+    if a is None or b is None or len(a.body) != len(b.body):
+        return None
+    names: list[str] = []
+    for sa, sb in zip(a.body, b.body, strict=True):
+        if ast.dump(sa) == ast.dump(sb):
+            continue
+        ca, cb = _const_assign(sa), _const_assign(sb)
+        if not (ca and cb and ca[0] == cb[0] and cb[1] == "" and ca[1] and not _addressy(ca[1])):
+            return None
+        names.append(ca[0])
+    return names or None
+
+
 def compare_integration_asset(asset: Path, tree: Path) -> list[Finding]:
     a, b = _files(asset), _files(tree)
     changed = []
@@ -315,6 +371,22 @@ def compare_integration_asset(asset: Path, tree: Path) -> list[Finding]:
     code = (".py", ".pyc", ".pyo", ".so", ".pyd")
     extra = sorted(rel for rel in set(a) - set(b) if rel.endswith(code))
     out = []
+    filled = {rel: injected_constants(a[rel], b[rel]) for rel in changed if rel.endswith(".py")}
+    if changed and all(filled.get(rel) for rel in changed):
+        where = ", ".join(f"{rel}: {', '.join(names)}" for rel, names in filled.items() if names)
+        out.append(
+            _finding(
+                "repo-release-fills-constant",
+                "Release fills in a constant",
+                Severity.MEDIUM,
+                f"The release zip HACS installs differs from the tagged source only in "
+                f"{len(changed)} file(s) where a constant that is empty at the tag holds a "
+                "value (no address). Developers do this to keep a key out of the public "
+                "source; what it holds can't be reviewed on GitHub. Scanned: the release zip.",
+                where[:300],
+            )
+        )
+        changed = []
     if changed:
         out.append(
             _finding(

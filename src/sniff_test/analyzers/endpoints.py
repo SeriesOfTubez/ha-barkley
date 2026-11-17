@@ -163,7 +163,13 @@ class Declared:
         if reg in self.hosts:
             return True
         first = _norm(reg.split(".")[0])
-        return bool(first) and first in self.names
+        if first and first in self.names:
+            return True
+        # (0.14.0) A name that spans the top-level domain: `acme.energy` for an
+        # integration named acme_energy. The whole registrable domain must equal the
+        # name; no prefix matching.
+        whole = _norm(reg)
+        return bool(whole) and whole in self.names
 
 
 def _url_host(url: Any) -> str | None:

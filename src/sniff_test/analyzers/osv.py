@@ -20,6 +20,7 @@ pass our own empty `--config`.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -436,13 +437,17 @@ def check_python(
 def npm_dev_only(lockfile: Path) -> set[tuple[str, str]]:
     """(name, version) pairs that appear in a package-lock only as dev dependencies.
 
-    yarn.lock and pnpm-lock.yaml don't mark dev packages per entry; for those we can't
-    tell, so everything is treated as bundled (and capped at medium). bun.lock has the
-    dependency graph, so packages not reachable from a workspace's runtime dependencies
-    are dev-only (`bun_dev_only`).
+    yarn.lock, pnpm-lock.yaml and bun.lock don't mark dev packages per entry, but they
+    hold the dependency graph: packages not reachable from package.json's runtime
+    dependencies are dev-only (`yarn_dev_only`, `pnpm_dev_only`, `bun_dev_only`; yarn and
+    pnpm since 0.14.0). When a walk fails everything counts as bundled (the safe side).
     """
     if lockfile.name == "bun.lock":
         return bun_dev_only(lockfile)
+    if lockfile.name == "yarn.lock":
+        return yarn_dev_only(lockfile)
+    if lockfile.name == "pnpm-lock.yaml":
+        return pnpm_dev_only(lockfile)
     if lockfile.name not in ("package-lock.json", "npm-shrinkwrap.json"):
         return set()
     try:
@@ -579,6 +584,216 @@ def bun_dev_only(lockfile: Path) -> set[tuple[str, str]]:
     shipped = {i for k in runtime if (i := ident(packages[k]))}
     every = {i for e in packages.values() if (i := ident(e))}
     return every - shipped
+
+
+_RUNTIME_KEYS = ("dependencies", "optionalDependencies", "peerDependencies")
+
+
+def _runtime_roots(lockfile: Path) -> dict[str, str] | None:
+    """package.json's runtime dependencies (name -> range) beside the lockfile."""
+    try:
+        pkg = json.loads((lockfile.parent / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(pkg, dict):
+        return None
+    out: dict[str, str] = {}
+    for k in _RUNTIME_KEYS:
+        if isinstance(pkg.get(k), dict):
+            out.update({str(n): str(r) for n, r in pkg[k].items()})
+    return out
+
+
+# A dependency line: v1 `"@scope/x" "^1.2"` / `x "^1"`, berry `"@scope/x": "npm:^1"` / `x: npm:^1`
+_YARN_DEP = re.compile(r"""^(?P<name>"[^"]+"|'[^']+'|[^\s:"']+):?\s+(?P<rng>.+)$""")
+
+
+def _unquote(s: str) -> str:
+    s = s.strip()
+    return s[1:-1] if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'" else s
+
+
+def _split_spec(spec: str) -> tuple[str, str] | None:
+    """'@scope/name@^1.2' -> ('@scope/name', '^1.2')."""
+    at = spec.find("@", 1)
+    return (spec[:at], spec[at + 1 :]) if at > 0 else None
+
+
+def _walk(roots: list[str], edges: dict[str, list[str]]) -> set[str]:
+    seen: set[str] = set()
+    todo = list(roots)
+    while todo:
+        key = todo.pop()
+        if key not in seen:
+            seen.add(key)
+            todo += edges.get(key, [])
+    return seen
+
+
+def yarn_dev_only(lockfile: Path) -> set[tuple[str, str]]:
+    """(name, version) pairs in a yarn.lock (v1 or berry) that no runtime dependency of
+    package.json reaches. An entry header lists every `name@range` it answers for; a
+    dependency `name range` resolves to the entry for `name@range` (berry writes the
+    protocol, `npm:^1.2`). A root whose exact range isn't found takes every version of
+    that name, so an odd lockfile errs towards "bundled"."""
+    roots = _runtime_roots(lockfile)
+    try:
+        text = lockfile.read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    if roots is None:
+        return set()
+    entries: dict[int, dict[str, Any]] = {}
+    alias: dict[str, int] = {}  # "name@range" -> entry number
+    cur: dict[str, Any] | None = None
+    block: str | None = None
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        line = raw.strip()
+        if indent == 0:
+            block = None
+            if not line.endswith(":") or line.startswith("__metadata"):
+                cur = None
+                continue
+            cur = {"version": None, "deps": []}
+            n = len(entries)
+            entries[n] = cur
+            for spec in line[:-1].split(","):
+                alias[_unquote(spec)] = n
+        elif cur is None:
+            continue
+        elif indent == 2:
+            key, _, value = line.partition(" ")
+            key = key.rstrip(":")
+            block = key if not value.strip() and line.endswith(":") else None
+            if key == "version":
+                cur["version"] = _unquote(value)
+        elif indent >= 4 and block in _RUNTIME_KEYS:
+            m = _YARN_DEP.match(line)
+            if m is None:
+                continue
+            name, rng = m["name"], m["rng"]
+            cur["deps"].append((_unquote(name), _unquote(rng)))
+    if not entries:
+        return set()
+
+    def find(name: str, rng: str) -> list[int]:
+        for key in (f"{name}@{rng}", f"{name}@npm:{rng}"):
+            if key in alias:
+                return [alias[key]]
+        return [n for k, n in alias.items() if (s := _split_spec(k)) and s[0] == name]
+
+    edges: dict[str, list[str]] = {}
+    for n, e in entries.items():
+        edges[str(n)] = [str(m) for d, r in e["deps"] for m in find(d, r)]
+    start = [str(m) for name, rng in roots.items() for m in find(name, rng)]
+    shipped = _walk(start, edges)
+
+    def ident(n: int) -> tuple[str, str] | None:
+        names = {s[0] for k, m in alias.items() if m == n and (s := _split_spec(k))}
+        version = entries[n]["version"]
+        if len(names) != 1 or not version or "use.local" in version:
+            return None
+        return (names.pop(), version)
+
+    every = {i for n in entries if (i := ident(n))}
+    kept = {i for n in entries if str(n) in shipped and (i := ident(n))}
+    return every - kept
+
+
+def _mini_yaml(text: str) -> dict[str, Any]:
+    """The block mappings of a pnpm lockfile (scalars kept as text; lists and flow
+    collections are kept as their text too). Not a YAML parser: enough for pnpm's
+    machine-written layout, and any surprise makes the caller fall back."""
+    root: dict[str, Any] = {}
+    stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith(("#", "- ")):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        line = raw.strip()
+        if line.startswith(("'", '"')):
+            q = line[0]
+            end = line.find(q, 1)
+            if end < 0 or line[end + 1 : end + 2] != ":":
+                continue
+            key, value = line[1:end], line[end + 2 :].strip()
+        elif ":" in line:
+            key, _, value = line.partition(":")
+            value = value.strip()
+        else:
+            continue
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        parent = stack[-1][1]
+        if value:
+            parent[key] = _unquote(value)
+        else:
+            child: dict[str, Any] = {}
+            parent[key] = child
+            stack.append((indent, child))
+    return root
+
+
+def _pnpm_version(v: Any) -> str | None:
+    if isinstance(v, dict):
+        v = v.get("version")
+    if not isinstance(v, str) or v.startswith(("link:", "file:", "workspace:")):
+        return None
+    return re.sub(r"[(_].*$", "", v)
+
+
+def _pnpm_key(key: str) -> tuple[str, str] | None:
+    key = re.sub(r"\(.*$", "", key.lstrip("/"))
+    if (s := _split_spec(key)) is not None:
+        return (s[0], re.sub(r"_.*$", "", s[1]))
+    name, _, version = key.rpartition("/")  # lockfile v5: /name/1.2.3
+    return (name, re.sub(r"_.*$", "", version)) if name and version else None
+
+
+def pnpm_dev_only(lockfile: Path) -> set[tuple[str, str]]:
+    """(name, version) pairs in a pnpm-lock.yaml (v5 to v9) that the root project's
+    runtime dependencies don't reach. v9 keeps the graph under `snapshots`, older
+    versions under `packages`."""
+    try:
+        doc = _mini_yaml(lockfile.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return set()
+    importers = doc.get("importers")
+    project = importers.get(".") if isinstance(importers, dict) else doc
+    graph = doc.get("snapshots") if isinstance(doc.get("snapshots"), dict) else None
+    graph = graph if graph is not None else doc.get("packages")
+    if not isinstance(project, dict) or not isinstance(graph, dict):
+        return set()
+    nodes: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for key, meta in graph.items():
+        ident = _pnpm_key(key)
+        if ident is None:
+            continue
+        deps: list[tuple[str, str]] = []
+        for k in ("dependencies", "optionalDependencies"):
+            for name, v in (meta.get(k) or {}).items() if isinstance(meta, dict) else ():
+                if (ver := _pnpm_version(v)) is not None:
+                    deps.append((name, ver))
+        nodes.setdefault(ident, []).extend(deps)
+    if not nodes:
+        return set()
+    roots = [
+        (name, ver)
+        for k in ("dependencies", "optionalDependencies")
+        for name, v in (project.get(k) or {}).items()
+        if isinstance(project.get(k), dict) and (ver := _pnpm_version(v)) is not None
+    ]
+    seen: set[tuple[str, str]] = set()
+    todo = list(roots)
+    while todo:
+        node = todo.pop()
+        if node not in seen:
+            seen.add(node)
+            todo += nodes.get(node, [])
+    return set(nodes) - seen
 
 
 def _npm_direct(source_root: Path) -> set[str] | None:

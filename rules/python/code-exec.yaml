@@ -149,8 +149,19 @@ rules:
       - pattern: '"".join(chr($C) for $C in $XS)'
       - pattern: '"".join(map(chr, $XS))'
       - pattern: chr($A) + chr($B) + chr($C)
-      - pattern: getattr(__builtins__, $X)
-      - pattern: getattr(builtins, $X)
+      # (0.14.0) A builtin looked up by a plain variable is an interpreter's ordinary
+      # name lookup (a real Python-in-Python integration does it); a name built from
+      # pieces, or a dangerous builtin fetched by its literal name, stays.
+      - pattern: getattr(builtins, $X + $Y)
+      - pattern: getattr(builtins, f"...")
+      - pattern: getattr(builtins, $S.join(...))
+      - pattern: getattr(builtins, $X[::-1])
+      - pattern: getattr(builtins, "=~/^(exec|eval|compile|__import__|open)$/")
+      - pattern: getattr(__builtins__, $X + $Y)
+      - pattern: getattr(__builtins__, f"...")
+      - pattern: getattr(__builtins__, $S.join(...))
+      - pattern: getattr(__builtins__, $X[::-1])
+      - pattern: getattr(__builtins__, "=~/^(exec|eval|compile|__import__|open)$/")
       - pattern: __builtins__.__dict__[$X]
       - pattern: globals()["=~/^(exec|eval|__import__|compile)$/"]
       - pattern: codecs.decode($X, "=~/(?i)^rot_?13$/")

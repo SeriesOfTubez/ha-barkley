@@ -108,12 +108,32 @@ RULES: dict[str, Explanation] = {
         "files; reading other files there would be a problem.",
         "Reads HA's private storage",
     ),
+    "ha-own-storage-path": _E(
+        "Builds the path to its own storage file by hand",
+        "Home Assistant gives apps a helper to keep their data in its private storage "
+        "folder. This app writes the path to its own file itself instead.",
+        "No. It's a coding habit, not a risk: the file it uses is its own.",
+        "Own storage, by hand",
+    ),
     "ha-auth-internals": _E(
-        "Uses Home Assistant's user and login system",
-        "The app lists users, reads or creates login tokens, or creates accounts. Normal "
-        "apps at most look up which user is calling them.",
-        "Yes, unless that's the app's whole purpose (for example a user-management tool).",
-        "Handles users and logins",
+        "Handles Home Assistant login tokens",
+        "The app reads, creates or removes login tokens, or reaches into Home Assistant's "
+        "own login store. A login token lets whoever holds it act as that user.",
+        "Yes, unless that's the app's whole purpose (for example a login add-on).",
+        "Handles login tokens",
+    ),
+    "ha-auth-change-users": _E(
+        "Changes who can log in to Home Assistant",
+        "The app can create, enable, disable or remove user accounts.",
+        "Only if the app isn't meant to manage users. A user-management tool needs this.",
+        "Changes user accounts",
+    ),
+    "ha-auth-list-users": _E(
+        "Reads the list of Home Assistant users",
+        "The app lists every user account: names, ids and who is an administrator. Apps "
+        "do this to offer a list of people to pick from, for example in their own panel.",
+        "Usually not. The list holds no passwords or login tokens.",
+        "Lists users",
     ),
     "ha-foreign-entry-data": _E(
         "Reads other apps' saved passwords and settings",
@@ -121,6 +141,13 @@ RULES: dict[str, Explanation] = {
         "reads the entries of other apps.",
         "Yes, unless it's a tool built to manage other integrations and you trust it.",
         "Reads other apps' passwords",
+    ),
+    "ha-foreign-entry-options": _E(
+        "Reads other apps' settings",
+        "Apps keep their options (filters, chosen devices, entity lists) separately from "
+        "their passwords. This one reads the options of other apps.",
+        "Usually not. Tools that check or tidy up other integrations do this.",
+        "Reads other apps' settings",
     ),
     "ha-bulk-location-read": _E(
         "Reads where the people in your home are",
@@ -181,6 +208,14 @@ RULES: dict[str, Explanation] = {
         "the list it declares. Nobody checks those packages, and all apps share them.",
         "Yes. Ask why it doesn't declare them like other apps do.",
         "Installs software itself",
+    ),
+    "py-runtime-pip-listed": _E(
+        "Installs named software while running",
+        "The app installs Python packages itself instead of declaring them, but the "
+        "package names are written in its code, so Barkley checked those packages like "
+        "the declared ones.",
+        "Usually not. It's an old habit; the packages it installs were checked.",
+        "Installs listed packages",
     ),
     "py-shell-exec": _E(
         "Runs commands on your system",
@@ -398,6 +433,15 @@ RULES: dict[str, Explanation] = {
         "Not by itself. It just makes changes harder to follow.",
         "No releases",
     ),
+    "repo-release-fills-constant": _E(
+        "The download fills in a value the public code leaves empty",
+        "The code you install is the same as the code on GitHub, except for a setting "
+        "that is empty there and filled in the download, usually a key for the "
+        "developer's own service that they keep out of public view. It isn't a web "
+        "address.",
+        "Usually not. The rest of the code matches what anyone can review.",
+        "Fills in a key",
+    ),
     "repo-release-source-mismatch": _E(
         "The download differs from the code people can read",
         "The files the Marketplace installs differ from the same files in the project's "
@@ -536,6 +580,10 @@ DATA_LABELS = {
     "auth and credential storage": "Login and password storage",
     ".storage files": "HA's private storage",
     "users and tokens": "Users and login tokens",
+    "login tokens": "Login tokens",
+    "user accounts": "User accounts",
+    "the user list": "The list of users",
+    "other integrations' settings": "Other apps' settings",
     "other integrations' credentials": "Other apps' passwords",
     "config entries of other integrations": "Other apps' settings",
     "household locations": "Where people are",

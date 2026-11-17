@@ -43,12 +43,12 @@ def test_evil_integration_flows(fixtures):
     edges = _edges(_graph(fixtures, "evil_integration"))
     off_box = "network:off-box (destination not visible statically)"
     # proven: the hass.auth read shares a function with the taint sink
-    assert edges[("auth:users and tokens", "flows_to", off_box)]["evidence"] == "proven"
+    assert edges[("auth:login tokens", "flows_to", off_box)]["evidence"] == "proven"
     # possible: the split read (helpers.py) to the undeclared host, via the correlation
     e = edges[("data:secrets.yaml", "flows_to", "host:weather-cdn.invalid")]
     assert e["evidence"] == "possible" and e["finding_ids"]
     # the proven source is not also drawn as a merely possible flow
-    assert ("auth:users and tokens", "flows_to", "host:weather-cdn.invalid") not in edges
+    assert ("auth:login tokens", "flows_to", "host:weather-cdn.invalid") not in edges
 
 
 def test_evil_card_graph(fixtures):
