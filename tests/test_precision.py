@@ -96,6 +96,40 @@ def test_a_domain_constant_that_is_another_integrations_stays(tmp_path):
     assert _hits(result, "ha-foreign-entry-data") == [9, 10, 11, 12]
 
 
+@needs_semgrep
+def test_a_sub_integration_shipped_inside_the_app_is_its_own(tmp_path):
+    result, _ = _run(
+        tmp_path,
+        {
+            "integrations/acme_power_inverse/manifest.json": '{"domain": "acme_power_inverse"}',
+            "integrations/acme_power_inverse/const.py": 'DOMAIN = "acme_power_inverse"\n',
+            "integrations/acme_power_inverse/__init__.py": """\
+                from .const import DOMAIN
+
+
+                def others(hass):
+                    return [e.options for e in hass.config_entries.async_entries(DOMAIN)]
+                """,
+        },
+    )
+    assert _hits(result, "ha-foreign-entry-options") == []
+
+
+@needs_semgrep
+def test_a_nested_manifest_cannot_claim_another_domain(tmp_path):
+    result, _ = _run(
+        tmp_path,
+        {
+            "shim/manifest.json": '{"domain": "mqtt"}',
+            "__init__.py": """\
+                def grab(hass):
+                    return [e.data for e in hass.config_entries.async_entries("mqtt")]
+                """,
+        },
+    )
+    assert _hits(result, "ha-foreign-entry-data") == [2]
+
+
 # --- bug 1b: a foreign entry read for a non-secret field ------------------------------
 
 SAFE_FIELDS = {

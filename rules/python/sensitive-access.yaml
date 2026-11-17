@@ -60,8 +60,23 @@ rules:
           - metavariable-regex:
               metavariable: $ATTR
               regex: ^(_store|_providers|auth_providers|async_get_refresh_tokens?|async_get_refresh_token_by_token|async_create_refresh_token|async_create_access_token|async_validate_access_token|async_remove_refresh_token)$
-      # A user's tokens, reached through the user list (ha-auth-list-users alone is medium)
-      - pattern: $USER.refresh_tokens
+      # A user's tokens, reached through the user list (ha-auth-list-users alone is
+      # medium): only in a function that uses hass.auth, and never a call (Semgrep
+      # resolves an imported `refresh_tokens(...)` helper to `<module>.refresh_tokens`).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  def $F(...):
+                    ...
+                    $HASS.auth.$GET
+                    ...
+              - pattern-inside: |
+                  async def $F(...):
+                    ...
+                    $HASS.auth.$GET
+                    ...
+          - pattern: $USER.refresh_tokens
+          - pattern-not-inside: $X.refresh_tokens(...)
 
   # (0.14.0) Split from ha-auth-internals: changing who can log in is high, listing
   # users is medium (a real integration lists users to fill a picker in its panel).

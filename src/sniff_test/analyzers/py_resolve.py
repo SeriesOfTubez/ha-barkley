@@ -52,6 +52,7 @@ class Resolver:
         self.root = root.resolve()
         self._trees: dict[str, ast.Module | None] = {}
         self._imports: dict[str, dict[str, tuple[str, str]]] = {}
+        self.domains: frozenset[str] | None = None  # py_precision.own_domains' cache
 
     # --- files -------------------------------------------------------------------------
 

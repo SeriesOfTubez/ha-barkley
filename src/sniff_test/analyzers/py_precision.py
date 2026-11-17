@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import json
 import re
 
 from sniff_test.analyzers.py_resolve import Resolver, parents
@@ -85,12 +86,35 @@ def _own_domain(res: Resolver, rel: str, call: ast.Call, domain: str | None) -> 
         return False  # every integration's entries
     value = res.value(rel, arg)
     if value is not None:
-        return domain is not None and value == domain
+        return value in own_domains(res, domain)
     if isinstance(arg, ast.Name) and arg.id == "DOMAIN":
         imported = res.imports(rel).get("DOMAIN")
         # from homeassistant.components.<x> import DOMAIN is another integration's
         return imported is None or imported[0].startswith(".")
     return False
+
+
+def own_domains(res: Resolver, domain: str | None) -> frozenset[str]:
+    """The manifest's domain, plus the domain of every manifest.json inside the app's
+    folder whose domain starts with the app's own (`<domain>_inverse`): an app can ship
+    sub-integrations of its own (a real one ships three), whose entries are its own too."""
+    if res.domains is None:
+        found: set[str] = set()
+        for m in sorted(res.root.rglob("manifest.json"))[:50]:
+            if m.is_symlink() or not m.is_file():
+                continue
+            try:
+                d = json.loads(m.read_text(encoding="utf-8", errors="replace")).get("domain")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if isinstance(d, str) and d:
+                found.add(d)
+        res.domains = frozenset(found)
+    if not domain:
+        return frozenset()
+    # Only names under the app's own (`<domain>_x`): a nested manifest claiming another
+    # domain ("mqtt") must not make that integration's entries look like the app's.
+    return frozenset({domain} | {d for d in res.domains if d.startswith(f"{domain}_")})
 
 
 def _safe_key(res: Resolver, rel: str, node: ast.expr) -> bool:

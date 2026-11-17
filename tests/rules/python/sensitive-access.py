@@ -37,6 +37,15 @@ async def auth_internals(hass, call):
     return token, caller, tokens
 
 
+async def vendor_tokens(session, data):
+    from .api import refresh_tokens
+
+    # ok: ha-auth-internals
+    fresh = await refresh_tokens(session, client_id=data["client_id"])
+    # ok: ha-auth-internals
+    return fresh.refresh_tokens
+
+
 async def auth_users(hass, user):
     # ruleid: ha-auth-change-users
     await hass.auth.async_update_user(user, is_active=False)
