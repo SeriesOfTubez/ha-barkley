@@ -45,6 +45,9 @@ class Tag(StrEnum):
     INBOUND = "inbound"  # weighted up under --exposure public
     POSSIBLE = "possible"  # heuristic correlation, not a proven path
     MALWARE = "malware"  # known-malicious package / payload pattern
+    # (0.14.0) in a test file no runtime module imports: HA never loads it. A label only;
+    # the finding stays and scores as before (hostile code can hide in tests too).
+    TEST_CODE = "test-code"
 
 
 # A shipped code file no Semgrep rule could read at all. Scoring caps the score while one

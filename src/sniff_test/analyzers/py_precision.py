@@ -10,8 +10,8 @@ files with `ast` (py_resolve: never run, never imported) and decide:
   Anything else stays. A `DOMAIN` imported from another package is another
   integration's domain (that used to pass as "own").
 - `ha-raw-storage-access`: a path into `.storage` in three levels. Into the app's own
-  file or folder (starts with its domain) is `ha-own-storage-path` (low, a practice
-  note); into `auth*`, `core.config_entries` or `onboarding` through a constant is
+  file or folder (starts with its domain) is `ha-own-storage-path` (info, not
+  scored); into `auth*`, `core.config_entries` or `onboarding` through a constant is
   `ha-read-auth-storage` (high); anything else, or anything we can't resolve, stays
   medium.
 - `py-runtime-pip`: an install whose packages are all fixed in the code (a literal list
@@ -26,8 +26,11 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import functools
 import json
 import re
+from importlib import resources
+from pathlib import Path
 
 from sniff_test.analyzers.py_resolve import Resolver, parents
 from sniff_test.deps import reqs
@@ -113,8 +116,21 @@ def own_domains(res: Resolver, domain: str | None) -> frozenset[str]:
     if not domain:
         return frozenset()
     # Only names under the app's own (`<domain>_x`): a nested manifest claiming another
-    # domain ("mqtt") must not make that integration's entries look like the app's.
-    return frozenset({domain} | {d for d in res.domains if d.startswith(f"{domain}_")})
+    # domain ("mqtt") must not make that integration's entries look like the app's. And
+    # never one of HA's built-in domains: an app `google` shipping a nested
+    # `google_assistant` manifest doesn't make Google Assistant's entries its own.
+    builtin = ha_domains()
+    return frozenset(
+        {domain} | {d for d in res.domains if d.startswith(f"{domain}_") and d not in builtin}
+    )
+
+
+@functools.cache
+def ha_domains() -> frozenset[str]:
+    """Home Assistant's built-in integration domains (data/ha_domains.txt, made by
+    scripts/ha_domains.py from HA's source tree)."""
+    text = (resources.files("sniff_test") / "data" / "ha_domains.txt").read_text("utf-8")
+    return frozenset(ln for ln in text.splitlines() if ln and not ln.startswith("#"))
 
 
 def _safe_key(res: Resolver, rel: str, node: ast.expr) -> bool:
@@ -268,14 +284,17 @@ def storage_level(f: Finding, res: Resolver, domain: str | None) -> Finding | No
 
 
 def own_storage(f: Finding) -> Finding:
+    """Info, not scored (user decision 2026-11-17): HA has no developer page for the
+    `Store` helper and no rule against writing into `.storage`, so this is a description
+    of what the code does, not a practice finding."""
     return dataclasses.replace(
         f,
         rule_id="ha-own-storage-path",
         title="Builds its own .storage path by hand",
-        severity=Severity.LOW,
+        severity=Severity.INFO,
         message=(
-            "Builds a path to its own file in HA's .storage folder instead of using the "
-            "homeassistant.helpers.storage.Store helper. Poor practice, not a risk."
+            "Builds a path to its own file in Home Assistant's .storage folder itself, "
+            "instead of going through the homeassistant.helpers.storage.Store helper."
         ),
     )
 
@@ -376,3 +395,217 @@ def pip_listed(f: Finding, res: Resolver) -> tuple[Finding, list[str]] | None:
         ),
         packages,
     )
+
+
+# --- secrets.yaml: HA's file, or text and the app's own copy (issue #15) ---------------
+
+_SECRETS = re.compile(r"secrets\.yaml")
+_LOG_CALLS = frozenset(
+    {"debug", "info", "warning", "warn", "error", "exception", "critical", "log"}
+)
+_BLOCKS = (
+    ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.If, ast.For, ast.AsyncFor,
+    ast.While, ast.With, ast.AsyncWith, ast.Try, ast.Match,
+)  # fmt: skip
+
+
+def _hops(node: ast.expr) -> int | None:
+    """How many folders up from the file a path expression built from `__file__` is
+    (`Path(__file__)` 0, `.parent` 1, `.parents[1]` 2, `os.path.dirname` 1, a `/ "x"`
+    one down, `/ ".."` one up), or None when it isn't plainly built from `__file__`."""
+    if isinstance(node, ast.Name):
+        return 0 if node.id == "__file__" else None
+    if isinstance(node, ast.Attribute) and node.attr == "parent":
+        h = _hops(node.value)
+        return None if h is None else h + 1
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "parents"
+        and isinstance(node.slice, ast.Constant)
+        and type(node.slice.value) is int
+        and node.slice.value >= 0
+    ):
+        h = _hops(node.value.value)
+        return None if h is None else h + node.slice.value + 1
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        h = _hops(node.left)
+        step = _step(node.right)
+        return None if h is None or step is None else h + step
+    if isinstance(node, ast.Call):
+        name = _dotted(node.func)
+        if name.endswith(("resolve", "absolute")) and isinstance(node.func, ast.Attribute):
+            return _hops(node.func.value) if not node.args else None
+        if len(node.args) != 1 or node.keywords:
+            if name in ("os.path.join", "path.join", "join") and node.args:
+                return _joined(node.args)
+            return None
+        arg = node.args[0]
+        if name in ("Path", "pathlib.Path", "PurePath", "os.path.abspath", "os.path.realpath",
+                    "abspath", "realpath"):  # fmt: skip
+            return _hops(arg)
+        if name in ("os.path.dirname", "dirname", "path.dirname"):
+            h = _hops(arg)
+            return None if h is None else h + 1
+    return None
+
+
+def _step(node: ast.expr) -> int | None:
+    """A fixed path part: ".." one up (+1), a plain name one down (-1)."""
+    if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+        return None
+    total = 0
+    for part in node.value.replace("\\", "/").split("/"):
+        if part in ("", "."):
+            continue
+        total += 1 if part == ".." else -1
+    if node.value.startswith(("/", "\\")) or ":" in node.value:
+        return None  # an absolute path: not relative to the file any more
+    return total
+
+
+def _joined(args: list[ast.expr]) -> int | None:
+    h = _hops(args[0])
+    if h is None:
+        return None
+    for a in args[1:-1]:
+        step = _step(a)
+        if step is None:
+            return None
+        h += step
+    return h
+
+
+def _own_copy(const: ast.Constant, up: dict[ast.AST, ast.AST], depth: int) -> bool:
+    """`const` ("secrets.yaml") is the last part of a path built from `__file__` that stays
+    inside the app's folder: `depth` is how many folders the file sits below it. HA's
+    real secrets.yaml is above the app (config/custom_components/<domain>/), so a path
+    that climbs out of the app keeps the finding."""
+    parent = up.get(const)
+    if isinstance(parent, ast.BinOp) and isinstance(parent.op, ast.Div) and parent.right is const:
+        h = _hops(parent.left)
+    elif (
+        isinstance(parent, ast.Call)
+        and _dotted(parent.func) in ("os.path.join", "path.join", "join")
+        and parent.args
+        and parent.args[-1] is const
+        and len(parent.args) >= 2
+    ):
+        h = _joined(parent.args)
+    else:
+        return False
+    if h is None or _step(const) is None or const.value.replace("\\", "/") != "secrets.yaml":
+        return False
+    return h - 1 <= depth  # h = 1 is the file's own folder
+
+
+def _prose(const: ast.Constant, up: dict[ast.AST, ast.AST]) -> bool:
+    """Text about secrets.yaml, not a path to it: a message (it has spaces), or a string
+    passed straight to a log call or a raised exception. Passing through any other call
+    on the way up (`_LOGGER.info("%s", open("/config/secrets.yaml").read())`) keeps it."""
+    if any(ch.isspace() for ch in const.value):
+        return True
+    node: ast.AST = const
+    while True:
+        parent = up.get(node)
+        if isinstance(parent, (ast.JoinedStr, ast.FormattedValue, ast.Tuple, ast.keyword)):
+            node = parent
+            continue
+        if isinstance(parent, ast.BinOp) and isinstance(parent.op, (ast.Mod, ast.Add)):
+            node = parent
+            continue
+        if isinstance(parent, ast.Call) and node is not parent.func:
+            if isinstance(parent.func, ast.Attribute) and parent.func.attr in _LOG_CALLS:
+                return True
+            return isinstance(up.get(parent), ast.Raise)  # raise SomeError("…secrets.yaml")
+        return False
+
+
+def secrets_dropped(f: Finding, res: Resolver) -> bool:
+    """`ha-read-secrets` where every `secrets.yaml` string in the matched statement is
+    message text, or the path is the app's own copy next to its code (issue #15: a test
+    script's `Path(__file__).resolve().parent / "secrets.yaml"`). Anything we can't read
+    plainly keeps the finding."""
+    if f.rule_id != "ha-read-secrets" or not f.file or not f.line:
+        return False
+    tree = res.tree(f.file)
+    if tree is None:
+        return False
+    stmts = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.stmt)
+        and not isinstance(n, _BLOCKS)
+        and n.lineno <= f.line <= (n.end_lineno or n.lineno)
+    ]
+    if not stmts:
+        return False
+    stmt = min(stmts, key=lambda n: (n.end_lineno or n.lineno) - n.lineno)
+    up = parents(tree)
+    hits = [
+        n
+        for n in ast.walk(stmt)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and _SECRETS.search(n.value)
+    ]
+    if not hits:
+        return False  # the name came through a constant: keep
+    depth = len(Path(f.file).parts) - 1
+    return all(_prose(c, up) or _own_copy(c, up, depth) for c in hits)
+
+
+# --- test code no runtime module imports ---------------------------------------------
+
+_TEST_DIRS = frozenset({"test", "tests", "testing"})
+
+
+def _looks_like_test(rel: str) -> bool:
+    p = Path(rel)
+    name = p.name
+    return (
+        bool(_TEST_DIRS & set(p.parts[:-1]))
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+        or name == "conftest.py"
+    )
+
+
+def test_only_files(res: Resolver) -> frozenset[str]:
+    """Python files that look like tests (a test folder, test_*.py, conftest.py) and that
+    no other module of the app imports or names. Home Assistant imports an integration's
+    package and its platforms; a test file nothing imports is never loaded by it."""
+    files = sorted(
+        p.relative_to(res.root).as_posix()
+        for p in res.root.rglob("*.py")
+        if p.is_file() and not p.is_symlink()
+    )[:5000]
+    tests = {r for r in files if _looks_like_test(r)}
+    if not tests:
+        return frozenset()
+    used: set[str] = set()
+    for rel in files:
+        if rel in tests:
+            continue
+        tree = res.tree(rel)
+        if tree is None:
+            return frozenset()  # can't tell what an unreadable module imports
+        for n in ast.walk(tree):
+            if isinstance(n, ast.ImportFrom):
+                target = res._module_file(rel, n.level, n.module)
+                if target:
+                    used.add(target)
+                for a in n.names:  # from . import tests  /  from .tests import helper
+                    mod = f"{n.module}.{a.name}" if n.module else a.name
+                    sub = res._module_file(rel, n.level, mod)
+                    if sub:
+                        used.add(sub)
+            elif isinstance(n, ast.Import):
+                for a in n.names:
+                    segs = a.name.split(".")
+                    if any(seg in _TEST_DIRS or seg.startswith("test_") for seg in segs):
+                        return frozenset()  # an absolute import of a test module: unsure
+            elif isinstance(n, ast.Constant) and isinstance(n.value, str):
+                for t in tests:  # import_module("…tests…") or a path string
+                    stem = Path(t).with_suffix("").as_posix()
+                    if stem.replace("/", ".") in n.value or stem in n.value:
+                        used.add(t)
+    return frozenset(tests - used)

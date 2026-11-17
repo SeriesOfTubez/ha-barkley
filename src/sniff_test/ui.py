@@ -1003,7 +1003,13 @@ def _where(fs: list[dict[str, Any]]) -> str:
     shown = ", ".join(f"<code>{e(x, 160)}</code>" for x in locs[:3])
     more = f" and {len(locs) - 3} more" if len(locs) > 3 else ""
     times = f" ({len(fs)} times)" if len(fs) > 1 and len(locs) == 1 else ""
-    return shown + more + times
+    test = ""
+    if all("test-code" in (f.get("tags") or []) for f in fs if f.get("file")):
+        test = (
+            '<br><span class="muted">Test code: no part of the app that Home Assistant '
+            "loads imports this file. Still shown, since code can hide anywhere.</span>"
+        )
+    return shown + more + times + test
 
 
 def patch_html(patch: Any) -> str:
@@ -1176,10 +1182,21 @@ def finding_html(
         f"<dt>Should you worry?</dt><dd>{e(ex.worry, 600)}</dd>"
         + (f"<dt>Where we saw it</dt><dd>{where}</dd>" if where else "")
         + fact
+        + _links_html(ex.links)
         + dep_html
         + ai_html
         + f'</dl>{deep}<div class="tech">{" · ".join(tech)}</div>{code}</div></div>'
     )
+
+
+def _links_html(links: tuple[tuple[str, str], ...]) -> str:
+    """explain.Explanation.links: fixed https links, shown as "Read more"."""
+    items = [
+        f'<a href="{e(url, 300)}" target="_blank" rel="noopener noreferrer">{e(label, 120)}</a>'
+        for label, url in links
+        if url.startswith("https://")
+    ]
+    return f"<dt>Read more</dt><dd>{'<br>'.join(items)}</dd>" if items else ""
 
 
 _DEP_ACTION = {

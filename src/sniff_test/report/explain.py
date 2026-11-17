@@ -25,6 +25,8 @@ class Explanation:
     means: str
     worry: str
     chip: str
+    # (label, https URL) pairs shown as "Read more"; fixed here, never from a report.
+    links: tuple[tuple[str, str], ...] = ()
 
 
 LEVELS = {
@@ -109,11 +111,23 @@ RULES: dict[str, Explanation] = {
         "Reads HA's private storage",
     ),
     "ha-own-storage-path": _E(
-        "Builds the path to its own storage file by hand",
-        "Home Assistant gives apps a helper to keep their data in its private storage "
-        "folder. This app writes the path to its own file itself instead.",
-        "No. It's a coding habit, not a risk: the file it uses is its own.",
-        "Own storage, by hand",
+        "Keeps its own file in Home Assistant's storage folder",
+        "The app writes its own file into Home Assistant's .storage folder, where Home "
+        "Assistant also keeps logins and every integration's settings. It builds the "
+        "file's path itself; Home Assistant's code has a helper (Store) that does this "
+        "for an app. Home Assistant has no documentation page saying which way to use.",
+        "No. The file is the app's own; this is shown for information and isn't scored.",
+        "Own storage file",
+        (
+            (
+                "Home Assistant's Store helper (source)",
+                "https://github.com/home-assistant/core/blob/dev/homeassistant/helpers/storage.py",
+            ),
+            (
+                "Home Assistant developer blog, 2022: Store is now a Generic class",
+                "https://contributors.home-assistant.io/blog/2022/07/08/generic-store/",
+            ),
+        ),
     ),
     "ha-auth-internals": _E(
         "Handles Home Assistant login tokens",

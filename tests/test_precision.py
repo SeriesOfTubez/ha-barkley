@@ -130,6 +130,30 @@ def test_a_nested_manifest_cannot_claim_another_domain(tmp_path):
     assert _hits(result, "ha-foreign-entry-data") == [2]
 
 
+@needs_semgrep
+def test_a_built_in_domain_is_never_the_apps_own(tmp_path):
+    """(item 12) An app `google` shipping a nested `google_assistant` manifest: the
+    prefix rule alone would call Google Assistant's entries the app's own."""
+    result, _ = _run(
+        tmp_path,
+        {
+            "sub/manifest.json": '{"domain": "google_assistant"}',
+            "__init__.py": """\
+                def grab(hass):
+                    return [e.data for e in hass.config_entries.async_entries("google_assistant")]
+                """,
+        },
+        domain="google",
+    )
+    assert _hits(result, "ha-foreign-entry-data") == [2]
+
+
+def test_the_built_in_domain_list_is_shipped():
+    names = py_precision.ha_domains()
+    assert len(names) > 1000
+    assert {"google_assistant", "mqtt", "homeassistant", "hassio"} <= names
+
+
 # --- bug 1b: a foreign entry read for a non-secret field ------------------------------
 
 SAFE_FIELDS = {
@@ -241,8 +265,8 @@ def test_storage_levels(tmp_path):
     result, _ = _run(tmp_path, STORAGE)
     got = {(f.line, f.rule_id, f.severity) for f in result.findings if "storage" in f.rule_id}
     assert got == {
-        (10, "ha-own-storage-path", Severity.LOW),  # its own folder through a constant
-        (11, "ha-own-storage-path", Severity.LOW),  # its own file in an f-string
+        (10, "ha-own-storage-path", Severity.INFO),  # its own folder through a constant
+        (11, "ha-own-storage-path", Severity.INFO),  # its own file in an f-string
         (12, "ha-read-auth-storage", Severity.HIGH),  # auth through a constant
         (13, "ha-raw-storage-access", Severity.MEDIUM),  # someone else's file
         (14, "ha-raw-storage-access", Severity.MEDIUM),  # the whole folder
@@ -589,3 +613,78 @@ def test_listing_or_changing_users_no_longer_pairs_with_a_host(tmp_path):
     assert _corr(tmp_path, "ha-auth-change-users") == []
     assert [f.rule_id for f in _corr(tmp_path, "ha-foreign-entry-data")] == ["possible-exfil"]
     assert [f.rule_id for f in _corr(tmp_path, "ha-auth-internals")] == ["possible-exfil"]
+
+
+# --- item 14 (issue #15): secrets.yaml as text, or the app's own copy -----------------
+
+SECRETS_CASES = {
+    "__init__.py": """\
+        import logging
+        import os
+        from pathlib import Path
+
+        _LOGGER = logging.getLogger(__name__)
+        HELP = "Put your key in secrets.yaml first"
+
+
+        def real(hass, key):
+            a = hass.config.path("secrets.yaml")
+            b = os.path.join(os.path.dirname(__file__), "..", "..", "secrets.yaml")
+            c = Path(__file__).parents[2] / "secrets.yaml"
+            _LOGGER.info("%s", open("/config/secrets.yaml").read())
+            _LOGGER.warning("Secret %s not found in secrets.yaml", key)
+            raise ValueError("secrets.yaml")
+            return a, b, c
+        """,
+    "tests/test_sources.py": """\
+        from pathlib import Path
+
+        SECRET_FILENAME = Path(__file__).resolve().parent / "secrets.yaml"
+        """,
+    "tools/deep/up.py": """\
+        import os
+
+        INSIDE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "secrets.yaml")
+        """,
+}
+
+
+@needs_semgrep
+def test_secrets_text_and_own_copies_are_no_finding(tmp_path):
+    result, _ = _run(tmp_path, SECRETS_CASES)
+    got = sorted((f.file, f.line) for f in result.findings if f.rule_id == "ha-read-secrets")
+    # HA's file through hass.config.path, a path climbing out of the app (two forms) and
+    # a log call that reads the file stay; help text, a log message, an exception, the
+    # test script's own copy (issue #15) and a copy one folder up inside the app go.
+    assert got == [("__init__.py", n) for n in (10, 11, 12, 13)]
+
+
+def test_test_files_nothing_imports_are_labelled(tmp_path):
+    target = _integration(
+        tmp_path,
+        {
+            "__init__.py": "from .helpers import x\nfrom . import fixtures_pkg\n",
+            "helpers.py": "x = 1\n",
+            "tests/test_a.py": "import os\n",
+            "tests/conftest.py": "",
+            "test_b.py": "",
+            "fixtures_pkg/__init__.py": "",
+            "used/tests/__init__.py": "",
+            "used/tests/test_c.py": "",
+            "used/__init__.py": "from .tests import test_c\n",
+        },
+    )
+    got = py_precision.test_only_files(Resolver(target.root))
+    # `from .tests import test_c` loads used/tests/__init__.py and test_c.py
+    assert got == {"tests/test_a.py", "tests/conftest.py", "test_b.py"}
+
+
+def test_an_absolute_import_of_a_test_module_labels_nothing(tmp_path):
+    target = _integration(
+        tmp_path,
+        {
+            "__init__.py": "import custom_components.acme_power.tests.test_a\n",
+            "tests/test_a.py": "",
+        },
+    )
+    assert py_precision.test_only_files(Resolver(target.root)) == frozenset()

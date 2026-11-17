@@ -106,3 +106,28 @@ def test_the_unread_file_rule_has_plain_text():
     from sniff_test.models import RULE_FILE_NOT_CHECKED
 
     assert "89" in explain.RULES[RULE_FILE_NOT_CHECKED].worry
+
+
+def test_own_storage_is_described_not_judged():
+    """(0.14.0) HA has no docs page for the Store helper: the text says what the code
+    does and links the helper's source and the 2022 post, and claims no HA guidance."""
+    from sniff_test import ui
+
+    ex = explain.explain("ha-own-storage-path")
+    assert [u for _, u in ex.links] == [
+        "https://github.com/home-assistant/core/blob/dev/homeassistant/helpers/storage.py",
+        "https://contributors.home-assistant.io/blog/2022/07/08/generic-store/",
+    ]
+    text = f"{ex.title} {ex.means} {ex.worry}".lower()
+    assert "poor practice" not in text and "recommend" not in text
+    html = ui._links_html(ex.links)
+    assert html.count('rel="noopener noreferrer"') == 2 and "Read more" in html
+    assert ui._links_html((("x", "http://example.invalid/"),)) == ""
+
+
+def test_no_rule_text_claims_home_assistant_guidance():
+    """Never claim HA recommends something unless its docs or code say so (a link)."""
+    for rid, ex in explain.RULES.items():
+        text = f"{ex.means} {ex.worry}".lower()
+        if "home assistant recommends" in text or "poor practice" in text:
+            assert ex.links, rid

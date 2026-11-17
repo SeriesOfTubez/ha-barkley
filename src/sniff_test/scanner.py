@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,15 +13,25 @@ from sniff_test.analyzers import (
     endpoints,
     guarddog,
     osv,
+    py_precision,
     pypi_meta,
     python_deps,
     repo_hygiene,
     repo_signals,
     semgrep,
 )
+from sniff_test.analyzers.py_resolve import Resolver
 from sniff_test.deps import ha_env
 from sniff_test.fetch.hacs import fetch
-from sniff_test.models import AnalyzerResult, AnalyzerState, Fact, Finding, Target, TargetKind
+from sniff_test.models import (
+    AnalyzerResult,
+    AnalyzerState,
+    Fact,
+    Finding,
+    Tag,
+    Target,
+    TargetKind,
+)
 from sniff_test.report import context, graph
 from sniff_test.report.json_report import ScanResult, finding_json
 from sniff_test.scoring import Exposure, apply_exposure, score
@@ -94,6 +105,15 @@ def _dependency_analyzers(
     return results, resolution, env
 
 
+def _label_test_code(findings: list[Finding], target: Target) -> list[Finding]:
+    """(0.14.0) Tag findings in test files no runtime module imports (py_precision)."""
+    tests = py_precision.test_only_files(Resolver(target.root))
+    return [
+        dataclasses.replace(f, tags=f.tags | {Tag.TEST_CODE}) if f.file in tests else f
+        for f in findings
+    ]
+
+
 def scan(
     source: str,
     ref: str | None = None,
@@ -132,6 +152,8 @@ def scan(
             findings.extend(r.findings)
             facts.extend(r.facts)
         findings += correlate.correlate(findings, facts, target.root)
+        if target.kind is TargetKind.INTEGRATION:
+            findings = _label_test_code(findings, target)
         findings = apply_exposure(_dedupe(findings), exposure)
         complete = all(r.state in (AnalyzerState.OK, AnalyzerState.NOT_APPLICABLE) for r in results)
         result = ScanResult(
