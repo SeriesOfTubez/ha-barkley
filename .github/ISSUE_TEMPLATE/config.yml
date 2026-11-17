@@ -1,0 +1,10 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem in Barkley
+    url: https://github.com/SeriesOfTubez/ha-barkley/security/advisories/new
+    about: >-
+      A way to hide code from Barkley, make it run what it scans, or reach outside its
+      container. Report it privately here, not as an issue. See SECURITY.md.
+  - name: Documentation
+    url: https://github.com/SeriesOfTubez/ha-barkley/wiki
+    about: Install, standalone setup and how scoring works.
