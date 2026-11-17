@@ -337,7 +337,7 @@ def osv_version() -> str | None:
     exe = shutil.which("osv-scanner")
     if not exe:
         return None
-    v = _proc.version([exe, "--version"])
+    v = _proc.version([exe, "--version"], tool="osv-scanner")
     return v.split(":", 1)[-1].strip() if v else None
 
 
@@ -364,7 +364,7 @@ def scan_lockfile(exe: str, lockfile: Path, work: Path) -> tuple[list[_Pkg] | No
         "error",
     ]
     try:
-        proc = _proc.run(cmd, run_dir, _TIMEOUT)
+        proc = _proc.run(cmd, run_dir, _TIMEOUT, tool="osv-scanner")
     except subprocess.TimeoutExpired:
         return None, "osv-scanner timed out"
     if proc.returncode not in (0, 1, 128):

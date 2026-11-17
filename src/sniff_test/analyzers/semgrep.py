@@ -13,7 +13,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from sniff_test.analyzers import py_tamper
+from sniff_test.analyzers import _proc, py_tamper
 from sniff_test.models import (
     RULE_FILE_NOT_CHECKED,
     AnalyzerResult,
@@ -137,12 +137,13 @@ def failure_detail(proc: subprocess.CompletedProcess[str]) -> str:
 
 
 def _version(exe: str) -> str | None:
-    try:
-        out = subprocess.run(
-            [exe, "--version"], capture_output=True, text=True, timeout=60, env=_tool_env()
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="sniff-test-version-") as d:
+        try:
+            out = _proc.run([exe, "--version"], Path(d), 60, _tool_env(), tool="semgrep")
+        except (OSError, subprocess.TimeoutExpired):
+            return None
     lines = [ln for ln in out.stdout.splitlines() if ln.strip()]
     return lines[-1].strip() if lines else None
 
@@ -486,14 +487,9 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
         cmd += ["--jobs", str(jobs)]
     cmd.append(str(root))
     try:
-        proc = subprocess.run(
-            cmd,
-            cwd=run_dir,  # never run from inside the scanned tree
-            capture_output=True,
-            text=True,
-            timeout=_PROCESS_TIMEOUT,
-            env=_tool_env(),
-        )
+        # never run from inside the scanned tree; sandboxed, with no network at all
+        proc = _proc.run(cmd, run_dir, _PROCESS_TIMEOUT, _tool_env(), tool="semgrep",
+                         read=(rules_dir(),))  # fmt: skip
     except subprocess.TimeoutExpired:
         return AnalyzerResult(
             NAME, AnalyzerState.ERROR, detail="semgrep timed out", tool_version=version

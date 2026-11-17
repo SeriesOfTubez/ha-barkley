@@ -21,7 +21,7 @@ is the one used, and Barkley stores no AI key of its own.
 |---|---|---|
 | How it reaches Home Assistant | The Supervisor's proxy, no token to handle | `HA_URL` and a long-lived access token of an administrator |
 | Who can open it | Home Assistant's ingress (the sidebar) | Anyone who logs in with Home Assistant as an administrator |
-| Containment | AppArmor profile, no open port | Whatever you give the container (the compose file below: non-root, read-only, no capabilities) |
+| Containment | AppArmor profile, no open port, and the tool sandbox | The tool sandbox, and what you give the container (the compose file: non-root, read-only, no capabilities) |
 | Where it shows up | The sidebar | Its own address, such as `http://192.168.1.20:8099` |
 
 ## Set it up
@@ -60,6 +60,25 @@ Already have a reverse proxy that does its own login? Leave out `BARKLEY_URL` an
 `BARKLEY_ALLOW` to the proxy's address instead. Barkley won't start with neither, so the
 panel is never open to the network by accident.
 
+## The tool sandbox
+
+Barkley's own AppArmor profile is only for the app, and Docker doesn't load it. On
+Docker Desktop, or on a host without AppArmor, there may be no AppArmor at all. What
+protects you if a scanner tool is exploited by a file it reads is Barkley's tool
+sandbox, built on Landlock, a Linux kernel feature that needs nothing installed on the
+host. Each run of Semgrep, GuardDog, osv-scanner or uv:
+
+- can write only that scan's own folder, and can't read the scan store, the token or
+  other scans;
+- can run only what the image ships, so nothing it downloaded or wrote;
+- can connect only to port 443 (Semgrep nowhere), and can't listen;
+- can't signal Barkley or read its environment.
+
+It needs Linux 5.13 or later (the port limit 6.7 or later); Docker Desktop has it.
+Diagnostics shows "Tool sandbox (Landlock)". **Without it, Barkley doesn't start
+standalone**, because it would be parsing hostile code with nothing around it. To run
+anyway, knowing that, set `BARKLEY_UNSANDBOXED=1`.
+
 ## Settings
 
 Environment variables. Settings you can change in the panel (the AI entity, AI mode,
@@ -77,6 +96,7 @@ auto-sniff and the notify target) are kept there once you change them.
 | `BARKLEY_EXPOSURE`, `BARKLEY_PARALLEL`, `BARKLEY_JOBS` | As the app's [options](Options) `exposure`, `parallel_scans`, `jobs` |
 | `BARKLEY_AI_ENTITY`, `BARKLEY_AI_MODE`, `BARKLEY_AUTO_SCAN`, `BARKLEY_NOTIFY_TARGET` | Starting values for the panel's settings |
 | `GITHUB_TOKEN_FILE` or `GITHUB_TOKEN` | Optional, as the app's `github_token` |
+| `BARKLEY_UNSANDBOXED` | `1` starts Barkley on a kernel without Landlock, with the scanner tools unsandboxed |
 
 ## Memory
 

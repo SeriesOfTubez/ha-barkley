@@ -44,14 +44,40 @@ def _tail(text: str) -> str:
     return ("…" + text[-_TAIL:]) if len(text) > _TAIL else text
 
 
+_TOOLS: dict[str, tuple[Callable[[], tuple[Path, ...]], Callable[[], tuple[Path, ...]]]] = {
+    "semgrep": (lambda: (), lambda: (rules_dir(),)),
+    "osv-scanner": (lambda: (), lambda: ()),
+    "guarddog": (lambda: guarddog._cache_dirs(), lambda: ()),
+    "uv": (lambda: (), lambda: ()),
+}
+
+
+def sandbox_check() -> Check:
+    from sniff_test import sandbox
+
+    v, line = sandbox.status()
+    return Check("Tool sandbox (Landlock)", v > 0 or not _sandbox_required(), line)
+
+
+def _sandbox_required() -> bool:
+    """Standalone has no AppArmor profile of Barkley's, so the sandbox is required there
+    (serve refuses to start without it unless BARKLEY_UNSANDBOXED=1)."""
+    conn = supervisor.connection()
+    return conn is not None and conn.mode == "direct"
+
+
 def _run(name: str, cmd: list[str], cwd: Path, env: dict[str, str], timeout: int = 300) -> Check:
     exe = shutil.which(cmd[0])
     if not exe:
         return Check(name, False, f"{cmd[0]} not on PATH")
     start = time.monotonic()
+    # The same sandbox a scan uses (`_TOOLS`), so Diagnostics shows whether it works here.
+    tool = cmd[0] if cmd[0] in _TOOLS else None
+    write, read = _TOOLS.get(cmd[0], ((), ()))
+    run_cmd, env = _proc.sandboxed([exe, *cmd[1:]], cwd, env, tool, write(), read())
     try:
         p = subprocess.run(
-            [exe, *cmd[1:]], cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env
+            run_cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env
         )
     except subprocess.TimeoutExpired:
         return Check(name, False, f"timed out after {timeout}s", " ".join(cmd))
@@ -232,6 +258,7 @@ def steps(addon: bool = False) -> list[Step]:
     out: list[Step] = [
         ("environment", lambda s, r: _facts()),
         ("memory guard", lambda s, r: memory_check()),
+        ("tool sandbox", lambda s, r: sandbox_check()),
         ("GitHub API", lambda s, r: github_check()),
     ]
     if addon or supervisor.token() or supervisor.config_problem():

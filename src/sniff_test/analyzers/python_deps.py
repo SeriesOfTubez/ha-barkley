@@ -92,7 +92,7 @@ def manifest_requirements(target: Target) -> list[object] | None:
 
 def uv_version() -> str | None:
     exe = uv.exe()
-    v = _proc.version([exe, "--version"]) if exe else None
+    v = _proc.version([exe, "--version"], tool="uv") if exe else None
     return v.split()[1] if v and len(v.split()) > 1 else v  # "uv 0.13.7 (Homebrew ...)"
 
 

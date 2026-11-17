@@ -147,7 +147,7 @@ def guarddog_version() -> str | None:
     """Even `--version` imports the typosquat module, which refreshes the lists (so it
     needs `tool_env`: under the app's AppArmor profile the plain call would crash)."""
     exe = shutil.which("guarddog")
-    return _proc.version([exe, "--version"], tool_env(exe)) if exe else None
+    return _proc.version([exe, "--version"], tool_env(exe), tool="guarddog") if exe else None
 
 
 def shipped_lists(exe: str) -> Path | None:
@@ -181,6 +181,11 @@ def tool_env(exe: str) -> dict[str, str]:
     return _proc.tool_env(GUARDDOG_TOP_PACKAGES_CACHE_LOCATION=str(cache))
 
 
+def _cache_dirs() -> tuple[Path, ...]:
+    """GuardDog refreshes its typosquat lists into our cache (tool_env)."""
+    return (cache_root() / "guarddog",)
+
+
 def _scan(
     exe: str, target: Path, run_dir: Path, env: dict[str, str] | None = None
 ) -> tuple[dict | None, str, bool]:
@@ -188,12 +193,13 @@ def _scan(
     base = [exe, "pypi", "scan", str(target), "--output-format", "json"]
     sandboxed = True
     try:
-        proc = _proc.run(base, run_dir, _TIMEOUT, env)
+        proc = _proc.run(base, run_dir, _TIMEOUT, env, tool="guarddog", write=_cache_dirs())
         if proc.returncode != 0 and "sandbox" in proc.stderr.lower():
             # No kernel sandbox here (e.g. some containers). GuardDog only parses files,
             # so fall back, but record it.
             sandboxed = False
-            proc = _proc.run([*base, "--no-sandbox"], run_dir, _TIMEOUT, env)
+            proc = _proc.run([*base, "--no-sandbox"], run_dir, _TIMEOUT, env, tool="guarddog",
+                             write=_cache_dirs())  # fmt: skip
     except subprocess.TimeoutExpired:
         return None, "timed out", sandboxed
     try:

@@ -228,6 +228,13 @@ when the app is installed or updated, so after an update check that the Diagnost
 line names Barkley's own profile, ending in `sniff_test (enforce)`
 (`local_sniff_test (enforce)` for a local install), rather than `docker-default`.
 
+Inside that, each run of a scanner tool gets a sandbox of its own (Landlock, a Linux
+kernel feature): it can write only that scan's folder, can't read the scan store, the
+options or other scans, can run only what the image ships, and can connect only to port
+443 (Semgrep nowhere). It can't signal Barkley or read its environment, where the
+Supervisor's token is. Diagnostics shows "Tool sandbox (Landlock)"; on a kernel without
+Landlock the tools run under the AppArmor profile alone, and that line says so.
+
 ## Installing
 
 From the app store: Settings → Apps → the app store → ⋮ → Repositories, add

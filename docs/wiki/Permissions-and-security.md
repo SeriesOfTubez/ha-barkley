@@ -20,13 +20,22 @@ A security tool that reads hostile code should be held to its own standard.
 - **The panel** answers only Home Assistant's ingress, which handles the login. It ships
   no JavaScript: its content security policy allows no scripts.
 
+- **Each scanner tool in its own sandbox** (Landlock, a Linux kernel feature Barkley sets
+  up itself). Every run of Semgrep, GuardDog, osv-scanner or uv can write only that
+  scan's own folder. It can read the image and the system, but not the scan store, the
+  Home Assistant token or other scans. It can run only what the image ships and connect
+  only to port 443; Semgrep can't connect anywhere. It also can't signal Barkley or read
+  Barkley's environment. Diagnostics shows whether the sandbox is on. It needs Linux 5.13
+  or later; the port limit needs 6.7 or later.
+
 Run [standalone](Standalone), Barkley has no Supervisor around it. It reaches Home
 Assistant with a long-lived token of an administrator, sends it only to `HA_URL`, follows
 no redirects and ignores proxy settings. The same fixed list of calls applies. Its panel
 is on the network, so every page asks for a login with Home Assistant (administrators
 only), and Barkley keeps none of the login's tokens. The containment is the container's:
 the compose file runs it as a non-root user with a read-only filesystem and no
-capabilities.
+capabilities. The tool sandbox works the same there, and Barkley won't start standalone
+without it unless you tell it to.
 
 ## How scanned code is handled
 

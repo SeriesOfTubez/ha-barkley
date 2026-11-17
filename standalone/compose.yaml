@@ -21,6 +21,7 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     mem_limit: 3g # the memory guard reads this; scans need 0.5 to 1.5 GB each
+    pids_limit: 512 # a runaway tool can't fork-bomb the host
     ports:
       - "8099:8099"
     environment:

@@ -444,6 +444,19 @@ def test_standalone_serve_needs_a_login_or_an_allow_list(env, tmp_path, capsys):
     assert "HA_URL should look like" in capsys.readouterr().err
 
 
+def test_standalone_without_landlock_refuses_unless_told(env, tmp_path, capsys):
+    from sniff_test import sandbox
+
+    env.setenv("HA_URL", "http://127.0.0.1:9")
+    env.setenv("HA_TOKEN", "llat")
+    env.setattr(sandbox, "abi", lambda: 0)
+    args = ["serve", "--store", str(tmp_path / "s.db"), "--port", "0",
+            "--public-url", "http://barkley.lan:8099"]  # fmt: skip
+    env.delenv(sandbox.UNSANDBOXED_ENV, raising=False)
+    assert cli.main(args) == 1
+    assert "BARKLEY_UNSANDBOXED=1" in capsys.readouterr().err
+
+
 # --- memory: a container's limit counts ---------------------------------------------------
 
 

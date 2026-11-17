@@ -194,6 +194,13 @@ layers, each of which you can check in this repository.
   the image ships, write only under `/data` and `/tmp`, and open only ordinary network
   sockets (no raw sockets, no capabilities). Nothing downloaded is executable. A hole
   in one of the parsers that read hostile code is confined to that.
+- **Each scanner tool in its own sandbox** (Landlock, `src/sniff_test/sandbox.py`).
+  Every run of Semgrep, GuardDog, osv-scanner or uv can write only that scan's own
+  folder, read the image and the system but not the scan store, the token or other
+  scans, run only what the image ships, and connect only to port 443 (Semgrep: nowhere).
+  It also can't signal Barkley or read its environment. Barkley sets this up itself,
+  so it applies on top of AppArmor in the app and on its own when Barkley runs
+  [standalone](https://github.com/SeriesOfTubez/ha-barkley/wiki/Standalone).
 - **The panel** answers only Home Assistant's ingress, which handles the login, and it
   ships no JavaScript at all: its content security policy allows no scripts, only the
   page's own styles, images and fonts.
