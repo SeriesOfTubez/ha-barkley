@@ -69,8 +69,11 @@ class FakeSupervisor:
     """Answers one websocket connection the way the Supervisor's Core proxy does."""
 
     def __init__(self, result=None, *, accept_token="tok", error=None, fragment=False,
-                 known=("marketplace/repositories/list",)):  # fmt: skip
+                 known=("marketplace/repositories/list",), ws_path="/core/websocket",
+                 results=None):  # fmt: skip
         self.result = HACS_ROWS if result is None else result
+        self.results = results or {}  # command -> result, for commands other than the list
+        self.ws_path = ws_path
         self.known = known
         self.accept_token = accept_token
         self.error = error
@@ -103,7 +106,7 @@ class FakeSupervisor:
             req = b""
             while b"\r\n\r\n" not in req:
                 req += conn.recv(4096)
-            assert b"GET /core/websocket HTTP/1.1" in req
+            assert f"GET {self.ws_path} HTTP/1.1".encode() in req
             conn.sendall(
                 b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
                 b"Connection: Upgrade\r\nSec-WebSocket-Accept: x\r\n\r\n"
@@ -131,8 +134,9 @@ class FakeSupervisor:
                                                "success": False, "error": err})  # fmt: skip
                     else:
                         self._send_json(conn, {"id": 99, "type": "event", "event": {}})
+                        res = self.results.get(msg["type"], self.result)
                         self._send_json(conn, {"id": msg["id"], "type": "result",
-                                               "success": True, "result": self.result})  # fmt: skip
+                                               "success": True, "result": res})  # fmt: skip
             except (ConnectionError, OSError):
                 return
 
@@ -237,7 +241,7 @@ def test_memory_levels(gb, level):
 
 
 def test_memory_unknown_without_meminfo(tmp_path):
-    mem = memory.check(tmp_path / "missing")
+    mem = memory.check(tmp_path / "missing", cgroup=tmp_path / "no-cgroup")
     assert mem.level == "unknown" and not mem.refuse
 
 
@@ -464,7 +468,7 @@ def test_notifications_go_through_the_core_api(monkeypatch):
         supervisor.notify_service("../x", "T", "P", tok="tok")
     with pytest.raises(SupervisorError, match=r"answered 500: Service notify\.broken"):
         supervisor.notify_service("broken", "T", "P", tok="tok")
-    with pytest.raises(SupervisorError, match="not running as a Home Assistant add-on"):
+    with pytest.raises(SupervisorError, match="isn't connected"):
         supervisor.notify_persistent("T", "M", "x", tok=None)
     fake.httpd.shutdown()
 

@@ -20,6 +20,14 @@ A security tool that reads hostile code should be held to its own standard.
 - **The panel** answers only Home Assistant's ingress, which handles the login. It ships
   no JavaScript: its content security policy allows no scripts.
 
+Run [standalone](Standalone), Barkley has no Supervisor around it. It reaches Home
+Assistant with a long-lived token of an administrator, sends it only to `HA_URL`, follows
+no redirects and ignores proxy settings. The same fixed list of calls applies. Its panel
+is on the network, so every page asks for a login with Home Assistant (administrators
+only), and Barkley keeps none of the login's tokens. The containment is the container's:
+the compose file runs it as a non-root user with a read-only filesystem and no
+capabilities.
+
 ## How scanned code is handled
 
 It is treated as hostile. Barkley never executes, imports, builds or installs it.

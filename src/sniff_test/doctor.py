@@ -117,17 +117,27 @@ def supervisor_checks(
     ha_fn=supervisor.ha_version,
     installed_fn=supervisor.installed_hacs,
 ) -> list[Check]:
-    """What the add-on reads from HA: the HA version (and where it came from) and HACS."""
-    if not supervisor.token():
-        return [Check("Home Assistant", True, "not running as an add-on (no SUPERVISOR_TOKEN)")]
+    """What Barkley reads from HA: the HA version (and where it came from) and HACS."""
+    if problem := supervisor.config_problem():
+        return [Check("Home Assistant", False, problem)]
+    conn = supervisor.connection()
+    if conn is None:
+        return [Check("Home Assistant", True,
+                      "not running as an add-on (no SUPERVISOR_TOKEN), and no HA_URL")]  # fmt: skip
     out = []
+    if conn.mode == "direct":
+        how = ("https" if conn.tls else
+               "plain http: the token crosses the network unencrypted; use https if "
+               "Home Assistant offers it")  # fmt: skip
+        out.append(Check("Home Assistant connection", True,
+                         f"standalone, {conn.base} ({how})"))  # fmt: skip
     t0 = time.monotonic()
     ha = ha_fn()
     if ha:
-        out.append(Check("Home Assistant version", True, f"{ha} (from the Supervisor)"))
+        out.append(Check("Home Assistant version", True, f"{ha} (from {conn.where})"))
     else:
         out.append(Check("Home Assistant version", False,
-                         "the Supervisor didn't answer /core/api/config; scans fall back to "
+                         f"{conn.where} didn't answer /api/config; scans fall back to "
                          "the latest stable HA release"))  # fmt: skip
     try:
         items, other = installed_fn()
@@ -224,7 +234,7 @@ def steps(addon: bool = False) -> list[Step]:
         ("memory guard", lambda s, r: memory_check()),
         ("GitHub API", lambda s, r: github_check()),
     ]
-    if addon or supervisor.token():
+    if addon or supervisor.token() or supervisor.config_problem():
         out.append(("Home Assistant and the Marketplace list", lambda s, r: supervisor_checks()))
     out += [
         ("semgrep --version",

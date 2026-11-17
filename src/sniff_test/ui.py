@@ -252,6 +252,10 @@ button { font:500 var(--t-sm)/20px var(--font); padding:var(--s1) var(--s3);
 button:hover { background:var(--soft); }
 button.primary { background:var(--brand); color:var(--brand-fg); border-color:var(--brand); }
 button.primary:hover { filter:brightness(1.08); }
+a.button { display:inline-block; font:500 var(--t-sm)/20px var(--font);
+  padding:var(--s2) var(--s4); border-radius:var(--r2); background:var(--brand);
+  color:var(--brand-fg); text-decoration:none; }
+a.button:hover { filter:brightness(1.08); }
 .legend { display:flex; flex-wrap:wrap; gap:var(--s2) var(--s4); font-size:var(--t-xs);
   color:var(--muted); }
 .sw { display:inline-block; width:12px; height:12px; border-radius:var(--r1);

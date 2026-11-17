@@ -1,8 +1,10 @@
 """`sniff-test serve`: the add-on's ingress panel. Stdlib only, one scan at a time.
 
 Behind HA ingress, HA does the login and the Supervisor (172.30.32.2) is the only
-client the panel ever sees, so every other address is refused. Forms carry a
-per-process token so another page can't make the panel start scans.
+client the panel ever sees, so every other address is refused. Standalone (no
+Supervisor), the panel is reachable from the network instead, so every page but the
+login asks for a session from "log in with Home Assistant" (login.py; administrators
+only). Forms carry a per-process token so another page can't make the panel start scans.
 
 Everything shown from a report (repo names, refs, file names, evidence, hosts) came
 from scanned repos and is escaped. The JSON view is served as `application/json`
@@ -28,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from typing import Any
 
-from sniff_test import __version__, doctor, memory, recheck, supervisor, trust, ui, watch
+from sniff_test import __version__, doctor, login, memory, recheck, supervisor, trust, ui, watch
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import GitHubError, RateLimit, RateLimitError
@@ -711,6 +713,7 @@ def render_index(
     status: str = "",
     here: str = "",
     auto: str = "",
+    account: str = "",
 ) -> bytes:
     rows = store.history(limit=100)
     against = f" against HA {e(ha)}" if ha else ""
@@ -789,7 +792,33 @@ def render_index(
         + f'Scores never come from an AI. <a href="{base}/doctor">Diagnostics</a>: can each '
         f'tool run on this box? <a href="{base}/trusted">Addresses you trust</a>.</p>'
     )
+    out.append(account)
     return ui.page("Barkley", "".join(out), refresh=5 if active else 0, base=base)
+
+
+def render_account(base: str, name: str, token: str) -> str:
+    """Standalone only: who is logged in, and a way out."""
+    return (
+        f'<form class="foot" method=post action="{base}/logout">'
+        f"Logged in with Home Assistant as {e(name, 100)}. "
+        f'<input type=hidden name=token value="{token}">'
+        '<button class="link">Log out</button></form>'
+    )
+
+
+def render_login(message: str = "") -> bytes:
+    """The one page a standalone panel shows before the login."""
+    note = f'<p class="sev-high">{e(message, 400)}</p>' if message else ""
+    body = (
+        f'<div class="head"><h1>{ui.logo_img()}Barkley</h1></div>{note}'
+        "<p>Barkley runs next to your Home Assistant, so it asks Home Assistant who you are. "
+        "Only Home Assistant administrators can use it.</p>"
+        # A link, not a form: CSP form-action 'self' would stop the redirect to HA.
+        '<p><a class="button" href="/login">Log in with Home Assistant</a></p>'
+        '<p class="muted">Barkley keeps no password or token of yours, only a session that '
+        "ends after 12 hours or when Barkley restarts.</p>"
+    )
+    return ui.page("Barkley: log in", body)
 
 
 AUTO_NOTE = (
@@ -1655,14 +1684,15 @@ class Panel:
         self,
         store: Store,
         worker: Worker,
-        allow: set[str],
+        allow: set[str] | None,
         installed_fn: InstalledFn | None = None,
         memory_fn: Callable[[], memory.Memory] = memory.check,
     ):
         self.store = store
         store.trust_overlay = True  # rows show scores with the user's trusted addresses
         self.worker = worker
-        self.allow = allow
+        self.allow = allow  # None: any address (standalone, behind the login)
+        self.login: login.Login | None = None  # standalone: "log in with Home Assistant"
         self.token = secrets.token_urlsafe(24)
         self.installed_fn = installed_fn
         self.memory_fn = memory_fn
@@ -2022,9 +2052,16 @@ class Panel:
                 return path if _INGRESS_PATH.match(path) else ""
 
             def _send(
-                self, status: int, body: bytes, ctype: str = "text/html", cache: str = "no-store"
+                self,
+                status: int,
+                body: bytes,
+                ctype: str = "text/html",
+                cache: str = "no-store",
+                cookies: tuple[str, ...] = (),
             ) -> None:
                 self.send_response(status)
+                for c in cookies:
+                    self.send_header("Set-Cookie", c)
                 charset = "" if ctype.startswith("font/") else "; charset=utf-8"
                 self.send_header("Content-Type", f"{ctype}{charset}")
                 self.send_header("Content-Length", str(len(body)))
@@ -2038,23 +2075,76 @@ class Panel:
             def _text(self, status: int, msg: str) -> None:
                 self._send(status, _page("Barkley", f"<p>{e(msg)}</p>", self._base()))
 
-            def _redirect(self, to: str) -> None:
+            def _redirect(self, to: str, cookies: tuple[str, ...] = (), away: bool = False) -> None:
+                """`away`: `to` is Home Assistant's login page (built by login.start from
+                the configured URL); every other redirect stays on this panel."""
                 self.send_response(HTTPStatus.SEE_OTHER)
-                self.send_header("Location", local_path(to))
+                self.send_header("Location", to if away else local_path(to))
+                for c in cookies:
+                    self.send_header("Set-Cookie", c)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
 
+            def _session(self) -> login.Session | None:
+                if panel.login is None:
+                    return None
+                return panel.login.session(
+                    login.read_cookie(self.headers.get("Cookie"), login.SESSION_COOKIE)
+                )
+
             def _allowed(self) -> bool:
-                if self.client_address[0] in panel.allow:
+                if panel.allow is not None and self.client_address[0] not in panel.allow:
+                    self._text(HTTPStatus.FORBIDDEN, "only reachable through Home Assistant")
+                    return False
+                lg = panel.login
+                if lg is None:
                     return True
-                self._text(HTTPStatus.FORBIDDEN, "only reachable through Home Assistant")
+                path = urllib.parse.urlsplit(self.path).path
+                if self.command == "GET" and (
+                    path in ("/login", login.CALLBACK_PATH) or path.startswith("/fonts/")
+                ):
+                    return True
+                if self._session() is not None:
+                    return True
+                if self.command == "GET":
+                    self._send(HTTPStatus.UNAUTHORIZED, render_login())
+                else:
+                    self._text(HTTPStatus.FORBIDDEN, "log in first")
                 return False
+
+            def _login_routes(self, url: urllib.parse.SplitResult) -> bool:
+                """/login and the way back from HA; True when one of them answered."""
+                lg = panel.login
+                if lg is None or url.path not in ("/login", login.CALLBACK_PATH):
+                    return False
+                if url.path == "/login":
+                    state, to = lg.start()
+                    self._redirect(to, (lg.cookie(login.STATE_COOKIE, state, login.STATE_SECONDS),),
+                                   away=True)  # fmt: skip
+                    return True
+                q = urllib.parse.parse_qs(url.query)
+                got = lambda k: (q.get(k) or [""])[0][:1024]  # noqa: E731
+                gone = lg.cookie(login.STATE_COOKIE, "", 0)
+                try:
+                    sid, s = lg.finish(got("code"), got("state"),
+                                       login.read_cookie(self.headers.get("Cookie"),
+                                                         login.STATE_COOKIE))  # fmt: skip
+                except login.LoginError as ex:
+                    print(f"login refused ({self.client_address[0]}): {ex}", file=sys.stderr)
+                    self._send(HTTPStatus.FORBIDDEN, render_login(str(ex)), cookies=(gone,))
+                    return True
+                print(f"login: {s.user} ({s.user_id[:8]}) logged in", file=sys.stderr)
+                self._redirect("/", (gone, lg.cookie(login.SESSION_COOKIE, sid,
+                                                     login.SESSION_SECONDS)))  # fmt: skip
+                return True
 
             def do_GET(self) -> None:
                 if not self._allowed():
                     return
                 url = urllib.parse.urlsplit(self.path)
                 base = self._base()
+                if self._login_routes(url):
+                    return
                 try:
                     if url.path in ("", "/"):
                         jobs = list(panel.worker.jobs)
@@ -2071,6 +2161,8 @@ class Panel:
                             panel.worker.github_wait, panel.worker.ha_fn(),
                             panel.worker.parallel, panel.catalog_fn is not None,
                             status_html(base, jobs, panel.names(), v.qs()), v.qs(), auto,
+                            render_account(base, s.user, panel.token)
+                            if (s := self._session()) else "",
                         )  # fmt: skip
                         return self._send(200, body)
                     if m := re.fullmatch(r"/fonts/([A-Za-z-]+\.woff2)", url.path):
@@ -2180,6 +2272,12 @@ class Panel:
                 if not secrets.compare_digest(get("token"), panel.token):
                     return self._text(HTTPStatus.FORBIDDEN, "stale form; reload the page")
                 path = urllib.parse.urlsplit(self.path).path
+                if path == "/logout" and panel.login is not None:
+                    panel.login.logout(
+                        login.read_cookie(self.headers.get("Cookie"), login.SESSION_COOKIE)
+                    )
+                    gone = panel.login.cookie(login.SESSION_COOKIE, "", 0)
+                    return self._send(200, render_login("You're logged out."), cookies=(gone,))
                 # Back to the same filter, view and page (rebuilt from known values only)
                 v = ui.View.parse(urllib.parse.parse_qs(get("back")[:200]))
                 home = f"{self._base()}/?{v.qs('&')}" if get("back") else f"{self._base()}/"
@@ -2325,7 +2423,7 @@ def serve(
     scan_fn: ScanFn,
     host: str,
     port: int,
-    allow: set[str],
+    allow: set[str] | None,
     *,
     exposure: str = "local",
     ha_fn: Callable[[], str | None] = lambda: None,
@@ -2340,14 +2438,18 @@ def serve(
     entities_fn: EntitiesFn | None = None,
     releases_fn: ReleasesFn | None = None,
     watcher: watch.Watcher | None = None,
+    login_cfg: login.Login | None = None,
 ) -> PanelServer:
     """Build the server (caller runs `serve_forever`); `.panel.worker` runs the scans.
-    `watcher`: auto-sniff; built by the caller with the worker from `make_worker`."""
+    `watcher`: auto-sniff; built by the caller with the worker from `make_worker`.
+    `allow`: client addresses let in (None: any). `login_cfg`: standalone, every page
+    but the login needs a session."""
     worker = Worker(
         store, scan_fn, exposure=exposure, ha_fn=ha_fn, memory_fn=memory_fn,
         budget_fn=budget_fn, parallel=parallel,
     )  # fmt: skip
     panel = Panel(store, worker, allow, installed_fn, memory_fn)
+    panel.login = login_cfg
     if ai_entity and not supervisor.ai_entity_ok(ai_entity):
         print(f"ignoring ai_entity {ai_entity!r}: not an ai_task.* entity", file=sys.stderr)
         ai_entity = ""

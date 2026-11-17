@@ -42,6 +42,33 @@ def workspace(keep: bool = False) -> Iterator[Path]:
             shutil.rmtree(path, ignore_errors=True)
 
 
+STALE_AFTER = 24 * 3600
+
+
+def sweep_stale(root: Path | None = None, now: float | None = None) -> int:
+    """Remove workspaces a killed run left behind (older than a day: no scan runs that
+    long). Matters where the temp folder outlives the process, as with TMPDIR on a
+    standalone container's data volume. Returns how many were removed."""
+    import time
+
+    root = Path(root or tempfile.gettempdir())
+    cutoff = (now if now is not None else time.time()) - STALE_AFTER
+    n = 0
+    try:
+        found = list(root.glob("sniff-test-*"))
+    except OSError:
+        return 0
+    for d in found:
+        try:
+            st = d.lstat()
+        except OSError:
+            continue
+        if stat.S_ISDIR(st.st_mode) and st.st_mtime < cutoff:
+            shutil.rmtree(d, ignore_errors=True)
+            n += 1
+    return n
+
+
 def new_subdir(ws: Path, name: str) -> Path:
     d = ws / name
     d.mkdir(parents=True, exist_ok=False)

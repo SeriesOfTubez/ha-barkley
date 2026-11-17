@@ -1,0 +1,49 @@
+# Barkley without the Supervisor: next to Home Assistant Container or Core, or on another
+# machine than Home Assistant (a NAS, a PC) to keep scans off a small box.
+# Step by step: the wiki page "Standalone (no Supervisor)".
+#
+#   mkdir -p data && sudo chown 1000:1000 data
+#   printf '%s' 'PASTE-THE-TOKEN' > ha_token && chmod 600 ha_token
+#   docker compose up -d
+#
+# It is the same signed image the app store installs. The image's own start (s6 and
+# bashio, which read the Supervisor's options) belongs to the add-on, so `entrypoint`
+# runs the scanner directly.
+services:
+  barkley:
+    image: ghcr.io/seriesoftubez/barkley:0.14.0
+    entrypoint: ["sniff-test"]
+    command: ["serve"]
+    restart: unless-stopped
+    init: true # reaps the scanner tools' child processes and passes on docker stop
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 3g # the memory guard reads this; scans need 0.5 to 1.5 GB each
+    ports:
+      - "8099:8099"
+    environment:
+      # Home Assistant, as this container reaches it. https when HA has it.
+      HA_URL: "http://homeassistant.local:8123"
+      HA_TOKEN_FILE: /run/secrets/ha_token
+      # HA_CA_FILE: /run/secrets/ha_ca      # a private CA behind an https HA_URL
+      # HA_BROWSER_URL: "https://ha.example" # if your browser reaches HA at another address
+      # Barkley, as your browser reaches it: the login with Home Assistant and the links in
+      # notifications use it. Every page asks for that login (administrators only).
+      BARKLEY_URL: "http://192.168.1.20:8099"
+      # BARKLEY_EXPOSURE: local  # public: HA is reachable from the internet
+      # BARKLEY_PARALLEL: "1"    # scans at once, as memory allows (1-4)
+      # GITHUB_TOKEN_FILE: /run/secrets/github_token
+      SNIFF_TEST_STORE: /data/sniff-test.db
+      SNIFF_TEST_CACHE: /data/cache
+      HOME: /data/cache/home
+      TMPDIR: /data/tmp
+    volumes:
+      - ./data:/data
+    secrets:
+      - ha_token
+
+secrets:
+  ha_token:
+    file: ./ha_token

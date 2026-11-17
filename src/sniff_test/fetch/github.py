@@ -81,6 +81,11 @@ def parse_repo(source: str) -> tuple[str, str] | None:
 def _token() -> str | None:
     if tok := os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN"):
         return tok
+    if path := os.environ.get("GITHUB_TOKEN_FILE"):  # a container secret (standalone)
+        try:
+            return Path(path).read_text(encoding="utf-8")[:512].strip() or None
+        except OSError:
+            return None
     gh = shutil.which("gh")
     if not gh:
         return None

@@ -117,47 +117,80 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("--json", action="store_true")
     _add_store(h, "the SQLite scan store")
 
+    env = os.environ.get
     v = sub.add_parser(
         "serve",
-        help="run the add-on's web panel (HA ingress)",
-        description="Serve the scan store and run scans one at a time. Only clients in "
-        "--allow may connect (default: the Supervisor's ingress proxy, 172.30.32.2).",
+        help="run the web panel (the add-on's, or standalone next to Home Assistant)",
+        description="Serve the scan store and run scans. As an add-on (SUPERVISOR_TOKEN "
+        "set) only clients in --allow may connect (default: the Supervisor's ingress "
+        "proxy, 172.30.32.2). Standalone (HA_URL and HA_TOKEN or HA_TOKEN_FILE set), "
+        "every page asks for a login with Home Assistant (administrators only), which "
+        "needs --public-url. Each option also reads the environment variable named in "
+        "its help.",
     )
     _add_store(v, "the SQLite scan store")
-    v.add_argument("--host", default="0.0.0.0")  # noqa: S104 - in the add-on container
-    v.add_argument("--port", type=int, default=8099)
-    v.add_argument("--allow", action="append", metavar="IP", help="client address to accept")
-    v.add_argument("--exposure", choices=[e.value for e in Exposure], default=Exposure.LOCAL.value)
-    v.add_argument("--jobs", type=int, default=1)
+    v.add_argument("--host", default="0.0.0.0")  # noqa: S104 - in a container
+    v.add_argument("--port", type=int, default=env("BARKLEY_PORT", "8099"),
+                   help="(BARKLEY_PORT)")  # fmt: skip
+    v.add_argument(
+        "--allow",
+        action="append",
+        metavar="IP",
+        default=[a.strip() for a in env("BARKLEY_ALLOW", "").split(",") if a.strip()] or None,
+        help="client address to accept; standalone, also needed when there is no login "
+        "(BARKLEY_ALLOW, comma-separated)",
+    )
+    v.add_argument(
+        "--public-url",
+        default=env("BARKLEY_URL", ""),
+        metavar="URL",
+        help="standalone: Barkley's address as your browser reaches it, e.g. "
+        "http://192.168.1.20:8099; the login and notification links use it (BARKLEY_URL)",
+    )
+    v.add_argument(
+        "--ha-browser-url",
+        default=env("HA_BROWSER_URL", ""),
+        metavar="URL",
+        help="standalone: Home Assistant's address as your browser reaches it, when it "
+        "differs from HA_URL (HA_BROWSER_URL)",
+    )
+    v.add_argument("--exposure", choices=[e.value for e in Exposure],
+                   default=env("BARKLEY_EXPOSURE", Exposure.LOCAL.value),
+                   help="(BARKLEY_EXPOSURE)")  # fmt: skip
+    v.add_argument("--jobs", type=int, default=env("BARKLEY_JOBS", "1"), help="(BARKLEY_JOBS)")
     v.add_argument(
         "--parallel",
         type=int,
-        default=1,
-        help="scans that may run at once, as memory allows (1-4)",
+        default=env("BARKLEY_PARALLEL", "1"),
+        help="scans that may run at once, as memory allows (1-4) (BARKLEY_PARALLEL)",
     )
     v.add_argument(
         "--ai-entity",
-        default="",
+        default=env("BARKLEY_AI_ENTITY", ""),
         metavar="ai_task.NAME",
-        help="AI Task entity for 'Explain this app' (empty: off)",
+        help="AI Task entity for 'Explain this app' (empty: off; the panel can pick one) "
+        "(BARKLEY_AI_ENTITY)",
     )
     v.add_argument(
         "--ai-mode",
         choices=("summary", "deep"),
-        default="summary",
-        help="summary: explain the findings; deep: also 'Explain in context' (reads code)",
+        default=env("BARKLEY_AI_MODE", "summary"),
+        help="summary: explain the findings; deep: also 'Explain in context' (reads code) "
+        "(BARKLEY_AI_MODE)",
     )
     v.add_argument(
         "--auto-scan",
-        default="true",
+        default=env("BARKLEY_AUTO_SCAN", "true"),
         metavar="true|false",
-        help="sniff every Marketplace install and update and notify (add-on only)",
+        help="sniff every Marketplace install and update and notify (needs Home "
+        "Assistant) (BARKLEY_AUTO_SCAN)",
     )
     v.add_argument(
         "--notify-target",
-        default="",
+        default=env("BARKLEY_NOTIFY_TARGET", ""),
         metavar="NAME",
-        help="a notify service (notify.NAME) that also gets auto-sniff results",
+        help="a notify service (notify.NAME) that also gets auto-sniff results "
+        "(BARKLEY_NOTIFY_TARGET)",
     )
     v.add_argument(
         "--ha-version",
@@ -340,6 +373,20 @@ def _history(args: argparse.Namespace, out: Console, err: Console) -> int:
     return EXIT_OK
 
 
+AI_MODES = ("summary", "deep")
+
+
+def _loopback(host: str) -> bool:
+    import ipaddress
+
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     from sniff_test import server
 
@@ -348,7 +395,42 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         err.print(f"[red]🐕 serve needs --store (or ${STORE_ENV})[/]")
         return EXIT_ERROR
 
-    from sniff_test import supervisor
+    from sniff_test import login, supervisor, workspace
+
+    if problem := supervisor.config_problem():
+        err.print(f"[red]🐕 {escape(problem)}[/]")
+        return EXIT_ERROR
+    if args.exposure not in {x.value for x in Exposure} or args.ai_mode not in AI_MODES:
+        err.print("[red]🐕 BARKLEY_EXPOSURE is local|public, BARKLEY_AI_MODE summary|deep[/]")
+        return EXIT_ERROR
+    conn = supervisor.connection()
+    login_cfg = None
+    if conn is None or conn.mode != "direct":
+        standalone = False
+        allow: set[str] | None = set(args.allow or [server.SUPERVISOR_IP])
+    else:
+        standalone = True
+        allow = set(args.allow) if args.allow else None
+        if args.public_url:
+            try:
+                login_cfg = login.Login(args.public_url, args.ha_browser_url or conn.base)
+            except supervisor.SupervisorError as ex:
+                err.print(f"[red]🐕 {escape(str(ex))}[/]")
+                return EXIT_ERROR
+        elif allow is None:
+            err.print(
+                "[red]🐕 Standalone, the panel is on the network: set BARKLEY_URL "
+                "(--public-url) to log in with Home Assistant, or --allow (BARKLEY_ALLOW) for "
+                "a proxy in front that does its own login.[/]"
+            )
+            return EXIT_ERROR
+    # Standalone the image runs without the add-on's start script, which made these.
+    for var in ("SNIFF_TEST_CACHE", "HOME", "TMPDIR"):
+        if (d := os.environ.get(var)) and Path(d).is_absolute():
+            with contextlib.suppress(OSError):
+                Path(d).mkdir(parents=True, exist_ok=True)
+    if swept := workspace.sweep_stale():
+        out.print(f"🐕 Removed {swept} scan folder(s) an earlier run left behind")
 
     def ha_fn() -> str | None:
         return args.ha_version or supervisor.ha_version()
@@ -359,8 +441,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         # the lockfiles for later advisory re-checks ride along; Store.save takes them out
         return {**to_dict(result), recheck.KEY: result.inputs, sources.KEY: result.source}
 
-    allow = set(args.allow or [server.SUPERVISOR_IP])
-    # The installed list needs HA (through the Supervisor); outside an add-on there's none.
+    # The installed list needs HA (the Supervisor, or HA_URL standalone).
     installed_fn = supervisor.installed_hacs if supervisor.token() else None
     watcher = None
     if installed_fn is not None:
@@ -373,7 +454,8 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
             notify_fn=supervisor.notify_persistent,
             notify_service_fn=supervisor.notify_service,
             targets_fn=supervisor.notify_targets,
-            slug_fn=supervisor.self_slug,
+            slug_fn=None if standalone else supervisor.self_slug,
+            panel_url=login_cfg.client_id if login_cfg else "",
             # bashio prints "null" for an option missing from an older options file
             enabled=str(args.auto_scan).strip().lower() in ("true", "1", "on", "yes", "null"),
             notify_target=target if target != "null" else "",
@@ -389,7 +471,17 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         entities_fn=supervisor.ai_task_entities if supervisor.token() else None,
         releases_fn=lambda repo: releases.recent(repo),
         watcher=watcher,
+        login_cfg=login_cfg,
     )  # fmt: skip
+    if conn is not None:
+        where = "via the Supervisor" if conn.mode == "addon" else f"at {conn.base} (standalone)"
+        out.print(f"🐕 Home Assistant: {where}")
+        if standalone and not conn.tls and not _loopback(conn.ws_host):
+            out.print("🐕 [yellow]HA_URL is plain http: the token crosses your network "
+                      "unencrypted. Use https if Home Assistant offers it.[/]")  # fmt: skip
+    if login_cfg is not None:
+        out.print(f"🐕 Login with Home Assistant ({login_cfg.ha_url}), administrators only; "
+                  f"Barkley's address: {login_cfg.public_url}")  # fmt: skip
     if watcher is not None:
         watcher.start()
         out.print(
@@ -404,9 +496,10 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     else:
         out.print(f"🐕 AI explanations: {'on, via ' + ai if ai else 'off (no ai_entity set)'}"
                   f"{', mode ' + httpd.panel.ai_mode if ai else ''}")  # fmt: skip
+    clients = ", ".join(sorted(allow)) if allow is not None else "any, after the login"
     out.print(
         f"🐕 Barkley {__version__} panel on {args.host}:{args.port} "
-        f"(clients: {', '.join(sorted(allow))}; store: {store.path})"
+        f"(clients: {clients}; store: {store.path})"
     )
     with contextlib.suppress(KeyboardInterrupt):
         httpd.serve_forever()

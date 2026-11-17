@@ -95,6 +95,11 @@ Barkley runs as an app (add-on), so it needs Home Assistant OS or Supervised.
 The app store downloads a prebuilt image (amd64 or aarch64, about 200 MB). Plan for
 0.5 to 1 GB of free memory while a scan runs.
 
+**Home Assistant Container or Core, or a small box?** The same image runs as a container
+next to Home Assistant or on another machine, with a login through Home Assistant:
+[`standalone/compose.yaml`](standalone/compose.yaml) and the wiki page
+[Standalone (no Supervisor)](https://github.com/SeriesOfTubez/ha-barkley/wiki/Standalone).
+
 ## What gets checked
 
 - **Code** (Semgrep, bundled HA-specific rules): token and data exfiltration, encoded

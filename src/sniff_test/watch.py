@@ -322,6 +322,7 @@ class Watcher:
         notify_service_fn: Callable[[str, str, str, str], None] | None = None,
         targets_fn: Callable[[], list[str]] | None = None,
         slug_fn: Callable[[], str] | None = None,
+        panel_url: str = "",
         enabled: bool = True,
         notify_target: str = "",
         sleep_fn: Callable[[float], None] = time.sleep,
@@ -338,6 +339,7 @@ class Watcher:
         self.notify_service_fn = notify_service_fn
         self.targets_fn = targets_fn
         self.slug_fn = slug_fn
+        self.panel_url = panel_url  # standalone: Barkley's own URL (no app page in HA)
         self.sleep_fn = sleep_fn
         self.now_fn = now_fn
         self.poll = poll
@@ -408,7 +410,10 @@ class Watcher:
         2026.11.0: the hassio integration registers a generic `app` panel at `/app`
         and one per app at `/<slug>` (only while "show in sidebar" is on), both rendered
         by the frontend's `ha-panel-app`; the old `/hassio/ingress/<slug>` route is gone
-        (it fell through to the default dashboard on the user's box)."""
+        (it fell through to the default dashboard on the user's box).
+        Standalone, it is Barkley's own URL (BARKLEY_URL) instead."""
+        if self.panel_url:
+            return self.panel_url
         if self._slug is None:
             try:
                 self._slug = self.slug_fn() if self.slug_fn else ""
