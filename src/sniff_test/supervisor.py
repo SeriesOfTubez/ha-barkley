@@ -136,7 +136,11 @@ class Connection:
     def ssl_context(self) -> ssl.SSLContext | None:
         if not self.tls:
             return None
-        return ssl.create_default_context(cafile=self.ca_file or None)
+        ctx = ssl.create_default_context(cafile=self.ca_file or None)
+        ctx.minimum_version = (
+            ssl.TLSVersion.TLSv1_2
+        )  # never TLS 1.0/1.1, whatever the system allows
+        return ctx
 
 
 def parse_ha_url(url: str, what: str = HA_URL_ENV) -> tuple[str, str, int]:

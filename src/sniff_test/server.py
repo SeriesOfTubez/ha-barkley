@@ -2075,11 +2075,12 @@ class Panel:
             def _text(self, status: int, msg: str) -> None:
                 self._send(status, _page("Barkley", f"<p>{e(msg)}</p>", self._base()))
 
-            def _redirect(self, to: str, cookies: tuple[str, ...] = (), away: bool = False) -> None:
-                """`away`: `to` is Home Assistant's login page (built by login.start from
-                the configured URL); every other redirect stays on this panel."""
+            def _redirect(self, to: str, cookies: tuple[str, ...] = ()) -> None:
+                self._see_other(local_path(to), cookies)
+
+            def _see_other(self, location: str, cookies: tuple[str, ...] = ()) -> None:
                 self.send_response(HTTPStatus.SEE_OTHER)
-                self.send_header("Location", to if away else local_path(to))
+                self.send_header("Location", location)
                 for c in cookies:
                     self.send_header("Set-Cookie", c)
                 self.send_header("Content-Length", "0")
@@ -2118,9 +2119,11 @@ class Panel:
                 if lg is None or url.path not in ("/login", login.CALLBACK_PATH):
                     return False
                 if url.path == "/login":
+                    # The one redirect off this panel: HA's login page, built from the
+                    # configured URL, a fixed path and url-encoded values (login.ha_login_url).
                     state, to = lg.start()
-                    self._redirect(to, (lg.cookie(login.STATE_COOKIE, state, login.STATE_SECONDS),),
-                                   away=True)  # fmt: skip
+                    keep = lg.cookie(login.STATE_COOKIE, state, login.STATE_SECONDS)
+                    self._see_other(login.ha_login_url(lg.ha_url, to), (keep,))
                     return True
                 q = urllib.parse.parse_qs(url.query)
                 got = lambda k: (q.get(k) or [""])[0][:1024]  # noqa: E731

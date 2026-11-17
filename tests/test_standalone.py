@@ -68,6 +68,29 @@ def test_ha_url_is_scheme_host_and_port_only(env, url):
     assert supervisor.connection() is None
 
 
+def test_tls_verifies_and_never_goes_below_1_2(env):
+    import ssl
+
+    env.setenv("HA_URL", "https://ha.example")
+    env.setenv("HA_TOKEN", "llat")
+    ctx = supervisor.connection().ssl_context()
+    assert ctx.minimum_version >= ssl.TLSVersion.TLSv1_2
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+
+
+def test_the_redirect_off_the_panel_is_only_ever_ha_login_page():
+    ha = "http://ha.lan:8123"
+    good = f"{ha}/auth/authorize?response_type=code&state=abc"
+    assert login.ha_login_url(ha, good) == good
+    for bad in (
+        f"{ha}/auth/authorize?x\r\nSet-Cookie: a=b",
+        "http://evil.example/auth/authorize?x",
+        f"{ha}/other?x",
+        f"{ha}.evil.example/auth/authorize?x",
+    ):
+        assert login.ha_login_url(ha, bad) == f"{ha}/auth/authorize"
+
+
 def test_missing_token_file_and_ca_file_are_named(env, tmp_path):
     env.setenv("HA_URL", "http://ha.lan:8123")
     env.setenv("HA_TOKEN_FILE", str(tmp_path / "nope"))

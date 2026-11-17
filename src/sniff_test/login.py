@@ -22,6 +22,7 @@ Everything a session can do still needs the panel's per-process form token on PO
 
 from __future__ import annotations
 
+import re
 import secrets
 import threading
 import time
@@ -183,6 +184,18 @@ class Login:
         return f"{name}={value}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Lax" + (
             "; Secure" if self.secure else ""
         )
+
+
+_PRINTABLE = re.compile(r"^[\x21-\x7e]+$")
+
+
+def ha_login_url(ha_url: str, to: str) -> str:
+    """`to` if it is HA's login page under the configured `ha_url` and one printable
+    line (no header can be smuggled into Location), else HA's bare login page."""
+    prefix = f"{ha_url}/auth/authorize?"
+    if to.startswith(prefix) and _PRINTABLE.match(to):
+        return to
+    return f"{ha_url}/auth/authorize"
 
 
 def read_cookie(header: str | None, name: str) -> str:
