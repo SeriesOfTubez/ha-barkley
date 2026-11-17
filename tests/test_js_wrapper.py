@@ -254,3 +254,20 @@ def test_a_plain_relative_constant_is_proven(tmp_path):
         "}\n"
     )
     assert _scan(tmp_path, {"card.js": card}, TargetKind.PLUGIN) == []
+
+
+def test_an_unrelated_function_destructuring_the_same_name_doesnt_count(tmp_path):
+    """Minified bundles reuse short names everywhere (a real card's bundle has 492
+    destructured names): only the scopes around the call are checked."""
+    card = (
+        "function other({i}){return i+1}\n"
+        "export function legit(n, t) {\n  var i;\n"
+        '  return i="/api/x/file_cache/".concat(n.p),'
+        'fetch(i,{headers:{Authorization:"Bearer ".concat(this._hass.auth.data.access_token)}});\n'
+        "}\n"
+    )
+    assert _scan(tmp_path, {"card.js": card}, TargetKind.PLUGIN) == []
+    inner = card.replace(
+        "export function legit(n, t) {\n  var i;", "export function legit(n, {i}) {"
+    )
+    assert _scan(tmp_path / "b", {"card.js": inner}, TargetKind.PLUGIN) == [("card.js", 3)]

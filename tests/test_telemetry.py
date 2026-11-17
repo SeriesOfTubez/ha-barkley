@@ -164,3 +164,14 @@ def test_an_ordinary_api_call_is_not_telemetry(tmp_path):
             """
     }
     assert _run(tmp_path, files).findings == []
+
+
+def test_a_collection_day_api_is_not_telemetry(tmp_path):
+    files = {
+        "__init__.py": """\
+            async def async_setup_entry(hass, entry):
+                await hass.data["s"].get("https://council.invalid/bin-collection/next")
+                return True
+            """
+    }
+    assert _run(tmp_path, files).findings == []

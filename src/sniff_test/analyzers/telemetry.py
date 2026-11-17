@@ -39,7 +39,7 @@ from sniff_test.models import AnalyzerResult, AnalyzerState, Category, Finding, 
 NAME = "telemetry"
 MARKER = re.compile(
     r"(?i)telemetry|analytic|metric|usage|heartbeat|"
-    r"(?:^|[./_?&=-])(?:ping|stats?|track|beacon|collect)(?:$|[./_?&=-])"
+    r"(?:^|[./_?&=-])(?:ping|stats?|track|beacon)(?:$|[./_?&=-])"
 )
 _HTTP = frozenset({"post", "get", "put", "patch", "request", "urlopen"})
 _LOCAL = re.compile(

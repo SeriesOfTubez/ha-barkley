@@ -229,7 +229,6 @@ class _Index:
         self.root = root
         self._texts: dict[Path, str] = {}
         self._loaded_as_module: set[str] | None = None
-        self._destructured: dict[Path, frozenset[str]] = {}
         self.card = False
 
     def text(self, path: Path) -> str:
@@ -271,10 +270,12 @@ class _Index:
             self._loaded_as_module = found
         return self._loaded_as_module
 
-    def trusted(self, path: Path, arg: str) -> bool:
-        if path not in self._destructured:
-            self._destructured[path] = destructured(self.text(path))
-        return propagation_trusted(self.text(path), arg, self._destructured[path])
+    def trusted(self, path: Path, arg: str, at: int) -> bool:
+        """propagation_trusted, judged on the code that can see offset `at`: every
+        function (parameters and body) that doesn't contain `at` is blanked out first, so
+        a minified bundle's unrelated `({i}) => …` elsewhere doesn't count."""
+        text = visible(self.text(path), at)
+        return propagation_trusted(text, arg, destructured(text), at)
 
     def is_module(self, path: Path) -> bool:
         if self.card or _ESM.search(self.text(path)):
@@ -310,31 +311,86 @@ _STRING_NAMES = re.compile(
     r"""(?:\b(?:const|let|var)\s+|[,;{(]\s*|^\s*)([A-Za-z_$][\w$]*)\s*=\s*["'`]""", re.M
 )
 _DESTRUCTURE = (
-    re.compile(r"(?:\b(?:const|let|var)|\(|,)\s*([{\[][^{}\[\]()]*[}\]])"),
+    # const {C} = …  /  let [C] = …  (also `for (const {C} of …)`)
+    re.compile(r"\b(?:const|let|var)\s*([{\[][^;=]*?[}\]])\s*(?:=|of\b|in\b)"),
+    # ({C} = obj)  /  [C] = arr   (an assignment, not a comparison or an arrow)
     re.compile(r"([{\[][^{}\[\]()=;]*[}\]])\s*=(?![=>])"),
 )
 _NAME = re.compile(r"[A-Za-z_$][\w$]*")
 
 
+def visible(text: str, at: int) -> str:
+    """`text` with every function that doesn't contain offset `at` blanked (same length):
+    its parameter list and its `{…}` body, for `function (…) {…}`, methods and arrows
+    with a block body. What's left is the scope chain around `at` (plus expression-bodied
+    arrows, which only make the check stricter)."""
+    from sniff_test.report.fingerprint import _parsed
+
+    toks, braces = _parsed(text)
+    parens: dict[int, int] = {}
+    stack: list[int] = []
+    for i, (_k, v, _o) in enumerate(toks):
+        if v == "(":
+            stack.append(i)
+        elif v == ")" and stack:
+            parens[i] = stack.pop()
+    cut: list[tuple[int, int]] = []
+    for open_i, close_i in braces.items():
+        start, end = toks[open_i][2], toks[close_i][2] + 1
+        if start <= at < end or open_i == 0:
+            continue
+        prev = toks[open_i - 1][1]
+        if prev == ")" and (open_i - 1) in parens:
+            start = toks[parens[open_i - 1]][2]
+        elif prev == "=>" and open_i >= 2:
+            q = open_i - 2
+            start = toks[parens[q]][2] if toks[q][1] == ")" and q in parens else toks[q][2]
+        else:
+            continue
+        cut.append((start, end))
+    if not cut:
+        return text
+    cut.sort()
+    out, pos = [], 0
+    for a, b in cut:
+        if b <= pos:
+            continue
+        a = max(a, pos)
+        out.append(text[pos:a])
+        out.append(re.sub(r"[^\n]", " ", text[a:b]))
+        pos = b
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def destructured(text: str) -> frozenset[str]:
-    """Names a destructuring may bind in this file (object shorthand looks the same here,
-    so it counts too): `({C}) =>`, `const [C] = p`, `{a: C} = o`."""
+    """Names a destructuring may bind in this file: in a parameter list (`({C}) =>`,
+    `function f(a, [C])`, a method's), a declaration (`const {C} = p`), an assignment
+    pattern (`[C] = arr`) or `catch ({C})`. An object or array literal passed as an
+    argument isn't one."""
     out: set[str] = set()
     for rx in _DESTRUCTURE:
         for m in rx.finditer(text):
             out.update(_NAME.findall(m.group(1)))
+    for rx in _PARAMS:
+        for m in rx.finditer(text):
+            for d in re.finditer(r"[{\[][^{}\[\]]*[}\]]", m.group(1)):
+                out.update(_NAME.findall(d.group(0)))
     return frozenset(out)
 
 
 _LEAD = re.compile(r"^\s*(?:`\$\{\s*([A-Za-z_$][\w$]*)\s*\}|([A-Za-z_$][\w$]*))")
 
 
-def propagation_trusted(text: str, arg: str, names: frozenset[str], depth: int = 0) -> bool:
-    """Whether a Semgrep proof of `arg` can be trusted. Semgrep 1.185's constant
-    propagation doesn't see a destructured binding as shadowing (`({C}) => fetch(C +
-    "/x")` read C as an outer "/api/…"), so the proof is refused when the name the URL
-    starts with, or (for a variable) the name its assigned value starts with, followed
-    three levels, may be bound by a destructuring anywhere in the file."""
+def propagation_trusted(
+    text: str, arg: str, names: frozenset[str], at: int | None = None, depth: int = 0
+) -> bool:
+    """Whether a Semgrep proof of `arg` (used at offset `at`) can be trusted. Semgrep
+    1.185's constant propagation doesn't see a destructured binding as shadowing
+    (`({C}) => fetch(C + "/x")` read C as an outer "/api/…"), so the proof is refused when
+    the name the URL starts with may be bound by a destructuring in `text` (the code that
+    can see the call: js_wrapper.visible), or when the value last assigned to that name
+    before the call starts with such a name (followed three levels)."""
     m = _LEAD.match(arg)
     if not m:
         return True  # starts with a literal
@@ -343,10 +399,13 @@ def propagation_trusted(text: str, arg: str, names: frozenset[str], depth: int =
         return False
     if depth >= 3:
         return False
-    for a in re.finditer(rf"(?<![\w$.]){re.escape(name)}\s*=(?![=>])\s*([^;\n]{{0,200}})", text):
-        if not propagation_trusted(text, a.group(1), names, depth + 1):
-            return False
-    return True
+    before = text if at is None else text[:at]
+    last = None
+    for a in re.finditer(rf"(?<![\w$.]){re.escape(name)}\s*=(?![=>])\s*([^;\n]{{0,200}})", before):
+        last = a
+    if last is None:
+        return True
+    return propagation_trusted(text, last.group(1), names, last.start(1), depth + 1)
 
 
 def _relative(value: str) -> bool:
@@ -510,7 +569,7 @@ def precise(hits: list[Hit], root: Path, run: Runner, card: bool = False) -> set
             continue
         arg = _arg_text(text, span)
         res = first.get(path, [])
-        safe = index.trusted(path, arg) and any(
+        safe = index.trusted(path, arg, span[0]) and any(
             cs <= span[0] and span[1] <= ce for rid in sink_ids for cs, ce in _proven(res, rid)
         )
         if safe or _text_safe(arg, index, path):
@@ -600,7 +659,7 @@ def _wrapper_safe(
             if _rid(r) != f"all-c-{name}":
                 continue
             cs, ce = r["start"]["offset"], r["end"]["offset"]
-            if (cs, ce) in safe and index.trusted(f, _first_arg(text, cs, name)):
+            if (cs, ce) in safe and index.trusted(f, _first_arg(text, cs, name), cs):
                 continue
             paren = text.find("(", cs + len(name))
             args = _args(text, paren) if paren >= 0 else []
