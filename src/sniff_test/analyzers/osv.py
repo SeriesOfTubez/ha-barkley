@@ -660,8 +660,10 @@ def yarn_dev_only(lockfile: Path) -> set[tuple[str, str]]:
             cur = {"version": None, "deps": []}
             n = len(entries)
             entries[n] = cur
+            # v1 quotes each spec ("a@^1", "a@^2"); berry quotes the whole list
+            # ("a@npm:^1, a@npm:^2"). Strip both kinds before reading names.
             for spec in line[:-1].split(","):
-                alias[_unquote(spec)] = n
+                alias[spec.strip().strip("\"'")] = n
         elif cur is None:
             continue
         elif indent == 2:

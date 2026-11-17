@@ -363,7 +363,7 @@ bundler@^4.0.0:
     esparse "^0.18.0"
     "@acme/util" "^1.0.0"
 
-esparse@^0.18.0:
+"esparse@^0.18.0", "esparse@^0.18.2":
   version "0.18.20"
 
 widget@^3.3.0:
@@ -391,7 +391,7 @@ __metadata:
     esparse: "npm:^0.18.0"
   languageName: node
 
-"esparse@npm:^0.18.0":
+"esparse@npm:^0.18.0, esparse@npm:^0.18.2":
   version: 0.18.20
   languageName: node
 
