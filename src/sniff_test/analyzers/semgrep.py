@@ -13,7 +13,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from sniff_test.analyzers import _proc, py_precision, py_tamper
+from sniff_test.analyzers import _proc, js_wrapper, py_precision, py_tamper
 from sniff_test.analyzers.py_resolve import Resolver
 from sniff_test.models import (
     RULE_FILE_NOT_CHECKED,
@@ -27,6 +27,7 @@ from sniff_test.models import (
     Severity,
     Tag,
     Target,
+    TargetKind,
 )
 
 NAME = "semgrep"
@@ -534,11 +535,22 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
         )
     findings: list[Finding] = []
     facts: list[Fact] = []
+    token_hits: list[js_wrapper.Hit] = []
     for r in data.get("results", []):
         if (fact := to_fact(r, root, target.domain)) is not None:
             facts.append(fact)
         else:
-            findings.append(to_finding(r, root))
+            findings.append(f := to_finding(r, root))
+            if f.rule_id == js_wrapper.RULE and f.file:
+                raw = (root / f.file).read_bytes()
+                start = js_wrapper.char_offset(raw, r["start"]["offset"])
+                end = js_wrapper.char_offset(raw, r["end"]["offset"])
+                token_hits.append(js_wrapper.Hit(f, root / f.file, start, end))
+    if token_hits:  # (0.14.0) same-origin URLs the rule can't prove (js_wrapper)
+        runner = js_wrapper.semgrep_runner(exe, root, run_dir, _tool_env(), _proc.run)
+        card = target.kind is TargetKind.PLUGIN
+        same_origin = js_wrapper.precise(token_hits, root, runner, card=card)
+        findings = [f for f in findings if id(f) not in same_origin]
     trees: dict[str, Any] = {}
     findings = [f for f in findings if not _only_rebinds_names(f, root, trees)]
     findings = _precise(findings, root, target)

@@ -3,9 +3,13 @@ rules:
   - id: card-token-exfil
     mode: taint
     languages: [javascript, typescript]
-    # A URL held in a variable is judged by the value it was last assigned.
+    # (0.14.0) No constant propagation: Semgrep 1.185 doesn't treat a destructured
+    # binding as shadowing (`({C}) => fetch(C + "/x")` read C as an outer "/api/…"), so
+    # the exclusions below only see literal text. URLs built from names are proven
+    # same-origin, or not, by the scan's js_wrapper step (analyzers/js_wrapper.py).
     options:
       symbolic_propagation: true
+      constant_propagation: false
     severity: ERROR
     message: >-
       A Home Assistant auth token flows into a network request that is not
