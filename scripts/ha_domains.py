@@ -22,7 +22,8 @@ _DOMAIN = re.compile(r"^[a-z0-9_]+$")
 
 def main() -> None:
     gh = GitHub()
-    tag = sys.argv[1] if len(sys.argv) > 1 else gh.latest_release("home-assistant", "core")["tag_name"]
+    latest = gh.latest_release("home-assistant", "core") if len(sys.argv) < 2 else None
+    tag = sys.argv[1] if latest is None else latest["tag_name"]
     top = gh.get_json(f"/repos/home-assistant/core/contents/homeassistant?ref={tag}")
     sha = next(x["sha"] for x in top if x["name"] == "components" and x["type"] == "dir")
     tree = gh.get_json(f"/repos/home-assistant/core/git/trees/{sha}")

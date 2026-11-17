@@ -19,6 +19,7 @@ from sniff_test.analyzers import (
     repo_hygiene,
     repo_signals,
     semgrep,
+    telemetry,
 )
 from sniff_test.analyzers.py_resolve import Resolver
 from sniff_test.deps import ha_env
@@ -143,6 +144,8 @@ def scan(
         )
         results += dep_results
         if target.kind is TargetKind.INTEGRATION:
+            say("usage reporting")
+            results.append(telemetry.run(target))
             say("bytecode")
             results.append(bytecode.run(target, env.python_version if env else None))
 

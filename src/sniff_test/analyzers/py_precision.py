@@ -521,12 +521,24 @@ def _prose(const: ast.Constant, up: dict[ast.AST, ast.AST]) -> bool:
         return False
 
 
+_AUTH_TEXT = re.compile(
+    r"\.storage[\\/](?:auth|core\.config_entries|onboarding)|auth_provider\.homeassistant"
+)
+
+
 def secrets_dropped(f: Finding, res: Resolver) -> bool:
     """`ha-read-secrets` where every `secrets.yaml` string in the matched statement is
     message text, or the path is the app's own copy next to its code (issue #15: a test
-    script's `Path(__file__).resolve().parent / "secrets.yaml"`). Anything we can't read
-    plainly keeps the finding."""
-    if f.rule_id != "ha-read-secrets" or not f.file or not f.line:
+    script's `Path(__file__).resolve().parent / "secrets.yaml"`); `ha-read-auth-storage`
+    where every matching string is message text (a docstring, a log line, an error).
+    Anything we can't read plainly keeps the finding."""
+    if f.rule_id == "ha-read-secrets":
+        rx, own_copy = _SECRETS, True
+    elif f.rule_id == "ha-read-auth-storage" and f.analyzer == "semgrep":
+        rx, own_copy = _AUTH_TEXT, False
+    else:
+        return False
+    if not f.file or not f.line:
         return False
     tree = res.tree(f.file)
     if tree is None:
@@ -545,12 +557,12 @@ def secrets_dropped(f: Finding, res: Resolver) -> bool:
     hits = [
         n
         for n in ast.walk(stmt)
-        if isinstance(n, ast.Constant) and isinstance(n.value, str) and _SECRETS.search(n.value)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and rx.search(n.value)
     ]
     if not hits:
         return False  # the name came through a constant: keep
     depth = len(Path(f.file).parts) - 1
-    return all(_prose(c, up) or _own_copy(c, up, depth) for c in hits)
+    return all(_prose(c, up) or (own_copy and _own_copy(c, up, depth)) for c in hits)
 
 
 # --- test code no runtime module imports ---------------------------------------------
@@ -609,3 +621,64 @@ def test_only_files(res: Resolver) -> frozenset[str]:
                     if stem.replace("/", ".") in n.value or stem in n.value:
                         used.add(t)
     return frozenset(tests - used)
+
+
+# --- the Supervisor token: read, or only checked for ----------------------------------
+
+
+def _env_read(node: ast.AST) -> bool:
+    if not isinstance(node, (ast.Call, ast.Subscript)):
+        return False
+    text = _dotted(node.func if isinstance(node, ast.Call) else node.value)
+    return text in ("os.environ.get", "os.getenv", "getenv", "environ.get", "os.environ", "environ")
+
+
+def supervisor_presence_only(f: Finding, res: Resolver) -> bool:
+    """`ha-supervisor-token` where every read of the variable on that line is only a
+    test of whether it is set (`if os.environ.get("SUPERVISOR_TOKEN"):`, `bool(…)`,
+    `… is None`, `not …`): the token's value is never kept or sent."""
+    if f.rule_id != "ha-supervisor-token" or not f.file or not f.line:
+        return False
+    tree = res.tree(f.file)
+    if tree is None:
+        return False
+    up = parents(tree)
+    reads = [
+        n
+        for n in ast.walk(tree)
+        if _env_read(n)
+        and getattr(n, "lineno", 0) <= f.line <= (getattr(n, "end_lineno", 0) or 0)
+        and any(
+            isinstance(c, ast.Constant) and c.value in ("SUPERVISOR_TOKEN", "HASSIO_TOKEN")
+            for c in ast.walk(n)
+        )
+    ]
+    if not reads:
+        return False
+
+    def tested(n: ast.AST) -> bool:
+        p = up.get(n)
+        while isinstance(p, ast.BoolOp) or (
+            isinstance(p, ast.UnaryOp) and isinstance(p.op, ast.Not)
+        ):
+            if isinstance(p, ast.BoolOp):
+                q = up.get(p)
+                # `a or b` as a value passes a token on; only inside a test is it a check
+                if (
+                    not (isinstance(q, (ast.If, ast.While, ast.IfExp, ast.Assert)) and q.test is p)
+                    and not (isinstance(q, ast.UnaryOp) and isinstance(q.op, ast.Not))
+                    and not (isinstance(q, ast.Call) and _dotted(q.func) == "bool")
+                ):
+                    return False
+            n, p = p, up.get(p)
+        if isinstance(p, (ast.If, ast.While, ast.IfExp, ast.Assert)) and p.test is n:
+            return True
+        if isinstance(p, ast.UnaryOp) and isinstance(p.op, ast.Not):
+            return True
+        if isinstance(p, ast.Call) and _dotted(p.func) == "bool" and p.args == [n]:
+            return True
+        if isinstance(p, ast.Compare) and all(isinstance(o, (ast.Is, ast.IsNot)) for o in p.ops):
+            return all(isinstance(c, ast.Constant) and c.value is None for c in p.comparators)
+        return False
+
+    return all(tested(n) for n in reads)

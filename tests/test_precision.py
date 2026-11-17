@@ -688,3 +688,39 @@ def test_an_absolute_import_of_a_test_module_labels_nothing(tmp_path):
         },
     )
     assert py_precision.test_only_files(Resolver(target.root)) == frozenset()
+
+
+# --- credential rules: text and presence checks are not reads --------------------------
+
+CREDENTIAL_TEXT = {
+    "__init__.py": '''\
+        """Never touches .storage/auth or .storage/core.config_entries directly."""
+        import json
+        import logging
+        import os
+
+        _LOGGER = logging.getLogger(__name__)
+
+
+        def check(hass, entry):
+            if not os.environ.get("SUPERVISOR_TOKEN"):
+                _LOGGER.warning("Not on a Supervisor install")
+            on_supervisor = bool(os.environ.get("SUPERVISOR_TOKEN"))
+            missing = os.getenv("SUPERVISOR_TOKEN") is None
+            token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN")
+            headers = {"Authorization": f"Bearer {os.environ['SUPERVISOR_TOKEN']}"}
+            if entry is None:
+                raise ValueError("entry missing from .storage/core.config_entries here")
+            data = json.load(open("/config/.storage/core.config_entries"))
+            return on_supervisor, missing, token, headers, data
+        '''
+}
+
+
+@needs_semgrep
+def test_credential_text_and_presence_checks_are_no_finding(tmp_path):
+    result, _ = _run(tmp_path, CREDENTIAL_TEXT)
+    # the docstring and the error text go; reading the file stays
+    assert _hits(result, "ha-read-auth-storage") == [18]
+    # three presence checks go; keeping the token and sending it stay
+    assert sorted(set(_hits(result, "ha-supervisor-token"))) == [14, 15]

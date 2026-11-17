@@ -340,6 +340,8 @@ def _precise(findings: list[Finding], root: Path, target: Target) -> list[Findin
             continue
         if py_precision.secrets_dropped(f, res):
             continue
+        if py_precision.supervisor_presence_only(f, res):
+            continue
         if f.rule_id == "ha-raw-storage-access":
             level = py_precision.storage_level(f, res, target.domain)
             if (

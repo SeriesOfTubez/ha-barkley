@@ -139,6 +139,32 @@ class VulnPolicy:
 PYTHON_POLICY = VulnPolicy(Severity.HIGH, True, "installed into Home Assistant's Python")
 NPM_POLICY = VulnPolicy(Severity.MEDIUM, False, "bundled into the card's JavaScript")
 
+# (0.14.0, user decision 2026-11-17) Tools that only transform code when the card is
+# built: they run on the developer's machine and none of their code ends up in the
+# browser bundle (checked on three real cards: no trace of them in the shipped files; the
+# babel advisories seen say "users that only compile trusted code are not impacted").
+# Exact names only. Not here, because their code IS copied into bundles: @babel/runtime,
+# @babel/helpers, core-js, regenerator-runtime, tslib, and rollup plugins (the commonjs
+# plugin writes a shim into the output). Their advisories are shown, unscored; known
+# malware in them is still dep-malicious (a malicious build tool can rewrite the bundle).
+NPM_BUILD_TOOLS = frozenset(
+    {
+        "rollup",
+        "webpack",
+        "esbuild",
+        "vite",
+        "typescript",
+        "terser",
+        "@babel/core",
+        "@babel/parser",
+        "@babel/preset-env",
+    }
+)
+
+
+def is_build_tool(name: str) -> bool:
+    return name in NPM_BUILD_TOOLS or name.startswith("@babel/plugin-transform-")
+
 
 _DETAILS_MAX = 1500  # characters of an advisory's text kept for the page and the AI
 Lookup = Callable[[str, str, str], tuple[str | None, str | None, int | None]]
@@ -266,10 +292,12 @@ def to_findings(
     dev_only: set[tuple[str, str]] | frozenset[tuple[str, str]] = frozenset(),
     direct: set[str] | None = None,
     lookup: Lookup | None = None,
+    build_tool: Callable[[str], bool] | None = None,
 ) -> list[Finding]:
     """skip_vulns: names whose CVEs aren't ours to report (HA-provided).
     dev_only: (name, version) of build-only packages: malware is reported, CVEs aren't.
-    direct: names the app lists itself. lookup: the newest release (None: offline)."""
+    direct: names the app lists itself. lookup: the newest release (None: offline).
+    build_tool: (cards) names whose advisories are shown as info, not scored."""
     out: list[Finding] = []
     for p in sorted(pkgs, key=lambda p: (p.name, p.version)):
         evidence_base = f"{p.name}@{p.version} ({p.ecosystem})"
@@ -312,6 +340,27 @@ def to_findings(
         else:
             cvss = f"max CVSS {raw:g}" if raw is not None else "severity unknown"
         dep = _dep_facts(p, ids, direct, lookup)
+        if build_tool is not None and build_tool(p.name):
+            out.append(
+                Finding(
+                    rule_id="dep-build-tool-vuln",
+                    title="Build tool with known vulnerabilities",
+                    severity=Severity.INFO,
+                    category=Category.DEPENDENCY,
+                    message=(
+                        f"{p.name} {p.version} has {len(ids)} known "
+                        f"{'vulnerability' if len(ids) == 1 else 'vulnerabilities'} ({cvss}): "
+                        f"{_ids_text(ids)}. It's a build tool: it runs on the developer's "
+                        "machine when the card is built, and its code isn't part of the "
+                        "card's JavaScript, so this isn't scored."
+                    ),
+                    file=file,
+                    evidence=f"{evidence_base}: {_ids_text(ids)}",
+                    analyzer=NAME,
+                    platforms=plats,
+                )
+            )
+            continue
         out.append(
             Finding(
                 rule_id="dep-vuln",
@@ -880,6 +929,7 @@ def check_npm(root: Path, work: Path) -> AnalyzerResult:
             npm_dev_only(lf),
             direct=_npm_direct(root),
             lookup=latest_release,
+            build_tool=is_build_tool,
         )
     state = AnalyzerState.ERROR if errors else AnalyzerState.OK
     detail = ", ".join(lf.name for lf in lockfiles) + (f"; {' | '.join(errors)}" if errors else "")

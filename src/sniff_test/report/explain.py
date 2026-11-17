@@ -362,6 +362,38 @@ RULES: dict[str, Explanation] = {
         "hit, but it's worth updating the app when a fix ships.",
         "Outdated library",
     ),
+    "telemetry-shadow": _E(
+        "Sends usage data on its own, without telling you",
+        "The app reports how it's used to a server the developer runs, by itself (when "
+        "Home Assistant starts or on a timer). Barkley found no option in the code to "
+        "turn it off, and the app's description doesn't mention it.",
+        "It's a privacy matter, not an attack: the server learns your home's internet "
+        "address and whatever the report contains. Ask the developer what it sends.",
+        "Hidden telemetry",
+    ),
+    "telemetry-opt-out": _E(
+        "Sends usage data unless you turn it off",
+        "The app reports how it's used to a server the developer runs, by itself. It's "
+        "either on by default behind an option, or the app's description mentions it.",
+        "A privacy choice: check the app's options if you'd rather it didn't.",
+        "Telemetry, on by default",
+    ),
+    "telemetry-usage": _E(
+        "Can send usage data to the developer",
+        "The code has what looks like usage reporting to a server the developer runs. "
+        "Barkley says below what it could tell about when it's sent.",
+        "Shown for information and not scored.",
+        "Usage reporting",
+    ),
+    "dep-build-tool-vuln": _E(
+        "A build tool with known security bugs",
+        "The card lists a tool that turns its source into the JavaScript you download "
+        "(such as rollup or babel). That tool has publicly known bugs, but it only runs on "
+        "the developer's machine when the card is built; none of its code is in the card.",
+        "No, not for you: the bugs are in the developer's build step. Shown for "
+        "information and not scored.",
+        "Build tool",
+    ),
     "dep-typosquat": _E(
         "Uses a code library with a name one typo away from a popular one",
         "Copycat packages copy well-known names with a small typo so that people install "

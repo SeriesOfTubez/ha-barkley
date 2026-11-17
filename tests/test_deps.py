@@ -655,3 +655,38 @@ def test_githubs_reviewed_rating_wins_over_the_reported_cvss():
     p.vulns = {"GHSA-gcqx-w48m-w2h4": {"id": "GHSA-gcqx-w48m-w2h4"}}
     [f] = osv.to_findings([p], "bun.lock", set(), osv.NPM_POLICY)
     assert f.severity is Severity.MEDIUM and "(max CVSS 5.3)" in f.message
+
+
+def test_a_cards_build_tool_advisory_is_shown_but_not_scored():
+    """(0.14.0, item 17) Exact names only: a runtime helper copied into the bundle stays
+    scored, and known malware in a build tool is still critical."""
+    from sniff_test.scoring import score
+
+    v = {"id": "GHSA-0000-1111-2222", "database_specific": {"severity": "HIGH"}}
+    group = [{"ids": [v["id"]], "max_severity": "8.2"}]
+    pkgs = [
+        _pkg("rollup", [v], group, "npm"),
+        _pkg("@babel/plugin-transform-modules-systemjs", [v], group, "npm"),
+        _pkg("@babel/runtime", [v], group, "npm"),
+        _pkg("@rollup/plugin-commonjs", [v], group, "npm"),
+        _pkg("esbuild", [{"id": "MAL-2099-1"}], [{"ids": ["MAL-2099-1"]}], "npm"),
+    ]
+    fs = osv.to_findings(pkgs, "yarn.lock", set(), osv.NPM_POLICY, build_tool=osv.is_build_tool)
+    got = {
+        (
+            f.evidence.split("@", 2)[1] if f.evidence.startswith("@") else f.evidence.split("@")[0],
+            f.rule_id,
+            f.severity,
+        )
+        for f in fs
+    }
+    assert got == {
+        ("rollup", "dep-build-tool-vuln", Severity.INFO),
+        ("babel/plugin-transform-modules-systemjs", "dep-build-tool-vuln", Severity.INFO),
+        ("babel/runtime", "dep-vuln", Severity.MEDIUM),
+        ("rollup/plugin-commonjs", "dep-vuln", Severity.MEDIUM),
+        ("esbuild", "dep-malicious", Severity.CRITICAL),
+    }
+    info = [f for f in fs if f.rule_id == "dep-build-tool-vuln"]
+    assert score(info, True).score == 100
+    assert "isn't part of the card's JavaScript" in info[0].message
