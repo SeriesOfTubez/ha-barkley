@@ -149,6 +149,9 @@ behind the names used. That is at most 150 lines of code plus 40 of imports and
 constants, and you can open it under "The code it reads" before you click. When you
 click, that code and the question go to your AI; nothing is sent before. It is the
 app's own public code, never anything from your Home Assistant.
+A privacy note shows the button, or the reading, of the address or port behind it:
+the same reading as under "Where it connects", not a second one. A note whose addresses
+are all named in the app's documentation or manifest has none, and says so.
 
 For integrations the AI may ask once to see more of the app's code. It can only pick
 from a list of names Barkley offers (at most three picks; never a file path, never its

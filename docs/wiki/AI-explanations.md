@@ -29,6 +29,12 @@ in context** button. During the scan Barkley keeps the code around it, and you c
 it under "The code it reads" before you click. On your click, that code and the question
 go to your AI.
 
+A privacy note (telemetry, analytics, a server the developer runs, unencrypted
+addresses, MQTT without encryption) shows the button, or the AI's reading, of the
+address or port behind it. It is the same reading as under "Where it connects", not a
+second one. A note whose addresses are all named in the app's documentation or manifest
+has no reading, and says so.
+
 What the code is, for an integration: the function the finding is in; the functions
 and classes of the app that it calls or refers to, starting with the ones named on the
 flagged line (at most 150 lines together); and the import lines and constants behind the

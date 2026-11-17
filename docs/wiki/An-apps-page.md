@@ -16,7 +16,8 @@ Every scan has a page. From top to bottom:
   named as a hint; that name never changes a score, and no address is ever sent anywhere
   to be looked up.
 - **Privacy notes** such as telemetry, analytics or unencrypted connections. They are
-  never scored.
+  never scored. In deep mode a note links to the AI's reading of the address or port
+  behind it.
 - **What it can do inside Home Assistant:** the services, views and events it hooks into.
 - **The developer's security habits:** whether the project runs security scanners in its
   workflows, has Dependabot or Renovate and a SECURITY.md, how many dependency-update

@@ -40,6 +40,18 @@ class Note:
     unknown: str  # what we can't tell from the code
     hosts: list[str] = field(default_factory=list)  # untrusted: from the scanned code
     where: list[str] = field(default_factory=list)  # "file:line", untrusted
+    # (0.13.0) graph edge ids behind the note, in the order shown: an edge with an
+    # "Explain in context" item (report.context) opens that same reading from the note
+    edges: list[str] = field(default_factory=list)
+    classes: list[str] = field(default_factory=list)  # each edge's host class ("" for a port)
+
+
+def _ids(edges: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """Edge ids and host classes, one per edge, so they line up with `hosts`."""
+    return (
+        [str(e.get("id") or "") for e in edges],
+        [str(e.get("attrs", {}).get("class") or "") for e in edges],
+    )
 
 
 def _where(edges: list[dict[str, Any]], limit: int = 4) -> list[str]:
@@ -107,6 +119,7 @@ def notes(report: dict[str, Any]) -> list[Note]:
                 "options in Settings > Devices & services.",
                 [n["label"] for _, n in dev_tel],
                 _where([e for e, _ in dev_tel]),
+                *_ids([e for e, _ in dev_tel]),
             )
         )
     if dev_other:
@@ -121,6 +134,7 @@ def notes(report: dict[str, Any]) -> list[Note]:
                 "What it sends there, or when. It may be a harmless helper, such as a login relay.",
                 [n["label"] for _, n in dev_other],
                 _where([e for e, _ in dev_other]),
+                *_ids([e for e, _ in dev_other]),
             )
         )
     if analytics:
@@ -134,6 +148,7 @@ def notes(report: dict[str, Any]) -> list[Note]:
                 "Whether it's switched on, or what it sends.",
                 [n["label"] for _, n in analytics],
                 _where([e for e, _ in analytics]),
+                *_ids([e for e, _ in analytics]),
             )
         )
     if plain:
@@ -149,6 +164,7 @@ def notes(report: dict[str, Any]) -> list[Note]:
                 "redirects to an encrypted address.",
                 [n["label"] for _, n in plain],
                 _where([e for e, _ in plain]),
+                *_ids([e for e, _ in plain]),
             )
         )
     mqtt = _port_edges(report, 1883)
@@ -164,6 +180,7 @@ def notes(report: dict[str, Any]) -> list[Note]:
                 "matters less) and whether encryption is switched on elsewhere.",
                 [],
                 _where(mqtt),
+                *_ids(mqtt),
             )
         )
     return out

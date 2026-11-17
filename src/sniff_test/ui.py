@@ -48,7 +48,8 @@ def logo_img(size: int = 40) -> str:
     return f'<img class="logo" src="{LOGO_URI}" width="{size}" height="{size}" alt="">'
 
 
-DeepFn = Callable[[str], str]  # item id -> "Explain in context" HTML ("" for none)
+# item id (, part="both"|"inline"|"sheet") -> "Explain in context" HTML ("" for none)
+DeepFn = Callable[..., str]
 
 
 def e(text: Any, limit: int = 300) -> str:
@@ -351,6 +352,8 @@ details summary { cursor:pointer; color:var(--muted); font-size:var(--t-xs); }
 .privbox { border:1px solid var(--priv); background:var(--priv-bg); border-radius:var(--r4);
   padding:var(--s3) var(--s4); }
 .privbox h2 { color:var(--priv); }
+.noteai { margin-top:var(--s2); }
+.noteai p { margin:0; }
 ul.plain { margin:0; padding-left:var(--s4); display:flex; flex-direction:column;
   gap:var(--s1); }
 ul.marks { list-style:none; padding-left:0; }
@@ -1343,6 +1346,7 @@ def deep_html(
     asking: list[str] | None = None,
     more: str = "",
     also: str = "",
+    part: str = "both",
 ) -> str:
     """One item's "Explain in context": a compact chip or button where the item is, and
     a full-width sheet (`#ai-<id>`, opened with CSS :target, no script) with the answer
@@ -1356,7 +1360,10 @@ def deep_html(
     report, 2026-11-12), and a fragment-only open would stop the plain reload (a page at a
     fragment never reloads).
     `asking`: while the second round runs, what the AI asked to see. `more`: more_note().
-    `also`: also_note(), what else the request carries (the comparison, the README)."""
+    `also`: also_note(), what else the request carries (the comparison, the README).
+    `part` (0.13.0): "inline" is only the chip or button, without the sheet or the item's
+    anchor, for a second place on the page that opens the same reading (a privacy note);
+    "sheet" is only the sheet, for an item whose own place isn't on the page."""
     from sniff_test.report.context import line_count
 
     mid = f"ai-{e(item_id, 40)}"
@@ -1502,6 +1509,10 @@ def deep_html(
         f'<a class="x" href="{close}">Close {icon("x")}</a></div>'
         f'<div class="st">{e(title, 200)}</div>{body}</div></div>'
     )
+    if part == "inline":
+        return f'<div class="deepi">{inline}</div>'
+    if part == "sheet":
+        return sheet
     return f'<div class="deepi" id="item-{e(item_id, 40)}">{inline}</div>{sheet}'
 
 
@@ -1521,7 +1532,45 @@ def address_line(address: str) -> str:
     return f"<li><code>{e(address, 253)}</code> · {known_text(address)}</li>"
 
 
-def privacy_html(notes: list[privacy.Note]) -> str:
+def note_reading(note: privacy.Note, inline: DeepFn) -> str:
+    """(0.13.0) A privacy note's way to the AI's reading: the "Explain in context" button
+    or chip of the address or port behind it (`inline(edge_id)`, the same item, answer and
+    sheet as under "Where it connects"; the user's pick, 2026-11-16), or a line saying
+    why there is none."""
+    links = []
+    for i, edge in enumerate(note.edges):
+        html = inline(edge) if edge else ""
+        if not html:
+            continue
+        what = f"<code>{e(note.hosts[i], 120)}</code>" if i < len(note.hosts) else "port 1883"
+        links.append((what, html))
+    if links:
+        place = "port" if note.kind == "mqtt" else "address"
+        lead = (
+            f'<p class="small">The AI\'s reading of this {place} is the same one as under '
+            "“Where it connects”.</p>"
+            if len(links) == 1
+            else '<p class="small">The AI\'s reading of each address is the same one as under '
+            "“Where it connects”.</p>"
+        )
+        body = "".join(
+            (f'<div class="small">{what}</div>' if len(links) > 1 else "") + html
+            for what, html in links[:4]
+        )
+        return f'<div class="noteai">{lead}{body}</div>'
+    if note.classes and all(c == "declared" for c in note.classes):
+        why = (
+            "its addresses are named in the app's documentation or manifest, and Barkley "
+            "offers a reading only for addresses that aren't"
+        )
+    else:
+        why = "none of its addresses has one on this page"
+    return f'<p class="small muted noteai">No “Explain in context” for this note: {why}.</p>'
+
+
+def privacy_html(notes: list[privacy.Note], inline: DeepFn | None = None) -> str:
+    """`inline(edge_id)`: the chip or button only (deep(..., part="inline")); None when
+    the AI's code reading is off, and then the notes show none."""
     if not notes:
         return ""
     parts = [
@@ -1541,7 +1590,9 @@ def privacy_html(notes: list[privacy.Note]) -> str:
             f"<dt>What it means</dt><dd>{e(n.means, 600)}{(' Address:' if len(n.hosts) == 1 else ' Addresses:') + hosts_html if hosts_html else ''}</dd>"
             f"<dt>What we can't tell</dt><dd>{e(n.unknown, 400)}</dd>"
             + (f"<dt>Where we saw it</dt><dd>{where}</dd>" if where else "")
-            + "</dl></div></div>"
+            + "</dl>"
+            + (note_reading(n, inline) if inline else "")
+            + "</div></div>"
         )
     parts.append("</section>")
     return "".join(parts)
@@ -2425,12 +2476,20 @@ def render_app(
         + ai_form
         + "</section>"
     )
-    parts.append(privacy_html(privacy.notes(report)))
+    notes = privacy.notes(report)
+    parts.append(privacy_html(notes, (lambda i: deep(i, part="inline")) if deep else None))
     groups = scored_findings(report)
     aside = report.get("trusted_findings") or []
     expl = ai.get("findings", {})
     items = (report.get("context") or {}).get("items") or {}
-    dfn = deep or (lambda _id: "")
+    shown: set[str] = set()  # items whose block (with its sheet) is on the page
+
+    def dfn(item_id: str) -> str:
+        out = deep(item_id) if deep else ""
+        if out:
+            shown.add(item_id)
+        return out
+
     tfn = trust or (lambda _f: "")
     if groups:
         parts.append(
@@ -2497,7 +2556,7 @@ def render_app(
         '<section class="box"><h2>Where it connects</h2><p class="sub">Every site, IP address '
         "and port in the shipped code, grouped by where it is. A site being here means the code "
         "mentions it, not that it was seen connecting. Web addresses drop anything after "
-        f"<code>?</code>, which can hold keys.</p>{zones_html(report, deep)}</section>"
+        f"<code>?</code>, which can hold keys.</p>{zones_html(report, dfn if deep else None)}</section>"
     )
     parts.append(hygiene_html(report))
     can = explain.can_do(report)
@@ -2511,4 +2570,10 @@ def render_app(
         + f'</section><section class="box"><h2>History</h2>{history_html(base, sid, report, rows)}'
         f'<p class="tech"><a href="{base}/scan/{sid}.json">Technical report (raw JSON)</a></p></section></div>'
     )
+    if deep:  # a note's address beyond the 12 shown per zone: its sheet goes at the end
+        parts.extend(
+            deep(i, part="sheet")
+            for i in dict.fromkeys(x for n in notes for x in n.edges)
+            if i and i not in shown
+        )
     return page(f"Barkley · {title}", "".join(parts), refresh, base, refresh_url)

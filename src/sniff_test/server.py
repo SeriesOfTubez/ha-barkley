@@ -1045,10 +1045,12 @@ def render_scan(
         # asked of the index only: the page is rendered often, the copy is unpacked on a click
         src_note = None if store.has_source(sid) else (report["context"].get("source") or {})
 
-        def deep(item_id: str) -> str:
+        def deep(item_id: str, part: str = "both") -> str:
             snip = ai_context.snippet_of(report, item_id)
             if snip is None:
                 it = (report["context"].get("items") or {}).get(item_id) or {}
+                if part != "both":  # the notes below are for the item's own place only
+                    return ""
                 if it.get("kind") == "dependency" and it.get("unread"):
                     return (f'<p class="small muted">{ui.icon("sparkle")} Explain in context: '
                             "this package's advisory appeared after the code was sniffed, so "
@@ -1076,7 +1078,8 @@ def render_scan(
                                 also=ui.also_note(ai_context.comparison_of(report, item_id),
                                                   ai_context.readme_of(report, item_id)),
                                 open_url=_scan_url(base, sid, item_id) if running else "",
-                                close_url=e(f"{base}/scan/{sid}") if running else "")  # fmt: skip
+                                close_url=e(f"{base}/scan/{sid}") if running else "",
+                                part=part)  # fmt: skip
 
     return ui.render_app(
         base,
