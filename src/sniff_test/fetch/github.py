@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from sniff_test import __version__
+from sniff_test.fetch import retry
 
 API = "https://api.github.com"
 MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024
@@ -28,11 +30,18 @@ _OWNER_REPO = re.compile(r"^(?P<owner>[\w.-]+)/(?P<name>[\w.-]+)$")
 
 
 class GitHubError(Exception):
-    pass
+    """`status`: GitHub's HTTP status, if any (fetch.retry reads it); `failure`: set
+    by retry.attempt when retries ran out."""
+
+    status: int | None = None
+    retry_after: float | None = None
+    kind: str | None = None
+    failure: Any = None
 
 
 class NotFoundError(GitHubError):
-    pass
+    status = 404
+    kind = "not_found"
 
 
 class RateLimitError(GitHubError):
@@ -133,7 +142,8 @@ class GitHub:
     def _opener(self) -> urllib.request.OpenerDirector:
         return urllib.request.build_opener(_NoCrossHostAuth())
 
-    def _request(self, url: str, accept: str = "application/vnd.github+json"):
+    def _request(self, url: str, accept: str = "application/vnd.github+json", tries: int = 0):
+        """`tries=1`: no retry here (GitHub.download retries the whole file itself)."""
         if not url.startswith("https://"):
             raise GitHubError(f"refusing non-https URL: {url}")
         req = urllib.request.Request(url)  # noqa: S310 - scheme checked above
@@ -142,6 +152,18 @@ class GitHub:
         req.add_header("X-GitHub-Api-Version", "2022-11-28")
         if self.token and urllib.parse.urlsplit(url).hostname == "api.github.com":
             req.add_header("Authorization", f"Bearer {self.token}")
+        # (0.14.0) only transient errors are retried (fetch.retry); never the rate limit
+        # (the worker waits for its reset) and never a 404
+        return retry.attempt(
+            lambda: self._open_once(req, url),
+            file=urllib.parse.urlsplit(url).path,
+            source=urllib.parse.urlsplit(url).hostname or "?",
+            tries=tries or retry.TRIES,
+            retry=(GitHubError,),
+            never=(RateLimitError, NotFoundError),
+        )
+
+    def _open_once(self, req: urllib.request.Request, url: str):
         try:
             return self._opener().open(req, timeout=_TIMEOUT)
         except urllib.error.HTTPError as e:
@@ -149,9 +171,13 @@ class GitHub:
                 raise NotFoundError(url) from e
             if e.code in (403, 429) and (reset := _rate_limit_reset(e)) is not None:
                 raise RateLimitError(url, reset, bool(self.token)) from e
-            raise GitHubError(f"GitHub {e.code} for {url}: {e.reason}") from e
+            err = GitHubError(f"GitHub {e.code} for {url}: {e.reason}")
+            err.status = e.code
+            raise err from e
         except urllib.error.URLError as e:
             raise GitHubError(f"network error for {url}: {e.reason}") from e
+        except TimeoutError as e:
+            raise GitHubError(f"timed out after {_TIMEOUT} s: {url}") from e
 
     def get_json(self, path: str) -> Any:
         with self._request(f"{API}{path}") as resp:
@@ -173,17 +199,37 @@ class GitHub:
             return None
 
     def download(self, url: str, dest: Path, accept: str = "application/octet-stream") -> str:
-        """Stream to dest with a size cap. Returns sha256 hex."""
-        h = hashlib.sha256()
-        total = 0
-        with self._request(url, accept=accept) as resp, dest.open("xb") as out:
-            while chunk := resp.read(1024 * 1024):
-                total += len(chunk)
-                if total > MAX_DOWNLOAD_BYTES:
-                    raise GitHubError(f"download exceeds {MAX_DOWNLOAD_BYTES} bytes: {url}")
-                h.update(chunk)
-                out.write(chunk)
-        return h.hexdigest()
+        """Stream to dest with a size cap. Returns sha256 hex. (0.14.0) A connection
+        dropped mid-file is retried (the partial file deleted first)."""
+
+        def once() -> str:
+            h = hashlib.sha256()
+            total = 0
+            try:
+                with self._request(url, accept, tries=1) as resp, dest.open("xb") as out:
+                    while chunk := resp.read(1024 * 1024):
+                        total += len(chunk)
+                        if total > MAX_DOWNLOAD_BYTES:
+                            err = GitHubError(f"download exceeds {MAX_DOWNLOAD_BYTES} bytes: {url}")
+                            err.kind = "too_big"
+                            raise err
+                        h.update(chunk)
+                        out.write(chunk)
+            except (OSError, http.client.HTTPException) as e:
+                dest.unlink(missing_ok=True)
+                raise GitHubError(f"{type(e).__name__} while downloading {url}: {e}") from e
+            except BaseException:
+                dest.unlink(missing_ok=True)
+                raise
+            return h.hexdigest()
+
+        return retry.attempt(
+            once,
+            file=urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1],
+            source=urllib.parse.urlsplit(url).hostname or "?",
+            retry=(GitHubError,),
+            never=(RateLimitError, NotFoundError),
+        )
 
     # --- convenience wrappers -------------------------------------------------
 

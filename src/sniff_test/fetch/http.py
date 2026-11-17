@@ -8,6 +8,7 @@ allowlist of hosts, size-capped, and downloads are verified against the expected
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import urllib.error
 import urllib.parse
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from sniff_test import __version__
+from sniff_test.fetch import retry
 
 ALLOWED_HOSTS = frozenset(
     {
@@ -32,11 +34,18 @@ _TIMEOUT = 60
 
 
 class HttpError(Exception):
-    pass
+    """`status`: the HTTP status, if any; `kind`: a fixed reason for fetch.retry
+    (not_found, too_big, checksum, refused); `failure`: set by retry.attempt."""
+
+    status: int | None = None
+    retry_after: float | None = None
+    kind: str | None = None
+    failure: retry.Failure | None = None
 
 
 class NotFoundError(HttpError):
-    pass
+    kind = "not_found"
+    status = 404
 
 
 class _AllowlistRedirects(urllib.request.HTTPRedirectHandler):
@@ -48,7 +57,9 @@ class _AllowlistRedirects(urllib.request.HTTPRedirectHandler):
 def _check_url(url: str) -> None:
     parts = urllib.parse.urlsplit(url)
     if parts.scheme != "https" or parts.hostname not in ALLOWED_HOSTS:
-        raise HttpError(f"refusing to fetch {url!r}: not an allowed https package host")
+        err = HttpError(f"refusing to fetch {url!r}: not an allowed https package host")
+        err.kind = "refused"
+        raise err
 
 
 def _open(url: str):
@@ -60,15 +71,33 @@ def _open(url: str):
         return opener.open(req, timeout=_TIMEOUT)
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            raise NotFoundError(url) from e
-        raise HttpError(f"HTTP {e.code} for {url}: {e.reason}") from e
+            raise NotFoundError(f"HTTP 404 for {url}") from e
+        err = HttpError(f"HTTP {e.code} for {url}: {e.reason}")
+        err.status = e.code
+        after = (e.headers.get("Retry-After") or "").strip() if e.headers else ""
+        err.retry_after = float(after) if after.isdigit() else None
+        raise err from e
     except urllib.error.URLError as e:
         raise HttpError(f"network error for {url}: {e.reason}") from e
     except TimeoutError as e:
-        raise HttpError(f"timeout for {url}") from e
+        raise HttpError(f"timed out after {_TIMEOUT} s: {url}") from e
+
+
+def _host(url: str) -> str:
+    return urllib.parse.urlsplit(url).hostname or "?"
 
 
 def get_json(url: str) -> Any:
+    """The JSON at `url`, retried on transient errors (fetch.retry)."""
+    return retry.attempt(
+        lambda: _get_json_once(url),
+        file=url.rsplit("/", 2)[-2] if url.endswith("/json") else url.rsplit("/", 1)[-1],
+        source=_host(url),
+        retry=(HttpError, OSError, http.client.HTTPException),
+    )
+
+
+def _get_json_once(url: str) -> Any:
     with _open(url) as resp:
         data = resp.read(MAX_JSON_BYTES + 1)
     if len(data) > MAX_JSON_BYTES:
@@ -80,7 +109,27 @@ def get_json(url: str) -> Any:
 
 
 def download(url: str, dest: Path, sha256: str | None, max_bytes: int = MAX_DOWNLOAD_BYTES) -> str:
-    """Stream url to dest (which must not exist). Verifies sha256 when given; returns it."""
+    """Stream url to dest (which must not exist). Verifies sha256 when given; returns it.
+    Only this file is retried on a transient error (fetch.retry); the partial file is
+    deleted between tries. A connection or read error is raised as HttpError."""
+
+    def once() -> str:
+        try:
+            return _download_once(url, dest, sha256, max_bytes)
+        except (OSError, http.client.HTTPException) as e:
+            if isinstance(e, HttpError):
+                raise
+            raise HttpError(f"{type(e).__name__} while downloading {url}: {e}") from e
+
+    return retry.attempt(
+        once,
+        file=urllib.parse.unquote(url.rsplit("/", 1)[-1].split("#", 1)[0]),
+        source=_host(url),
+        retry=(HttpError,),
+    )
+
+
+def _download_once(url: str, dest: Path, sha256: str | None, max_bytes: int) -> str:
     h = hashlib.sha256()
     total = 0
     try:
@@ -88,7 +137,9 @@ def download(url: str, dest: Path, sha256: str | None, max_bytes: int = MAX_DOWN
             while chunk := resp.read(1024 * 1024):
                 total += len(chunk)
                 if total > max_bytes:
-                    raise HttpError(f"download exceeds {max_bytes} bytes: {url}")
+                    err = HttpError(f"bigger than {max_bytes // (1024 * 1024)} MB: {url}")
+                    err.kind = "too_big"
+                    raise err
                 h.update(chunk)
                 out.write(chunk)
     except BaseException:
@@ -97,5 +148,7 @@ def download(url: str, dest: Path, sha256: str | None, max_bytes: int = MAX_DOWN
     digest = h.hexdigest()
     if sha256 and digest != sha256.lower():
         dest.unlink(missing_ok=True)
-        raise HttpError(f"sha256 mismatch for {url}")
+        err = HttpError(f"sha256 mismatch for {url}")
+        err.kind = "checksum"
+        raise err
     return digest

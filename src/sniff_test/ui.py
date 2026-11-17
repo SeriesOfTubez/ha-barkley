@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from sniff_test import __version__, known
 from sniff_test.analyzers.correlate import SENSITIVE_NODES
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
+from sniff_test.fetch import retry
 from sniff_test.models import STALE_YEARS, fix_phrase, years_since
 from sniff_test.report import explain, privacy
 from sniff_test.report.json_report import sanitize_untrusted
@@ -985,6 +986,24 @@ def in_short(report: dict[str, Any]) -> str:
     if not report.get("complete"):
         out.append("Part of the check didn't finish, so the score is capped at 89.")
     return " ".join(x if x.startswith("<b>") or "<b>" in x else e(x, 600) for x in out)
+
+
+def _missing_html(a: dict[str, Any]) -> str:
+    """One analyzer that didn't finish. (0.14.0) Files it couldn't fetch are said in plain
+    English (fetch.retry.plain: which file, from where, tries, time, the error, what it
+    means); the analyzer's own detail stays underneath as the technical line."""
+    problems = [p for p in a.get("problems") or [] if isinstance(p, dict)][:5]
+    head = f"<b>{e(a.get('name'))}</b> {e(a.get('state'))}"
+    if not problems:
+        return f"<li>{head}: {e(a.get('detail'), 300)}</li>"
+    more = len(a.get("problems") or []) - len(problems)
+    return (
+        f"<li>{head}: couldn't fetch {len(problems) + more} "
+        f"file{'s' * (len(problems) + more != 1)}.<ul class=plain>"
+        + "".join(f"<li>{e(retry.plain(p), 700)}</li>" for p in problems)
+        + (f"<li>and {more} more</li>" if more > 0 else "")
+        + f'</ul><span class="muted small">{e(a.get("detail"), 300)}</span></li>'
+    )
 
 
 def _lower1(s: str) -> str:
@@ -2486,10 +2505,7 @@ def render_app(
         parts.append(
             '<div class="banner warn"><b>Part of the check didn\'t finish</b>, so the score '
             "is capped at 89 and we can't vouch for everything:<ul class=plain>"
-            + "".join(
-                f"<li><b>{e(a.get('name'))}</b> {e(a.get('state'))}: {e(a.get('detail'), 300)}</li>"
-                for a in missing
-            )
+            + "".join(_missing_html(a) for a in missing)
             + "</ul></div>"
         )
     summary = ai.get("summary", "")

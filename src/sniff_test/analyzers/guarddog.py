@@ -252,6 +252,9 @@ def to_findings(data: dict, pkg: ResolvedPackage, art: Artifact) -> list[Finding
     return out
 
 
+LAST_PASS_MAX = 10  # files retried once more at the end; beyond that the network is down
+
+
 def run(resolution: Resolution | None, work: Path, jobs: int | None = None) -> AnalyzerResult:
     pkgs = resolution.third_party() if resolution else []
     if not pkgs:
@@ -275,20 +278,38 @@ def run(resolution: Resolution | None, work: Path, jobs: int | None = None) -> A
         _pkg, art = item
         local = fetch_artifact(art, work)
         if local is None:
-            return item, None, "download/extract failed", True
+            return item, None, "fetch failed", True
         neutralize_ignores(local)
         return (item, *_scan(exe, local, run_dir, env))
 
     findings: list[Finding] = []
     errors: list[str] = []
+    problems: list[dict] = []
     unsandboxed = 0
-    with ThreadPoolExecutor(max_workers=max(1, min(jobs or 4, 4))) as pool:
-        for (pkg, art), data, err, sandboxed in pool.map(one, jobs_list):
+    failed: list[tuple[ResolvedPackage, Artifact]] = []
+
+    def take(results) -> None:
+        nonlocal unsandboxed
+        for (pkg, art), data, err, sandboxed in results:
             unsandboxed += not sandboxed
+            if data is None and err == "fetch failed":
+                failed.append((pkg, art))
+                continue
             if data is None:
                 errors.append(f"{art.filename}: {err}")
                 continue
-            findings += to_findings(data, pkg, art)
+            findings.extend(to_findings(data, pkg, art))
+
+    with ThreadPoolExecutor(max_workers=max(1, min(jobs or 4, 4))) as pool:
+        take(pool.map(one, jobs_list))
+    # (0.14.0) one last pass over what still failed, after everything else had its time
+    if failed:
+        again, failed = failed[:LAST_PASS_MAX], failed[LAST_PASS_MAX:]
+        take(map(one, again))
+    for _pkg, art in failed:
+        problem = art.failure or {"file": art.filename, "kind": "other", "error": "fetch failed"}
+        problems.append(problem)
+        errors.append(f"{art.filename}: {problem.get('kind')}: {problem.get('error')}")
 
     # One finding per (package, rule): the same hit in each platform's wheel is one issue.
     merged: dict[tuple[str, str], Finding] = {}
@@ -305,4 +326,6 @@ def run(resolution: Resolution | None, work: Path, jobs: int | None = None) -> A
     if errors:
         state = AnalyzerState.ERROR
         detail += "; " + " | ".join(errors)[:500]
-    return AnalyzerResult(NAME, state, list(merged.values()), detail, guarddog_version())
+    return AnalyzerResult(
+        NAME, state, list(merged.values()), detail, guarddog_version(), problems=problems
+    )

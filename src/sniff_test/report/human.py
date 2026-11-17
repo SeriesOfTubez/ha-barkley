@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from sniff_test.diff import HEADLINE_MAX
+from sniff_test.fetch import retry
 from sniff_test.models import AnalyzerState, Finding, Severity, Tag
 from sniff_test.report.json_report import ScanResult, ordered, sanitize_untrusted
 from sniff_test.scoring import VERDICTS
@@ -167,6 +168,8 @@ def render(scan: ScanResult, console: Console, verbose: bool = False) -> None:
     for a in scan.analyzers:
         if a.state in (AnalyzerState.SKIPPED, AnalyzerState.ERROR):
             console.print(f"[yellow]⚠ {a.name} {a.state}: {escape(a.detail)}[/]")
+            for problem in a.problems[:5]:  # (0.14.0) files it couldn't fetch, in plain words
+                console.print(Text("  " + retry.plain(problem), style="yellow"))
 
     style = _VERDICT_STYLE[s.verdict.key]
     body = Text.assemble(

@@ -237,6 +237,9 @@ class AnalyzerResult:
     detail: str = ""
     tool_version: str | None = None
     facts: list[Fact] = field(default_factory=list)
+    # (0.14.0) files that couldn't be fetched: fetch.retry.Failure.as_dict() each, shown
+    # in plain English (retry.plain) instead of a bare "incomplete"
+    problems: list[dict[str, Any]] = field(default_factory=list)
 
 
 class TargetKind(StrEnum):

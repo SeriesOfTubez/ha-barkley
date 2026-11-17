@@ -7,6 +7,7 @@ import subprocess
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from sniff_test.analyzers import _proc
 from sniff_test.deps.reqs import normalize
@@ -92,6 +93,8 @@ class Artifact:
     sha256: str | None
     kind: str  # "wheel" | "sdist"
     local: Path | None = None  # extracted directory, once fetched
+    # (0.14.0) why the last fetch failed (fetch.retry.Failure.as_dict()), else None
+    failure: dict[str, Any] | None = None
 
 
 def parse_pylock(path: Path) -> list[tuple[str, str, list[Artifact]]]:

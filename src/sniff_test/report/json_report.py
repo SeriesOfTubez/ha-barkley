@@ -164,6 +164,7 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
                 "detail": a.detail,
                 "tool_version": a.tool_version,
                 "findings": len(a.findings),
+                **({"problems": a.problems[:20]} if a.problems else {}),
             }
             for a in scan.analyzers
         ],
