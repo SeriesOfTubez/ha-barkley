@@ -2170,6 +2170,15 @@ _ENTITIES_TTL = 300
 _INSTALLED_TTL = 300  # seconds; HACS itself refreshes far less often
 
 
+@dataclass(frozen=True)
+class _Inputs:
+    generation: int
+    settings: settings_mod.Settings
+    trusted: trust.Trusted
+    malware_only: set[str]
+    accepts: dict[str, list[review.Accept]]
+
+
 class Panel:
     def __init__(
         self,
@@ -2186,6 +2195,8 @@ class Panel:
         self.worker = worker
         self.start_settings = settings_mod.DEFAULTS  # from the add-on options / BARKLEY_*
         self.option_token = ""  # the add-on option's GitHub token (Remove falls back to it)
+        self._cache: _Inputs | None = None  # see _inputs()
+        self._rows: dict[int, ScanRow] = {}  # overlay_row answers for that same input
         self.standalone = False  # (0.14.0 part 4) set by `serve`: Barkley's own HA token
         self.allow = allow  # None: any address (standalone, behind the login)
         self.login: login.Login | None = None  # standalone: "log in with Home Assistant"
@@ -2480,44 +2491,72 @@ class Panel:
         rep = self.report(sid)
         return self.view(rep, show_minor) if rep is not None else None
 
+    def _inputs(self) -> _Inputs:
+        """What a shown score depends on, read once and kept until the store records a
+        write to any of it (Store.generation): a page with hundreds of rows read the
+        settings, trusted addresses and reviews for each row, 1,500 database opens on
+        one render (3-4 s on a real box, 0.14.0.1)."""
+        gen = self.store.generation
+        cached = self._cache
+        if cached is not None and cached.generation == gen:
+            return cached
+        fresh = _Inputs(
+            gen,
+            settings_mod.load(self.store, self.start_settings),
+            self.store.trusted(),
+            settings_mod.malware_only(self.store),
+            self.store.all_accepts(),
+        )
+        self._cache = fresh
+        self._rows = {}
+        return fresh
+
     @property
     def settings(self) -> settings_mod.Settings:
-        return settings_mod.load(self.store, self.start_settings)
+        return self._inputs().settings
 
     def view(self, rep: dict[str, Any], show_minor: bool = False) -> dict[str, Any]:
-        repo = str((rep.get("target") or {}).get("repo") or "")
+        repo = str((rep.get("target") or {}).get("repo") or "").lower()
+        i = self._inputs()
         return review.view(
             rep,
-            trusted=self.store.trusted(),
-            settings=self.settings.review(),
-            accepts=self.store.accepts(repo) if repo else [],
-            malware_only=bool(repo) and repo.lower() in settings_mod.malware_only(self.store),
+            trusted=i.trusted,
+            settings=i.settings.review(),
+            accepts=i.accepts.get(repo, []) if repo else [],
+            malware_only=bool(repo) and repo in i.malware_only,
             show_minor=show_minor,
         )
 
     def overlay_row(self, row: ScanRow) -> ScanRow:
         """A stored scan's index row with the score the panel shows (Store.overlay). Reads
-        the report only when something could change it."""
-        s = self.settings
-        default = s.review().policy(row.exposure) == scoring.Policy(exposure=row.exposure)
+        the report only when something could change it; the answer is kept until an
+        input changes."""
+        i = self._inputs()
+        default = i.settings.review().policy(row.exposure) == scoring.Policy(exposure=row.exposure)
         repo = (row.repo or "").lower()
         if (
             default
-            and not self.store.trusted()
-            and not (repo and self.store.accepts(repo))
-            and not (repo and repo in settings_mod.malware_only(self.store))
+            and not i.trusted
+            and not (repo and repo in i.accepts)
+            and not (repo and repo in i.malware_only)
         ):
             return row
+        hit = self._rows.get(row.id)
+        if hit is not None:
+            return hit
         rep = self.report(row.id)
         if rep is None:
             return row
         v = self.view(rep)
         score = int(v.get("score", row.score))
         key = str((v.get("verdict") or {}).get("key") or row.verdict)
-        if score == row.score and key == row.verdict:
-            return row
-        own = int((v.get("review") or {}).get("own_score", row.score))
-        return replace(row, score=score, verdict=key, own_score=own)
+        out = row
+        if score != row.score or key != row.verdict:
+            own = int((v.get("review") or {}).get("own_score", row.score))
+            out = replace(row, score=score, verdict=key, own_score=own)
+        if len(self._rows) < 5000:
+            self._rows[row.id] = out
+        return out
 
     def save_settings(self, raw: dict[str, str]) -> None:
         """The Settings page's one form. Every value is checked; one that isn't valid

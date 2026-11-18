@@ -434,3 +434,30 @@ def test_notification_says_reviewed_and_reopened():
     assert "1 finding you accepted changed in this version and is open again." in plain
     _t, _md, plain = watch.notification(entry, v, None, "", notify_reopen=False)
     assert "open again" not in plain
+
+
+def test_a_page_reads_the_settings_and_reviews_once_not_per_row(addon, monkeypatch):  # noqa: F811
+    """0.14.0.1 on a real box: the list took 3-4 s because every row read the settings,
+    trusted addresses and reviews again (about 1,500 database opens per render)."""
+    store, _scan, base, _httpd, _state = addon
+    from test_server import INSTALLED
+
+    for it in INSTALLED:
+        for v in range(6):
+            store.save(report(repo=it.repo, ref=f"v{v}", kind=it.kind))
+    store.accept([acc(fnd(1, "py-shell-exec"))])
+    get(base + "/?refresh=1")  # warm
+    opened = []
+    real = Store._connect
+
+    def counting(self):
+        opened.append(1)
+        return real(self)
+
+    monkeypatch.setattr(Store, "_connect", counting)
+    get(base + "/?refresh=1")
+    assert len(opened) < 60, len(opened)
+    # and a change shows at once
+    settings_mod.set_malware_only(store, INSTALLED[0].repo, True)
+    _, _, page = get(base + "/?refresh=1")
+    assert "Malware check only" in page

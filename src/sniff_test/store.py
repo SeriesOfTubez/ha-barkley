@@ -213,6 +213,9 @@ class Store:
         # (0.14.0) The panel sets this instead: each row as the panel shows it (Barkley's
         # score with the user's scoring settings, the reviewed score once there is one).
         self.overlay: Callable[[ScanRow], ScanRow] | None = None
+        # Bumped by every write a shown score can depend on (settings, trusted addresses,
+        # reviews), so the panel can keep what it read until one of them changes.
+        self.generation = 0
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
@@ -452,6 +455,7 @@ class Store:
     def set_setting(self, key: str, value: str) -> None:
         with self._connect() as db:
             db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        self.generation += 1
 
     # --- trusted addresses (trust.py) ----------------------------------------------
 
@@ -501,6 +505,21 @@ class Store:
 
     # --- reviews (0.14.0) ---------------------------------------------------------------
 
+    def all_accepts(self) -> dict[str, list[review.Accept]]:
+        """Every app's acceptances in one read, by lowercase owner/name."""
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT repo, fingerprint, rule_id, file, note, who, at, scan_id, finding_id, "
+                "ref FROM reviews ORDER BY at"
+            ).fetchall()
+        out: dict[str, list[review.Accept]] = {}
+        for r in rows:
+            out.setdefault(r["repo"], []).append(
+                review.Accept(r["repo"], r["fingerprint"], r["rule_id"], r["note"], r["who"],
+                              r["at"], r["scan_id"], r["finding_id"], r["ref"], r["file"])
+            )  # fmt: skip
+        return out
+
     def accepts(self, repo: str | None) -> list[review.Accept]:
         if not repo:
             return []
@@ -541,6 +560,7 @@ class Store:
                     for a in items
                 ],
             )
+        self.generation += 1
 
     def unaccept(self, repo: str, fingerprints: list[str]) -> None:
         with self._connect() as db:
@@ -548,6 +568,7 @@ class Store:
                 "DELETE FROM reviews WHERE repo = ? AND fingerprint = ?",
                 [(repo.lower(), fp) for fp in fingerprints],
             )
+        self.generation += 1
 
     def save_explanation(self, scan_id: int, entity_id: str, data: dict[str, Any]) -> None:
         with self._connect() as db:
