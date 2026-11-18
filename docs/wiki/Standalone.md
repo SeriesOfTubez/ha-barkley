@@ -9,6 +9,15 @@ Supervised. You can still run it without one:
   have to spare. Run Barkley on a NAS or PC and point it at Home Assistant. The Pi then
   only answers a few API calls.
 
+Scans mostly wait on the processor, so a faster machine helps a lot. One test
+(2026-11-18): the same 17 real apps, one of them a card with over 100 JavaScript files,
+both with 2 scans at once and 2 Semgrep jobs each:
+
+| Machine | How Barkley ran | All 17 sniffed |
+|---|---|---|
+| 2012 Intel NUC, Core i3, 16 GB | The app, on Home Assistant OS | about 12 minutes |
+| MacBook Pro M5 | Standalone, in Docker Desktop | about 2.5 minutes |
+
 It is the same signed image the app store installs, started differently. Everything works
 as it does in the app: the list, sniffing, update comparison, auto-sniff and
 notifications, advisory re-checks, and the AI explanations. AI explanations still go
