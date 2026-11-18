@@ -40,6 +40,10 @@ services:
       # BARKLEY_EXPOSURE: local  # public: HA is reachable from the internet
       # BARKLEY_PARALLEL: "1"    # scans at once, as memory allows (1-4)
       # GITHUB_TOKEN_FILE: /run/secrets/github_token
+      # Barkley won't start on a kernel without Landlock (Linux 5.13+; check with
+      # `cat /sys/kernel/security/lsm`). This starts it anyway, with the scanner tools
+      # unsandboxed: they then parse hostile code with only the container around them.
+      # BARKLEY_UNSANDBOXED: "1"
       SNIFF_TEST_STORE: /data/sniff-test.db
       SNIFF_TEST_CACHE: /data/cache
       HOME: /data/cache/home

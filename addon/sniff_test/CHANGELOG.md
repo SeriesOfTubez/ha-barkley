@@ -42,7 +42,11 @@ https://github.com/SeriesOfTubez/ha-barkley/releases
 
 - Standalone: run Barkley as its own container next to Home Assistant Container or Core
   (or on another machine), with "log in with Home Assistant". It can create and rotate
-  its own Home Assistant token. Needs Linux with Landlock (5.13 or later).
-- Each scanner tool runs in a Landlock sandbox where the kernel has it (Home Assistant OS
-  doesn't; there the app's AppArmor profile confines the tools, as before).
+  its own Home Assistant token. Full guardrail support needs a Linux kernel with Landlock
+  (5.13 or later). On a kernel without it, Barkley won't start unless you set
+  `BARKLEY_UNSANDBOXED=1`, which runs the scanner tools without their sandbox. See the
+  wiki's Standalone page, "The tool sandbox".
+- Each scanner tool runs in a Landlock sandbox if the kernel supports it. Home Assistant
+  OS doesn't ship with Landlock enabled in its kernel, so there the app relies on its
+  custom AppArmor profile to confine the tools.
 - Barkley itself runs on Python 3.14, as Home Assistant does.

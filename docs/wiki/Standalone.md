@@ -100,10 +100,12 @@ host. Each run of Semgrep, GuardDog, osv-scanner or uv:
 - can connect only to port 443 (Semgrep nowhere), and can't listen;
 - can't signal Barkley or read its environment.
 
-It needs Linux 5.13 or later (the port limit 6.7 or later); Docker Desktop has it.
-Diagnostics shows "Tool sandbox (Landlock)". **Without it, Barkley doesn't start
-standalone**, because it would be parsing hostile code with nothing around it. To run
-anyway, knowing that, set `BARKLEY_UNSANDBOXED=1`.
+It needs Linux 5.13 or later (the port limit 6.7 or later) with Landlock enabled; Docker
+Desktop has it. To check a host, run `cat /sys/kernel/security/lsm`: the list includes
+`landlock` when it's enabled. Diagnostics shows "Tool sandbox (Landlock)". **Without it,
+Barkley doesn't start standalone**, because it would be parsing hostile code with nothing
+around it. To run anyway, knowing that, add `BARKLEY_UNSANDBOXED: "1"` under
+`environment:` in `compose.yaml` (the line is there, commented out) and start it again.
 
 ## Settings
 
