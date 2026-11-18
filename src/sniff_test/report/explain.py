@@ -293,6 +293,16 @@ RULES: dict[str, Explanation] = {
         "Yes. Don't install it until someone has decoded that code.",
         "Runs hidden code",
     ),
+    "card-hidden-name": _E(
+        "Its dashboard card spells out a sensitive name in pieces",
+        "The card builds a name like fetch (send data), eval (run text as code) or "
+        "hassTokens (your stored login) from pieces while running, for example "
+        "['fe','tch'].join(''). Code only does this so the name can't be found by "
+        "reading or searching it. We put the pieces together and checked what the code "
+        "does with the name; anything found is listed separately.",
+        "Yes. Find out why the card hides the name before you install it.",
+        "Hides a name",
+    ),
     "card-eval": _E(
         "Its dashboard card builds code while running and executes it",
         "The card turns text into code and runs it in your browser, with your Home "

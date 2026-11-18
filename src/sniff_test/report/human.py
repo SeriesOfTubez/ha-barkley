@@ -41,6 +41,7 @@ _QUIPS = {
     "card-token-exfil": "🐕 This card is trying to walk off with your house keys.",
     "py-b64-exec": "🐕 Something's buried in the yard, and it's not a bone.",
     "card-b64-eval": "🐕 Something's buried in the yard, and it's not a bone.",
+    "card-hidden-name": "🐕 Spelling it out in pieces doesn't fool the nose.",
     "card-read-tokens": "🐕 Nose is in the token drawer. Why is the nose in the token drawer?",
     "ha-read-secrets": "🐕 Sniffing around secrets.yaml. Bad.",
     "ha-auth-internals": "🐕 Pawing at the auth system.",

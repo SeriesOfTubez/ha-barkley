@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from conftest import requires_semgrep
 
-from sniff_test.analyzers.semgrep import normalize_js, rules_dir
+from sniff_test.analyzers.semgrep import normalize_js, rules_const_dir, rules_dir
 from sniff_test.models import Severity
 from sniff_test.scanner import scan
 
@@ -36,6 +36,27 @@ def test_semgrep_rule_unit_tests_pass():
         check=False,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_second_pass_rule_unit_tests_pass():
+    """(0.14.0) The second pass's rules, tested on their own as they run."""
+    proc = subprocess.run(
+        ["semgrep", "scan", "--test", "--metrics=off", "--disable-version-check", "--config",
+         str(rules_const_dir()), str(Path(__file__).parent / "rules_const")],
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_hidden_card_is_bork(fixtures):
+    """(0.14.0) Names built from pieces: every send and every built name is reported."""
+    r = scan(str(fixtures / "hidden_card"), offline=True)
+    sends = sorted(f.line for f in r.findings if f.rule_id == "card-token-exfil")
+    assert sends == [11, 18, 24, 26, 34, 35]
+    hidden = {f.line for f in r.findings if f.rule_id == "card-hidden-name"}
+    assert {8, 9, 16, 17, 18, 23, 25, 31, 32, 33, 34, 35, 40, 41} <= hidden
+    assert ("card-eval", 41) in {(f.rule_id, f.line) for f in r.findings}
+    assert r.score.verdict.key == "bork"
 
 
 def test_evil_integration_is_bork(fixtures):

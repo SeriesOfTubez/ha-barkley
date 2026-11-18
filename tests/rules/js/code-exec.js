@@ -62,3 +62,28 @@ function htmlComment(a, b, n) {
   // ok: card-html-comment-token
   var s = "<!-- lit -->";
 }
+
+// (0.14.0) eval and Function reached through a global, plain or by computed name.
+function globalEval(code, blob) {
+  // ruleid: card-eval
+  window.eval(code);
+  // ruleid: card-eval
+  globalThis["eval"](code);
+  // ruleid: card-eval
+  new self.Function("a", code);
+  // ok: card-eval
+  var g = globalThis.Function("return this")();
+  // ruleid: card-b64-eval, card-eval
+  globalThis["eval"](atob(blob));
+  // ruleid: card-b64-eval
+  window.document.write(atob(blob));
+}
+
+// (0.14.0) ...and through a name bound to the global object at the top.
+const W = window;
+function aliasEval(code, blob) {
+  // ruleid: card-eval
+  W["eval"](code);
+  // ruleid: card-b64-eval, card-eval
+  W.eval(atob(blob));
+}

@@ -50,5 +50,10 @@ jobs:
       - name: Rule tests
         run: semgrep scan --test --config rules/ tests/rules/
 
+      # (0.14.0) The second pass runs on its own (analyzers/semgrep.py says why), so its
+      # rules are tested on their own too.
+      - name: Rule tests (second pass)
+        run: semgrep scan --test --config src/sniff_test/rules_const/ tests/rules_const/
+
       - name: The app folder stages
         run: uv run python scripts/stage_addon.py

@@ -43,7 +43,8 @@ def test_every_kept_guarddog_rule_has_plain_text():
     assert sorted(r for r in kept if r not in explain.GUARDDOG_WHAT) == []
     e = explain.explain("dep-guarddog-filesystem-autostart")
     assert e.title == "One of its code libraries sets something up to start automatically"
-    assert explain.explain("dep-guarddog-something-new").title.startswith("One of its code libraries")
+    new = explain.explain("dep-guarddog-something-new")
+    assert new.title.startswith("One of its code libraries")
 
 
 def test_text_is_plain_and_complete():

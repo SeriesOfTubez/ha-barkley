@@ -14,7 +14,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from sniff_test.analyzers import _proc, js_wrapper, py_precision, py_tamper
+from sniff_test.analyzers import _proc, js_fold, js_wrapper, py_precision, py_tamper
 from sniff_test.analyzers.py_resolve import Resolver
 from sniff_test.models import (
     RULE_FILE_NOT_CHECKED,
@@ -74,6 +74,21 @@ def rules_dir() -> Path:
     if dev.is_dir():
         return dev
     return Path(str(resources.files("sniff_test") / "rules"))
+
+
+def rules_const_dir() -> Path:
+    """(0.14.0) The second pass's rules (shipped inside the package)."""
+    return Path(str(resources.files("sniff_test") / "rules_const"))
+
+
+class _ScanFailed(Exception):
+    """Semgrep produced no JSON; the message says why."""
+
+
+def _rule_id(result: dict[str, Any]) -> str:
+    """A result's rule id; a rule with `sniff.alias` reports as the rule it copies."""
+    meta = ((result.get("extra") or {}).get("metadata") or {}).get("sniff") or {}
+    return str(meta.get("alias") or result["check_id"].rsplit(".", 1)[-1])
 
 
 def neutralize_ignores(root: Path) -> None:
@@ -193,7 +208,7 @@ def to_finding(result: dict[str, Any], root: Path) -> Finding:
     if len(evidence) >= _EVIDENCE_MAX:  # long/minified line: window around the column
         evidence = _evidence_at(abs_path, start, result["start"].get("col", 1))
     return Finding(
-        rule_id=result["check_id"].rsplit(".", 1)[-1],
+        rule_id=_rule_id(result),
         title=meta.get("title", result["check_id"]),
         severity=Severity.parse(meta.get("severity", "medium")),
         category=Category(meta.get("category", "code_exec")),
@@ -504,39 +519,91 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
     normalize_js(root, target.pristine_sha256)
     run_dir = work / "semgrep-run"
     run_dir.mkdir(exist_ok=True)
-    cmd = [
-        exe,
-        "scan",
-        "--config",
-        str(rules_dir()),
-        "--json",
-        "--metrics=off",
-        "--disable-version-check",
-        "--no-git-ignore",
-        "--no-rewrite-rule-ids",
-        "--max-target-bytes",
-        "50000000",
-        "--timeout",
-        "120",
-        "--quiet",
-    ]
-    if jobs:
-        cmd += ["--jobs", str(jobs)]
-    cmd.append(str(root))
-    try:
+
+    def scan(config: Path, targets: list[Path]) -> dict[str, Any]:
+        cmd = [
+            exe,
+            "scan",
+            "--config",
+            str(config),
+            "--json",
+            "--metrics=off",
+            "--disable-version-check",
+            "--no-git-ignore",
+            "--no-rewrite-rule-ids",
+            "--max-target-bytes",
+            "50000000",
+            "--timeout",
+            "120",
+            "--quiet",
+        ]
+        if jobs:
+            cmd += ["--jobs", str(jobs)]
+        cmd += [str(p) for p in targets]
         # never run from inside the scanned tree; sandboxed, with no network at all
         proc = _proc.run(cmd, run_dir, _PROCESS_TIMEOUT, _tool_env(), tool="semgrep",
-                         read=(rules_dir(),))  # fmt: skip
+                         read=(config,))  # fmt: skip
+        try:
+            return json.loads(proc.stdout)
+        except ValueError:
+            raise _ScanFailed(failure_detail(proc)) from None
+
+    try:
+        data = scan(rules_dir(), [root])
+        # (0.14.0) Second pass, JavaScript only: the constant-propagation copy of the
+        # token rule (Semgrep mixes two taint rules' propagation settings in one run).
+        # Names built from pieces (analyzers/js_fold.py) are written back in place and
+        # both passes run again on those files.
+        js = js_fold.js_files(root)
+        fold = js_fold.analyse(js, root)
+        # Only files that can hold a token source (every source pattern names one of
+        # js_fold.TOKEN_HINTS; a name built from pieces is in fold.rewrites, which both
+        # passes read again below). A real 1.6 MB card bundle without them: no second parse.
+        need = [p for p in js if p not in fold.rewrites and js_fold.may_hold_token(p)]
+        data2 = scan(rules_const_dir(), need) if need else {"results": [], "errors": []}
+        if fold.rewrites:
+            originals = {p: p.read_bytes() for p in fold.rewrites}
+            try:
+                for p, b in fold.rewrites.items():
+                    p.write_bytes(b)
+                files = sorted(fold.rewrites)
+                again, again2 = scan(rules_dir(), files), scan(rules_const_dir(), files)
+            finally:
+                for p, b in originals.items():
+                    p.write_bytes(b)
+            redone = {str(p.resolve()) for p in files}
+
+            def keep(d: dict[str, Any]) -> list[dict[str, Any]]:
+                return [
+                    r for r in d.get("results", []) if str(Path(r["path"]).resolve()) not in redone
+                ]
+
+            data["results"] = keep(data) + again.get("results", [])
+            data2["results"] = keep(data2) + again2.get("results", [])
+            data["errors"] = [
+                e for e in data.get("errors", [])
+                if str(Path(str(e.get("path", ""))).resolve()) not in redone
+            ] + again.get("errors", [])  # fmt: skip
     except subprocess.TimeoutExpired:
         return AnalyzerResult(
             NAME, AnalyzerState.ERROR, detail="semgrep timed out", tool_version=version
         )
-    try:
-        data = json.loads(proc.stdout)
-    except ValueError:
-        return AnalyzerResult(
-            NAME, AnalyzerState.ERROR, detail=failure_detail(proc), tool_version=version
-        )
+    except _ScanFailed as e:
+        return AnalyzerResult(NAME, AnalyzerState.ERROR, detail=str(e), tool_version=version)
+    # One list: the second pass's token findings (aliased to card-token-exfil), once per
+    # place; its parse errors repeat the first pass's and aren't counted twice.
+    seen = {(_rule_id(r), r["path"], r["start"]["offset"]) for r in data.get("results", [])}
+    for r in data2.get("results", []):
+        key = (_rule_id(r), r["path"], r["start"]["offset"])
+        if key in seen:
+            continue
+        seen.add(key)
+        data["results"].append(r)
+    data["errors"] = data.get("errors", []) + [
+        e
+        for e in data2.get("errors", [])
+        if _error_type(e) != "Syntax error" and "PartialParsing" not in str(e.get("type"))
+    ]
     findings: list[Finding] = []
     facts: list[Fact] = []
     token_hits: list[js_wrapper.Hit] = []
@@ -561,6 +628,7 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
         card = target.kind is TargetKind.PLUGIN
         same_origin = js_wrapper.precise(token_hits, root, runner, card=card)
         findings = [f for f in findings if id(f) not in same_origin]
+    findings += fold.findings
     trees: dict[str, Any] = {}
     findings = [f for f in findings if not _only_rebinds_names(f, root, trees)]
     findings = _precise(findings, root, target)

@@ -20,7 +20,7 @@ from pathlib import Path
 from sniff_test import memory, supervisor
 from sniff_test.analyzers import _proc, guarddog
 from sniff_test.analyzers.semgrep import _tool_env as semgrep_env
-from sniff_test.analyzers.semgrep import rules_dir
+from sniff_test.analyzers.semgrep import rules_const_dir, rules_dir
 from sniff_test.fetch.github import GitHub, RateLimit
 
 _TAIL = 1500
@@ -45,7 +45,7 @@ def _tail(text: str) -> str:
 
 
 _TOOLS: dict[str, tuple[Callable[[], tuple[Path, ...]], Callable[[], tuple[Path, ...]]]] = {
-    "semgrep": (lambda: (), lambda: (rules_dir(),)),
+    "semgrep": (lambda: (), lambda: (rules_dir(), rules_const_dir())),
     "osv-scanner": (lambda: (), lambda: ()),
     "guarddog": (lambda: guarddog._cache_dirs(), lambda: ()),
     "uv": (lambda: (), lambda: ()),
@@ -209,7 +209,9 @@ def supervisor_checks(
 def _semgrep_scan(sample: Path, run_dir: Path) -> Check:
     sg = _run(
         "semgrep scan (our rules, one-line sample)",
-        ["semgrep", "scan", "--config", str(rules_dir()), "--json", "--metrics=off",
+        # (0.14.0) Both rule folders, so a missing or broken second pass shows here.
+        ["semgrep", "scan", "--config", str(rules_dir()), "--config", str(rules_const_dir()),
+         "--json", "--metrics=off",
          "--disable-version-check", "--no-git-ignore", "--jobs", "1", str(sample)],
         run_dir,
         semgrep_env(),

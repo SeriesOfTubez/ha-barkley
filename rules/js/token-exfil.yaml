@@ -24,15 +24,22 @@ rules:
     pattern-sources:
       - pattern: localStorage.getItem("hassTokens")
       - pattern: window.localStorage.getItem("hassTokens")
+      # (0.14.0) By shape: storage reached through a global or a variable, and methods
+      # named by a computed key (`globalThis["localStorage"]["getItem"](…)`). The scan's
+      # js_fold step writes names that were built from pieces back in place first.
+      - pattern: $LS.getItem("hassTokens")
+      - pattern: $LS["getItem"]("hassTokens")
       - pattern: localStorage["hassTokens"]
+      - pattern: $LS["hassTokens"]
       - pattern: localStorage.hassTokens
-      - pattern: window.localStorage.hassTokens
+      - pattern: $LS.hassTokens
       - pattern: $H.auth.data
       - pattern: $H.auth.accessToken
       - pattern: $H.connection.options.auth
       - pattern: $X.access_token
       - pattern: $X.refresh_token
       - pattern: document.cookie
+      - pattern: $G.document.cookie
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -43,6 +50,42 @@ rules:
               - pattern: window.open($URL, ...)
               - pattern: $XHR.open($M, $URL, ...)
               - pattern: $IMG.src = $URL
+              # (0.14.0) The same calls reached through a global object, with a plain
+              # or computed name: `window.fetch(…)`, `globalThis["fetch"](…)`,
+              # `self.navigator.sendBeacon(…)`, `new window.WebSocket(…)`.
+              - patterns:
+                  - pattern-either:
+                      - pattern: $G.fetch($URL, ...)
+                      - pattern: $G["fetch"]($URL, ...)
+                      - pattern: $G.navigator.sendBeacon($URL, ...)
+                      - pattern: $G["navigator"]["sendBeacon"]($URL, ...)
+                      - pattern: navigator["sendBeacon"]($URL, ...)
+                      - pattern: new $G.WebSocket($URL, ...)
+                      - pattern: new $G["WebSocket"]($URL, ...)
+                      - pattern: new $G.EventSource($URL, ...)
+                      - pattern: new $G["EventSource"]($URL, ...)
+                      - pattern: $G.open($URL, ...)
+                      - pattern: $G["open"]($URL, ...)
+                  - metavariable-regex:
+                      metavariable: $G
+                      regex: ^(window|globalThis|self|top|parent|frames)$
+              # A name bound to a global object earlier (`const G = globalThis` at the
+              # top, used inside a function): Semgrep's propagation stays inside one
+              # function, so the binding is matched by shape here.
+              - patterns:
+                  - pattern-inside: |
+                      $G = $GLOBAL;
+                      ...
+                  - metavariable-regex:
+                      metavariable: $GLOBAL
+                      regex: ^(window|globalThis|self|top|parent|frames)$
+                  - pattern-either:
+                      - pattern: $G.fetch($URL, ...)
+                      - pattern: $G["fetch"]($URL, ...)
+                      - pattern: $G.navigator.sendBeacon($URL, ...)
+                      - pattern: new $G.WebSocket($URL, ...)
+                      - pattern: new $G.EventSource($URL, ...)
+                      - pattern: $G.open($URL, ...)
           # Relative URLs and hass-built URLs stay on the HA origin. A relative URL
           # starts with "/" and then neither "/" nor "\\" (browsers read "/\\h" as
           # "//h"); anything appended after such a prefix can't change the origin.
@@ -50,6 +93,10 @@ rules:
           - pattern-not: fetch("=~/^\/[^\/\\]/".concat(...), ...)
           - pattern-not: fetch("=~/^\/[^\/\\]/" + $Y, ...)
           - pattern-not: fetch($H.hassUrl(...), ...)
+          - pattern-not: $G.fetch("=~/^\/[^\/\\]/", ...)
+          - pattern-not: $G.fetch("=~/^\/[^\/\\]/".concat(...), ...)
+          - pattern-not: $G.fetch("=~/^\/[^\/\\]/" + $Y, ...)
+          - pattern-not: $G.fetch($H.hassUrl(...), ...)
           - pattern-not: $XHR.open($M, "=~/^\/[^\/\\]/", ...)
           - pattern-not: $XHR.open($M, "=~/^\/[^\/\\]/".concat(...), ...)
           - pattern-not: $XHR.open($M, "=~/^\/[^\/\\]/" + $Y, ...)

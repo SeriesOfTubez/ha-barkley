@@ -25,6 +25,35 @@ rules:
               - pattern: setInterval($ARG, ...)
               - pattern: document.write($ARG)
               - pattern: $EL.innerHTML = $ARG
+              # (0.14.0) Reached through a global, by plain or computed name.
+              - patterns:
+                  - pattern-either:
+                      - pattern: $G.eval($ARG)
+                      - pattern: $G["eval"]($ARG)
+                      - pattern: new $G.Function(..., $ARG)
+                      - pattern: new $G["Function"](..., $ARG)
+                      - pattern: $G.Function(..., $ARG)
+                      - pattern: $G["Function"](..., $ARG)
+                      - pattern: $G.document.write($ARG)
+                      - pattern: $G["document"].write($ARG)
+                      - pattern: $G["document"]["write"]($ARG)
+                      - pattern: document["write"]($ARG)
+                  - metavariable-regex:
+                      metavariable: $G
+                      regex: ^(window|globalThis|self|top|parent|frames)$
+              # A name bound to a global object earlier (`const G = globalThis`).
+              - patterns:
+                  - pattern-inside: |
+                      $G = $GLOBAL;
+                      ...
+                  - metavariable-regex:
+                      metavariable: $GLOBAL
+                      regex: ^(window|globalThis|self|top|parent|frames)$
+                  - pattern-either:
+                      - pattern: $G.eval($ARG)
+                      - pattern: $G["eval"]($ARG)
+                      - pattern: new $G.Function(..., $ARG)
+                      - pattern: $G.Function(..., $ARG)
           - focus-metavariable: $ARG
 
   - id: card-eval
@@ -42,11 +71,40 @@ rules:
               - pattern: window.eval($X)
               - pattern: new Function(..., $X)
               - pattern: Function(..., $X)
+              # (0.14.0) Reached through a global, by plain or computed name.
+              - patterns:
+                  - pattern-either:
+                      - pattern: $G.eval($X)
+                      - pattern: $G["eval"]($X)
+                      - pattern: new $G.Function(..., $X)
+                      - pattern: new $G["Function"](..., $X)
+                      - pattern: $G.Function(..., $X)
+                      - pattern: $G["Function"](..., $X)
+                  - metavariable-regex:
+                      metavariable: $G
+                      regex: ^(window|globalThis|self|top|parent|frames)$
+              # A name bound to a global object earlier (`const G = globalThis`).
+              - patterns:
+                  - pattern-inside: |
+                      $G = $GLOBAL;
+                      ...
+                  - metavariable-regex:
+                      metavariable: $GLOBAL
+                      regex: ^(window|globalThis|self|top|parent|frames)$
+                  - pattern-either:
+                      - pattern: $G.eval($X)
+                      - pattern: $G["eval"]($X)
+                      - pattern: new $G.Function(..., $X)
+                      - pattern: $G.Function(..., $X)
           # Literal code (bundler globalThis shims like Function("return this")) is fine.
           - pattern-not: eval("...")
           - pattern-not: window.eval("...")
+          - pattern-not: $G.eval("...")
+          - pattern-not: $G["eval"]("...")
           - pattern-not: new Function(..., "...")
           - pattern-not: Function(..., "...")
+          - pattern-not: new $G.Function(..., "...")
+          - pattern-not: $G.Function(..., "...")
           # Bundler shim: Function('return require("' + name + '")')
           - pattern-not: Function("=~/^return require\(/" + $M + "...")
           - pattern-not: new Function("=~/^return require\(/" + $M + "...")
@@ -83,6 +141,15 @@ rules:
               - pattern: window.eval($ARG)
               - pattern: new Function(..., $ARG)
               - pattern: Function(..., $ARG)
+              - patterns:
+                  - pattern-either:
+                      - pattern: $G.eval($ARG)
+                      - pattern: $G["eval"]($ARG)
+                      - pattern: new $G.Function(..., $ARG)
+                      - pattern: $G.Function(..., $ARG)
+                  - metavariable-regex:
+                      metavariable: $G
+                      regex: ^(window|globalThis|self|top|parent|frames)$
           - focus-metavariable: $ARG
 
   - id: card-remote-script
