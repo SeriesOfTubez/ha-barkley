@@ -26,8 +26,9 @@ Barkley reports. It never moves, refuses or blocks anything.
 ## Notifications
 
 Every result sends a bell notification in Home Assistant. If you pick a notify service
-in the Auto-sniff box (for example your phone through the companion app), it gets the
-same message. A test button sends a sample through both.
+on the Settings page (Notify; for example your phone through the companion app), it gets
+the same message. **Send a test notification** there sends a sample through both. Recent
+auto-sniffs are listed on the Settings page too.
 
 A notification carries the app's `owner/repo` name and version, the verdict and score,
 up to three things worth a look in fixed wording, for an update a count of what changed,
@@ -36,5 +37,5 @@ package names, no README text.
 
 ## Turning it off
 
-Use the toggle in the Auto-sniff box on the first page, or the `auto_scan` option. The
-panel's setting wins over the option.
+Set Auto-sniff to Off on the Settings page, or use the `auto_scan` option. The Settings
+page wins over the option.

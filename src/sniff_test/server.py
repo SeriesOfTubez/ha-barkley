@@ -979,7 +979,11 @@ SETTING_HELP = {
         "When the Marketplace installs or updates an app, or offers an update, Barkley "
         "sniffs that version and notifies you. Once a day it also asks again whether the "
         "libraries of what you have, and of updates waiting, have new known bugs or were "
-        "found to be malware. That doesn't download or scan the app's code again."
+        "found to be malware. That doesn't download or scan the app's code again. A new "
+        "integration runs as soon as it's installed: Home Assistant opens its setup right "
+        "away, which loads its code before the auto-sniff can finish. So sniff a new app from "
+        "search before you install it. An update is sniffed as soon as the Marketplace offers "
+        "it, so you hear what it changes before you update."
     ),
     "Notify": (
         "Every result goes to Home Assistant's bell. Pick a notify service, such as your "
@@ -1122,8 +1126,15 @@ def render_settings(
         check_rows += row("Auto-sniff", "Check new installs and offered updates on its own.",
                           sel("auto_scan", "on" if watcher.enabled else "off",
                               [("on", "On (default)"), ("off", "Off")]))  # fmt: skip
+        test = (f'<form method=post action="{base}/notify-test" class="setform">'
+                f'<input type=hidden name=token value="{token}">'
+                "<button>Send a test notification</button></form>")  # fmt: skip
         check_rows += row("Notify", "Where results go. Counts, scores and app names only.",
-                          sel("notify_target", chosen, opts))  # fmt: skip
+                          sel("notify_target", chosen, opts) + test)  # fmt: skip
+        check_rows += (
+            f'<div class="setrow"><div><b>Auto-sniff activity</b>'
+            f"{render_auto_activity(base, watcher)}</div><div></div></div>"
+        )
     if ai_choices is not None:
         opts = [("", "Off")] + [(i, f"{n} ({i})") for i, n in ai_choices]
         if ai_entity and ai_entity not in {i for i, _ in ai_choices}:
@@ -1158,10 +1169,10 @@ def render_settings(
     token_row = row(
         "GitHub token",
         "Optional. Raises GitHub's limit from 60 to 5,000 requests an hour. It needs no "
-        "permissions: a fine-grained token with read-only access to public repositories. "
+        f"permissions. {GITHUB_STEPS} "
         f'<a href="{WIKI_GITHUB_HELP}" target="_blank" rel="noopener noreferrer">'
-        "How to make one</a>",
-        ("" if have else f"{github_create_link()}") + token_ctl,
+        "More about it</a>",
+        github_create_link() + token_ctl,
     )
     if ha_token_html:
         check_rows += row("Token rotation", "How often Barkley replaces its own Home "
@@ -1394,31 +1405,10 @@ def render_login(message: str = "", first: bool = False) -> bytes:
     return ui.page("Barkley: log in", body)
 
 
-AUTO_NOTE = (
-    "<b>A new integration runs as soon as it's installed:</b> Home Assistant opens its setup "
-    "right away, which loads its code. The auto-sniff of a new install comes after that, so "
-    "the protection for a new install is sniffing it from search <i>before</i> you install. "
-    "An update is sniffed <b>as soon as the Marketplace offers it</b>, so the heads-up and "
-    "what it changes come before you update; its new code waits for a restart anyway."
-)
-
-
-def render_auto(base: str, w: watch.Watcher, token: str, now: float | None = None) -> str:
-    """The auto-sniff box: what it does, the plain timing note, settings, recent results."""
-    now = time.time() if now is None else now
-    on = w.enabled
-    targets, terr = w.targets()
-    chosen = w.notify_target
-    who = f"bell + notify.{e(chosen)}" if chosen else "bell notification"
+def render_auto_activity(base: str, w: watch.Watcher) -> str:
+    """(0.14.0) On Settings, under the auto-sniff rows: its state, the last test
+    notification, and recent auto-sniffs (the box on the list moved here)."""
     ok, diag = w.diagnostics()
-    hidden = f'<input type=hidden name=token value="{token}">'
-    opts = ['<option value="">no one else (bell notification only)</option>'] + [
-        f'<option value="{e(t)}"{" selected" if t == chosen else ""}>notify.{e(t)}</option>'
-        for t in targets
-    ]
-    if chosen and chosen not in targets:
-        opts.append(f'<option value="{e(chosen)}" selected>notify.{e(chosen)} (not offered now)'
-                    "</option>")  # fmt: skip
     rows = []
     for x in w.log()[:10]:
         ids = [int(i) for i in x.get("scan_ids", []) if isinstance(i, int)]
@@ -1454,35 +1444,12 @@ def render_auto(base: str, w: watch.Watcher, token: str, now: float | None = Non
         "watching.</p>"
     )  # fmt: skip
     return (
-        f'<div class="box auto"><h2>Auto-sniff: {"on" if on else "off"} · {who}</h2>'
-        '<p class="sub">When the Marketplace offers an update, installs or updates an '
-        "integration or card, Barkley sniffs that version (reusing a stored scan of that exact "
-        "version, for example one you sniffed from search) and sends a notification: the app, "
-        "its version, the verdict and score, what's worth a look, and for an update what "
-        "changes compared with the version you have. Once a day it also asks again whether "
-        "the packages of your installed apps (and of updates waiting) have new known "
-        "vulnerabilities or were found to be malicious, and tells you only when that "
-        "changed. That re-check doesn't fetch or scan the app's code again.</p>"
-        f"<p>{AUTO_NOTE}</p>"
-        '<div class="again">'
-        f'<form method=post action="{base}/auto-scan">{hidden}'
-        f'<input type=hidden name=on value="{0 if on else 1}">'
-        f'<button class="{"" if on else "primary"}">Turn auto-sniff {"off" if on else "on"}'
-        "</button></form>"
-        f'<form method=post action="{base}/notify-target">{hidden}'
-        f"<label>Also notify <select name=target>{''.join(opts)}</select></label> "
-        "<button>Save</button></form>"
-        f'<form method=post action="{base}/notify-test">{hidden}'
-        "<button>Send a test notification</button></form>"
-        + (f'<span class="small">{e(w.last_test, 300)}</span>' if w.last_test else "")
-        + "</div>"
-        + (f'<p class="muted small">Notify targets: {e(terr, 300)}</p>' if terr else "")
+        (f'<p class="small">{e(w.last_test, 300)}</p>' if w.last_test else "")
         + f'<p class="muted small">{"" if ok else ui.icon("alert", 14, "warn") + " "}'
         f"{e(diag, 600)}. Scans of apps that "
         f"aren't installed are deleted after {w.age_out_days:g} days; scans of installed apps "
         "are kept.</p>"
         f"<details><summary>Recent auto-sniffs ({len(w.log())})</summary>{recent}</details>"
-        "</div>"
     )
 
 
@@ -3109,8 +3076,7 @@ class Panel:
                         v = ui.View.parse(q, panel.store.setting("view") or "cards")
                         if q.get("view") and v.view != panel.store.setting("view"):
                             panel.store.set_setting("view", v.view)  # remembered for next time
-                        auto = (render_auto(base, panel.watcher, panel.token)
-                                if panel.watcher is not None else "")  # fmt: skip
+                        auto = ""  # (0.14.0) auto-sniff lives on Settings
                         body = render_index(
                             base, panel.store, jobs, panel.token,
                             panel.installed_html(base, refresh, v), panel.memory_fn(),
@@ -3292,7 +3258,7 @@ class Panel:
                                               "offers")  # fmt: skip
                     else:
                         w.notify_test()
-                    return self._redirect(f"{self._base()}/")
+                    return self._redirect(f"{self._base()}/settings")
                 who = (self._session().user if panel.login is not None and self._session()
                        else self.headers.get("X-Remote-User-Display-Name")
                        or self.headers.get("X-Remote-User-Name") or "")  # fmt: skip

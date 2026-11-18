@@ -380,3 +380,8 @@ def test_the_no_token_banner_links_to_setup_and_settings_offers_github(first_run
     assert 'href="/setup"' in page
     page = _req(port, "GET", "/settings", me)[3].decode()
     assert "github.com/settings/personal-access-tokens/new" in page
+    gh = "github_pat_" + "b" * 82
+    form = {"token": _csrf(page), "value": gh}
+    assert _req(port, "POST", "/github-token", me, form)[1] == "/settings?saved=1"
+    page = _req(port, "GET", "/settings", me)[3].decode()  # still offered with a token set
+    assert "github.com/settings/personal-access-tokens/new" in page

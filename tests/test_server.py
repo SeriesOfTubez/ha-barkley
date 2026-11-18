@@ -528,16 +528,17 @@ def auto(tmp_path):
     httpd.shutdown()
 
 
-def test_auto_box_says_what_it_does_and_that_a_new_integration_runs_at_once(auto):
-    _store, base, httpd, w, _sent = auto
+def test_auto_sniff_lives_on_settings_not_the_list(auto):
+    _store, base, httpd, _w, _sent = auto
     _, _, page = get(base + "/")
-    assert "Auto-sniff: on · bell notification" in page
-    assert "A new integration runs as soon as it's installed" in page
-    assert "sniffing it from search <i>before</i> you install" in page
+    assert "Turn auto-sniff" not in page and "Recent auto-sniffs" not in page
+    _, _, page = get(base + "/settings")
+    assert "A new integration runs as soon as it&#x27;s installed" in page
+    assert "sniff a new app from search before you install it" in page
     assert "deleted after 7 days; scans of installed apps are kept" in page
-    assert "name=target" in page and 'value="mobile_app_phone"' in page
-    assert "Turn auto-sniff off" in page
-    assert httpd.panel.worker.on_done == [w.on_job_done]  # the hook is wired
+    assert "Recent auto-sniffs (0)" in page and "Send a test notification" in page
+    assert "name=notify_target" in page and 'value="mobile_app_phone"' in page
+    assert httpd.panel.worker.on_done == [httpd.panel.watcher.on_job_done]  # wired
 
 
 def test_auto_settings_are_stored_and_the_test_button_notifies(auto):
@@ -545,8 +546,6 @@ def test_auto_settings_are_stored_and_the_test_button_notifies(auto):
     tok = token(base)
     assert post(base + "/auto-scan", {"token": tok, "on": "0"})[0] == 303
     assert store.setting("auto_scan") == "off" and not w.enabled
-    _, _, page = get(base + "/")
-    assert "Auto-sniff: off" in page and "Turn auto-sniff on" in page
     assert post(base + "/notify-target", {"token": tok, "target": "mobile_app_phone"})[0] == 303
     assert store.setting("notify_target") == "mobile_app_phone"
     code, _ = post(base + "/notify-target", {"token": tok, "target": "not_offered"})
@@ -554,8 +553,8 @@ def test_auto_settings_are_stored_and_the_test_button_notifies(auto):
     assert post(base + "/notify-test", {"token": tok})[0] == 303
     assert [s[0] for s in sent] == ["bell", "push"]
     assert sent[0][3] == "barkley_test" and sent[1][1] == "mobile_app_phone"
-    _, _, page = get(base + "/")
-    assert "bell + notify.mobile_app_phone" in page and "sent at" in page
+    _, _, page = get(base + "/settings")
+    assert "sent at" in page
     assert post(base + "/notify-test", {"token": "bad"})[0] == 403
 
 
