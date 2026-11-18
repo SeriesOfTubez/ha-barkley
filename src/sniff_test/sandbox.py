@@ -237,8 +237,11 @@ def policy_for(
     """The policy for one run of `tool` (semgrep | uv | osv-scanner | guarddog) from `cwd`."""
     ws = workspace_of(cwd)
     home, tmp = ws / ".tool-home", ws / ".tool-tmp"
-    for d in (home, tmp):
-        d.mkdir(parents=True, exist_ok=True)
+    # Landlock can only grant a folder that exists, and a tool can't create its own cache
+    # folder in a parent it may not write (uv's /data/cache/uv on a fresh standalone
+    # install, 2026-11-18). Barkley's own folders, so Barkley makes them first.
+    for d in (home, tmp, *write):
+        Path(d).mkdir(parents=True, exist_ok=True)
     rx = [*_SYSTEM_RX, sys.prefix, sys.base_prefix, *_install_roots(exe)]
     return Policy(
         rx=tuple(dict.fromkeys(rx)),

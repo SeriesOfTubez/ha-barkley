@@ -6,6 +6,7 @@ elsewhere): a child started exactly as a tool would be tries to get out.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,10 +31,17 @@ def ws():
 def test_each_tool_writes_only_its_workspace_and_semgrep_gets_no_network(ws):
     root, run = ws
     sg = sandbox.policy_for("semgrep", run)
-    uv = sandbox.policy_for("uv", run, write=(Path("/cache/uv"),), read=(Path("/cache/ha/c.txt"),))
+    cache = root.parent / f"{root.name}-cache"  # outside the workspace, like /data/cache
+    try:
+        uv = sandbox.policy_for("uv", run, write=(cache / "uv",), read=(cache / "ha/c.txt",))
+        # Landlock can only grant a folder that exists: a fresh install has no uv cache yet
+        assert (cache / "uv").is_dir()
+    finally:
+        shutil.rmtree(cache, ignore_errors=True)
     osv = sandbox.policy_for("osv-scanner", run)
     assert sg.connect == () and uv.connect == (443,) and osv.connect == (443,)
-    assert str(root) in sg.write and "/cache/uv" in uv.write and "/cache/ha/c.txt" in uv.read
+    assert str(root) in sg.write and str(cache / "uv") in uv.write
+    assert str(cache / "ha/c.txt") in uv.read
     for p in (sg, uv, osv):
         assert not any(w in ("/", "/data", "/tmp", tempfile.gettempdir()) for w in p.write)
         assert "/" not in p.rx + p.read + p.write
