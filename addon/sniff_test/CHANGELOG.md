@@ -57,6 +57,6 @@ https://github.com/SeriesOfTubez/ha-barkley/releases
 
 - Scans take longer than in 0.13.0. Barkley now reads every file of a card's release and
   checks JavaScript a second time for code built from pieces, to close a gap in the card
-  checks. Across 61 real apps, a full set of scans took about half again as long; a large
-  card that ships many files can take several minutes. A cache that skips work already
+  checks. Scanning 61 real apps took about 50% longer than before, and a large card with
+  many files can take several minutes on its own. A cache that skips work already
   done on identical files and packages is being worked on.
