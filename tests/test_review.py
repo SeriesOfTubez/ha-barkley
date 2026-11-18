@@ -409,7 +409,7 @@ def test_stars_and_downloads_are_facts_never_scores():
     assert ui.facts_line(r) == ""  # scans from before 0.14.0
     r["popularity"] = {"stars": 1234, "downloads": None}
     line = ui.facts_line(r)
-    assert "1,234 stars" in line and "not counted" in line and "never scored" in line
+    assert "1,234 stars" in line and "not counted" in line and "scored" not in line
     r["popularity"] = {"stars": 1, "downloads": 0}
     assert "0 downloads" in ui.facts_line(r)
 

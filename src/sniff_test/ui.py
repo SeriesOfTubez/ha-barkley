@@ -2612,7 +2612,7 @@ def facts_line(report: dict[str, Any]) -> str:
         parts.append(f"{dl:,} download{'s' * (dl != 1)} of this release's file")
     else:
         parts.append("Downloads: not counted (installed from the source, no release file)")
-    return f'<p class="facts">{" · ".join(parts)} (never scored)</p>'
+    return f'<p class="facts">{" · ".join(parts)}</p>'
 
 
 def verdict_text(report: dict[str, Any]) -> str:
