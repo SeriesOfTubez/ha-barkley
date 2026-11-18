@@ -20,8 +20,9 @@ of the options (see [Standalone](Standalone)).
 | Notify | Bell only | A `notify` service that gets each result besides the bell. |
 | AI | Off | The AI Task entity for explanations. Only as good as the model you pick. |
 | AI mode | Explain and read code | Or also read the code around a finding. See [AI explanations](AI-explanations). |
-| Parallel scans | 2 (app), 1 (standalone) | How many apps are scanned at the same time (1 to 4). Another scan starts only while there's free memory for it: 1.5 GB for each scan already running, on top of a 2 GB reserve; otherwise it waits. |
+| Parallel scans | 2 (app), 1 (standalone) | How many apps are scanned at the same time (1 to 4). Another scan starts only while there's memory for it (Memory for scans); otherwise it waits. Keep it times Semgrep jobs at or below the CPU cores. |
 | Semgrep jobs | 1 | Inside one scan, how many files Semgrep reads at once (1 to 4); GuardDog uses the same number for an integration's libraries. Helps apps that ship many files, such as cards split into chunks, not one big file. Barkley's passes over the code still run one after another. Each extra job needs its own memory. |
+| Memory for scans | Auto | How much memory scans may use at once. Barkley counts 1.5 GB per scan. Auto: free memory must cover that for every running scan plus a reserve (2 GB on a machine Home Assistant shares, 0.5 GB inside a container with its own memory limit). Or a fixed 2 to 16 GB: as many scans as fit, never past a container's limit, never with under 1 GB really free. |
 | GitHub token | none | See below. |
 
 Each section has **Reset to defaults**. Some settings have a **How this works** line that

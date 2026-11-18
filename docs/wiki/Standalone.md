@@ -143,8 +143,10 @@ auto-sniff and the notify target) are kept there once you change them.
 
 The memory guard reads the container's limit (`mem_limit` in the compose file) as well
 as the machine's free memory, and goes by the lower one. Under 2 GB available it warns,
-and under 1 GB it doesn't start a scan. With `BARKLEY_PARALLEL` above 1, give it about
-1.5 GB more per extra scan.
+and under 1 GB it doesn't start a scan. Barkley counts 1.5 GB per scan: with **Memory for
+scans** on Auto (Settings), the 3 GB in the compose file fits two scans at once. On a
+machine with memory to spare, raise `mem_limit` and pick a fixed amount on the Settings
+page (8 GB: up to 4 scans, the most Parallel scans allows).
 
 ## Updating
 

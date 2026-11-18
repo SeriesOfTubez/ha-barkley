@@ -25,6 +25,10 @@ from pathlib import Path
 GIB = 1024**3
 WARN_BELOW = 2 * GIB
 REFUSE_BELOW = 1 * GIB
+# (0.14.0) Inside a container with its own memory limit, the limit already keeps the
+# machine safe: Barkley keeps only this much of it free for itself when it decides
+# whether another scan fits (WARN_BELOW is for a machine Home Assistant shares).
+CONTAINER_RESERVE = GIB // 2
 MEMINFO = Path("/proc/meminfo")
 CGROUP = Path("/sys/fs/cgroup")
 _UNLIMITED = 1 << 60  # cgroup v1 says "no limit" with a huge number

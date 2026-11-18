@@ -17,9 +17,9 @@ https://github.com/SeriesOfTubez/ha-barkley/releases
 - Malware check only, per app: only Threats and known malware are shown and notified.
 - A Settings page: Paranoid mode (minor findings hidden and not counted while off), the
   no-Threat floor at Very Sus, pages without a login, hidden usage reporting, reviews,
-  auto-sniff, notifications, AI, parallel scans, Semgrep jobs and the GitHub token (with
-  Create token on GitHub). Auto-sniff's box moved from the list to this page. The app's
-  options are now the starting values.
+  auto-sniff, notifications, AI, parallel scans, Semgrep jobs, memory for scans and the
+  GitHub token (with Create token on GitHub). Auto-sniff's box moved from the list to
+  this page. The app's options are now the starting values.
 - AI mode now starts on Explain and read code. Nothing is sent until you click, and
   a click sends only the app's own public code around a finding.
 - Sniff again on every installed app, and Sniff all again for the list. New filters:

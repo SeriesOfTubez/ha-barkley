@@ -46,6 +46,8 @@ class Settings:
     # Checking (parallel and jobs: the add-on's defaults)
     parallel: int = 2
     jobs: int = 1
+    # (0.14.0) memory Barkley may give scans, in GB; 0 is Auto (what's free, less a reserve)
+    memory_gb: int = 0
     # Standalone: how often Barkley replaces its own Home Assistant token (ha_token.py)
     token_days: int = 60
 
@@ -64,7 +66,7 @@ DEFAULTS = Settings()
 PARTS = {
     "scoring": ("exposure", "paranoid", "floor", "unauth_views", "shadow_telemetry"),
     "reviews": ("notify_reopen", "reconfirm_months"),
-    "checking": ("parallel", "jobs", "token_days"),
+    "checking": ("parallel", "jobs", "memory_gb", "token_days"),
 }
 
 
@@ -79,6 +81,7 @@ CHOICES: dict[str, tuple[Any, ...]] = {
     "reconfirm_months": (0, 6, 12),
     "parallel": (1, 2, 3, 4),
     "jobs": (1, 2, 3, 4),
+    "memory_gb": (0, 2, 3, 4, 6, 8, 12, 16),
     "token_days": (30, 60, 90, 180),
 }
 

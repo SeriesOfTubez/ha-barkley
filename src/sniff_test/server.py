@@ -195,6 +195,7 @@ class Worker:
     ):
         self.recheck_fn = recheck_fn
         self.parallel = max(1, min(int(parallel), PARALLEL_MAX))
+        self.memory_gb_fn: Callable[[], int] = lambda: 0  # (0.14.0) Memory for scans
         self.store = store
         self.scan_fn = scan_fn
         self.tool_version = tool_version
@@ -223,11 +224,36 @@ class Worker:
         with self._slots:
             return list(self._running)
 
-    def _room_for_another(self) -> bool:
+    def _room_for_another(self) -> str:
+        """ "" when one more scan fits beside the running ones, else why not.
+
+        Auto (Memory for scans 0): free memory must cover a reserve plus PER_SCAN for each
+        running scan (each may still grow); the reserve is WARN_BELOW on a machine Home
+        Assistant shares, CONTAINER_RESERVE inside a container's own limit. A fixed amount:
+        as many scans as fit in it at PER_SCAN each (never past a container's limit), and
+        never below REFUSE_BELOW of real free memory after the running scans' growth."""
         mem = self.memory_fn()
         if mem.available is None:
-            return False
-        return mem.available >= memory.WARN_BELOW + PER_SCAN * len(self._running)
+            return "waiting: available memory is unknown, so one scan at a time"
+        n = len(self._running)
+        gb = self.memory_gb_fn()
+        if gb:
+            budget = gb * memory.GIB
+            if mem.limited and mem.total:
+                budget = min(budget, mem.total)
+            need = memory.REFUSE_BELOW + PER_SCAN * n
+            if PER_SCAN * (n + 1) > budget:
+                fits = max(1, int(budget // PER_SCAN))
+                return (f"waiting for a running scan to finish: {gb} GB (Memory for scans "
+                        f"in Settings) fits {fits} at a time")  # fmt: skip
+        else:
+            reserve = memory.CONTAINER_RESERVE if mem.limited else memory.WARN_BELOW
+            need = reserve + PER_SCAN * n
+        if mem.available < need:
+            return (f"waiting for memory: {mem.available / memory.GIB:.1f} GB free, "
+                    f"{need / memory.GIB:.1f} GB needed beside the {n} running (Memory for "
+                    "scans in Settings)")  # fmt: skip
+        return ""
 
     def _admit(self, job: Job) -> None:
         """Wait for a slot; the job then counts as running (state set by the caller)."""
@@ -235,14 +261,15 @@ class Worker:
             while True:
                 same = any(j.repo.lower() == job.repo.lower() for j in self._running)
                 full = len(self._running) >= self.parallel  # (0.14.0) a Settings choice
-                if not same and (not self._running or (not full and self._room_for_another())):
+                why = "" if same or full or not self._running else self._room_for_another()
+                if not same and (not self._running or (not full and not why)):
                     break
                 job.message = (
                     "waiting for the other check of this repo"
                     if same
                     else "waiting for a free slot (Parallel scans in Settings)"
                     if full
-                    else "waiting for memory to run beside the scans already running"
+                    else why
                 )
                 self._slots.wait(timeout=30)  # memory can free up without a job ending
             self._running.append(job)
@@ -1002,12 +1029,12 @@ SETTING_HELP = {
         "GitHub, kept from the scan). Nothing from your Home Assistant is ever sent."
     ),
     "Parallel scans": (
-        "Each scan is a separate app. Another scan starts only while the box has enough "
-        "free memory for it: 1.5 GB for each scan already running, on top of a 2 GB reserve. "
-        "Otherwise it waits its turn. Two checks of the same app never run together. Scans "
-        "share the processor too: keep Parallel scans times Semgrep jobs at or below the "
-        "number of processor cores (4 on many Home Assistant boxes). Past that, a big app's "
-        "checks can run out of time and its scan comes out Incomplete."
+        "Each scan is a separate app. Another scan starts only while there's memory for it "
+        "(see Memory for scans); otherwise it waits its turn. Two checks of the same app "
+        "never run together. Scans share the processor too: keep Parallel scans times "
+        "Semgrep jobs at or below the number of processor cores (4 on many Home Assistant "
+        "boxes). Past that, a big app's checks can run out of time and its scan comes out "
+        "Incomplete."
     ),
     "Semgrep jobs": (
         "Inside one scan, Semgrep (the code checker) reads this many files at once, and "
@@ -1017,6 +1044,14 @@ SETTING_HELP = {
         "the app takes the same time either way. Each extra job needs its own memory. With "
         "1 parallel scan, set this to the number of cores; with more, keep Parallel scans "
         "times this at or below the cores."
+    ),
+    "Memory for scans": (
+        "Barkley counts 1.5 GB for each scan, the most a big one has needed. Auto starts "
+        "another scan only while free memory covers that for every running scan plus a "
+        "reserve: 2 GB on a machine Home Assistant shares, 0.5 GB inside a container with "
+        "its own memory limit. A fixed amount runs as many scans as fit in it (4 GB: two), "
+        "never past a container's limit, and never with under 1 GB really free. A scan that "
+        "runs out of memory is stopped by the system and shows as Incomplete."
     ),
     "Token rotation": (
         "Barkley uses its current token to make a new one, checks that it works, saves it, "
@@ -1047,6 +1082,7 @@ def render_settings(
     saved: bool = False,
     bad: str = "",
     bad_detail: str = "",
+    mem: memory.Memory | None = None,
     defaults: settings_mod.Settings = settings_mod.DEFAULTS,
     ha_token_html: str = "",
 ) -> bytes:
@@ -1153,6 +1189,19 @@ def render_settings(
                       sel("jobs", s.jobs,
                           [(n, f"{n}{' (default)' if n == defaults.jobs else ''}")
                            for n in settings_mod.CHOICES["jobs"]]))  # fmt: skip
+    now_free = ""
+    if mem is not None and mem.available is not None and mem.total:
+        of = "this container's limit of " if mem.limited else ""
+        now_free = (f'<span class="muted small">Now {mem.available / memory.GIB:.1f} GB free '
+                    f"of {of}{mem.total / memory.GIB:.1f} GB.</span>")  # fmt: skip
+        if mem.limited and s.memory_gb * memory.GIB > mem.total:
+            now_free += ('<span class="muted small">The container\'s limit (mem_limit) is '
+                         "lower, so Barkley stays within it.</span>")  # fmt: skip
+    check_rows += row("Memory for scans", "How much memory scans may use at once. Auto goes "
+                      "by what's free.",
+                      sel("memory_gb", s.memory_gb,
+                          [(n, "Auto (default)" if n == 0 else f"{n} GB")
+                           for n in settings_mod.CHOICES["memory_gb"]]) + now_free)  # fmt: skip
     hidden = f'<input type=hidden name=token value="{token}">'
     have = {"settings": "Set here", "option": "Set in the app's options",
             "file": "Set by GITHUB_TOKEN_FILE"}.get(token_source, "")  # fmt: skip
@@ -3178,6 +3227,7 @@ class Panel:
                             external=ext, saved="saved" in q,
                             bad=(q.get("bad") or [""])[0],
                             bad_detail=(self._session() or login.Session("", "", 0)).token_error,
+                            mem=panel.memory_fn(),
                             defaults=panel.start_settings,
                             ha_token_html=ha_token_block(base, panel.store,
                                                          panel.settings.token_days, panel.token)
@@ -3511,6 +3561,7 @@ def serve(
         budget_fn=budget_fn, parallel=parallel,
     )  # fmt: skip
     panel = Panel(store, worker, allow, installed_fn, memory_fn)
+    worker.memory_gb_fn = lambda: panel.settings.memory_gb
     panel.login = login_cfg
     if login_cfg is not None:
         panel.csp = csp_with_login(login_cfg.ha_url)

@@ -24,7 +24,9 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 3g # the memory guard reads this; scans need 0.5 to 1.5 GB each
+    # Scans need up to 1.5 GB each: 3g fits two. To run more, raise it and set Memory for
+    # scans on Barkley's Settings page.
+    mem_limit: 3g
     pids_limit: 512 # a runaway tool can't fork-bomb the host
     ports:
       - "8099:8099"
