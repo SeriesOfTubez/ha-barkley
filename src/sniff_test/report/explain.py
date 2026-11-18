@@ -742,7 +742,10 @@ def can_do(report: dict[str, Any]) -> list[str]:
     for key, one, many in _CAN_DO:
         n = counts.get(key, 0)
         if n:
-            out.append(many.format(n=n) if n > 1 and many else one)
+            line = many.format(n=n) if n > 1 and many else one
+            if key == ("calls", "service"):
+                line += _high_privilege(g, nodes)
+            out.append(line)
     if reads:
         out.append("Reads " + _join(sorted(set(reads))))
     out += caps
@@ -758,6 +761,23 @@ def can_do(report: dict[str, Any]) -> list[str]:
     if bundled:
         out.append(f"Built from {bundled} code librar{'ies' if bundled != 1 else 'y'}")
     return out
+
+
+def _high_privilege(g: dict[str, Any], nodes: dict[str, Any]) -> str:
+    """ ", 2 of them high-privilege" (kinds.high_privilege, the agreed fixed list)."""
+    from sniff_test import kinds
+
+    labels = {
+        str(nodes.get(e["target"], {}).get("label", ""))
+        for e in g.get("edges", [])
+        if e["source"] == g.get("subject")
+        and e["relation"] == "calls"
+        and nodes.get(e["target"], {}).get("kind") == "service"
+    }
+    hi = sum(1 for x in labels if kinds.high_privilege(x))
+    if not hi:
+        return ""
+    return " (high-privilege)" if len(labels) == 1 else f", {hi} of them high-privilege"
 
 
 def _join(items: list[str]) -> str:

@@ -155,7 +155,7 @@ def top_titles(report: dict[str, Any], limit: int = 3) -> list[str]:
     seen: list[tuple[int, str]] = []
     for f in report.get("findings", []):
         sev = str(f.get("severity"))
-        if sev not in order:
+        if sev not in order or (f.get("review") or {}).get("state") == "accepted":
             continue
         title = explain.explain(str(f.get("rule_id"))).title
         if (order[sev], title) not in seen:
@@ -181,7 +181,11 @@ def change_summary(d: dict[str, Any]) -> str:
 
 
 def notification(
-    entry: dict[str, Any], report: dict[str, Any], d: dict[str, Any] | None, panel: str
+    entry: dict[str, Any],
+    report: dict[str, Any],
+    d: dict[str, Any] | None,
+    panel: str,
+    notify_reopen: bool = True,
 ) -> tuple[str, str, str]:
     """(title, markdown message, plain message) for one auto-sniffed install or update.
     Every piece is validated or fixed text; nothing comes from the scanned repo."""
@@ -214,8 +218,15 @@ def notification(
         )  # fmt: skip
     if not report.get("complete", True):
         lines.append("Part of the check didn't finish, so the score is capped at 89.")
+    r = report.get("review") or {}
+    if r.get("reviewed"):  # (0.14.0) the reviewed score is the big one; Barkley's beside it
+        lines.append(f"Reviewed by you; Barkley's own score is {int(r.get('own_score') or 0)}.")
+    due = len(r.get("reopened") or [])
+    if due and notify_reopen:
+        lines.append(f"{due} finding{'s' * (due != 1)} you accepted changed in this version "
+                     f"and {'is' if due == 1 else 'are'} open again.")  # fmt: skip
     t = report.get("trust")
-    if t:  # counts and Barkley's own number only; never the addresses themselves
+    if t and not r.get("reviewed"):  # counts and Barkley's number; never the addresses
         n = len(t.get("addresses") or [])
         lines.append(
             f"The score counts {n} address{'es' * (n != 1)} you trust as fine; "
@@ -332,6 +343,12 @@ class Watcher:
         age_out_days: float = AGE_OUT_DAYS,
     ):
         self.store = store
+        # (0.14.0) the report as the panel shows it (settings, reviews, Malware check only)
+        # and the "notify when an accepted finding changes" setting; set by server.serve
+        self.view_fn: Callable[[dict[str, Any]], dict[str, Any]] = lambda r: trust.view(
+            r, self.store.trusted()
+        )
+        self.notify_reopen_fn: Callable[[], bool] = lambda: True
         self.worker = worker
         self.installed_fn = installed_fn
         self.subscribe_fn = subscribe_fn
@@ -645,8 +662,7 @@ class Watcher:
                   flush=True)  # fmt: skip
             return
         counts = advisory_changes(old, new)
-        trusted = self.store.trusted()
-        shown = trust.view(new, trusted)
+        shown = self.view_fn(new)
         entry = {
             "when": _now_iso(self.now_fn()),
             "action": "advisories",
@@ -658,13 +674,17 @@ class Watcher:
             "message": str(job.message)[:300],
             "scan_ids": list(job.scan_ids),
             "score": int(shown.get("score", 0)),
-            "was": int(trust.view(old, trusted).get("score", 0)),
+            "was": int(self.view_fn(old).get("score", 0)),
             "verdict": str(shown.get("verdict", {}).get("key", "")),
             "complete": bool(shown.get("complete", True)),
             "changes": advisory_summary(counts),
             "malicious": counts["malicious"],
         }
         self._log(entry)
+        if (shown.get("review") or {}).get("malware_only") and not counts["malicious"]:
+            print(f"auto-sniff: advisories of {repo} {ver} changed; not notified (Malware "
+                  "check only: no known malware)", file=sys.stderr, flush=True)  # fmt: skip
+            return
         title, md, plain = advisory_notification(entry, shown, self.panel_path())
         err = self._notify(title, md, plain, f"barkley_{repo.lower()}")
         sent = (
@@ -800,9 +820,9 @@ class Watcher:
                 report = self.store.report(job.scan_ids[-1])
                 if len(job.scan_ids) == 2:
                     d = diff_reports(self.store.report(job.scan_ids[0]), report)
-                # the score as the panel shows it: findings about addresses the user
-                # trusts are set aside (the diff above compares the stored reports)
-                report = trust.view(report, self.store.trusted())
+                # the score as the panel shows it: the user's settings and review
+                # (the diff above compares the stored reports)
+                report = self.view_fn(report)
             except StoreError as ex:
                 entry["state"], entry["message"] = "failed", str(ex)
                 report = None
@@ -812,8 +832,14 @@ class Watcher:
             entry["complete"] = bool(report.get("complete", True))
             entry["changes"] = change_summary(d) if d is not None else ""
         self._log(entry)
+        quiet = False
         if report is not None:
-            title, md, plain = notification(entry, report, d, self.panel_path())
+            title, md, plain = notification(
+                entry, report, d, self.panel_path(), self.notify_reopen_fn()
+            )
+            # Malware check only: notified only when a Threat or known malware is found
+            r = report.get("review") or {}
+            quiet = bool(r.get("malware_only")) and not report.get("findings")
         else:
             if c.action == "available":
                 did = f"the offered update {c.version}"
@@ -824,7 +850,7 @@ class Watcher:
                 f"Barkley couldn't sniff {did} of {c.repo} ({job.state}: "
                 f"{str(job.message)[:200]}). Open Barkley from the sidebar to try again."
             )
-        err = self._notify(title, md, plain, f"barkley_{c.repo.lower()}")
+        err = "" if quiet else self._notify(title, md, plain, f"barkley_{c.repo.lower()}")
         # One line per outcome in the app's log (a finished job printed nothing before, so
         # the log on the user's box couldn't say whether a sniff ended before a rebuild).
         ver = f"{c.previous} → {c.version}" if c.previous else c.version
@@ -841,7 +867,8 @@ class Watcher:
         else:
             what = f"{entry['state']}: {entry['message'][:200]}"
         sent = (
-            f"notification failed: {err}" if err
+            "not notified (Malware check only: no Threat found)" if quiet
+            else f"notification failed: {err}" if err
             else "notified bell" + (f" + notify.{self.notify_target}" if self.notify_target else "")
         )  # fmt: skip
         print(f"auto-sniff: {c.repo} {ver} {what}; {ids}; {sent}", file=sys.stderr, flush=True)

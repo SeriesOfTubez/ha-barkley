@@ -173,6 +173,8 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
         "graph": scan.graph if scan.graph is not None else graph.build(scan),
         "provenance": _provenance_json(scan.provenance),
         "hygiene": _hygiene_json(scan, findings),
+        # (0.14.0) shown on the app's page, never scored (popularity isn't safety)
+        "popularity": {"stars": t.stars, "downloads": t.downloads} if t.repo else None,
         "ai_brief": ai_brief(scan, findings),
         # Code from the scanned repo (untrusted), for "Explain in context". Not in ai_brief.
         "context": scan.context,

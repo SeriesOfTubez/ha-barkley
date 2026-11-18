@@ -131,9 +131,15 @@ class Rescored:
     breakdown: list[dict[str, Any]]
 
 
-def rescore(findings: list[tuple[str, str, str]], complete: bool) -> Rescored:
+def rescore(
+    findings: list[tuple[str, str, str]], complete: bool, policy: scoring.Policy | None = None
+) -> Rescored:
     """The scanner's own score for (id, rule_id, severity) triples."""
-    s = scoring.score([_F(i, r, Severity.parse(sev)) for i, r, sev in findings], complete)  # type: ignore[list-item]
+    s = scoring.score(
+        [_F(i, r, Severity.parse(sev)) for i, r, sev in findings],  # type: ignore[misc]
+        complete,
+        policy,
+    )
     return Rescored(
         s.score,
         s.verdict.key,

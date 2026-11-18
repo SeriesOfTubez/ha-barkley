@@ -98,7 +98,22 @@ SIGNAL_INSTALL_PROGRESS = "marketplace_repository_install_progress"
 SIGNAL_REPOSITORY = "marketplace_repository"
 WATCH_SIGNALS = (SIGNAL_INSTALL_PROGRESS, SIGNAL_REPOSITORY)
 CURRENT_USER = "auth/current_user"  # standalone login: is the person who logged in an admin?
-_ALLOWED_COMMANDS = frozenset((*LIST_COMMANDS, SUBSCRIBE, CURRENT_USER))
+# (0.14.0 part 4) standalone only: Barkley's own token makes its successor, finds its own
+# id, and deletes the old one. Each acts only on the connection's own user's tokens
+# (Core: homeassistant/components/auth/__init__.py, ws_require_user); see ha_token.py.
+LLAT_CREATE = "auth/long_lived_access_token"
+REFRESH_TOKENS = "auth/refresh_tokens"
+REFRESH_TOKEN_DELETE = "auth/delete_refresh_token"  # noqa: S105 - a command name
+_ALLOWED_COMMANDS = frozenset(
+    (*LIST_COMMANDS, SUBSCRIBE, CURRENT_USER, LLAT_CREATE, REFRESH_TOKENS, REFRESH_TOKEN_DELETE)
+)
+# (0.14.0 part 4) standalone: Barkley's own token file next to its store (set by `serve`);
+# HA_TOKEN and HA_TOKEN_FILE win over it
+OWN_TOKEN_FILE: Path | None = None
+NOT_SET_UP = (
+    "Barkley has no Home Assistant token yet: log in and use Create token on the Settings "
+    "page, or set HA_TOKEN_FILE"
+)
 _MAX_MESSAGE = 64 * 1024 * 1024  # what the Supervisor accepts from Core
 _TIMEOUT = 20
 # HACS categories Barkley can scan, and what it calls them.
@@ -163,6 +178,11 @@ def _direct_token() -> str:
         return tok
     path = os.environ.get(HA_TOKEN_FILE_ENV, "").strip()
     if not path:
+        if OWN_TOKEN_FILE is not None:  # Barkley's own (created or pasted in the panel)
+            try:
+                return OWN_TOKEN_FILE.read_text(encoding="utf-8")[:8192].strip()
+            except OSError:
+                return ""
         return ""
     try:
         with Path(path).open(encoding="utf-8") as f:
@@ -177,7 +197,7 @@ def config_problem() -> str | None:
         return None
     try:
         parse_ha_url(os.environ[HA_URL_ENV])
-        if not _direct_token():
+        if not _direct_token() and OWN_TOKEN_FILE is None:
             return f"{HA_URL_ENV} is set but {HA_TOKEN_ENV} / {HA_TOKEN_FILE_ENV} is not"
     except SupervisorError as ex:
         return str(ex)
@@ -211,6 +231,8 @@ def _need() -> Connection:
             config_problem()
             or "Home Assistant isn't connected (no SUPERVISOR_TOKEN, and no HA_URL)"
         )
+    if not conn.token:
+        raise SupervisorError(NOT_SET_UP)
     return conn
 
 
@@ -243,6 +265,8 @@ def _with(tok: str | None) -> Connection:
         if not tok:
             return _need()
         return _addon(tok)
+    if not tok and not conn.token:
+        raise SupervisorError(NOT_SET_UP)
     if tok and tok != conn.token:
         return Connection(conn.mode, tok, conn.base, conn.ws_host, conn.ws_port, conn.ws_path,
                           conn.tls, conn.ca_file)  # fmt: skip
@@ -351,6 +375,24 @@ def ha_version(tok: str | None = None) -> str | None:
     except (OSError, ValueError):
         return None
     return version if isinstance(version, str) else None
+
+
+def external_url_set(tok: str | None = None) -> bool | None:
+    """(0.14.0) Whether HA has an external URL set (the same GET /api/config): the
+    Settings page's Exposure hint. Only the yes/no is kept, never the address. None when
+    HA can't say."""
+    try:
+        conn = _with(tok)
+    except SupervisorError:
+        return None
+    req = urllib.request.Request(f"{conn.base}{CONFIG_PATH}")  # noqa: S310
+    req.add_header("Authorization", f"Bearer {conn.token}")
+    try:
+        with _open(req, 10, conn) as r:
+            data = json.load(r)
+    except (OSError, ValueError):
+        return None
+    return bool(data.get("external_url")) if isinstance(data, dict) else None
 
 
 # --- a minimal websocket client (RFC 6455): ws:// to the Supervisor, ws:// or wss:// to Core
@@ -575,8 +617,8 @@ AUTH_REVOKE_PATH = "/auth/revoke"
 
 
 def _auth_post(path: str, form: dict[str, str], what: str) -> Any:
-    conn = _need()
-    if conn.mode != "direct":
+    conn = connection()  # the login needs no token of Barkley's own
+    if conn is None or conn.mode != "direct":
         raise SupervisorError("logging in is only for standalone mode")
     req = urllib.request.Request(  # noqa: S310 - validated base, constant path
         f"{conn.base}{path}", data=urllib.parse.urlencode(form).encode(), method="POST"

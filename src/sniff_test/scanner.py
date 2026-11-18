@@ -35,7 +35,7 @@ from sniff_test.models import (
 )
 from sniff_test.report import context, fingerprint, graph
 from sniff_test.report.json_report import ScanResult, finding_json
-from sniff_test.scoring import Exposure, apply_exposure, score
+from sniff_test.scoring import Exposure, Policy, apply_exposure, score
 from sniff_test.workspace import workspace
 
 
@@ -199,7 +199,7 @@ def scan(
             exposure=exposure,
             analyzers=results,
             findings=findings,
-            score=score(findings, complete),
+            score=score(findings, complete, Policy(exposure=exposure)),
             facts=facts,
             provenance=provenance,
             hygiene=hygiene,

@@ -45,6 +45,12 @@ body:
     validations:
       required: true
   - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      description: The version Barkley resolved the app's dependencies against, if shown.
+      placeholder: "2026.11.1"
+  - type: input
     id: rule
     attributes:
       label: Rule or finding

@@ -212,12 +212,14 @@ def fetch_remote(
 
     install = new_subdir(ws, "install")
     artifact_sha: str | None = None
+    downloads: int | None = None
 
     if kind is TargetKind.INTEGRATION:
         filename = hacs.get("filename")
         if hacs.get("zip_release") and filename and filename in assets:
             asset_path = ws / "asset.zip"
             artifact_sha = gh.download(assets[filename]["url"], asset_path)
+            downloads = _count(assets[filename])
             extract(asset_path, install)
             root = install
             install_source = "release_asset"
@@ -249,6 +251,7 @@ def fetch_remote(
                 digest = gh.download(a["url"], install / a["name"])
                 if a["name"].lower() in names:  # the card's own file, as before
                     artifact_sha = digest
+                    downloads = _count(a)
             install_source = "release_asset"
         elif not _plugin_from_tree(source_root, names, install):
             raise FetchError("could not locate a card .js file the way HACS would")
@@ -268,7 +271,14 @@ def fetch_remote(
         notes=notes,
         requested_repo=f"{parsed[0]}/{parsed[1]}",
         repo_meta=repo,
+        stars=_count(repo, "stargazers_count"),
+        downloads=downloads,
     )
+
+
+def _count(d: dict[str, Any], key: str = "download_count") -> int | None:
+    v = d.get(key)
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
 
 
 def fetch_local(source: str, ws: Path, kind: TargetKind | None = None) -> Target:

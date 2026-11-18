@@ -445,8 +445,19 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     def ha_fn() -> str | None:
         return args.ha_version or supervisor.ha_version()
 
+    from sniff_test import settings as settings_mod
+
+    # (0.14.0) The add-on options / BARKLEY_* give the starting values; the Settings page
+    # wins once saved. A GitHub token saved there wins over the option's.
+    start = settings_mod.from_dict(
+        {"exposure": args.exposure, "jobs": args.jobs, "parallel": args.parallel}
+    )
+    option_token = os.environ.get("GITHUB_TOKEN", "")
+    settings_mod.apply_token(store.path)
+
     def scan_fn(repo: str, ref: str | None) -> dict:
-        result = scan(repo, ref=ref, exposure=Exposure(args.exposure), jobs=args.jobs,
+        now = settings_mod.load(store, start)
+        result = scan(repo, ref=ref, exposure=Exposure(now.exposure), jobs=now.jobs,
                       ha_version=ha_fn())  # fmt: skip
         # the lockfiles for later advisory re-checks ride along; Store.save takes them out
         return {**to_dict(result), recheck.KEY: result.inputs, sources.KEY: result.source}
@@ -470,19 +481,22 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
             enabled=str(args.auto_scan).strip().lower() in ("true", "1", "on", "yes", "null"),
             notify_target=target if target != "null" else "",
         )  # fmt: skip
+    current = settings_mod.load(store, start)
     httpd = server.serve(
         store, scan_fn, args.host, args.port, allow,
-        exposure=args.exposure, ha_fn=ha_fn, installed_fn=installed_fn,
+        exposure=current.exposure, ha_fn=ha_fn, installed_fn=installed_fn,
         budget_fn=lambda: GitHub.from_env().rate_limit(),
         ai_entity=args.ai_entity.strip() if supervisor.token() else "",
         ai_mode=args.ai_mode,
-        parallel=args.parallel,
+        parallel=current.parallel,
         catalog_fn=supervisor.catalog if supervisor.token() else None,
         entities_fn=supervisor.ai_task_entities if supervisor.token() else None,
         releases_fn=lambda repo: releases.recent(repo),
         watcher=watcher,
         login_cfg=login_cfg,
     )  # fmt: skip
+    httpd.panel.start_settings = start
+    httpd.panel.option_token = option_token
     if conn is not None:
         where = "via the Supervisor" if conn.mode == "addon" else f"at {conn.base} (standalone)"
         out.print(f"🐕 Home Assistant: {where}")

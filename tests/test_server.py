@@ -468,12 +468,14 @@ def test_an_incomplete_scan_offers_to_scan_again(addon):
     bad["complete"] = False
     store.save(bad)  # newer, but a complete one exists: that one is shown
     _, _, page = get(base + "/?refresh=1")
-    assert "Sniff again" not in page
+    # (0.14.0) every sniffed card has a fresh "Sniff again" (POST /scan); only an
+    # unfinished one offers the installed-version re-run (POST /installed)
+    assert "Sniff again" in page and ">Unfinished<" not in page
     never = report(repo="acme/never", ref="v3", kind="plugin")
     never["complete"] = False
     store.save(never)
     _, _, page = get(base + "/?refresh=1")
-    assert "Sniff again" in page
+    assert ">Unfinished<" in page
 
 
 def test_one_button_sniffs_every_unfinished_scan_again(addon):

@@ -273,3 +273,7 @@ class Target:
     # `async_process_requirements(hass, DOMAIN, ["x==1"])`): resolved and checked with
     # the manifest's (analyzers/py_precision.pip_listed)
     runtime_requirements: list[str] = field(default_factory=list)
+    # (0.14.0) facts for the app's page, never scored: the repo's stars, and the download
+    # count of the release file HACS installs (None: installed from the source)
+    stars: int | None = None
+    downloads: int | None = None

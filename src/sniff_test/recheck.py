@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sniff_test import trust
+from sniff_test import scoring, trust
 from sniff_test.analyzers import osv
 from sniff_test.analyzers.python_deps import Resolution
 from sniff_test.models import AnalyzerResult, AnalyzerState, Target, TargetKind
@@ -256,6 +256,7 @@ def apply(
     r = trust.rescore(
         [(str(f["id"]), str(f["rule_id"]), str(f["severity"])) for f in findings],
         bool(out.get("complete")),
+        scoring.Policy(exposure=str(out.get("exposure") or "local")),
     )
     counts: dict[str, int] = {}
     for f in findings:
