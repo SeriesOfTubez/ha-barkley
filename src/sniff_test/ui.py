@@ -322,6 +322,7 @@ a.button:hover { filter:brightness(1.08); }
 .setrow { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);
   gap:var(--s2) var(--s4); padding:var(--s3) 0; border-top:1px solid var(--line); }
 .setrow:first-of-type { border-top:0; }
+.setrow:target { background:var(--soft); box-shadow:0 0 0 var(--s2) var(--soft); border-radius:var(--r1); }
 .setrow > div { min-width:0; overflow-wrap:anywhere; }
 .setrow .ctl { display:flex; flex-wrap:wrap; gap:var(--s2); align-items:center; }
 .setrow p.muted { margin-top:var(--s1); }

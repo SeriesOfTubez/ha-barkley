@@ -218,3 +218,12 @@ def test_two_tokens_made_in_the_same_second_get_different_names():
     """Found against a real HA: Core refuses a second long-lived token with the same name
     ("unknown_error"), which Create token followed by Rotate now could hit."""
     assert len({ha_token._name(NOW) for _ in range(20)}) > 1
+
+
+def test_the_no_token_banner_links_straight_to_the_token_row(tmp_path, monkeypatch):
+    monkeypatch.setattr(ha_token, "source", lambda: "")
+    panel = server.Panel(Store(tmp_path / "s.db"), lambda r, f: {}, None)
+    panel.standalone = True
+    assert 'href="/b/settings#ha-token"' in server._token_banner("/b", panel)
+    row = server.ha_token_block("/b", panel.store, 60, "t")
+    assert row.startswith('<div class="setrow" id="ha-token">')

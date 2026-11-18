@@ -672,13 +672,13 @@ def _token_banner(base: str, panel: Panel) -> str:
     if not src:
         return (
             '<div class="banner warn"><b>Barkley needs its own Home Assistant token</b> to '
-            f'list your apps and notify you. <a href="{base}/settings">Create one in Settings'
-            "</a> (one more Home Assistant login), or paste one there.</div>"
+            f'list your apps and notify you. <a href="{base}/settings#ha-token">Create one in '
+            "Settings</a> (one more Home Assistant login), or paste one there.</div>"
         )
     meta = ha_token.Meta.load(panel.store)
     if src == "barkley" and meta.error:
         return (f'<div class="banner warn">{e(meta.error, 300)}. The current token keeps '
-                f'working. <a href="{base}/settings">Settings</a></div>')  # fmt: skip
+                f'working. <a href="{base}/settings#ha-token">Settings</a></div>')  # fmt: skip
     return ""
 
 
@@ -889,7 +889,8 @@ def ha_token_block(base: str, store: Store, period: int, token: str) -> str:
             ctl += (f'<form method=post action="{base}/ha-token/rotate" class="setform">{hidden}'
                     "<button>Rotate now</button></form>")  # fmt: skip
     return (
-        '<div class="setrow"><div><b>Home Assistant token</b><p class="muted small">'
+        '<div class="setrow" id="ha-token"><div><b>Home Assistant token</b>'
+        '<p class="muted small">'
         "Barkley's own, for reading your apps and sending notifications. An administrator's "
         "(Home Assistant lists apps to administrators only). Create token logs you in to "
         "Home Assistant once more and makes it; your login's own tokens are revoked right "
