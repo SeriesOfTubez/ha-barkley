@@ -32,7 +32,7 @@ opens a longer explanation.
 Optional. Without one GitHub allows 60 requests an hour; with one, 5,000. A scan makes
 about 6 or 7. The token needs **no permissions**. **Create token on GitHub** on the
 Settings page opens GitHub's new fine-grained token page with a name, a description and
-the longest expiry (366 days) filled in. Leave **Repository access** on **Public
+a one-year expiry (365 days, the longest GitHub's form takes) filled in. Leave **Repository access** on **Public
 repositories**, add no permissions, click **Generate token**, and paste the token on
 Barkley's Settings page. (By hand: GitHub's Settings → Developer settings → Personal
 access tokens → Fine-grained tokens → Generate new token.) GitHub can't hand the token

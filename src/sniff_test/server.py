@@ -871,13 +871,14 @@ WIKI_HA_SETUP = (
 
 def github_token_url(now: datetime | None = None) -> str:
     """(0.14.0) GitHub's new fine-grained token page, filled in (its template URL: name up
-    to 40 characters, description, expiry 1-366 days). No permission is asked for: Barkley
+    to 40 characters, description, expiry in days; its docs say up
+    to 366, but its form takes 365 at most, tried 2026-11-18). No permission is asked for: Barkley
     only reads public repositories. GitHub can't send the token back; the user pastes it."""
     now = now or datetime.now(UTC)
     q = urllib.parse.urlencode({
         "name": f"Barkley {now:%Y-%m-%d}",
         "description": "Barkley: reads public repositories for its scans (a higher rate limit)",
-        "expires_in": "366",
+        "expires_in": "365",
     })  # fmt: skip
     return f"https://github.com/settings/personal-access-tokens/new?{q}"
 

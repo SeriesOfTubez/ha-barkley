@@ -299,7 +299,7 @@ def test_the_first_login_is_held_until_the_user_creates_the_token(first_run):
     q = urllib.parse.parse_qs(link.query)
     assert link.path == "/settings/personal-access-tokens/new"
     assert q["name"][0].startswith("Barkley 20") and len(q["name"][0]) <= 40
-    assert q["expires_in"] == ["366"] and set(q) == {"name", "description", "expires_in"}
+    assert q["expires_in"] == ["365"] and set(q) == {"name", "description", "expires_in"}
     assert 'rel="noopener noreferrer"' in page and ">Skip<" in page
 
     gh = "github_pat_" + "a" * 82
