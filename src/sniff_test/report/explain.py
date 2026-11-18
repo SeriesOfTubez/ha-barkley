@@ -303,13 +303,22 @@ RULES: dict[str, Explanation] = {
         "Yes. Find out why the card hides the name before you install it.",
         "Hides a name",
     ),
+    "card-eval-remote": _E(
+        "Its dashboard card runs code it gets from outside",
+        "The card takes text from a download, a message, the page address or browser "
+        "storage and runs it as code in your browser, with your Home Assistant login. That "
+        "code was never part of what we checked, and whoever controls its source controls "
+        "what runs.",
+        "Yes, unless you know where that code comes from and trust it.",
+        "Runs outside code",
+    ),
     "card-eval": _E(
         "Its dashboard card builds code while running and executes it",
-        "The card turns text into code and runs it in your browser, with your Home "
-        "Assistant login. It matters where that text comes from. Big code libraries "
-        "bundled into cards often do this harmlessly.",
-        "Worth a look. It matters where the text comes from: if it could come from the "
-        "internet, someone else could run code as you.",
+        "The card puts together a piece of code and runs it in your browser, with your "
+        "Home Assistant login. Charting and template libraries do this to make their own "
+        "code fast. We found no sign the code comes from outside the card, but we can't "
+        "follow it everywhere.",
+        "Usually not. It would matter if the pieces could come from the internet.",
         "Runs built-up code",
     ),
     "card-eval-config": _E(

@@ -56,14 +56,83 @@ rules:
                       - pattern: $G.Function(..., $ARG)
           - focus-metavariable: $ARG
 
-  - id: card-eval
+  # (0.14.0) Code that comes from outside the card: a network response, a message, the
+  # URL, cookies or browser storage, reaching eval/Function. That's how a card would run
+  # code nobody reviewed. Followed within one function (Semgrep's free engine): code
+  # fetched in one function and run in another shows as card-eval (medium), a known limit.
+  - id: card-eval-remote
+    mode: taint
     languages: [javascript, typescript]
     severity: ERROR
     message: >-
-      Evaluates a dynamically built string as code. Whatever reaches it runs
-      with the logged-in user's full HA access.
+      Runs code that comes from outside the card (a download, a message, the page
+      address or browser storage). That code was never part of what was scanned, and it
+      runs with the logged-in user's full HA access.
     metadata:
-      sniff: {title: Card evaluates dynamic code, severity: high, category: code_exec}
+      sniff:
+        title: Card runs code from outside the card
+        severity: high
+        category: code_exec
+        supersedes: [card-eval]
+    pattern-sources:
+      - pattern: fetch(...)
+      - pattern: $G.fetch(...)
+      # the value a promise chain hands on: fetch(u).then(r => r.text()).then(code => …)
+      - patterns:
+          - pattern-either:
+              - pattern: $F(...).then(($T) => $B)
+              - pattern: $F(...).then(function ($T) { ... })
+          - focus-metavariable: $T
+      - pattern: $X.responseText
+      - pattern: $X.response
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $W.addEventListener("message", ($E) => { ... })
+              - pattern-inside: $W.addEventListener("message", function ($E) { ... })
+              - pattern-inside: $W.onmessage = ($E) => { ... }
+              - pattern-inside: $W.onmessage = function ($E) { ... }
+          - pattern: $E.data
+      - pattern: location
+      - pattern: $G.location
+      - pattern: document.cookie
+      - pattern: document.URL
+      - pattern: document.referrer
+      - patterns:
+          - pattern: $LS.getItem(...)
+          - metavariable-regex:
+              metavariable: $LS
+              regex: (localStorage|sessionStorage)$
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: eval($ARG)
+              - pattern: new Function(..., $ARG)
+              - pattern: Function(..., $ARG)
+              - pattern: setTimeout($ARG, ...)
+              - pattern: setInterval($ARG, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern: $G.eval($ARG)
+                      - pattern: $G["eval"]($ARG)
+                      - pattern: new $G.Function(..., $ARG)
+                      - pattern: $G.Function(..., $ARG)
+                  - metavariable-regex:
+                      metavariable: $G
+                      regex: ^(window|globalThis|self|top|parent|frames)$
+          - focus-metavariable: $ARG
+
+  # (0.14.0) Medium, a Capability: code built at run time from the card's own pieces, or
+  # from values Barkley can't trace (charting and template libraries compile code this
+  # way; on 9 real cards it was the only high finding). card-eval-remote takes the line
+  # when the code comes from outside.
+  - id: card-eval
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Builds code while running and executes it. Charting and template libraries do
+      this to make their own code fast; it matters where the pieces come from.
+    metadata:
+      sniff: {title: Card builds code at run time, severity: medium, category: code_exec}
     pattern-either:
       - patterns:
           - pattern-either:

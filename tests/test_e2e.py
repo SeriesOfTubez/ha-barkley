@@ -55,7 +55,11 @@ def test_hidden_card_is_bork(fixtures):
     assert sends == [11, 18, 24, 26, 34, 35]
     hidden = {f.line for f in r.findings if f.rule_id == "card-hidden-name"}
     assert {8, 9, 16, 17, 18, 23, 25, 31, 32, 33, 34, 35, 40, 41} <= hidden
-    assert ("card-eval", 41) in {(f.rule_id, f.line) for f in r.findings}
+    # Line 41's hidden eval: card-eval (medium since 0.14.0) gives way to the high
+    # card-hidden-name on the same line (one finding per line and category).
+    assert {("card-hidden-name", 41)} <= {(f.rule_id, f.line) for f in r.findings}
+    downloaded = [f for f in r.findings if f.rule_id == "card-eval-remote"]
+    assert [(f.line, f.severity.name) for f in downloaded] == [(47, "HIGH")]
     assert r.score.verdict.key == "bork"
 
 
