@@ -59,4 +59,6 @@ https://github.com/SeriesOfTubez/ha-barkley/releases
   checks JavaScript a second time for code built from pieces, to close a gap in the card
   checks. Scanning 61 real apps took about 50% longer than before, and a large card with
   many files can take several minutes on its own. A cache that skips work already
-  done on identical files and packages is being worked on.
+  done on identical files and packages is being worked on. On a machine with spare
+  memory and CPU cores, you can speed things up on the Settings page: Parallel scans
+  runs more apps at once, and Semgrep jobs uses more cores within one scan.
