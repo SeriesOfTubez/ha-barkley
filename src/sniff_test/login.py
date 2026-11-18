@@ -25,6 +25,7 @@ Everything a session can do still needs the panel's per-process form token on PO
 
 from __future__ import annotations
 
+import contextlib
 import re
 import secrets
 import threading
@@ -75,6 +76,14 @@ def base_url(url: str, what: str) -> str:
 
 # Login purposes that also make Barkley's own Home Assistant token
 MAKES_TOKEN = ("token", "setup")
+# (0.14.0, his call 2026-11-18) The first login while Barkley has no token: the login's
+# tokens are held for the setup's Home Assistant step (Create token without a second
+# login), then revoked when that step ends, on logout, or after HOLD_SECONDS at most.
+# Revoking the refresh token early isn't possible: HA checks every access token against
+# the refresh token that issued it (auth/__init__.py, async_validate_access_token).
+FIRST = "first"
+HOLD_SECONDS = 600
+_MAX_HELD = 4
 
 
 @dataclass
@@ -90,6 +99,8 @@ class Login:
     _states: dict[str, tuple[float, str]] = field(default_factory=dict)
     _sessions: dict[str, Session] = field(default_factory=dict)
     _failures: list[float] = field(default_factory=list)
+    # sid: (access, refresh, until), the first login held for setup
+    _held: dict[str, tuple[str, str, float]] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def __post_init__(self) -> None:
@@ -122,7 +133,10 @@ class Login:
             self._prune(now)
             if len(self._states) >= _MAX_STATES:  # oldest first out
                 self._states.pop(min(self._states, key=lambda k: self._states[k][0]))
-            self._states[state] = (now + STATE_SECONDS, purpose if purpose in MAKES_TOKEN else "")
+            self._states[state] = (
+                now + STATE_SECONDS,
+                purpose if purpose in (*MAKES_TOKEN, FIRST) else "",
+            )
         query = urllib.parse.urlencode(
             {
                 "response_type": "code",
@@ -180,9 +194,23 @@ class Login:
                     self.token_fn(access)
                 except SupervisorError as ex:
                     token_error = f"Couldn't create Barkley's token ({ex})."
-        finally:
+            sid = secrets.token_urlsafe(32)
+            hold = purpose == FIRST
+        except BaseException:
             self.revoke_fn(refresh)
-        sid = secrets.token_urlsafe(32)
+            raise
+        if hold:
+            with self._lock:
+                oldest = min(self._held, key=lambda k: self._held[k][2]) if len(
+                    self._held) >= _MAX_HELD else None  # fmt: skip
+                self._held[sid] = (access, refresh, now + HOLD_SECONDS)
+            if oldest is not None:
+                self.release(oldest)
+            timer = threading.Timer(HOLD_SECONDS, self.release, (sid,))
+            timer.daemon = True
+            timer.start()
+        else:
+            self.revoke_fn(refresh)
         session = Session(
             user.name or "administrator", user.id, now + SESSION_SECONDS, token_error[:300]
         )
@@ -206,6 +234,34 @@ class Login:
     def logout(self, sid: str | None) -> None:
         with self._lock:
             self._sessions.pop(sid or "", None)
+        self.release(sid)
+
+    def held(self, sid: str | None) -> str:
+        """The access token of this session's first login while it's still held, or ""."""
+        with self._lock:
+            got = self._held.get(sid or "")
+        if got is None:
+            return ""
+        if got[2] <= self.now_fn():
+            self.release(sid)
+            return ""
+        return got[0]
+
+    def release(self, sid: str | None) -> None:
+        """Revoke a held first login (its refresh token, and with it the access token)."""
+        with self._lock:
+            got = self._held.pop(sid or "", None)
+        if got is not None:
+            # HA unreachable: an unused refresh token expires there by itself (90 days)
+            with contextlib.suppress(SupervisorError):
+                self.revoke_fn(got[1])
+
+    def release_all(self) -> None:
+        """On shutdown: revoke every held first login."""
+        with self._lock:
+            sids = list(self._held)
+        for sid in sids:
+            self.release(sid)
 
     def cookie(self, name: str, value: str, max_age: int) -> str:
         """A Set-Cookie value: HttpOnly, SameSite=Lax (the way back from HA's login is a

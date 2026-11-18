@@ -40,17 +40,17 @@ is the one used, and Barkley stores no AI key of its own.
    - `BARKLEY_URL`: Barkley, as your browser reaches it, such as
      `http://192.168.1.20:8099`. The login and the links in notifications use it.
 4. `docker compose up -d`, open `BARKLEY_URL` and log in with Home Assistant. The first
-   login also makes Barkley's Home Assistant token (see below). A short setup follows: it
-   shows the token, lets you paste your own instead, and offers an optional GitHub token
-   (Create token on GitHub, or Skip). Then you're on the list.
+   time, a short setup follows: **Create token** or paste your own for Barkley's Home
+   Assistant token (see below), then an optional GitHub token (Create token on GitHub,
+   or Skip). Then you're on the list.
 
 ## Barkley's Home Assistant token
 
 Three ways, the last one wins:
 
-- **Made with your first login**, or later with **Create token** on the Settings page
-  (one more login). With that login, Barkley makes a long-lived access token named
-  "Barkley" and the date. The login's own tokens are revoked right after, as with every
+- **Create token** in the first-time setup, or later on the Settings page (one more
+  login). Barkley uses your login to make a long-lived access token named "Barkley" and
+  the date. The login's own tokens are revoked right after, as with every
   login.
 - **Paste** a long-lived access token you made yourself (your profile → Security →
   Long-lived access tokens) on the same row. Barkley checks that it works and is an
@@ -83,6 +83,13 @@ Every page asks for a login with Home Assistant, using Home Assistant's own logi
 shows the address that is asking (`BARKLEY_URL`). Only administrators get in, as with the
 app. Barkley revokes the login's tokens straight away and keeps only a session of its own
 (a cookie that lasts 12 hours, or until Barkley restarts). It never sees your password.
+
+The one exception is the first login, while Barkley has no Home Assistant token: Barkley
+keeps that login until the setup's Home Assistant step is done, so **Create token** needs
+no second login. It's revoked as soon as you create or paste a token or skip the step,
+when you log out, when Barkley stops, and after 10 minutes at the latest. Should Barkley
+be killed in between, the login shows under your profile → Security → Refresh tokens
+until you delete it or Home Assistant expires it (after 90 days unused).
 
 If your browser reaches Home Assistant at another address than the container does (for
 example the container uses `http://homeassistant:8123` on a Docker network), set

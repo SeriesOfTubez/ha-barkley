@@ -5,7 +5,7 @@
 #   mkdir -p data && sudo chown 1000:1000 data
 #   docker compose up -d
 #
-# then open BARKLEY_URL and log in with Home Assistant: the first login also makes
+# then open BARKLEY_URL and log in with Home Assistant: a short first-time setup creates
 # Barkley's own Home Assistant token (Barkley rotates it itself). To give it a token you
 # manage instead, uncomment HA_TOKEN_FILE and the two `secrets` blocks below and run:
 #   printf '%s' 'PASTE-THE-TOKEN' > ha_token && chmod 600 ha_token

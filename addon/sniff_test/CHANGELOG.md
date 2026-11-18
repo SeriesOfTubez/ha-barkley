@@ -43,9 +43,9 @@ https://github.com/SeriesOfTubez/ha-barkley/releases
 **Running it**
 
 - Standalone: run Barkley as its own container next to Home Assistant Container or Core
-  (or on another machine), with "log in with Home Assistant". The first login also
-  makes Barkley's own Home Assistant token, which it rotates; a short setup then offers
-  a GitHub token. Full guardrail support needs a Linux kernel with Landlock
+  (or on another machine), with "log in with Home Assistant". A short first-time
+  setup creates Barkley's own Home Assistant token (or takes one you paste), which it
+  rotates, and offers a GitHub token. Full guardrail support needs a Linux kernel with Landlock
   (5.13 or later). On a kernel without it, Barkley won't start unless you set
   `BARKLEY_UNSANDBOXED=1`, which runs the scanner tools without their sandbox. See the
   wiki's Standalone page, "The tool sandbox".

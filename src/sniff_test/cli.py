@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import contextlib
 import json
 import os
+import signal
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -538,6 +540,10 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
                 ha_token.adopt(store, tok, "created", name)
 
             login_cfg.token_fn = make_token
+            # A held first login is revoked on shutdown: docker stop sends SIGTERM, which
+            # would end Python without running atexit.
+            atexit.register(login_cfg.release_all)
+            signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
         _rotation_thread(store, start)
         out.print(f"🐕 Home Assistant token: {ha_token.source() or 'none yet (Settings)'}")
     if conn is not None:

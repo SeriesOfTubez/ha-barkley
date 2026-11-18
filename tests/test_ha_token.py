@@ -233,7 +233,7 @@ def test_the_no_token_banner_links_to_setup_and_the_row_has_its_anchor(tmp_path,
     assert row.startswith('<div class="setrow" id="ha-token">')
 
 
-# --- (0.14.0) the first login makes the token, then a two-step setup -----------------------
+# --- (0.14.0) the first login is held for setup's first step, then a GitHub step ------------
 
 
 @pytest.fixture
@@ -258,8 +258,8 @@ def first_run(ha, monkeypatch):
     httpd.shutdown()
 
 
-def _log_in(port, code):
-    status, to, cookies, _ = _req(port, "GET", "/login")
+def _log_in(port, code, path="/login"):
+    status, to, cookies, _ = _req(port, "GET", path)
     assert status == 303 and to.startswith("http://ha.lan:8123/auth/authorize?")
     state = _cookie(cookies, login.STATE_COOKIE)
     q = urllib.parse.urlencode({"code": code, "state": state})
@@ -269,17 +269,29 @@ def _log_in(port, code):
     return to, f"{login.SESSION_COOKIE}={_cookie(cookies, login.SESSION_COOKIE)}"
 
 
-def test_the_first_login_makes_the_token_then_setup_asks_for_github(first_run):
-    port, _fake, browser, store = first_run
+def _csrf(page):
+    return re.search(r'name=token value="([^"]+)"', page)[1]
+
+
+def test_the_first_login_is_held_until_the_user_creates_the_token(first_run):
+    port, fake, browser, store = first_run
     status, _, _, page = _req(port, "GET", "/")
     assert status == 401 and b"First time:" in page and b"separate" not in page
     to, me = _log_in(port, "a")
-    assert to == "/setup" and ha_token.source() == "barkley"
-    assert browser.revoked == ["refresh-a"]  # the login's own token, at once
+    assert to == "/setup" and ha_token.source() == ""  # nothing made without a click
+    assert supervisor.LLAT_CREATE not in fake.calls and browser.revoked == []  # held
 
     page = _req(port, "GET", "/setup", me)[3].decode()
-    assert "1 of 2" in page and "Barkley has its own Home Assistant token" in page
-    assert "/setup?step=github" in page and ">Next<" in page and "separate" not in page
+    assert "1 of 2" in page and ">Create token<" in page and "logs you in again" not in page
+    assert "Paste a long-lived token" in page and "Skip for now" in page
+    assert "separate" not in page
+    form = {"token": _csrf(page), "back": "setup"}
+    assert _req(port, "POST", "/ha-token/create", me, form)[1] == "/setup?saved=1"
+    assert ha_token.source() == "barkley" and browser.revoked == ["refresh-a"]  # let go
+
+    page = _req(port, "GET", "/setup?saved=1", me)[3].decode()
+    assert "Barkley has its own Home Assistant token" in page and ">Next<" in page
+    assert _req(port, "POST", "/setup/next", me, form)[1] == "/setup?step=github"
 
     page = _req(port, "GET", "/setup?step=github", me)[3].decode()
     link = urllib.parse.urlsplit(re.search(r'href="(https://github\.com/[^"]+)"', page)[1]
@@ -290,35 +302,79 @@ def test_the_first_login_makes_the_token_then_setup_asks_for_github(first_run):
     assert q["expires_in"] == ["366"] and set(q) == {"name", "description", "expires_in"}
     assert 'rel="noopener noreferrer"' in page and ">Skip<" in page
 
-    tok = re.search(r'name=token value="([^"]+)"', page)[1]
     gh = "github_pat_" + "a" * 82
     status, to, _, _ = _req(port, "POST", "/github-token", me,
-                            {"token": tok, "value": gh, "back": "setup"})  # fmt: skip
+                            {"token": _csrf(page), "value": gh, "back": "setup"})  # fmt: skip
     assert (status, to) == (303, "/setup?step=github&saved=1")
     assert settings_mod.token_source(store.path) == "settings"
     page = _req(port, "GET", "/setup?step=github&saved=1", me)[3].decode()
     assert "Barkley has a GitHub token." in page and ">Done<" in page
 
-    # with a token, a later login is an ordinary one and lands on the list
-    assert _log_in(port, "b")[0] == "/"
+    # with a token, a later login is an ordinary one: revoked at once, onto the list
+    assert _log_in(port, "b")[0] == "/" and browser.revoked == ["refresh-a", "refresh-b"]
     assert b"First time" not in _req(port, "GET", "/")[3]
 
 
-def test_a_failed_first_token_still_logs_in_and_setup_says_why(first_run):
+def test_pasting_or_skipping_lets_go_of_the_held_login(first_run):
+    port, fake, browser, _store = first_run
+    _, me = _log_in(port, "p")
+    page = _req(port, "GET", "/setup", me)[3].decode()
+    form = {"token": _csrf(page), "value": fake.add(), "back": "setup"}
+    assert _req(port, "POST", "/ha-token", me, form)[1] == "/setup?saved=1"
+    assert browser.revoked == ["refresh-p"] and supervisor.LLAT_CREATE not in fake.calls
+
+    store_token = supervisor.OWN_TOKEN_FILE
+    store_token.unlink()  # back to no token: the next login is a first one again
+    _, me = _log_in(port, "s")
+    assert browser.revoked == ["refresh-p"]
+    form = {"token": _csrf(_req(port, "GET", "/setup", me)[3].decode()), "back": "setup"}
+    assert _req(port, "POST", "/setup/next", me, form)[1] == "/setup?step=github"
+    assert browser.revoked == ["refresh-p", "refresh-s"]
+
+
+def test_a_failed_create_keeps_the_login_for_another_try_or_a_paste(first_run):
     port, fake, browser, _store = first_run
     fake.fail_create = True
-    to, me = _log_in(port, "c")
-    assert to == "/setup?bad=create" and ha_token.source() == ""
+    _, me = _log_in(port, "c")
+    page = _req(port, "GET", "/setup", me)[3].decode()
+    form = {"token": _csrf(page), "back": "setup"}
+    assert _req(port, "POST", "/ha-token/create", me, form)[1] == "/setup?bad=create"
+    page = _req(port, "GET", "/setup?bad=create", me)[3].decode()
+    assert "create Barkley" in page and "unknown_error" in page and browser.revoked == []
+    fake.fail_create = False
+    assert _req(port, "POST", "/ha-token/create", me, form)[1] == "/setup?saved=1"
     assert browser.revoked == ["refresh-c"]
-    page = _req(port, "GET", to, me)[3].decode()
-    assert "Couldn&#x27;t create Barkley&#x27;s token" in page or "create Barkley" in page
-    assert "/ha-token/create" in page and "Skip for now" in page
-    assert "Paste a long-lived token" in page
+
+
+def test_a_held_login_ends_after_ten_minutes_or_at_logout():
+    ha = FakeHA()
+    lg, clock = _login(ha)
+    state, _ = lg.start(login.FIRST)
+    sid, _ = lg.finish("h", state, state)
+    assert lg.held(sid) == "access-h" and ha.revoked == []
+    clock[0] += login.HOLD_SECONDS + 1
+    assert lg.held(sid) == "" and ha.revoked == ["refresh-h"]
+    state, _ = lg.start(login.FIRST)
+    sid, _ = lg.finish("i", state, state)
+    lg.logout(sid)
+    assert ha.revoked == ["refresh-h", "refresh-i"] and lg.held(sid) == ""
+    state, _ = lg.start(login.FIRST)
+    lg.finish("j", state, state)
+    lg.release_all()  # shutdown
+    assert ha.revoked[-1] == "refresh-j"
+
+
+def test_a_first_login_refused_for_a_non_admin_is_still_revoked_at_once():
+    ha = FakeHA(admin=False)
+    lg, _ = _login(ha)
+    state, _ = lg.start(login.FIRST)
+    with pytest.raises(login.LoginError):
+        lg.finish("k", state, state)
+    assert ha.revoked == ["refresh-k"]
 
 
 def test_the_no_token_banner_links_to_setup_and_settings_offers_github(first_run):
-    port, fake, _browser, _store = first_run
-    fake.fail_create = True
+    port, _fake, _browser, _store = first_run
     _, me = _log_in(port, "d")
     page = _req(port, "GET", "/", me)[3].decode()
     assert 'href="/setup"' in page
