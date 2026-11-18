@@ -906,9 +906,12 @@ def render_settings(
     Checking and notifications. One form; each section can go back to Barkley's defaults.
     No script: plain selects and buttons."""
 
-    def row(label: str, help_: str, control: str) -> str:
+    def row(label: str, help_: str, control: str, more: str = "") -> str:
+        # `more`: the longer "How this works", folded (<details>: no script, works on phones)
+        fold = (f'<details class="more"><summary>How this works</summary>'
+                f'<p class="small">{e(more, 800)}</p></details>') if more else ""  # fmt: skip
         return (f'<div class="setrow"><div><b>{e(label)}</b><p class="muted small">{help_}</p>'
-                f'</div><div class="ctl">{control}</div></div>')  # fmt: skip
+                f'{fold}</div><div class="ctl">{control}</div></div>')  # fmt: skip
 
     def sel(name: str, current: Any, opts: list[tuple[Any, str]]) -> str:
         return (f'<select name={name} aria-label="{e(name)}">' + "".join(
@@ -945,7 +948,10 @@ def render_settings(
               "aren't shown or counted. On: show and count everything.",
               onoff("paranoid", s.paranoid, "On", "Off", False))
         + row("Powerful, no threat", "If an app has no Threat finding, what it can do won't "
-              "put its score below Very Sus (40).", onoff("floor", s.floor, "On", "Off", True))
+              "put its score below Very Sus (40).", onoff("floor", s.floor, "On", "Off", True),
+              "Only for a finished scan with no critical finding: an unfinished scan may have "
+              "missed a Threat, and a critical known bug in a library still counts in full. "
+              "Off: findings count down to 0 whatever their kind.")
         + row("Pages without a login", "When Exposure is Local only: list them under what the "
               "app can do, without counting them.",
               sel("unauth_views", "1" if s.unauth_views else "0",
@@ -985,14 +991,24 @@ def render_settings(
     check_rows += row("AI mode", "Explain only, or also read the code around a finding.",
                       sel("ai_mode", ai_mode, [("summary", "Explain only (default)"),
                                                ("deep", "Explain and read code")]))  # fmt: skip
-    check_rows += row("Parallel scans", "More is faster and needs more memory.",
+    check_rows += row("Parallel scans", "How many apps Barkley scans at the same time.",
                       sel("parallel", s.parallel,
                           [(n, f"{n}{' (default)' if n == defaults.parallel else ''}")
-                           for n in settings_mod.CHOICES["parallel"]]))  # fmt: skip
-    check_rows += row("Semgrep jobs", "Per scan. Fewer uses less memory.",
+                           for n in settings_mod.CHOICES["parallel"]]),
+                      "Each scan is a separate app. Another scan starts only while the box "
+                      "has enough free memory for it: 1.5 GB for each scan already running, on "
+                      "top of a 2 GB reserve. Otherwise it waits its turn. Two checks of the "
+                      "same app never run together. 1 is the safest on a small box.")  # fmt: skip
+    check_rows += row("Semgrep jobs", "How many files one scan's code check reads at once.",
                       sel("jobs", s.jobs,
                           [(n, f"{n}{' (default)' if n == defaults.jobs else ''}")
-                           for n in settings_mod.CHOICES["jobs"]]))  # fmt: skip
+                           for n in settings_mod.CHOICES["jobs"]]),
+                      "Inside one scan, Semgrep (the code checker) reads this many files at "
+                      "once, and GuardDog uses the same number for an integration's libraries. "
+                      "It helps apps that ship many files, such as cards split into chunks; one "
+                      "big file is still read by one worker. Barkley's passes over the code "
+                      "still run one after another. Each extra job needs its own "
+                      "memory.")  # fmt: skip
     hidden = f'<input type=hidden name=token value="{token}">'
     have = {"settings": "Set here", "option": "Set in the app's options",
             "file": "Set by GITHUB_TOKEN_FILE"}.get(token_source, "")  # fmt: skip

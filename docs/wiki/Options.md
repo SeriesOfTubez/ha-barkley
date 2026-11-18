@@ -11,7 +11,7 @@ of the options (see [Standalone](Standalone)).
 |---|---|---|
 | Exposure | Local only | Public if your Home Assistant is reachable from the internet. Raises findings about what an app accepts from outside; never lowers anything. A hint under it says whether Home Assistant has an external URL set. |
 | Paranoid mode | Off | Show and count the minor findings. See [scoring](Checks-and-scoring). |
-| Powerful, no threat | On | With no Threat finding, what an app can do won't put its score below Very Sus (40). |
+| Powerful, no threat | On | With no Threat finding, what an app can do won't put its score below Very Sus (40). Only for a finished scan with no critical finding. |
 | Pages without a login | List only | Count an app's pages that work without a login under Local only. |
 | Hidden usage reporting | Count it | Count usage data an app sends by itself, with no setting to turn it off, and doesn't tell you about. |
 | When an accepted finding changes | Notify me | A reopened finding is always reopened; this decides whether the notification says so. |
@@ -20,11 +20,12 @@ of the options (see [Standalone](Standalone)).
 | Notify | Bell only | A `notify` service that gets each result besides the bell. |
 | AI | Off | The AI Task entity for explanations. Only as good as the model you pick. |
 | AI mode | Explain only | Or also read the code around a finding. See [AI explanations](AI-explanations). |
-| Parallel scans | 2 (app), 1 (standalone) | How many scans may run at once (1 to 4), as memory allows. |
-| Semgrep jobs | 1 | Parallel Semgrep jobs inside one scan (1 to 4). Fewer uses less memory. |
+| Parallel scans | 2 (app), 1 (standalone) | How many apps are scanned at the same time (1 to 4). Another scan starts only while there's free memory for it: 1.5 GB for each scan already running, on top of a 2 GB reserve; otherwise it waits. |
+| Semgrep jobs | 1 | Inside one scan, how many files Semgrep reads at once (1 to 4); GuardDog uses the same number for an integration's libraries. Helps apps that ship many files, such as cards split into chunks, not one big file. Barkley's passes over the code still run one after another. Each extra job needs its own memory. |
 | GitHub token | none | See below. |
 
-Each section has **Reset to defaults**.
+Each section has **Reset to defaults**. Some settings have a **How this works** line that
+opens a longer explanation.
 
 ## GitHub token
 
