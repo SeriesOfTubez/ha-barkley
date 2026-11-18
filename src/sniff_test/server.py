@@ -672,8 +672,7 @@ def _token_banner(base: str, panel: Panel) -> str:
     if not src:
         return (
             '<div class="banner warn"><b>Barkley needs its own Home Assistant token</b> to '
-            f'list your apps and notify you. <a href="{base}/settings#ha-token">Create one in '
-            "Settings</a> (one more Home Assistant login), or paste one there.</div>"
+            f'list your apps and notify you. <a href="{base}/setup">Set it up</a>.</div>'
         )
     meta = ha_token.Meta.load(panel.store)
     if src == "barkley" and meta.error:
@@ -865,6 +864,33 @@ def render_index(
 
 
 WIKI_GITHUB_HELP = "https://github.com/SeriesOfTubez/ha-barkley/wiki/Options#github-token"
+WIKI_HA_SETUP = (
+    "https://github.com/SeriesOfTubez/ha-barkley/wiki/Standalone#barkleys-home-assistant-token"
+)
+
+
+def github_token_url(now: datetime | None = None) -> str:
+    """(0.14.0) GitHub's new fine-grained token page, filled in (its template URL: name up
+    to 40 characters, description, expiry 1-366 days). No permission is asked for: Barkley
+    only reads public repositories. GitHub can't send the token back; the user pastes it."""
+    now = now or datetime.now(UTC)
+    q = urllib.parse.urlencode({
+        "name": f"Barkley {now:%Y-%m-%d}",
+        "description": "Barkley: reads public repositories for its scans (a higher rate limit)",
+        "expires_in": "366",
+    })  # fmt: skip
+    return f"https://github.com/settings/personal-access-tokens/new?{q}"
+
+
+def github_create_link(now: datetime | None = None) -> str:
+    return (f'<a class="button" href="{e(github_token_url(now))}" target="_blank" '
+            'rel="noopener noreferrer">Create token on GitHub</a>')  # fmt: skip
+
+
+GITHUB_STEPS = (
+    "On GitHub, leave Repository access on <b>Public repositories</b>, add no permissions, "
+    "click <b>Generate token</b>, copy it and paste it here."
+)
 
 
 def ha_token_block(base: str, store: Store, period: int, token: str) -> str:
@@ -1015,6 +1041,7 @@ def render_settings(
     external: bool | None = None,
     saved: bool = False,
     bad: str = "",
+    bad_detail: str = "",
     defaults: settings_mod.Settings = settings_mod.DEFAULTS,
     ha_token_html: str = "",
 ) -> bytes:
@@ -1133,7 +1160,7 @@ def render_settings(
         "permissions: a fine-grained token with read-only access to public repositories. "
         f'<a href="{WIKI_GITHUB_HELP}" target="_blank" rel="noopener noreferrer">'
         "How to make one</a>",
-        token_ctl,
+        ("" if have else f"{github_create_link()}") + token_ctl,
     )
     if ha_token_html:
         check_rows += row("Token rotation", "How often Barkley replaces its own Home "
@@ -1150,9 +1177,10 @@ def render_settings(
         "was saved. The app's log says why.",
         "rotate": "The token couldn't be replaced; the current one keeps working. See below.",
         "nologin": "Create token needs the login (BARKLEY_URL). Paste a token instead.",
+        "create": bad_detail or "Barkley couldn't create its token. The app's log says why.",
     }  # fmt: skip
     if bad in bad_text:
-        note = f'<div class="banner warn">{e(bad_text[bad])}</div>'
+        note = f'<div class="banner warn">{e(bad_text[bad], 300)}</div>'
     if ha_token_html:
         token_row = ha_token_html + token_row
 
@@ -1246,13 +1274,111 @@ def render_account(base: str, name: str, token: str) -> str:
     )
 
 
-def render_login(message: str = "") -> bytes:
-    """The one page a standalone panel shows before the login."""
+def render_setup(
+    base: str,
+    store: Store,
+    token: str,
+    step: str,
+    *,
+    period: int = 60,
+    github_source: str = "",
+    error: str = "",
+    bad: str = "",
+    saved: bool = False,
+    now: datetime | None = None,
+) -> bytes:
+    """(0.14.0) Standalone's first run, after the login: 1. Barkley's Home Assistant token
+    (made with the login, or pasted), 2. a GitHub token (optional), then the list. No
+    script: links and plain forms."""
+    hidden = (f'<input type=hidden name=token value="{token}">'
+              "<input type=hidden name=back value=setup>")  # fmt: skip
+    src = ha_token.source()
+    if step == "github":
+        title = "2 of 2: GitHub token (optional)"
+        have = {"settings": "Barkley has a GitHub token.",
+                "option": "Barkley has a GitHub token from the app's options.",
+                "file": "Barkley has a GitHub token from GITHUB_TOKEN_FILE."}  # fmt: skip
+        have = have.get(github_source, "")
+        state = f"<p>{ui.icon('check', 14, 'ok')} {e(have)}</p>" if have else ""
+        if bad == "token":
+            state += ('<div class="banner warn">That doesn\'t look like a GitHub token, so '
+                      "nothing was saved.</div>")  # fmt: skip
+        elif saved:
+            state += f'<div class="banner">{ui.icon("check", 14, "ok")} Saved.</div>'
+        body = (
+            "<p>GitHub allows 60 requests an hour without a token, about 5 scans, and 5,000 "
+            "with one. Barkley only reads public repositories, so the token needs no "
+            f"permissions.</p>{state}"
+            + (
+                ""
+                if have
+                else f'<p>{github_create_link(now)}</p><p class="muted small">{GITHUB_STEPS}</p>'
+            )
+            + f'<form method=post action="{base}/github-token" class="setform ctl">{hidden}'
+            '<input type=password name=value autocomplete=off aria-label="GitHub token" '
+            f'placeholder="{"Replace with a new token" if have else "Paste the token"}">'
+            "<button>Save token</button></form>"
+            f'<p class="actions"><a class="button primary" href="{base}/">'
+            f"{'Done' if have else 'Skip'}</a></p>"
+        )
+    else:
+        title = "1 of 2: Home Assistant token"
+        made = ha_token.Meta.load(store)
+        if src == "barkley":
+            when = made.created[:10] or "now"
+            state = (f'<p>{ui.icon("check", 14, "ok")} Barkley has its own Home Assistant '
+                     f"token ({e(made.how or 'created')} {e(when)}). It rotates every "
+                     f"{period} days (Settings, Token rotation).</p>")  # fmt: skip
+        elif src:
+            state = (f'<p>{ui.icon("check", 14, "ok")} Barkley uses the token you set in '
+                     "its environment (HA_TOKEN_FILE or HA_TOKEN). You manage that one; "
+                     "Barkley doesn't rotate it.</p>")  # fmt: skip
+        else:
+            state = ("<p>Barkley needs its own Home Assistant token to list your apps and "
+                     "notify you.</p>")  # fmt: skip
+        if error:
+            state += f'<div class="banner warn">{e(error, 300)}</div>'
+        if bad == "hatoken":
+            state += ('<div class="banner warn">Home Assistant didn\'t accept that token as '
+                      "an administrator's, so nothing was saved.</div>")  # fmt: skip
+        elif saved:
+            state += f'<div class="banner">{ui.icon("check", 14, "ok")} Saved.</div>'
+        paste = (f'<form method=post action="{base}/ha-token" class="setform ctl">{hidden}'
+                 '<input type=password name=value autocomplete=off aria-label="Home Assistant '
+                 'token" placeholder="Paste a long-lived token"><button>Save token</button>'
+                 "</form>")  # fmt: skip
+        if not src:
+            ctl = (f'<form method=post action="{base}/ha-token/create" class="setform">'
+                   f"{hidden}<button class=primary>Create token</button></form>"
+                   f"{paste}")  # fmt: skip
+        elif src == "barkley":
+            ctl = (f'<details class="more"><summary>Use a token you made instead</summary>'
+                   f"{paste}</details>")  # fmt: skip
+        else:
+            ctl = ""
+        to = f"{base}/setup?step=github"
+        nxt = (f'<a class="button primary" href="{to}">Next</a>' if src
+               else f'<a class="button" href="{to}">Skip for now</a>')  # fmt: skip
+        body = (f"{state}{ctl}<p class=\"muted small\"><a href=\"{WIKI_HA_SETUP}\" "
+                'target="_blank" rel="noopener noreferrer">About this token</a></p>'
+                f'<p class="actions">{nxt}</p>')  # fmt: skip
+    page = (f'<div class="head"><h1>{ui.logo_img()}Set up Barkley</h1></div>'
+            f'<section class="box"><h2>{e(title)}</h2>{body}</section>')  # fmt: skip
+    return ui.page("Barkley: set up", page)
+
+
+def render_login(message: str = "", first: bool = False) -> bytes:
+    """The one page a standalone panel shows before the login. `first`: Barkley has no
+    Home Assistant token yet, so this login also makes it."""
     note = f'<p class="sev-high">{e(message, 400)}</p>' if message else ""
+    first_note = (
+        "<p><b>First time:</b> this login also makes Barkley's own Home Assistant token.</p>"
+        if first else ""
+    )  # fmt: skip
     body = (
         f'<div class="head"><h1>{ui.logo_img()}Barkley</h1></div>{note}'
         "<p>Barkley runs next to your Home Assistant, so it asks Home Assistant who you are. "
-        "Only Home Assistant administrators can use it.</p>"
+        f"Only Home Assistant administrators can use it.</p>{first_note}"
         # A link, not a form: CSP form-action 'self' would stop the redirect to HA.
         '<p><a class="button" href="/login">Log in with Home Assistant</a></p>'
         '<p class="muted">Barkley keeps no password or token of yours, only a session that '
@@ -2896,10 +3022,14 @@ class Panel:
                 if self._session() is not None:
                     return True
                 if self.command == "GET":
-                    self._send(HTTPStatus.UNAUTHORIZED, render_login())
+                    self._send(HTTPStatus.UNAUTHORIZED, render_login(first=self._first()))
                 else:
                     self._text(HTTPStatus.FORBIDDEN, "log in first")
                 return False
+
+            def _first(self) -> bool:
+                """Standalone with no Home Assistant token yet: the login makes one."""
+                return panel.standalone and not ha_token.source()
 
             def _login_routes(self, url: urllib.parse.SplitResult) -> bool:
                 """/login and the way back from HA; True when one of them answered."""
@@ -2909,9 +3039,15 @@ class Panel:
                 if url.path == "/login":
                     # The one redirect off this panel: HA's login page, built from the
                     # configured URL, a fixed path and url-encoded values (login.ha_login_url).
-                    # (0.14.0) "for=token" (Create token) only from a logged-in session.
+                    # (0.14.0) "for=token|setup" (Create token) only from a logged-in
+                    # session; the first login makes the token while there is none.
                     q = urllib.parse.parse_qs(url.query)
-                    purpose = "token" if q.get("for") == ["token"] and self._session() else ""
+                    asked = (q.get("for") or [""])[0]
+                    purpose = ""
+                    if asked in login.MAKES_TOKEN and self._session():
+                        purpose = asked
+                    elif self._first():
+                        purpose = "setup"
                     state, to = lg.start(purpose)
                     keep = lg.cookie(login.STATE_COOKIE, state, login.STATE_SECONDS)
                     self._see_other(login.ha_login_url(lg.ha_url, to), (keep,))
@@ -2919,20 +3055,30 @@ class Panel:
                 q = urllib.parse.parse_qs(url.query)
                 got = lambda k: (q.get(k) or [""])[0][:1024]  # noqa: E731
                 gone = lg.cookie(login.STATE_COOKIE, "", 0)
-                made = lg.purpose(got("state")) == "token"
+                purpose = lg.purpose(got("state"))
+                made = purpose in login.MAKES_TOKEN
                 try:
                     sid, s = lg.finish(got("code"), got("state"),
                                        login.read_cookie(self.headers.get("Cookie"),
                                                          login.STATE_COOKIE))  # fmt: skip
                 except login.LoginError as ex:
                     print(f"login refused ({self.client_address[0]}): {ex}", file=sys.stderr)
-                    self._send(HTTPStatus.FORBIDDEN, render_login(str(ex)), cookies=(gone,))
+                    self._send(HTTPStatus.FORBIDDEN, render_login(str(ex), self._first()),
+                               cookies=(gone,))  # fmt: skip
                     return True
-                did = " and created Barkley's token" if made else ""
+                did = ""
+                if made:
+                    did = (f"; {s.token_error}" if s.token_error
+                           else " and created Barkley's token")  # fmt: skip
                 print(f"login: {s.user} ({s.user_id[:8]}) logged in{did}", file=sys.stderr)
-                self._redirect("/settings?saved=1" if made else "/",
-                               (gone, lg.cookie(login.SESSION_COOKIE, sid,
-                                                login.SESSION_SECONDS)))  # fmt: skip
+                if purpose == "setup":
+                    to = "/setup" + ("?bad=create" if s.token_error else "")
+                elif made:
+                    to = "/settings?" + ("bad=create" if s.token_error else "saved=1") + "#ha-token"
+                else:
+                    to = "/"
+                self._redirect(to, (gone, lg.cookie(login.SESSION_COOKIE, sid,
+                                                    login.SESSION_SECONDS)))  # fmt: skip
                 return True
 
             def do_GET(self) -> None:
@@ -3028,6 +3174,16 @@ class Panel:
                             scans, busy, panel.token, err,
                         )  # fmt: skip
                         return self._send(200, page)
+                    if url.path == "/setup" and panel.standalone:
+                        q = urllib.parse.parse_qs(url.query)
+                        bad = (q.get("bad") or [""])[0]
+                        sess = self._session()
+                        err = sess.token_error if sess is not None and bad == "create" else ""
+                        return self._send(200, render_setup(
+                            base, panel.store, panel.token, (q.get("step") or [""])[0],
+                            period=panel.settings.token_days,
+                            github_source=settings_mod.token_source(panel.store.path),
+                            error=err, bad=bad, saved="saved" in q))  # fmt: skip
                     if url.path == "/settings":
                         q = urllib.parse.parse_qs(url.query)
                         choices, _cerr = (panel.ai_choices() if panel.entities_fn is not None
@@ -3040,6 +3196,7 @@ class Panel:
                             token_source=settings_mod.token_source(panel.store.path),
                             external=ext, saved="saved" in q,
                             bad=(q.get("bad") or [""])[0],
+                            bad_detail=(self._session() or login.Session("", "", 0)).token_error,
                             defaults=panel.start_settings,
                             ha_token_html=ha_token_block(base, panel.store,
                                                          panel.settings.token_days, panel.token)
@@ -3161,18 +3318,23 @@ class Panel:
                     panel.reset_settings(get("part"))
                     return self._redirect(f"{self._base()}/settings?saved=1")
                 if path == "/github-token":
+                    page = ("/setup?step=github&" if get("back") == "setup"
+                            else "/settings?")  # fmt: skip
                     if get("remove") == "1":
                         settings_mod.remove_token(panel.store.path, panel.option_token)
                     elif not settings_mod.set_token(panel.store.path, get("value")):
-                        return self._redirect(f"{self._base()}/settings?bad=token")
-                    return self._redirect(f"{self._base()}/settings?saved=1")
+                        return self._redirect(f"{self._base()}{page}bad=token")
+                    return self._redirect(f"{self._base()}{page}saved=1")
                 if path.startswith("/ha-token"):
                     if not panel.standalone:
                         return self._text(HTTPStatus.BAD_REQUEST, "only when running standalone")
+                    setup = get("back") == "setup"
+                    page = "/setup?" if setup else "/settings?"
                     if path == "/ha-token/create":
                         if panel.login is None:
-                            return self._redirect(f"{self._base()}/settings?bad=nologin")
-                        return self._redirect(f"{self._base()}/login?for=token")
+                            return self._redirect(f"{self._base()}{page}bad=nologin")
+                        return self._redirect(f"{self._base()}/login?for="
+                                              + ("setup" if setup else "token"))  # fmt: skip
                     if path == "/ha-token/rotate":
                         why = ha_token.rotate(panel.store, panel.settings.token_days)
                         return self._redirect(f"{self._base()}/settings?"
@@ -3182,9 +3344,9 @@ class Panel:
                             ha_token.adopt(panel.store, get("value"), "pasted")
                         except supervisor.SupervisorError as ex:
                             print(f"pasted Home Assistant token refused: {ex}", file=sys.stderr)
-                            return self._redirect(f"{self._base()}/settings?bad=hatoken")
+                            return self._redirect(f"{self._base()}{page}bad=hatoken")
                         print("Home Assistant token: pasted in the panel", file=sys.stderr)
-                        return self._redirect(f"{self._base()}/settings?saved=1")
+                        return self._redirect(f"{self._base()}{page}saved=1")
                     return self._text(HTTPStatus.NOT_FOUND, "nothing here")
                 if path == "/sniff-all-again":
                     st = panel.installed()

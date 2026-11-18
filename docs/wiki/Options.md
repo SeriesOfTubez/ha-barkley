@@ -30,10 +30,13 @@ opens a longer explanation.
 ## GitHub token
 
 Optional. Without one GitHub allows 60 requests an hour; with one, 5,000. A scan makes
-about 6 or 7. The token needs **no permissions**: on GitHub, Settings → Developer
-settings → Personal access tokens → Fine-grained tokens → Generate new token, with
-**Repository access: Public repositories** and nothing else. Paste it on Barkley's
-Settings page. Barkley keeps it in its own file next to its database (never in the
+about 6 or 7. The token needs **no permissions**. **Create token on GitHub** on the
+Settings page opens GitHub's new fine-grained token page with a name, a description and
+the longest expiry (366 days) filled in. Leave **Repository access** on **Public
+repositories**, add no permissions, click **Generate token**, and paste the token on
+Barkley's Settings page. (By hand: GitHub's Settings → Developer settings → Personal
+access tokens → Fine-grained tokens → Generate new token.) GitHub can't hand the token
+to Barkley itself, and Barkley can't renew it: make a new one before it expires. Barkley keeps it in its own file next to its database (never in the
 database) and never shows it again; **Remove** deletes it. A token in the app's
 `github_token` option still works, and one saved on the Settings page wins over it.
 

@@ -27,9 +27,7 @@ is the one used, and Barkley stores no AI key of its own.
 ## Set it up
 
 1. **A Home Assistant administrator.** Barkley needs an administrator's token, since the
-   Marketplace's list is for administrators. It's best to make a user just for Barkley
-   (Settings → People → Users, with **Administrator** on): its calls are then easy to see in
-   the logs and to revoke. You log in to Barkley as an administrator either way.
+   Marketplace's list is for administrators, and only administrators can log in to it.
 2. **The files.** Copy [`standalone/compose.yaml`](https://github.com/SeriesOfTubez/ha-barkley/blob/main/standalone/compose.yaml)
    into a new folder, then:
    ```sh
@@ -41,22 +39,30 @@ is the one used, and Barkley stores no AI key of its own.
      http, the token crosses your network unencrypted.
    - `BARKLEY_URL`: Barkley, as your browser reaches it, such as
      `http://192.168.1.20:8099`. The login and the links in notifications use it.
-4. `docker compose up -d`, open `BARKLEY_URL`, log in with Home Assistant, and on
-   Barkley's **Settings** page click **Create token** (see below).
+4. `docker compose up -d`, open `BARKLEY_URL` and log in with Home Assistant. The first
+   login also makes Barkley's Home Assistant token (see below). A short setup follows: it
+   shows the token, lets you paste your own instead, and offers an optional GitHub token
+   (Create token on GitHub, or Skip). Then you're on the list.
 
 ## Barkley's Home Assistant token
 
 Three ways, the last one wins:
 
-- **Create token** on the Settings page. Barkley sends you to Home Assistant's login once
-  more and, with that login, makes a long-lived access token named "Barkley" and the date
-  for the user who logged in (use the user you made for Barkley). The login's own tokens
-  are revoked right after, as with every login.
+- **Made with your first login**, or later with **Create token** on the Settings page
+  (one more login). With that login, Barkley makes a long-lived access token named
+  "Barkley" and the date. The login's own tokens are revoked right after, as with every
+  login.
 - **Paste** a long-lived access token you made yourself (your profile → Security →
   Long-lived access tokens) on the same row. Barkley checks that it works and is an
   administrator's before keeping it.
 - **`HA_TOKEN_FILE`** (or `HA_TOKEN`) in `compose.yaml`: a token you manage. Barkley uses
   it as it is and never rotates it.
+
+**The token belongs to the Home Assistant account it was made for**: the one that logged
+in, or whoever made the token you pasted. It lists under that account's profile →
+Security → Long-lived access tokens, where deleting it cuts Barkley off at once. Deleting
+the account deletes its tokens too, and Barkley needs the account to stay an
+administrator. If that changes, create or paste a new token on the Settings page.
 
 A token made or pasted in the panel is **rotated** by Barkley: every 60 days by default
 (Settings → Token rotation: 30, 60, 90 or 180 days), it makes a new token with the

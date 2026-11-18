@@ -3,14 +3,18 @@ pasted, and its rotation (user decisions 2026-11-17). HA_TOKEN / HA_TOKEN_FILE a
 win and are never rotated; the token file is mode 600, outside the database; a failed
 rotation keeps the old token."""
 
+import re
 import stat
+import threading
+import urllib.parse
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from test_server import get, post, token
-from test_standalone import FakeHA, _login
+from test_standalone import FakeHA, _cookie, _login, _req
 
 from sniff_test import ha_token, login, server, supervisor
+from sniff_test import settings as settings_mod
 from sniff_test.store import Store
 from sniff_test.supervisor import SupervisorError
 
@@ -168,8 +172,8 @@ def test_create_token_failure_still_revokes_the_login():
 
     lg.token_fn = boom
     state, _ = lg.start("token")
-    with pytest.raises(login.LoginError, match="Couldn't create Barkley's token"):
-        lg.finish("c", state, state)
+    _sid, session = lg.finish("c", state, state)  # the login itself still works
+    assert session.token_error == "Couldn't create Barkley's token (nope)."
     assert ha.revoked == ["refresh-c"]
 
 
@@ -220,10 +224,103 @@ def test_two_tokens_made_in_the_same_second_get_different_names():
     assert len({ha_token._name(NOW) for _ in range(20)}) > 1
 
 
-def test_the_no_token_banner_links_straight_to_the_token_row(tmp_path, monkeypatch):
+def test_the_no_token_banner_links_to_setup_and_the_row_has_its_anchor(tmp_path, monkeypatch):
     monkeypatch.setattr(ha_token, "source", lambda: "")
     panel = server.Panel(Store(tmp_path / "s.db"), lambda r, f: {}, None)
     panel.standalone = True
-    assert 'href="/b/settings#ha-token"' in server._token_banner("/b", panel)
+    assert 'href="/b/setup"' in server._token_banner("/b", panel)
     row = server.ha_token_block("/b", panel.store, 60, "t")
     assert row.startswith('<div class="setrow" id="ha-token">')
+
+
+# --- (0.14.0) the first login makes the token, then a two-step setup -----------------------
+
+
+@pytest.fixture
+def first_run(ha, monkeypatch):
+    fake, store = ha
+    monkeypatch.setenv("GITHUB_TOKEN", "x")
+    monkeypatch.delenv("GITHUB_TOKEN")  # restored after the test (set_token sets it)
+    browser = FakeHA()
+    browser.exchange = lambda code, cid: (fake.add(f"login-{code}"), f"refresh-{code}")
+    lg = login.Login("http://barkley.lan:8099", "http://ha.lan:8123", browser.exchange,
+                     browser.user, browser.revoke)  # fmt: skip
+
+    def make_token(access):
+        tok, name = ha_token.create(access, 60)
+        ha_token.adopt(store, tok, "created", name)
+
+    lg.token_fn = make_token
+    httpd = server.serve(store, lambda r, f: {}, "127.0.0.1", 0, None, login_cfg=lg)
+    httpd.panel.standalone = True
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield httpd.server_address[1], fake, browser, store
+    httpd.shutdown()
+
+
+def _log_in(port, code):
+    status, to, cookies, _ = _req(port, "GET", "/login")
+    assert status == 303 and to.startswith("http://ha.lan:8123/auth/authorize?")
+    state = _cookie(cookies, login.STATE_COOKIE)
+    q = urllib.parse.urlencode({"code": code, "state": state})
+    status, to, cookies, _ = _req(port, "GET", f"/auth/callback?{q}",
+                                  f"{login.STATE_COOKIE}={state}")  # fmt: skip
+    assert status == 303
+    return to, f"{login.SESSION_COOKIE}={_cookie(cookies, login.SESSION_COOKIE)}"
+
+
+def test_the_first_login_makes_the_token_then_setup_asks_for_github(first_run):
+    port, _fake, browser, store = first_run
+    status, _, _, page = _req(port, "GET", "/")
+    assert status == 401 and b"First time:" in page and b"separate" not in page
+    to, me = _log_in(port, "a")
+    assert to == "/setup" and ha_token.source() == "barkley"
+    assert browser.revoked == ["refresh-a"]  # the login's own token, at once
+
+    page = _req(port, "GET", "/setup", me)[3].decode()
+    assert "1 of 2" in page and "Barkley has its own Home Assistant token" in page
+    assert "/setup?step=github" in page and ">Next<" in page and "separate" not in page
+
+    page = _req(port, "GET", "/setup?step=github", me)[3].decode()
+    link = urllib.parse.urlsplit(re.search(r'href="(https://github\.com/[^"]+)"', page)[1]
+                                 .replace("&amp;", "&"))  # fmt: skip
+    q = urllib.parse.parse_qs(link.query)
+    assert link.path == "/settings/personal-access-tokens/new"
+    assert q["name"][0].startswith("Barkley 20") and len(q["name"][0]) <= 40
+    assert q["expires_in"] == ["366"] and set(q) == {"name", "description", "expires_in"}
+    assert 'rel="noopener noreferrer"' in page and ">Skip<" in page
+
+    tok = re.search(r'name=token value="([^"]+)"', page)[1]
+    gh = "github_pat_" + "a" * 82
+    status, to, _, _ = _req(port, "POST", "/github-token", me,
+                            {"token": tok, "value": gh, "back": "setup"})  # fmt: skip
+    assert (status, to) == (303, "/setup?step=github&saved=1")
+    assert settings_mod.token_source(store.path) == "settings"
+    page = _req(port, "GET", "/setup?step=github&saved=1", me)[3].decode()
+    assert "Barkley has a GitHub token." in page and ">Done<" in page
+
+    # with a token, a later login is an ordinary one and lands on the list
+    assert _log_in(port, "b")[0] == "/"
+    assert b"First time" not in _req(port, "GET", "/")[3]
+
+
+def test_a_failed_first_token_still_logs_in_and_setup_says_why(first_run):
+    port, fake, browser, _store = first_run
+    fake.fail_create = True
+    to, me = _log_in(port, "c")
+    assert to == "/setup?bad=create" and ha_token.source() == ""
+    assert browser.revoked == ["refresh-c"]
+    page = _req(port, "GET", to, me)[3].decode()
+    assert "Couldn&#x27;t create Barkley&#x27;s token" in page or "create Barkley" in page
+    assert "/ha-token/create" in page and "Skip for now" in page
+    assert "Paste a long-lived token" in page
+
+
+def test_the_no_token_banner_links_to_setup_and_settings_offers_github(first_run):
+    port, fake, _browser, _store = first_run
+    fake.fail_create = True
+    _, me = _log_in(port, "d")
+    page = _req(port, "GET", "/", me)[3].decode()
+    assert 'href="/setup"' in page
+    page = _req(port, "GET", "/settings", me)[3].decode()
+    assert "github.com/settings/personal-access-tokens/new" in page

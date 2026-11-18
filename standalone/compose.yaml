@@ -5,9 +5,9 @@
 #   mkdir -p data && sudo chown 1000:1000 data
 #   docker compose up -d
 #
-# then open BARKLEY_URL, log in with Home Assistant, and click Create token on Barkley's
-# Settings page (Barkley rotates that token itself). To give it a token you manage
-# instead, uncomment HA_TOKEN_FILE and the two `secrets` blocks below and run:
+# then open BARKLEY_URL and log in with Home Assistant: the first login also makes
+# Barkley's own Home Assistant token (Barkley rotates it itself). To give it a token you
+# manage instead, uncomment HA_TOKEN_FILE and the two `secrets` blocks below and run:
 #   printf '%s' 'PASTE-THE-TOKEN' > ha_token && chmod 600 ha_token
 #
 # It is the same signed image the app store installs. The image's own start (s6 and

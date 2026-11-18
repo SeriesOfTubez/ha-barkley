@@ -61,6 +61,9 @@ class Session:
     user: str  # display name
     user_id: str
     expires: float
+    # (0.14.0) why this login couldn't make Barkley's token, if it was asked to: shown on
+    # the setup or Settings page; the login itself still succeeds
+    token_error: str = ""
 
 
 def base_url(url: str, what: str) -> str:
@@ -68,6 +71,10 @@ def base_url(url: str, what: str) -> str:
     scheme, host, port = supervisor.parse_ha_url(url, what)
     default = 443 if scheme == "https" else 80
     return f"{scheme}://{host}" + ("" if port == default else f":{port}")
+
+
+# Login purposes that also make Barkley's own Home Assistant token
+MAKES_TOKEN = ("token", "setup")
 
 
 @dataclass
@@ -106,15 +113,16 @@ class Login:
         self._sessions = {k: v for k, v in self._sessions.items() if v.expires > now}
 
     def start(self, purpose: str = "") -> tuple[str, str]:
-        """(state, the URL of HA's login page). `purpose` "token": this login also makes
-        Barkley's own token (the caller checks that a session asked for it)."""
+        """(state, the URL of HA's login page). `purpose` "token" (from Settings) or
+        "setup" (the first login, while Barkley has no token): this login also makes
+        Barkley's own token. The caller decides when a purpose is allowed."""
         state = secrets.token_urlsafe(24)
         now = self.now_fn()
         with self._lock:
             self._prune(now)
             if len(self._states) >= _MAX_STATES:  # oldest first out
                 self._states.pop(min(self._states, key=lambda k: self._states[k][0]))
-            self._states[state] = (now + STATE_SECONDS, "token" if purpose == "token" else "")
+            self._states[state] = (now + STATE_SECONDS, purpose if purpose in MAKES_TOKEN else "")
         query = urllib.parse.urlencode(
             {
                 "response_type": "code",
@@ -126,7 +134,8 @@ class Login:
         return state, f"{self.ha_url}/auth/authorize?{query}"
 
     def purpose(self, state: str) -> str:
-        """What a login in progress was started for ("token" or ""), without using it up."""
+        """What a login in progress was started for ("token", "setup" or ""), without
+        using it up."""
         with self._lock:
             return self._states.get(state, (0.0, ""))[1]
 
@@ -165,15 +174,18 @@ class Login:
                     f"{user.name or 'That user'} isn't a Home Assistant administrator. Barkley "
                     "starts scans and changes notifications, so it's for administrators only."
                 )
-            if purpose == "token" and self.token_fn is not None:
+            token_error = ""
+            if purpose in MAKES_TOKEN and self.token_fn is not None:
                 try:
                     self.token_fn(access)
                 except SupervisorError as ex:
-                    raise LoginError(f"Couldn't create Barkley's token ({ex}).") from ex
+                    token_error = f"Couldn't create Barkley's token ({ex})."
         finally:
             self.revoke_fn(refresh)
         sid = secrets.token_urlsafe(32)
-        session = Session(user.name or "administrator", user.id, now + SESSION_SECONDS)
+        session = Session(
+            user.name or "administrator", user.id, now + SESSION_SECONDS, token_error[:300]
+        )
         with self._lock:
             if len(self._sessions) >= _MAX_SESSIONS:
                 self._sessions.pop(min(self._sessions, key=lambda k: self._sessions[k].expires))

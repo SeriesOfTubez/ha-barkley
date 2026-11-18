@@ -111,8 +111,8 @@ _ALLOWED_COMMANDS = frozenset(
 # HA_TOKEN and HA_TOKEN_FILE win over it
 OWN_TOKEN_FILE: Path | None = None
 NOT_SET_UP = (
-    "Barkley has no Home Assistant token yet: log in and use Create token on the Settings "
-    "page, or set HA_TOKEN_FILE"
+    "Barkley has no Home Assistant token yet: log in to Barkley (the first login makes "
+    "one), paste one on its Settings page, or set HA_TOKEN_FILE"
 )
 _MAX_MESSAGE = 64 * 1024 * 1024  # what the Supervisor accepts from Core
 _TIMEOUT = 20
