@@ -2583,8 +2583,9 @@ class Panel:
         self.worker.exposure = new.exposure
         self.worker.parallel = new.parallel
         if self.watcher is not None:
-            if raw.get("auto_scan") in ("on", "off"):
-                self.watcher.set_enabled(raw["auto_scan"] == "on")
+            on = raw.get("auto_scan")
+            if on in ("on", "off") and (on == "on") != self.watcher.enabled:
+                self.watcher.set_enabled(on == "on")
             target = raw.get("notify_target")
             if target is not None and target != self.watcher.notify_target:
                 self.watcher.set_target(target[:100])
