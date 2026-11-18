@@ -19,14 +19,14 @@ import hashlib
 import json
 import sqlite3
 import zlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sniff_test import trust
+from sniff_test import review, trust
 
 STORE_VERSION = 1
 _INPUTS_KEY = "_recheck_inputs"  # recheck.KEY (not imported: the store stays a leaf)
@@ -120,6 +120,19 @@ CREATE TABLE IF NOT EXISTS advisory_checks (  -- (0.10.0) the last advisory re-c
     checked_at TEXT NOT NULL,
     result     TEXT NOT NULL  -- same | changed:<new scan id> | failed: <why>
 );
+CREATE TABLE IF NOT EXISTS reviews (  -- (0.14.0) findings the user accepted, per app
+    repo        TEXT NOT NULL,     -- lowercase owner/name
+    fingerprint TEXT NOT NULL,     -- report/fingerprint.py: same code, same hash
+    rule_id     TEXT NOT NULL,
+    file        TEXT NOT NULL,
+    note        TEXT NOT NULL,     -- the user's own text
+    who         TEXT NOT NULL,     -- HA display name of who accepted it
+    at          TEXT NOT NULL,     -- ISO 8601 UTC
+    scan_id     INTEGER NOT NULL,  -- the scan it was accepted in (no FK: kept after age-out)
+    finding_id  TEXT NOT NULL,
+    ref         TEXT NOT NULL,
+    PRIMARY KEY (repo, fingerprint)
+);
 CREATE TABLE IF NOT EXISTS sources (  -- (0.11.0) an app version's own Python, once per content
     hash    TEXT PRIMARY KEY,   -- sha256 of the JSON before compression
     data    BLOB NOT NULL,      -- zlib(JSON), sources.capture(); text from the scan, never run
@@ -197,6 +210,12 @@ class Store:
         # The panel turns this on: rows then show the score with the user's trusted
         # addresses set aside (trust.py). Off for the CLI: its scores are the scanner's.
         self.trust_overlay = False
+        # (0.14.0) The panel sets this instead: each row as the panel shows it (Barkley's
+        # score with the user's scoring settings, the reviewed score once there is one).
+        self.overlay: Callable[[ScanRow], ScanRow] | None = None
+        # Bumped by every write a shown score can depend on (settings, trusted addresses,
+        # reviews), so the panel can keep what it read until one of them changes.
+        self.generation = 0
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
@@ -436,6 +455,7 @@ class Store:
     def set_setting(self, key: str, value: str) -> None:
         with self._connect() as db:
             db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        self.generation += 1
 
     # --- trusted addresses (trust.py) ----------------------------------------------
 
@@ -449,6 +469,8 @@ class Store:
         """With `trust_overlay` on: each row's score as the panel shows it. Uses the
         indexes only (no report is parsed): a scan changes only when it has findings
         with addresses and the user trusts every address of at least one of them."""
+        if self.overlay is not None:
+            return [self.overlay(r) for r in rows]
         if not self.trust_overlay or not rows:
             return rows
         trusted = self.trusted()
@@ -480,6 +502,73 @@ class Store:
                 r2 = trust.rescore(kept, row.complete)
                 out[sid] = replace(row, score=r2.score, verdict=r2.verdict_key, own_score=row.score)
         return [out[r.id] for r in rows]
+
+    # --- reviews (0.14.0) ---------------------------------------------------------------
+
+    def all_accepts(self) -> dict[str, list[review.Accept]]:
+        """Every app's acceptances in one read, by lowercase owner/name."""
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT repo, fingerprint, rule_id, file, note, who, at, scan_id, finding_id, "
+                "ref FROM reviews ORDER BY at"
+            ).fetchall()
+        out: dict[str, list[review.Accept]] = {}
+        for r in rows:
+            out.setdefault(r["repo"], []).append(
+                review.Accept(r["repo"], r["fingerprint"], r["rule_id"], r["note"], r["who"],
+                              r["at"], r["scan_id"], r["finding_id"], r["ref"], r["file"])
+            )  # fmt: skip
+        return out
+
+    def accepts(self, repo: str | None) -> list[review.Accept]:
+        if not repo:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT repo, fingerprint, rule_id, file, note, who, at, scan_id, finding_id, "
+                "ref FROM reviews WHERE repo = ? ORDER BY at",
+                (repo.lower(),),
+            ).fetchall()
+        return [review.Accept(r["repo"], r["fingerprint"], r["rule_id"], r["note"], r["who"],
+                              r["at"], r["scan_id"], r["finding_id"], r["ref"], r["file"])
+                for r in rows]  # fmt: skip
+
+    def accept(self, items: list[review.Accept], replaces: list[str] | None = None) -> None:
+        """Save acceptances; `replaces`: fingerprints of the old acceptances whose code
+        changed (a reopened finding accepted again), dropped in the same transaction."""
+        with self._connect() as db:
+            for fp in replaces or []:
+                if items:
+                    db.execute("DELETE FROM reviews WHERE repo = ? AND fingerprint = ?",
+                               (items[0].repo, fp))  # fmt: skip
+            db.executemany(
+                "INSERT OR REPLACE INTO reviews (repo, fingerprint, rule_id, file, note, who, "
+                "at, scan_id, finding_id, ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        a.repo,
+                        a.fingerprint,
+                        a.rule_id,
+                        a.file,
+                        a.note,
+                        a.who,
+                        a.at,
+                        a.scan_id,
+                        a.finding_id,
+                        a.ref,
+                    )
+                    for a in items
+                ],
+            )
+        self.generation += 1
+
+    def unaccept(self, repo: str, fingerprints: list[str]) -> None:
+        with self._connect() as db:
+            db.executemany(
+                "DELETE FROM reviews WHERE repo = ? AND fingerprint = ?",
+                [(repo.lower(), fp) for fp in fingerprints],
+            )
+        self.generation += 1
 
     def save_explanation(self, scan_id: int, entity_id: str, data: dict[str, Any]) -> None:
         with self._connect() as db:

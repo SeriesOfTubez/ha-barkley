@@ -1,0 +1,36 @@
+# Labels for the app's Configuration tab. Since 0.14.0 these are starting values:
+# Barkley's own Settings page (in its panel) wins once you save it there.
+configuration:
+  exposure:
+    name: Exposure
+    description: >-
+      Starting value. Change it on Barkley's Settings page, which wins once saved.
+  jobs:
+    name: Semgrep jobs
+    description: >-
+      Starting value. Change it on Barkley's Settings page, which wins once saved.
+  parallel_scans:
+    name: Parallel scans
+    description: >-
+      Starting value. Change it on Barkley's Settings page, which wins once saved.
+  github_token:
+    name: GitHub token
+    description: >-
+      Optional; needs no permissions. A token saved on Barkley's Settings page wins over
+      this one.
+  ai_entity:
+    name: AI Task entity
+    description: >-
+      Starting value. Change it on Barkley's Settings page, which wins once saved.
+  ai_mode:
+    name: AI mode
+    description: >-
+      Starting value. Change it on Barkley's Settings page, which wins once saved.
+  auto_scan:
+    name: Auto-sniff
+    description: >-
+      Starting value. Change it on Barkley's Settings page, which wins once saved.
+  notify_target:
+    name: Notify target
+    description: >-
+      Starting value. Change it on Barkley's Settings page, which wins once saved.

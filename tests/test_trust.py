@@ -177,7 +177,10 @@ def test_trust_button_flow_in_the_panel(panel):  # noqa: F811
     assert status == 303 and headers["Location"].endswith(f"/scan/{sid}")
     assert store.trusted().scope(REPO, "api.together.xyz") == "app"
     _, _, page = get(f"{base}/scan/{sid}")
-    assert "75 with 1 address you trust." in page
+    # (0.14.0) a trusted address counts as reviewed: the ring shows 75, the split pill
+    # Barkley's own 50 and what the review added
+    assert 'aria-label="Score 75 of 100"' in page and ">Reviewed<" in page
+    assert "Barkley's score 50" in page.replace("&#x27;", "'") and "+25 <small>" in page
     assert "Barkley's own score for this scan: 50." in page.replace("&#x27;", "'")
     assert "Findings about addresses you trust (1)" in page and "You trust this address" in page
     assert "What we found (1)" in page and "Stop trusting api.together.xyz" in page

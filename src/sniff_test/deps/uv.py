@@ -7,6 +7,7 @@ import subprocess
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from sniff_test.analyzers import _proc
 from sniff_test.deps.reqs import normalize
@@ -79,7 +80,10 @@ def compile_lock(
     # 3.14.10 fetched during the first integration scan, since `tool_env` drops the
     # image's UV_PYTHON_DOWNLOADS). The image's own Python resolves the same lock.
     env = _proc.tool_env(UV_NO_PROGRESS="1", UV_PYTHON_DOWNLOADS="never")
-    return _proc.run(cmd, run_dir, TIMEOUT, env)
+    # uv parses package metadata from the index; sandboxed, it writes only its cache and
+    # the workspace, and reads HA's constraints.
+    return _proc.run(cmd, run_dir, TIMEOUT, env, tool="uv", write=(cache_dir,),
+                     read=(constraints,))  # fmt: skip
 
 
 @dataclass
@@ -89,6 +93,8 @@ class Artifact:
     sha256: str | None
     kind: str  # "wheel" | "sdist"
     local: Path | None = None  # extracted directory, once fetched
+    # (0.14.0) why the last fetch failed (fetch.retry.Failure.as_dict()), else None
+    failure: dict[str, Any] | None = None
 
 
 def parse_pylock(path: Path) -> list[tuple[str, str, list[Artifact]]]:

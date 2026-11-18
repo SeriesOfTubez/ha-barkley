@@ -3,7 +3,8 @@
 ## What you need
 
 - Home Assistant OS or Supervised (Barkley is an app, so it needs the Supervisor), on
-  amd64 or aarch64.
+  amd64 or aarch64. With Home Assistant Container or Core, or to run Barkley on another
+  machine than a small box, see [Standalone (no Supervisor)](Standalone).
 - About 200 MB for the download, and 0.5 to 1 GB of free memory while a scan runs. See
   [Diagnostics and troubleshooting](Diagnostics-and-troubleshooting) for the memory guard.
 
@@ -21,8 +22,8 @@ the first start; the [options](Options) all have defaults.
 - Barkley lists what you have installed through the Marketplace. One button sniffs
   everything that hasn't been sniffed yet. See [The list](The-list).
 - Auto-sniff is on by default: installs, updates and offered updates are sniffed and you
-  get a notification. To also get them on your phone, pick a notify service in the
-  Auto-sniff box. See [Auto-sniff and notifications](Auto-sniff-and-notifications).
+  get a notification. To also get them on your phone, pick a notify service on
+  the Settings page. See [Auto-sniff and notifications](Auto-sniff-and-notifications).
 - A GitHub token is optional but useful when you sniff many apps in a row. See
   [Options](Options).
 

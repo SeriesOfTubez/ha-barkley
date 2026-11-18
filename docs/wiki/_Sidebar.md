@@ -1,6 +1,7 @@
 **[Barkley](Home)**
 
 - [Installing and updating](Installing-and-updating)
+- [Standalone (no Supervisor)](Standalone)
 - [The list](The-list)
 - [An app's page](An-apps-page)
 - [Checks and scoring](Checks-and-scoring)

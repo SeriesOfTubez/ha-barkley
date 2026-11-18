@@ -46,10 +46,47 @@ rules:
     languages: [python]
     severity: ERROR
     message: >-
-      Uses Home Assistant auth internals to list users, read or mint tokens, or
-      create accounts. Normal integrations at most look up the calling user.
+      Uses Home Assistant auth internals to read, mint or revoke login tokens, or
+      reaches into the auth store and providers. Normal integrations at most look up
+      the calling user.
     metadata:
-      sniff: {title: Touches auth tokens / users, severity: high, category: sensitive_access}
+      sniff: {title: Touches auth tokens, severity: high, category: sensitive_access}
+    pattern-either:
+      - patterns:
+          - pattern: $HASS.auth.$ATTR
+          - metavariable-regex:
+              metavariable: $HASS
+              regex: (?i)(.*\.)?_?hass$
+          - metavariable-regex:
+              metavariable: $ATTR
+              regex: ^(_store|_providers|auth_providers|async_get_refresh_tokens?|async_get_refresh_token_by_token|async_create_refresh_token|async_create_access_token|async_validate_access_token|async_remove_refresh_token)$
+      # A user's tokens, reached through the user list (ha-auth-list-users alone is
+      # medium): only in a function that uses hass.auth, and never a call (Semgrep
+      # resolves an imported `refresh_tokens(...)` helper to `<module>.refresh_tokens`).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  def $F(...):
+                    ...
+                    $HASS.auth.$GET
+                    ...
+              - pattern-inside: |
+                  async def $F(...):
+                    ...
+                    $HASS.auth.$GET
+                    ...
+          - pattern: $USER.refresh_tokens
+          - pattern-not-inside: $X.refresh_tokens(...)
+
+  # (0.14.0) Split from ha-auth-internals: changing who can log in is high, listing
+  # users is medium (a real integration lists users to fill a picker in its panel).
+  - id: ha-auth-change-users
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Creates, changes, enables, disables or removes Home Assistant user accounts.
+    metadata:
+      sniff: {title: Changes user accounts, severity: high, category: sensitive_access}
     patterns:
       - pattern: $HASS.auth.$ATTR
       - metavariable-regex:
@@ -57,15 +94,32 @@ rules:
           regex: (?i)(.*\.)?_?hass$
       - metavariable-regex:
           metavariable: $ATTR
-          regex: ^(_store|_providers|auth_providers|async_get_users|async_get_refresh_tokens?|async_get_refresh_token_by_token|async_create_refresh_token|async_create_access_token|async_validate_access_token|async_create_user|async_create_system_user|async_get_or_create_user|async_link_user|async_update_user|async_remove_refresh_token|async_enable_user|async_activate_user)$
+          regex: ^(async_create_user|async_create_system_user|async_get_or_create_user|async_link_user|async_update_user|async_enable_user|async_activate_user|async_deactivate_user|async_remove_user)$
 
+  - id: ha-auth-list-users
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Lists every Home Assistant user account (names, ids, whether they are admins).
+    metadata:
+      sniff: {title: Lists user accounts, severity: medium, category: sensitive_access}
+    patterns:
+      - pattern: $HASS.auth.async_get_users
+      - metavariable-regex:
+          metavariable: $HASS
+          regex: (?i)(.*\.)?_?hass$
+
+  # Whose entries these are is decided after Semgrep, by parsing the file
+  # (analyzers/semgrep.py, _entry_filter): async_entries(DOMAIN, ...) with any arguments
+  # or the manifest domain as a literal is the integration's own, and a foreign entry
+  # read only for a non-secret field (host, mac, name, unique_id) is no finding.
   - id: ha-foreign-entry-data
     languages: [python]
     severity: ERROR
     message: >-
-      Reads credential data (entry.data / entry.options) from config entries that
-      are not this integration's own. That is where other integrations keep their
-      passwords and API tokens.
+      Reads credential data (entry.data) from config entries that are not this
+      integration's own. That is where other integrations keep their passwords and
+      API tokens.
     metadata:
       sniff: {title: Reads other integrations' credentials, severity: high, category: sensitive_access}
     patterns:
@@ -75,13 +129,26 @@ rules:
                 ...
           - pattern-inside: '[... for $E in $HASS.config_entries.async_entries(...)]'
           - pattern-inside: '{... for $E in $HASS.config_entries.async_entries(...)}'
-      - pattern-not-inside: |
-          for $E in $HASS.config_entries.async_entries(DOMAIN):
-            ...
-      - pattern-not-inside: '[... for $E in $HASS.config_entries.async_entries(DOMAIN)]'
+      - pattern: $E.data
+
+  # (0.14.0) Options hold an integration's settings (filters, entity lists), not its
+  # passwords: medium. Same ownership filter as ha-foreign-entry-data.
+  - id: ha-foreign-entry-options
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Reads the settings (entry.options) of config entries that are not this
+      integration's own.
+    metadata:
+      sniff: {title: Reads other integrations' settings, severity: medium, category: sensitive_access}
+    patterns:
       - pattern-either:
-          - pattern: $E.data
-          - pattern: $E.options
+          - pattern-inside: |
+              for $E in $HASS.config_entries.async_entries(...):
+                ...
+          - pattern-inside: '[... for $E in $HASS.config_entries.async_entries(...)]'
+          - pattern-inside: '{... for $E in $HASS.config_entries.async_entries(...)}'
+      - pattern: $E.options
 
   - id: ha-bulk-location-read
     languages: [python]

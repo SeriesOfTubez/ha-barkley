@@ -21,6 +21,8 @@ installs it.
 
 **Getting started**
 - [Installing and updating](Installing-and-updating)
+- [Standalone (no Supervisor)](Standalone): Home Assistant Container or Core, or Barkley on
+  another machine
 - [The list](The-list): what you see when you open Barkley
 - [An app's page](An-apps-page): the score, the findings and everything under them
 

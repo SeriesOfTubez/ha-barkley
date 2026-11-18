@@ -45,6 +45,9 @@ class Tag(StrEnum):
     INBOUND = "inbound"  # weighted up under --exposure public
     POSSIBLE = "possible"  # heuristic correlation, not a proven path
     MALWARE = "malware"  # known-malicious package / payload pattern
+    # (0.14.0) in a test file no runtime module imports: HA never loads it. A label only;
+    # the finding stays and scores as before (hostile code can hide in tests too).
+    TEST_CODE = "test-code"
 
 
 # A shipped code file no Semgrep rule could read at all. Scoring caps the score while one
@@ -168,6 +171,8 @@ class Finding:
     # address behind the finding could be read with certainty. The panel lets the user
     # mark these addresses trusted; a finding without them can never be switched off.
     addresses: tuple[str, ...] = ()
+    # (0.14.0) report/fingerprint.py: stays the same while the flagged code does
+    fingerprint: str | None = None
 
     @property
     def id(self) -> str:
@@ -234,6 +239,9 @@ class AnalyzerResult:
     detail: str = ""
     tool_version: str | None = None
     facts: list[Fact] = field(default_factory=list)
+    # (0.14.0) files that couldn't be fetched: fetch.retry.Failure.as_dict() each, shown
+    # in plain English (retry.plain) instead of a bare "incomplete"
+    problems: list[dict[str, Any]] = field(default_factory=list)
 
 
 class TargetKind(StrEnum):
@@ -261,3 +269,11 @@ class Target:
     # root-relative path -> sha256 of the bytes as installed, for files our analyzers
     # rewrote in place (semgrep.normalize_js). Byte comparisons must use these.
     pristine_sha256: dict[str, str] = field(default_factory=dict)
+    # (0.14.0) requirements the code installs itself from a fixed list (a literal
+    # `async_process_requirements(hass, DOMAIN, ["x==1"])`): resolved and checked with
+    # the manifest's (analyzers/py_precision.pip_listed)
+    runtime_requirements: list[str] = field(default_factory=list)
+    # (0.14.0) facts for the app's page, never scored: the repo's stars, and the download
+    # count of the release file HACS installs (None: installed from the source)
+    stars: int | None = None
+    downloads: int | None = None

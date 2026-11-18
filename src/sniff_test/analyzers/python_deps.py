@@ -19,7 +19,9 @@ from __future__ import annotations
 import email.parser
 import json
 import re
+import shutil
 import subprocess
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,7 +29,7 @@ from sniff_test.analyzers import _proc
 from sniff_test.deps import reqs, uv
 from sniff_test.deps.ha_env import HAEnv
 from sniff_test.deps.uv import Artifact, parse_pylock
-from sniff_test.fetch import http
+from sniff_test.fetch import http, retry
 from sniff_test.models import (
     AnalyzerResult,
     AnalyzerState,
@@ -92,7 +94,7 @@ def manifest_requirements(target: Target) -> list[object] | None:
 
 def uv_version() -> str | None:
     exe = uv.exe()
-    v = _proc.version([exe, "--version"]) if exe else None
+    v = _proc.version([exe, "--version"], tool="uv") if exe else None
     return v.split()[1] if v and len(v.split()) > 1 else v  # "uv 0.13.7 (Homebrew ...)"
 
 
@@ -142,14 +144,23 @@ def fetch_artifact(art: Artifact, work: Path) -> Path | None:
     key = (art.sha256 or re.sub(r"[^A-Za-z0-9]", "_", art.filename))[:32]
     archive = dl / f"{key}-{re.sub(r'[^A-Za-z0-9._-]', '_', art.filename)}"
     dest = dl / f"{key}.d"
+    host = urllib.parse.urlsplit(art.url).hostname or "?"
     try:
         if not archive.exists():
             http.download(art.url, archive, art.sha256)
         if not dest.exists():
             dest.mkdir()
             extract(archive, dest)
-    except (http.HttpError, UnsafeArchiveError, OSError):
+    except http.HttpError as e:
+        f = e.failure or retry.Failure(art.filename, host, 1, 0.0, e.kind or "other", str(e))
+        art.failure = f.as_dict()
         return None
+    except (UnsafeArchiveError, OSError) as e:
+        shutil.rmtree(dest, ignore_errors=True)  # a half-unpacked folder is never reused
+        kind = "unsafe" if isinstance(e, UnsafeArchiveError) else "other"
+        art.failure = retry.Failure(art.filename, host, 1, 0.0, kind, str(e)[:300]).as_dict()
+        return None
+    art.failure = None
     art.local = dest
     return dest
 
@@ -222,8 +233,9 @@ def _culprit_finding(c: _Culprit, plats: set[str]) -> Finding:
 def run(target: Target, work: Path, env: HAEnv | None) -> tuple[AnalyzerResult, Resolution | None]:
     if target.kind is not TargetKind.INTEGRATION:
         return AnalyzerResult(NAME, AnalyzerState.NOT_APPLICABLE), None
-    raw = manifest_requirements(target)
-    parsed = [reqs.parse(r) for r in raw or []]
+    raw = list(manifest_requirements(target) or [])
+    raw += [r for r in target.runtime_requirements if r not in raw]  # (0.14.0) see Target
+    parsed = [reqs.parse(r) for r in raw]
     resolution = Resolution(requirements=parsed)
     plain = [r for r in parsed if r.kind is reqs.ReqKind.PLAIN]
     if not plain:

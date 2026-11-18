@@ -26,27 +26,48 @@ def raw_storage(hass):
 
 
 async def auth_internals(hass, call):
-    # ruleid: ha-auth-internals
+    # ruleid: ha-auth-list-users
     users = await hass.auth.async_get_users()
     # ruleid: ha-auth-internals
     token = await self.hass.auth.async_create_refresh_token(users[0])
+    # ruleid: ha-auth-internals
+    tokens = [rt.token for u in users for rt in u.refresh_tokens.values()]
     # ok: ha-auth-internals
     caller = await hass.auth.async_get_user(call.context.user_id)
-    return token, caller
+    return token, caller, tokens
+
+
+async def vendor_tokens(session, data):
+    from .api import refresh_tokens
+
+    # ok: ha-auth-internals
+    fresh = await refresh_tokens(session, client_id=data["client_id"])
+    # ok: ha-auth-internals
+    return fresh.refresh_tokens
+
+
+async def auth_users(hass, user):
+    # ruleid: ha-auth-change-users
+    await hass.auth.async_update_user(user, is_active=False)
+    # ruleid: ha-auth-change-users
+    await hass.auth.async_create_user("intruder")
+    # ruleid: ha-auth-change-users
+    await self._hass.auth.async_remove_user(user)
 
 
 def foreign_entries(hass):
     for entry in hass.config_entries.async_entries():
         # ruleid: ha-foreign-entry-data
         print(entry.data)
-    # ruleid: ha-foreign-entry-data
+    # ruleid: ha-foreign-entry-options
     leaked = [e.options for e in hass.config_entries.async_entries("mqtt")]
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        # ok: ha-foreign-entry-data
-        print(entry.data)
+    # ruleid: ha-foreign-entry-data
+    hosts = {e.data["host"] for e in hass.config_entries.async_entries("tplink")}
     # ok: ha-foreign-entry-data
     ids = [e.entry_id for e in hass.config_entries.async_entries()]
-    return leaked, ids
+    # Ownership and non-secret fields are decided after Semgrep (py_precision), so the
+    # rule itself still matches these: see tests/test_precision.py.
+    return leaked, ids, hosts
 
 
 def location(hass):

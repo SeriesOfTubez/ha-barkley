@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from sniff_test import kinds
 from sniff_test.models import RULE_FILE_NOT_CHECKED, Finding, Severity, Tag
 
 BASE_POINTS: dict[Severity, float] = {
@@ -30,6 +31,43 @@ CAP_UNCHECKED = 89
 class Exposure(StrEnum):
     LOCAL = "local"
     PUBLIC = "public"
+
+
+FLOOR_NO_THREAT = 40  # Very Sus: what an app can do, alone, can't push it lower
+
+
+@dataclass(frozen=True)
+class Policy:
+    """(0.14.0 part 3) The scoring choices a user can change on the Settings page. The
+    defaults are Barkley's own score: the scanner stores it, and the panel computes it
+    again (never stored) only when a setting differs.
+
+    - `paranoid`: score the minor findings (kinds.MINOR). Off: they're not counted (the
+      panel leaves them out unless asked).
+    - `floor`: with no Threat finding (and no critical one), the score can't go below
+      Very Sus. Only for a complete scan: an unfinished one may have missed a Threat.
+    - `unauth_views`: count a page without a login (ha-unauth-view) under local
+      exposure. Public exposure always counts it, raised a level.
+    - `shadow_telemetry`: count usage reporting sent with no option and no mention.
+    """
+
+    paranoid: bool = False
+    floor: bool = True
+    unauth_views: bool = False
+    shadow_telemetry: bool = True
+    exposure: str = Exposure.LOCAL
+
+    def counts(self, rule_id: str) -> bool:
+        if rule_id in kinds.MINOR:
+            return self.paranoid
+        if rule_id == "ha-unauth-view":
+            return self.unauth_views or self.exposure == Exposure.PUBLIC
+        if rule_id == "telemetry-shadow":
+            return self.shadow_telemetry
+        return True
+
+
+DEFAULT = Policy()
 
 
 @dataclass(frozen=True)
@@ -89,7 +127,11 @@ def apply_exposure(findings: list[Finding], exposure: Exposure) -> list[Finding]
     return out
 
 
-def score(findings: list[Finding], complete: bool) -> ScoreResult:
+def score(findings: list[Finding], complete: bool, policy: Policy | None = None) -> ScoreResult:
+    """`policy` None is Barkley's own: the defaults, local exposure."""
+    policy = policy or DEFAULT
+    every = findings
+    findings = [f for f in findings if policy.counts(f.rule_id)]
     by_rule: dict[str, list[Finding]] = defaultdict(list)
     for f in sorted(findings, key=lambda f: (-f.severity, f.id)):
         by_rule[f.rule_id].append(f)
@@ -123,6 +165,15 @@ def score(findings: list[Finding], complete: bool) -> ScoreResult:
         if applies and final > cap:
             final = cap
             caps.append(f"{reason}: capped at {cap}")
+    if (
+        policy.floor
+        and complete
+        and final < FLOOR_NO_THREAT
+        and Severity.CRITICAL not in severities
+        and not any(kinds.is_threat(f.rule_id) for f in every)
+    ):
+        final = FLOOR_NO_THREAT
+        caps.append(f"no Threat finding: what it can do alone stops at {FLOOR_NO_THREAT}")
     return ScoreResult(
         score=final,
         verdict=verdict_for(final),

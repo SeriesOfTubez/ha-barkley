@@ -102,3 +102,37 @@ def test_github_budget_reserves_what_running_jobs_need(tmp_path):
     w.wait()
     assert slept  # one of them waited for GitHub instead of running
     assert all(j.state == "done" for j in w.jobs)
+
+
+# --- (0.14.0) Memory for scans: Auto with a container's own limit, or a fixed amount ----------
+
+
+def _limited(avail_gb, limit_gb):
+    gib = memory.GIB
+    return lambda: memory.Memory("ok", int(avail_gb * gib), int(limit_gb * gib), limited=True)
+
+
+def _room(tmp_path, mem_fn, running, gb=0):
+    w = server.Worker(Store(tmp_path / "s.db"), Slow(), memory_fn=mem_fn, parallel=4)
+    w.memory_gb_fn = lambda: gb
+    w._running = [object()] * running
+    return w._room_for_another()
+
+
+def test_auto_keeps_a_small_reserve_inside_a_containers_own_limit(tmp_path):
+    # a 3 GB container with 2.6 GB free: 0.5 + 1.5 for the running scan fits a second
+    assert _room(tmp_path, _limited(2.6, 3), 1) == ""
+    # the same free memory on a machine Home Assistant shares: 2 + 1.5 doesn't
+    why = _room(tmp_path, _mem(2.6), 1)
+    assert why.startswith("waiting for memory: 2.6 GB free, 3.5 GB needed beside the 1")
+
+
+def test_a_fixed_amount_runs_as_many_as_fit_and_never_past_the_container(tmp_path):
+    assert _room(tmp_path, _mem(20), 1, gb=4) == ""  # 4 GB: two scans
+    why = _room(tmp_path, _mem(20), 2, gb=4)
+    assert why.startswith("waiting for a running scan to finish: 4 GB") and "fits 2" in why
+    assert _room(tmp_path, _mem(20), 7, gb=12) == ""  # a big machine: eight at 1.5 GB
+    # 8 GB chosen, but the container allows 3: two at most
+    assert "fits 2" in _room(tmp_path, _limited(2.9, 3), 2, gb=8)
+    # and never under 1 GB really free after the running scans' growth
+    assert _room(tmp_path, _mem(2.0), 1, gb=8).startswith("waiting for memory")

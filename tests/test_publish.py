@@ -289,3 +289,24 @@ def test_sample_owner_cannot_be_a_real_github_account():
     ).read_text()
     assert "@not_a_hacker" in manifest
     assert "github.com/not_a_hacker/" in manifest
+
+
+def _version(text: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in text.split("."))
+
+
+def test_barkleys_python_is_not_older_than_home_assistants():
+    """(0.14.0) Barkley parses apps written for HA's Python: on an older one, newer syntax
+    (3.14's t-strings) doesn't parse, so the ast checks skip that file. HA's version is
+    the one recorded with the domain list (scripts/ha_domains.py)."""
+    data = (ROOT / "src/sniff_test/data/ha_domains.txt").read_text()
+    ha = re.search(r"^# python: (\d+\.\d+\.\d+)", data, re.M).group(1)
+    image = re.search(
+        r"^ARG BARKLEY_PYTHON=(\S+)$", (ROOT / "addon/sniff_test/Dockerfile").read_text(), re.M
+    )
+    assert image and _version(image.group(1)) >= _version(ha), (image, ha)
+    dev = (ROOT / ".python-version").read_text().strip()
+    assert _version(dev) >= _version(ha)[:2]
+    need = re.search(r'^requires-python = ">=(\S+)"', (ROOT / "pyproject.toml").read_text(), re.M)
+    assert _version(need.group(1)) >= _version(ha)[:2]
+    assert sys.version_info[:2] >= _version(ha)[:2]  # what runs this test

@@ -5,6 +5,14 @@ everything the Dockerfile copies. Usage:
 
     uv run python scripts/stage_addon.py            # -> dist/addon/sniff_test/
     uv run python scripts/stage_addon.py OUT_DIR
+    uv run python scripts/stage_addon.py --box-build 2   # version X.Y.Z.2, for a test box
+
+`--box-build N` stamps the staged copy (config.yaml, pyproject.toml, the package's
+__version__) with `<version>.N`. Only for deploying unreleased work to a test box: the
+Supervisor offers Update (which loads the AppArmor profile; Rebuild doesn't) only when
+the version changed, and Barkley reuses a stored scan only when it was made by the same
+version, so scans from an earlier build of the same release are sniffed again. The repo
+never carries the stamp.
 
 It also writes `sniff_test.tar` next to the folder: a plain archive (no extended
 attributes, no pax headers) to stream into HA's local add-on folder over SSH:
@@ -62,6 +70,24 @@ def stage(out: Path) -> Path:
     return dest
 
 
+def stamp(dest: Path, build: int) -> str:
+    """Write `<version>.<build>` into the staged copy only (see the module docstring)."""
+    init = dest / "scanner" / "src" / "sniff_test" / "__init__.py"
+    text = init.read_text()
+    old = text.split('__version__ = "', 1)[1].split('"', 1)[0]
+    new = f"{old}.{build}"
+    init.write_text(text.replace(f'__version__ = "{old}"', f'__version__ = "{new}"', 1))
+    for path, before, after in (
+        (dest / "config.yaml", f'version: "{old}"', f'version: "{new}"'),
+        (dest / "scanner" / "pyproject.toml", f'version = "{old}"', f'version = "{new}"'),
+    ):
+        t = path.read_text()
+        if before not in t:
+            raise SystemExit(f"{path}: expected {before!r}")
+        path.write_text(t.replace(before, after, 1))
+    return new
+
+
 def archive(dest: Path) -> Path:
     """A plain GNU-format tar of the staged folder: regular files and dirs only."""
     out = dest.parent / f"{dest.name}.tar"
@@ -80,7 +106,17 @@ def archive(dest: Path) -> Path:
 
 
 if __name__ == "__main__":
-    target = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "dist" / "addon"
+    args = sys.argv[1:]
+    build = None
+    if "--box-build" in args:
+        i = args.index("--box-build")
+        build = int(args[i + 1])
+        if build < 1:
+            raise SystemExit("--box-build wants a number from 1")
+        del args[i : i + 2]
+    target = Path(args[0]) if args else ROOT / "dist" / "addon"
     staged = stage(target)
+    if build is not None:
+        print("version", stamp(staged, build))
     print(staged)
     print(archive(staged))

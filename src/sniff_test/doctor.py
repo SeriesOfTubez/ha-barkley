@@ -20,7 +20,7 @@ from pathlib import Path
 from sniff_test import memory, supervisor
 from sniff_test.analyzers import _proc, guarddog
 from sniff_test.analyzers.semgrep import _tool_env as semgrep_env
-from sniff_test.analyzers.semgrep import rules_dir
+from sniff_test.analyzers.semgrep import rules_const_dir, rules_dir
 from sniff_test.fetch.github import GitHub, RateLimit
 
 _TAIL = 1500
@@ -44,14 +44,40 @@ def _tail(text: str) -> str:
     return ("…" + text[-_TAIL:]) if len(text) > _TAIL else text
 
 
+_TOOLS: dict[str, tuple[Callable[[], tuple[Path, ...]], Callable[[], tuple[Path, ...]]]] = {
+    "semgrep": (lambda: (), lambda: (rules_dir(), rules_const_dir())),
+    "osv-scanner": (lambda: (), lambda: ()),
+    "guarddog": (lambda: guarddog._cache_dirs(), lambda: ()),
+    "uv": (lambda: (), lambda: ()),
+}
+
+
+def sandbox_check() -> Check:
+    from sniff_test import sandbox
+
+    v, line = sandbox.status()
+    return Check("Tool sandbox (Landlock)", v > 0 or not _sandbox_required(), line)
+
+
+def _sandbox_required() -> bool:
+    """Standalone has no AppArmor profile of Barkley's, so the sandbox is required there
+    (serve refuses to start without it unless BARKLEY_UNSANDBOXED=1)."""
+    conn = supervisor.connection()
+    return conn is not None and conn.mode == "direct"
+
+
 def _run(name: str, cmd: list[str], cwd: Path, env: dict[str, str], timeout: int = 300) -> Check:
     exe = shutil.which(cmd[0])
     if not exe:
         return Check(name, False, f"{cmd[0]} not on PATH")
     start = time.monotonic()
+    # The same sandbox a scan uses (`_TOOLS`), so Diagnostics shows whether it works here.
+    tool = cmd[0] if cmd[0] in _TOOLS else None
+    write, read = _TOOLS.get(cmd[0], ((), ()))
+    run_cmd, env = _proc.sandboxed([exe, *cmd[1:]], cwd, env, tool, write(), read())
     try:
         p = subprocess.run(
-            [exe, *cmd[1:]], cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env
+            run_cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env
         )
     except subprocess.TimeoutExpired:
         return Check(name, False, f"timed out after {timeout}s", " ".join(cmd))
@@ -91,6 +117,30 @@ def _facts() -> Check:
     return Check("environment", True, "; ".join(lines))
 
 
+def python_check() -> Check:
+    """(0.14.0) Barkley parses apps written for HA's Python; an older one can't read newer
+    syntax. HA's version is the one shipped with the built-in domain list."""
+    import re
+    import sys
+    from importlib import resources
+
+    mine = ".".join(str(x) for x in sys.version_info[:3])
+    text = (resources.files("sniff_test") / "data" / "ha_domains.txt").read_text("utf-8")
+    m = re.search(r"^# python: (\d+)\.(\d+)\.(\d+)", text, re.M)
+    src = re.search(r"^# Source: home-assistant/core at (\S+)", text, re.M)
+    if not m:
+        return Check("Barkley's Python", True, f"{mine} (HA's not recorded)")
+    ha = tuple(int(x) for x in m.groups())
+    ok = sys.version_info[:3] >= ha
+    where = f"HA {src.group(1)} runs {'.'.join(m.groups())}" if src else "HA's"
+    return Check(
+        "Barkley's Python",
+        ok,
+        f"{mine}; {where}" + ("" if ok else ": older, so files using newer syntax are "
+                              "skipped by the parse-only checks"),
+    )  # fmt: skip
+
+
 def memory_check(mem: memory.Memory | None = None) -> Check:
     """The scan guard: warn under ~2 GB available, refuse under ~1 GB."""
     mem = mem or memory.check()
@@ -117,17 +167,27 @@ def supervisor_checks(
     ha_fn=supervisor.ha_version,
     installed_fn=supervisor.installed_hacs,
 ) -> list[Check]:
-    """What the add-on reads from HA: the HA version (and where it came from) and HACS."""
-    if not supervisor.token():
-        return [Check("Home Assistant", True, "not running as an add-on (no SUPERVISOR_TOKEN)")]
+    """What Barkley reads from HA: the HA version (and where it came from) and HACS."""
+    if problem := supervisor.config_problem():
+        return [Check("Home Assistant", False, problem)]
+    conn = supervisor.connection()
+    if conn is None:
+        return [Check("Home Assistant", True,
+                      "not running as an add-on (no SUPERVISOR_TOKEN), and no HA_URL")]  # fmt: skip
     out = []
+    if conn.mode == "direct":
+        how = ("https" if conn.tls else
+               "plain http: the token crosses the network unencrypted; use https if "
+               "Home Assistant offers it")  # fmt: skip
+        out.append(Check("Home Assistant connection", True,
+                         f"standalone, {conn.base} ({how})"))  # fmt: skip
     t0 = time.monotonic()
     ha = ha_fn()
     if ha:
-        out.append(Check("Home Assistant version", True, f"{ha} (from the Supervisor)"))
+        out.append(Check("Home Assistant version", True, f"{ha} (from {conn.where})"))
     else:
         out.append(Check("Home Assistant version", False,
-                         "the Supervisor didn't answer /core/api/config; scans fall back to "
+                         f"{conn.where} didn't answer /api/config; scans fall back to "
                          "the latest stable HA release"))  # fmt: skip
     try:
         items, other = installed_fn()
@@ -149,7 +209,9 @@ def supervisor_checks(
 def _semgrep_scan(sample: Path, run_dir: Path) -> Check:
     sg = _run(
         "semgrep scan (our rules, one-line sample)",
-        ["semgrep", "scan", "--config", str(rules_dir()), "--json", "--metrics=off",
+        # (0.14.0) Both rule folders, so a missing or broken second pass shows here.
+        ["semgrep", "scan", "--config", str(rules_dir()), "--config", str(rules_const_dir()),
+         "--json", "--metrics=off",
          "--disable-version-check", "--no-git-ignore", "--jobs", "1", str(sample)],
         run_dir,
         semgrep_env(),
@@ -192,7 +254,9 @@ def _osv_scan(sample: Path, run_dir: Path) -> Check:
     It has to find and read the file, and asks OSV nothing. `--version` alone passed on
     a box where every scan's advisory check failed: 2.7.1 opens `/` before it reaches
     the lockfile, and the AppArmor profile of 0.10.3 didn't let it."""
-    with tempfile.TemporaryDirectory(prefix="sniff-test-doctor-") as tmp:
+    # Inside the run folder's workspace, as in a scan: the tool sandbox lets osv-scanner
+    # read only its own scan's folder.
+    with tempfile.TemporaryDirectory(prefix="osv-sample-", dir=run_dir) as tmp:
         lock = Path(tmp) / "pylock.toml"
         lock.write_text('lock-version = "1.0"\ncreated-by = "barkley-doctor"\n')
         config = Path(tmp) / "osv-empty-config.toml"
@@ -221,10 +285,12 @@ def steps(addon: bool = False) -> list[Step]:
     the tool runs take seconds each."""
     out: list[Step] = [
         ("environment", lambda s, r: _facts()),
+        ("Barkley's Python", lambda s, r: python_check()),
         ("memory guard", lambda s, r: memory_check()),
+        ("tool sandbox", lambda s, r: sandbox_check()),
         ("GitHub API", lambda s, r: github_check()),
     ]
-    if addon or supervisor.token():
+    if addon or supervisor.token() or supervisor.config_problem():
         out.append(("Home Assistant and the Marketplace list", lambda s, r: supervisor_checks()))
     out += [
         ("semgrep --version",

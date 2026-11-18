@@ -108,7 +108,14 @@ Scans of apps that aren't installed are deleted after 7 days (sniff-before-insta
 included, unless the app was installed by then, in which case the scan is reused). A
 scan of anything installed, at any version, is never deleted.
 
-## Options
+## Settings and options
+
+Since 0.14.0 Barkley has its own **Settings** page (the link at the top of the panel):
+the scoring settings (Paranoid mode, the no-Threat floor, pages without a login, hidden
+usage reporting), reviews, auto-sniff and notifications, AI, parallel scans, Semgrep jobs
+and the GitHub token. The options below are the starting values; once you save the
+Settings page, it wins. A GitHub token saved there is kept in its own file next to the
+database and wins over the option's.
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -117,7 +124,7 @@ scan of anything installed, at any version, is never deleted.
 | `parallel_scans` | `2` | How many scans may run at once. A second scan starts only while the box has room for another full scan above the 2 GB warning line (1.5 GB counted for each scan already running); otherwise it waits. Two checks of the same project never run together. |
 | `github_token` | empty | A GitHub token (no scopes needed) for the 5,000 requests/hour limit instead of 60. |
 | `ai_entity` | empty | Optional. Easier: pick your AI in the panel (any app's page, "Explain this app with AI"), which lists your AI Task entities. A choice made in the panel wins over this option. |
-| `ai_mode` | `summary` | `summary`: the AI explains the findings. `deep`: it can also read the code around one finding, port or unknown address when you click **Explain in context**. Also set in the panel (wins over this option). |
+| `ai_mode` | `deep` | `summary`: the AI explains the findings. `deep`: it can also read the code around one finding, port or unknown address when you click **Explain in context**. Also set in the panel (wins over this option). |
 | `auto_scan` | `true` | Sniff every Marketplace install, update and offered update, and send a notification. Also set in the panel (wins over this option). |
 | `notify_target` | empty | A `notify` service name (for example `mobile_app_my_phone`) that gets each auto-sniff result besides the bell notification. Easier: pick it in the panel, which lists your notify services (wins over this option). |
 
@@ -227,6 +234,13 @@ bug. Diagnostics shows the profile the app runs under; the Supervisor loads the 
 when the app is installed or updated, so after an update check that the Diagnostics
 line names Barkley's own profile, ending in `sniff_test (enforce)`
 (`local_sniff_test (enforce)` for a local install), rather than `docker-default`.
+
+Inside that, each run of a scanner tool gets a sandbox of its own (Landlock, a Linux
+kernel feature): it can write only that scan's folder, can't read the scan store, the
+options or other scans, can run only what the image ships, and can connect only to port
+443 (Semgrep nowhere). It can't signal Barkley or read its environment, where the
+Supervisor's token is. Diagnostics shows "Tool sandbox (Landlock)"; on a kernel without
+Landlock the tools run under the AppArmor profile alone, and that line says so.
 
 ## Installing
 

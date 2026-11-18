@@ -4,9 +4,12 @@
 #
 # Debian, not Alpine: GuardDog 3.2 needs nono-py (its sandbox), which ships only
 # manylinux wheels, and every tool here is installed from wheels only (nothing is
-# compiled in the image). yara-python 4.5.4 has wheels up to cp313, so the tools run
-# on Debian trixie's Python 3.13. The scanner resolves *scanned* dependencies for
-# HA's musl platforms with uv regardless of the image's own libc.
+# compiled in the image). yara-python 4.5.4 has wheels up to cp313, so GuardDog and
+# Semgrep run on Debian trixie's Python 3.13. (0.14.0) Barkley itself runs on the Python
+# Home Assistant runs (BARKLEY_PYTHON, HA's .python-version), so its parse-only checks
+# read every syntax HA's Python accepts (3.14's t-strings don't parse on 3.13). The
+# scanner resolves *scanned* dependencies for HA's musl platforms with uv regardless of
+# the image's own libc.
 #
 # Two stages (M8, image slimming): tools are installed and trimmed in `build`, and only
 # the results are copied into a fresh base, so build-only packages (binutils) and
@@ -28,6 +31,10 @@ ARG SEMGREP_VERSION=1.185.0
 ARG GUARDDOG_VERSION=3.2.0
 ARG OSV_SCANNER_VERSION=2.7.1
 ARG UV_VERSION=0.13.7
+# Barkley's own interpreter: CPython from python-build-standalone, installed by uv, which
+# checks it against the SHA-256 it ships for that build. Keep it at HA's .python-version
+# (tests/test_publish.py fails when it's older; data/ha_domains.txt records HA's).
+ARG BARKLEY_PYTHON=3.14.10
 # Bumping UV_VERSION or OSV_SCANNER_VERSION: update the sha256 and asset ids in the RUN below.
 # osv-scanner 2.7.1 (2026-11-13): 2.7.0 was built with Go 1.27.0 and x/net 0.61, which
 # carry five high CVEs with fixes (one in crypto/x509's chain checks, and osv-scanner's
@@ -92,9 +99,21 @@ RUN set -eu; \
     rm -rf "${gd}"/boto3 "${gd}"/boto3-* "${gd}"/botocore "${gd}"/botocore-* \
            "${gd}"/s3transfer "${gd}"/s3transfer-* "${gd}"/jmespath "${gd}"/jmespath-*; \
     rm -f /usr/local/bin/uvx
+# Barkley's Python (see BARKLEY_PYTHON), with the parts nothing here runs left out.
+ENV UV_PYTHON_INSTALL_DIR=/opt/python
+RUN set -eu; \
+    UV_PYTHON_DOWNLOADS=manual uv python install --no-bin "cpython-${BARKLEY_PYTHON}"; \
+    home="$(echo /opt/python/cpython-${BARKLEY_PYTHON}-linux-*)"; \
+    py="$(echo "${home}"/lib/python3*)"; \
+    rm -rf "${py}"/test "${py}"/idlelib "${py}"/tkinter "${py}"/turtledemo "${py}"/ensurepip \
+           "${py}"/lib-dynload/_tkinter*.so "${py}"/site-packages/pip* \
+           "${home}"/lib/tcl* "${home}"/lib/tk* "${home}"/lib/libtcl* "${home}"/lib/libtk* \
+           "${home}"/lib/itcl* "${home}"/lib/thread* "${home}"/share "${home}"/include \
+           /opt/python/.temp /opt/python/.lock; \
+    ln -s /opt/python/cpython-${BARKLEY_PYTHON}-linux-*/bin/python3 /opt/python/barkley-python
 # The scanner, with its locked runtime dependencies.
 COPY scanner /src
-RUN uv venv --python /usr/bin/python3 /opt/sniff-test \
+RUN uv venv --python /opt/python/barkley-python /opt/sniff-test \
     && uv export --frozen --no-dev --no-emit-project --project /src -o /tmp/req.txt \
     && uv pip install --python /opt/sniff-test --no-build --require-hashes -r /tmp/req.txt \
     && uv pip install --python /opt/sniff-test --no-deps /src \
@@ -120,12 +139,15 @@ ENV UV_PYTHON_DOWNLOADS=never \
     SEMGREP_SEND_METRICS=off \
     SEMGREP_ENABLE_VERSION_CHECK=0
 COPY --from=build /opt/tools /opt/tools
+COPY --from=build /opt/python /opt/python
 COPY --from=build /opt/sniff-test /opt/sniff-test
 COPY --from=build /usr/local/bin/ /usr/local/bin/
 # Precompile the venvs: 3,200 modules had no .pyc, so every run tried to write them next
 # to the code (strace, 2026-11-11). Under the AppArmor profile /opt is read-only, and
 # those writes would be denied (silently to Python, loudly in the audit log).
-RUN python3 -m compileall -q -j 0 /opt/tools /opt/sniff-test
+# Each venv with its own interpreter (the .pyc name carries the Python version).
+RUN python3 -m compileall -q -j 0 /opt/tools \
+    && /opt/python/barkley-python -m compileall -q -j 0 /opt/python /opt/sniff-test
 
 COPY rootfs /
 

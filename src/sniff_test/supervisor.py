@@ -1,8 +1,21 @@
-"""What the add-on asks Home Assistant, through the Supervisor (stdlib only).
+"""What Barkley asks Home Assistant (stdlib only).
 
-Three calls, all covered by `homeassistant_api: true` in config.yaml, no other permission:
+Two ways in (`connection()`):
 
-- `GET http://supervisor/core/api/config`: the installed HA version.
+- **Add-on** (SUPERVISOR_TOKEN set): through the Supervisor's proxy to Core,
+  `http://supervisor/core/api/...` and `ws://supervisor/core/websocket`. Covered by
+  `homeassistant_api: true` in config.yaml, no other permission.
+- **Standalone** (no Supervisor: HA Container, HA Core in a venv, or Barkley on another
+  machine): straight to Core at `HA_URL` (`<url>/api/...`, `<url>/api/websocket`, https
+  and wss when the URL says so, `HA_CA_FILE` for a private CA) with `HA_TOKEN` or
+  `HA_TOKEN_FILE`, a long-lived access token of an administrator. Same calls, same
+  allowlists; no proxy from the environment and no redirects are followed, so the
+  token only ever goes to that URL. The panel's login (`auth_exchange`, `current_user`,
+  `auth_revoke`) uses HA's own OAuth2 there; see login.py.
+
+The calls (paths below are Core's; an add-on prefixes them with /core):
+
+- `GET /api/config`: the installed HA version.
 - The Marketplace's installed list, over the Supervisor's Core websocket proxy
   (`ws://supervisor/core/websocket`): installed integrations and cards, with the
   version installed and the version it would install now (`available_version`
@@ -11,12 +24,12 @@ Three calls, all covered by `homeassistant_api: true` in config.yaml, no other p
   Older HA with the HACS custom integration answers `hacs/repositories/list`, which
   returns the same fields; it is asked only when Core doesn't know the first command.
 
-- (M8) `POST http://supervisor/core/api/services/ai_task/generate_data?return_response`,
+- (M8) `POST /api/services/ai_task/generate_data?return_response`,
   only when the user clicks "Explain this app" and has chosen an AI Task entity in the
   options. It sends findings about a public repo (the report's `ai_brief`), never HA
   data, to whatever AI provider that entity uses.
 
-- (M8) `POST http://supervisor/core/api/template` with one template fixed in code
+- (M8) `POST /api/template` with one template fixed in code
   (`AI_ENTITIES_TEMPLATE`) that returns only the ids and names of `ai_task` entities, so
   the panel can offer them in a dropdown. HA renders it; no other entity or state ever
   reaches the app (user decision over reading all states via /api/states).
@@ -27,18 +40,19 @@ Three calls, all covered by `homeassistant_api: true` in config.yaml, no other p
   Verified in Core's source at 2026.11.0: there is no `hacs/subscribe` any more, and no
   event carries the installed version, so the list is read after each cue.
 
-- (auto-sniff) `POST /core/api/services/persistent_notification/create` and, when the
-  user picked a target in the panel, `POST /core/api/services/notify/<target>`: one
+- (auto-sniff) `POST /api/services/persistent_notification/create` and, when the
+  user picked a target in the panel, `POST /api/services/notify/<target>`: one
   notification per auto-sniffed install or update. The text is built from validated
   names, versions, scores and fixed rule titles, never from scanned text. To offer the
-  targets, `GET /core/api/services` is read and only the names of `notify` services
+  targets, `GET /api/services` is read and only the names of `notify` services
   are kept. `GET /addons/self/info` (allowed for every app without a Supervisor role)
   gives the app's own slug, for the "Open Barkley" link.
 
-The proxy talks to Core as the Supervisor's admin user, so these connections could reach
-almost anything in Core. The client sends only the list commands and the subscribe
-command with fixed signals, the one AI Task service call, the two notification services
-and the one fixed template, all in code (`_ALLOWED_COMMANDS`, `WATCH_SIGNALS`,
+The proxy talks to Core as the Supervisor's admin user (and a standalone token is an
+administrator's), so these connections could reach almost anything in Core. The client
+sends only the list commands and the subscribe command with fixed signals,
+`auth/current_user` (the login), the one AI Task service call, the two notification
+services and the one fixed template, all in code (`_ALLOWED_COMMANDS`, `WATCH_SIGNALS`,
 `AI_TASK_PATH`, `AI_ENTITIES_TEMPLATE`, `NOTIFY_PATH`); nothing from a request or a
 report ever becomes a command, a service name, a template or a URL (a notify target is
 checked against the list HA gave and a strict pattern).
@@ -55,14 +69,26 @@ import os
 import re
 import secrets
 import socket
+import ssl
 import struct
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 SUPERVISOR_HOST = "supervisor"
+# Standalone (no Supervisor: HA Container, HA Core, or Barkley on another machine): the
+# same calls go straight to Core with a long-lived access token of an admin user.
+HA_URL_ENV = "HA_URL"
+HA_TOKEN_ENV = "HA_TOKEN"  # noqa: S105 - the variable's name
+HA_TOKEN_FILE_ENV = "HA_TOKEN_FILE"  # noqa: S105 - the variable's name
+HA_CA_FILE_ENV = "HA_CA_FILE"
+_HA_URL = re.compile(
+    r"^(https?)://([A-Za-z0-9.-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\])(?::(\d{1,5}))?/?$"
+)
 MARKETPLACE_LIST = "marketplace/repositories/list"  # HA 2026.11+: built into Core
 HACS_LIST = "hacs/repositories/list"  # older HA: the HACS custom integration
 LIST_COMMANDS = (MARKETPLACE_LIST, HACS_LIST)
@@ -71,7 +97,23 @@ SUBSCRIBE = "marketplace/subscribe"  # HA 2026.11+: Core's Marketplace dispatche
 SIGNAL_INSTALL_PROGRESS = "marketplace_repository_install_progress"
 SIGNAL_REPOSITORY = "marketplace_repository"
 WATCH_SIGNALS = (SIGNAL_INSTALL_PROGRESS, SIGNAL_REPOSITORY)
-_ALLOWED_COMMANDS = frozenset((*LIST_COMMANDS, SUBSCRIBE))
+CURRENT_USER = "auth/current_user"  # standalone login: is the person who logged in an admin?
+# (0.14.0 part 4) standalone only: Barkley's own token makes its successor, finds its own
+# id, and deletes the old one. Each acts only on the connection's own user's tokens
+# (Core: homeassistant/components/auth/__init__.py, ws_require_user); see ha_token.py.
+LLAT_CREATE = "auth/long_lived_access_token"
+REFRESH_TOKENS = "auth/refresh_tokens"
+REFRESH_TOKEN_DELETE = "auth/delete_refresh_token"  # noqa: S105 - a command name
+_ALLOWED_COMMANDS = frozenset(
+    (*LIST_COMMANDS, SUBSCRIBE, CURRENT_USER, LLAT_CREATE, REFRESH_TOKENS, REFRESH_TOKEN_DELETE)
+)
+# (0.14.0 part 4) standalone: Barkley's own token file next to its store (set by `serve`);
+# HA_TOKEN and HA_TOKEN_FILE win over it
+OWN_TOKEN_FILE: Path | None = None
+NOT_SET_UP = (
+    "Barkley has no Home Assistant token yet: log in to Barkley (the first-time setup "
+    "makes one), paste one on its Settings page, or set HA_TOKEN_FILE"
+)
 _MAX_MESSAGE = 64 * 1024 * 1024  # what the Supervisor accepts from Core
 _TIMEOUT = 20
 # HACS categories Barkley can scan, and what it calls them.
@@ -84,11 +126,160 @@ class SupervisorError(Exception):
     """The Supervisor, Core or HACS didn't answer the way we need."""
 
 
-AI_TASK_PATH = "/core/api/services/ai_task/generate_data?return_response"
+@dataclass(frozen=True, slots=True)
+class Connection:
+    """How this process reaches Home Assistant's Core API.
+
+    `addon`: through the Supervisor's proxy (`http://supervisor/core/api/...`,
+    `ws://supervisor/core/websocket`) with SUPERVISOR_TOKEN. `direct`: straight to Core
+    at HA_URL (`<url>/api/...`, `<url>/api/websocket`) with a long-lived access token.
+    """
+
+    mode: str  # addon | direct
+    token: str
+    base: str  # REST paths (/api/...) are appended to this
+    ws_host: str
+    ws_port: int
+    ws_path: str
+    tls: bool = False
+    ca_file: str | None = None
+
+    @property
+    def where(self) -> str:
+        return "the Supervisor" if self.mode == "addon" else self.base
+
+    def ssl_context(self) -> ssl.SSLContext | None:
+        if not self.tls:
+            return None
+        ctx = ssl.create_default_context(cafile=self.ca_file or None)
+        ctx.minimum_version = (
+            ssl.TLSVersion.TLSv1_2
+        )  # never TLS 1.0/1.1, whatever the system allows
+        return ctx
+
+
+def parse_ha_url(url: str, what: str = HA_URL_ENV) -> tuple[str, str, int]:
+    """(scheme, host, port) of a base URL such as HA_URL: http(s)://host[:port], nothing
+    else (no user, path, query or fragment). Raises SupervisorError saying what's wrong."""
+    m = _HA_URL.match(url.strip())
+    if not m:
+        raise SupervisorError(
+            f"{what} should look like http://homeassistant.local:8123 (scheme, host and "
+            f"port only), not {url.strip()[:80]!r}"
+        )
+    port = int(m[3]) if m[3] else (443 if m[1] == "https" else 80)
+    if not 0 < port < 65536:
+        raise SupervisorError(f"{what}: bad port {port}")
+    return m[1], m[2], port
+
+
+def _direct_token() -> str:
+    if tok := os.environ.get(HA_TOKEN_ENV, "").strip():
+        return tok
+    path = os.environ.get(HA_TOKEN_FILE_ENV, "").strip()
+    if not path:
+        if OWN_TOKEN_FILE is not None:  # Barkley's own (created or pasted in the panel)
+            try:
+                return OWN_TOKEN_FILE.read_text(encoding="utf-8")[:8192].strip()
+            except OSError:
+                return ""
+        return ""
+    try:
+        with Path(path).open(encoding="utf-8") as f:
+            return f.read(8192).strip()
+    except OSError as ex:
+        raise SupervisorError(f"can't read {HA_TOKEN_FILE_ENV} ({path}): {ex.strerror}") from ex
+
+
+def config_problem() -> str | None:
+    """Why HA_URL/HA_TOKEN can't be used, or None (also None when neither is set)."""
+    if os.environ.get("SUPERVISOR_TOKEN") or not os.environ.get(HA_URL_ENV, "").strip():
+        return None
+    try:
+        parse_ha_url(os.environ[HA_URL_ENV])
+        if not _direct_token() and OWN_TOKEN_FILE is None:
+            return f"{HA_URL_ENV} is set but {HA_TOKEN_ENV} / {HA_TOKEN_FILE_ENV} is not"
+    except SupervisorError as ex:
+        return str(ex)
+    ca = os.environ.get(HA_CA_FILE_ENV, "").strip()
+    if ca and not Path(ca).is_file():
+        return f"{HA_CA_FILE_ENV} ({ca}) is not a file"
+    return None
+
+
+def connection() -> Connection | None:
+    """The add-on's Supervisor when SUPERVISOR_TOKEN is set, else HA_URL with HA_TOKEN
+    (or HA_TOKEN_FILE), else None. Read on every call: cheap, and tests can set the
+    environment."""
+    if tok := os.environ.get("SUPERVISOR_TOKEN"):
+        return _addon(tok)
+    if config_problem() or not os.environ.get(HA_URL_ENV, "").strip():
+        return None
+    scheme, host, port = parse_ha_url(os.environ[HA_URL_ENV])
+    shown = f"{host}:{port}" if port != (443 if scheme == "https" else 80) else host
+    return Connection(
+        "direct", _direct_token(), f"{scheme}://{shown}", host.strip("[]"), port,
+        "/api/websocket", tls=scheme == "https",
+        ca_file=os.environ.get(HA_CA_FILE_ENV, "").strip() or None,
+    )  # fmt: skip
+
+
+def _need() -> Connection:
+    conn = connection()
+    if conn is None:
+        raise SupervisorError(
+            config_problem()
+            or "Home Assistant isn't connected (no SUPERVISOR_TOKEN, and no HA_URL)"
+        )
+    if not conn.token:
+        raise SupervisorError(NOT_SET_UP)
+    return conn
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Core never redirects an API call; following one could carry the token elsewhere."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _open(req: urllib.request.Request, timeout: float, conn: Connection) -> Any:
+    """urlopen for HA: no proxies from the environment, no redirects, the CA file for
+    https. `req`'s URL is always the connection's base plus a path constant."""
+    handlers: list[Any] = [urllib.request.ProxyHandler({}), _NoRedirect()]
+    if (ctx := conn.ssl_context()) is not None:
+        handlers.append(urllib.request.HTTPSHandler(context=ctx))
+    return urllib.request.build_opener(*handlers).open(req, timeout=timeout)
+
+
+def _addon(tok: str) -> Connection:
+    return Connection("addon", tok, f"http://{SUPERVISOR_HOST}/core", SUPERVISOR_HOST, 80,
+                      "/core/websocket")  # fmt: skip
+
+
+def _with(tok: str | None) -> Connection:
+    """The current connection, with the caller's token when one is passed (a token
+    passed without any configuration means the Supervisor, as before standalone mode)."""
+    conn = connection()
+    if conn is None:
+        if not tok:
+            return _need()
+        return _addon(tok)
+    if not tok and not conn.token:
+        raise SupervisorError(NOT_SET_UP)
+    if tok and tok != conn.token:
+        return Connection(conn.mode, tok, conn.base, conn.ws_host, conn.ws_port, conn.ws_path,
+                          conn.tls, conn.ca_file)  # fmt: skip
+    return conn
+
+
+AI_TASK_PATH = "/api/services/ai_task/generate_data?return_response"
 _AI_ENTITY = re.compile(r"^ai_task\.[a-z0-9_]{1,100}$")
 _AI_TIMEOUT = 180
 
 
+TEMPLATE_PATH = "/api/template"
+CONFIG_PATH = "/api/config"
 AI_ENTITIES_TEMPLATE = (
     "{% set ns = namespace(out=[]) %}{% for s in states.ai_task %}"
     "{% set ns.out = ns.out + [[s.entity_id, s.name]] %}{% endfor %}{{ ns.out | tojson }}"
@@ -97,20 +288,17 @@ AI_ENTITIES_TEMPLATE = (
 
 def ai_task_entities(tok: str | None = None) -> list[tuple[str, str]]:
     """(entity_id, name) of every ai_task entity, via the one fixed template."""
-    tok = tok or token()
-    if not tok:
-        raise SupervisorError("not running as a Home Assistant add-on")
-    req = urllib.request.Request(
-        f"http://{SUPERVISOR_HOST}/core/api/template",
+    conn = _with(tok)
+    # conn.base is the Supervisor or a validated http(s) HA_URL; the path is a constant.
+    req = urllib.request.Request(  # noqa: S310
+        f"{conn.base}{TEMPLATE_PATH}",
         data=json.dumps({"template": AI_ENTITIES_TEMPLATE}).encode(),
         method="POST",
     )
-    req.add_header("Authorization", f"Bearer {tok}")
+    req.add_header("Authorization", f"Bearer {conn.token}")
     req.add_header("Content-Type", "application/json")
     try:
-        # The host is the constant SUPERVISOR_HOST; the path is a constant of this module.
-        # nosemgrep: dynamic-urllib-use-detected
-        with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310
+        with _open(req, 15, conn) as r:
             data = json.loads(r.read().decode("utf-8", "replace") or "[]")
     except (OSError, ValueError) as ex:
         raise SupervisorError(f"couldn't list AI Task entities: {ex}") from ex
@@ -136,9 +324,7 @@ def ai_generate_data(
 ) -> Any:
     """Call ai_task.generate_data and return its `data` (validated by HA against
     `structure`). Raises SupervisorError with HA's message on any failure."""
-    tok = tok or token()
-    if not tok:
-        raise SupervisorError("not running as a Home Assistant add-on")
+    conn = _with(tok)
     if not ai_entity_ok(entity_id):
         raise SupervisorError(f"{entity_id!r} is not an AI Task entity (ai_task.…)")
     body = json.dumps(
@@ -149,15 +335,11 @@ def ai_generate_data(
             "structure": structure,
         }
     ).encode()
-    req = urllib.request.Request(
-        f"http://{SUPERVISOR_HOST}{AI_TASK_PATH}", data=body, method="POST"
-    )
-    req.add_header("Authorization", f"Bearer {tok}")
+    req = urllib.request.Request(f"{conn.base}{AI_TASK_PATH}", data=body, method="POST")  # noqa: S310
+    req.add_header("Authorization", f"Bearer {conn.token}")
     req.add_header("Content-Type", "application/json")
     try:
-        # The host is the constant SUPERVISOR_HOST; the path is a constant of this module.
-        # nosemgrep: dynamic-urllib-use-detected
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+        with _open(req, timeout, conn) as r:
             answer = json.load(r)
     except urllib.error.HTTPError as ex:
         try:
@@ -174,39 +356,75 @@ def ai_generate_data(
 
 
 def token() -> str | None:
-    return os.environ.get("SUPERVISOR_TOKEN") or None
+    """The token HA calls use, or None when Home Assistant isn't connected."""
+    conn = connection()
+    return conn.token if conn else None
 
 
 def ha_version(tok: str | None = None) -> str | None:
-    """The installed HA version, via the Supervisor's Core API proxy (add-on only)."""
-    tok = tok or token()
-    if not tok:
-        return None
-    req = urllib.request.Request(f"http://{SUPERVISOR_HOST}/core/api/config")
-    req.add_header("Authorization", f"Bearer {tok}")
+    """The installed HA version (GET /api/config), None when HA can't say."""
     try:
-        # The host is the constant SUPERVISOR_HOST; the path is a constant of this module.
-        # nosemgrep: dynamic-urllib-use-detected
-        with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 - fixed URL
+        conn = _with(tok)
+    except SupervisorError:
+        return None
+    req = urllib.request.Request(f"{conn.base}{CONFIG_PATH}")  # noqa: S310
+    req.add_header("Authorization", f"Bearer {conn.token}")
+    try:
+        with _open(req, 10, conn) as r:
             version = json.load(r).get("version")
     except (OSError, ValueError):
         return None
     return version if isinstance(version, str) else None
 
 
-# --- a minimal websocket client (RFC 6455), plain ws:// inside the Supervisor network ---
+def external_url_set(tok: str | None = None) -> bool | None:
+    """(0.14.0) Whether HA has an external URL set (the same GET /api/config): the
+    Settings page's Exposure hint. Only the yes/no is kept, never the address. None when
+    HA can't say."""
+    try:
+        conn = _with(tok)
+    except SupervisorError:
+        return None
+    req = urllib.request.Request(f"{conn.base}{CONFIG_PATH}")  # noqa: S310
+    req.add_header("Authorization", f"Bearer {conn.token}")
+    try:
+        with _open(req, 10, conn) as r:
+            data = json.load(r)
+    except (OSError, ValueError):
+        return None
+    return bool(data.get("external_url")) if isinstance(data, dict) else None
+
+
+# --- a minimal websocket client (RFC 6455): ws:// to the Supervisor, ws:// or wss:// to Core
 
 
 class _WebSocket:
-    def __init__(self, host: str, port: int, path: str, timeout: float = _TIMEOUT):
-        self.sock = socket.create_connection((host, port), timeout=timeout)
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        path: str,
+        timeout: float = _TIMEOUT,
+        ctx: ssl.SSLContext | None = None,
+    ):
+        sock = socket.create_connection((host, port), timeout=timeout)
+        if ctx is not None:
+            try:
+                sock = ctx.wrap_socket(sock, server_hostname=host)
+            except (OSError, ssl.SSLError):
+                sock.close()
+                raise
+        self.sock = sock
         self._buf = b""
         self._parts: list[bytes] = []
         self._size = 0
         key = base64.b64encode(secrets.token_bytes(16)).decode()
+        default = 443 if ctx is not None else 80
+        hhost = f"[{host}]" if ":" in host else host
+        hhost = hhost if port == default else f"{hhost}:{port}"
         self.sock.sendall(
             (
-                f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
+                f"GET {path} HTTP/1.1\r\nHost: {hhost}\r\nUpgrade: websocket\r\n"
                 f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
                 "Sec-WebSocket-Version: 13\r\n\r\n"
             ).encode()
@@ -319,12 +537,22 @@ class _WebSocket:
         self.sock.close()
 
 
-def _open_core(tok: str, host: str, port: int, path: str, timeout: float = _TIMEOUT) -> _WebSocket:
-    """Connect to Core through the Supervisor's proxy and authenticate as the add-on."""
+def _open_core(
+    tok: str,
+    host: str | None = None,
+    port: int | None = None,
+    path: str | None = None,
+    timeout: float = _TIMEOUT,
+) -> _WebSocket:
+    """Connect to Core's websocket (through the Supervisor's proxy in an add-on) and
+    authenticate. host/port/path override the connection's (tests use a fake)."""
+    conn = _with(tok)
+    ctx = conn.ssl_context() if host is None else None
+    host, port, path = host or conn.ws_host, port or conn.ws_port, path or conn.ws_path
     try:
-        ws = _WebSocket(host, port, path, timeout=timeout)
+        ws = _WebSocket(host, port, path, timeout=timeout, ctx=ctx)
     except OSError as ex:
-        raise SupervisorError(f"can't reach the Supervisor: {ex}") from ex
+        raise SupervisorError(f"can't reach {conn.where}: {ex}") from ex
     try:
         msg = ws.recv_json()
         if msg.get("type") != "auth_required":
@@ -332,7 +560,14 @@ def _open_core(tok: str, host: str, port: int, path: str, timeout: float = _TIME
         ws.send_json({"type": "auth", "access_token": tok})
         msg = ws.recv_json()
         if msg.get("type") != "auth_ok":
-            raise SupervisorError("the Supervisor refused the add-on token (homeassistant_api?)")
+            if conn.mode == "addon":
+                raise SupervisorError(
+                    "the Supervisor refused the add-on token (homeassistant_api?)"
+                )
+            raise SupervisorError(
+                "Home Assistant refused the token (it should be a long-lived access token "
+                "of an administrator)"
+            )
     except (OSError, AttributeError) as ex:
         ws.close()
         raise SupervisorError(f"websocket failed: {ex}") from ex
@@ -346,9 +581,9 @@ def core_command(
     command: str,
     tok: str,
     *,
-    host: str = SUPERVISOR_HOST,
-    port: int = 80,
-    path: str = "/core/websocket",
+    host: str | None = None,
+    port: int | None = None,
+    path: str | None = None,
     **params: Any,
 ) -> Any:
     """Send one allowed command over the Core websocket and return its result."""
@@ -373,6 +608,72 @@ def core_command(
         ws.close()
 
 
+# --- standalone login: Home Assistant's own OAuth2 ("log in with Home Assistant") -------
+# https://developers.home-assistant.io/docs/auth_api : the client_id is the app's URL, and
+# HA accepts a redirect_uri on the same scheme, host and port. Only `direct` mode logs in.
+
+AUTH_TOKEN_PATH = "/auth/token"  # noqa: S105 - a URL path
+AUTH_REVOKE_PATH = "/auth/revoke"
+
+
+def _auth_post(path: str, form: dict[str, str], what: str) -> Any:
+    conn = connection()  # the login needs no token of Barkley's own
+    if conn is None or conn.mode != "direct":
+        raise SupervisorError("logging in is only for standalone mode")
+    req = urllib.request.Request(  # noqa: S310 - validated base, constant path
+        f"{conn.base}{path}", data=urllib.parse.urlencode(form).encode(), method="POST"
+    )
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with _open(req, 15, conn) as r:
+            raw = r.read(65536).decode("utf-8", "replace")
+    except urllib.error.HTTPError as ex:
+        raise SupervisorError(f"{what}: Home Assistant answered {ex.code}") from ex
+    except OSError as ex:
+        raise SupervisorError(f"{what} failed: {ex}") from ex
+    try:
+        return json.loads(raw) if raw.strip() else None
+    except ValueError as ex:
+        raise SupervisorError(f"{what}: Home Assistant's answer wasn't JSON") from ex
+
+
+def auth_exchange(code: str, client_id: str) -> tuple[str, str]:
+    """The login's authorization code -> (access token, refresh token)."""
+    data = _auth_post(
+        AUTH_TOKEN_PATH,
+        {"grant_type": "authorization_code", "code": code[:512], "client_id": client_id},
+        "logging in",
+    )
+    access = data.get("access_token") if isinstance(data, dict) else None
+    refresh = data.get("refresh_token") if isinstance(data, dict) else None
+    if not isinstance(access, str) or not access:
+        raise SupervisorError("logging in: Home Assistant gave no access token")
+    return access, refresh if isinstance(refresh, str) else ""
+
+
+def auth_revoke(refresh_token: str) -> None:
+    """Revoke the login's refresh token (and the access tokens made from it): Barkley
+    keeps its own session, never a token of the person who logged in. Best effort."""
+    if refresh_token:
+        with contextlib.suppress(SupervisorError):
+            _auth_post(AUTH_REVOKE_PATH, {"token": refresh_token}, "revoking the login")
+
+
+@dataclass(frozen=True, slots=True)
+class User:
+    id: str
+    name: str
+    is_admin: bool
+
+
+def current_user(access_token: str, **kw: Any) -> User:
+    """Who an access token belongs to (websocket `auth/current_user`)."""
+    data = core_command(CURRENT_USER, access_token, **kw)
+    if not isinstance(data, dict) or not isinstance(data.get("id"), str):
+        raise SupervisorError("Home Assistant didn't say who logged in")
+    return User(data["id"][:64], str(data.get("name") or "")[:100], data.get("is_admin") is True)
+
+
 class Subscription:
     """A long-lived Core websocket subscribed to the Marketplace's signals (auto-sniff).
 
@@ -386,9 +687,9 @@ class Subscription:
         tok: str,
         *,
         signals: tuple[str, ...] = WATCH_SIGNALS,
-        host: str = SUPERVISOR_HOST,
-        port: int = 80,
-        path: str = "/core/websocket",
+        host: str | None = None,
+        port: int | None = None,
+        path: str | None = None,
         idle: float = 60.0,
     ):
         bad = [x for x in signals if x not in WATCH_SIGNALS]
@@ -452,10 +753,10 @@ class Subscription:
 
 # --- notifications (auto-sniff) ---------------------------------------------------------
 
-NOTIFY_PERSISTENT_PATH = "/core/api/services/persistent_notification/create"
-NOTIFY_PATH = "/core/api/services/notify/"  # + a validated target
-SERVICES_PATH = "/core/api/services"
-SELF_INFO_PATH = "/addons/self/info"
+NOTIFY_PERSISTENT_PATH = "/api/services/persistent_notification/create"
+NOTIFY_PATH = "/api/services/notify/"  # + a validated target
+SERVICES_PATH = "/api/services"
+SELF_INFO_PATH = "/addons/self/info"  # the Supervisor's own API, not Core's
 _NOTIFY_TARGET = re.compile(r"^[a-z0-9_]{1,100}$")
 _SLUG = re.compile(r"^[a-z0-9_]{1,100}$")
 _NOTIFY_TIMEOUT = 20
@@ -465,19 +766,33 @@ def notify_target_ok(target: str) -> bool:
     return bool(_NOTIFY_TARGET.match(target))
 
 
-def _call(path: str, body: dict[str, Any] | None, tok: str, timeout: float, what: str) -> Any:
-    req = urllib.request.Request(
-        f"http://{SUPERVISOR_HOST}{path}",
+def _call(
+    path: str,
+    body: dict[str, Any] | None,
+    tok: str | None,
+    timeout: float,
+    what: str,
+    supervisor_api: bool = False,
+) -> Any:
+    """GET (body None) or POST JSON to a Core API path, or with `supervisor_api` to the
+    Supervisor's own API (add-on only)."""
+    conn = _with(tok)
+    if supervisor_api:
+        if conn.mode != "addon":
+            raise SupervisorError(f"{what}: only an add-on has a Supervisor")
+        url = f"http://{SUPERVISOR_HOST}{path}"
+    else:
+        url = f"{conn.base}{path}"
+    req = urllib.request.Request(  # noqa: S310 - validated base, constant path
+        url,
         data=json.dumps(body).encode() if body is not None else None,
         method="POST" if body is not None else "GET",
     )
-    req.add_header("Authorization", f"Bearer {tok}")
+    req.add_header("Authorization", f"Bearer {conn.token}")
     if body is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        # The host is the constant SUPERVISOR_HOST; the path is a constant of this module.
-        # nosemgrep: dynamic-urllib-use-detected
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 - fixed host
+        with _open(req, timeout, conn) as r:
             raw = r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as ex:
         try:
@@ -498,9 +813,6 @@ def notify_persistent(
 ) -> None:
     """A bell notification in HA (persistent_notification.create). The same id replaces
     the earlier notification about the same app."""
-    tok = tok or token()
-    if not tok:
-        raise SupervisorError("not running as a Home Assistant add-on")
     if not _NOTIFY_TARGET.match(notification_id):
         raise SupervisorError("bad notification id")
     body = {"notification_id": notification_id, "title": title[:100], "message": message[:1500]}
@@ -512,9 +824,6 @@ def notify_service(
 ) -> None:
     """notify.<target> (for example a phone's mobile_app). `url` is the panel path the
     companion app opens from the notification; other platforms ignore it."""
-    tok = tok or token()
-    if not tok:
-        raise SupervisorError("not running as a Home Assistant add-on")
     if not notify_target_ok(target):
         raise SupervisorError(f"{target!r} is not a notify target name")
     body: dict[str, Any] = {"title": title[:100], "message": message[:1500]}
@@ -525,9 +834,6 @@ def notify_service(
 
 def notify_targets(tok: str | None = None) -> list[str]:
     """Names of the `notify` services HA offers (GET /api/services, only that domain kept)."""
-    tok = tok or token()
-    if not tok:
-        raise SupervisorError("not running as a Home Assistant add-on")
     data = _call(SERVICES_PATH, None, tok, 15, "listing notify targets")
     out: list[str] = []
     for dom in data if isinstance(data, list) else []:
@@ -542,10 +848,7 @@ def notify_targets(tok: str | None = None) -> list[str]:
 def self_slug(tok: str | None = None) -> str:
     """This app's slug (GET /addons/self/info: every app may read its own info), for the
     panel link `/app/<slug>` in notifications."""
-    tok = tok or token()
-    if not tok:
-        raise SupervisorError("not running as a Home Assistant add-on")
-    data = _call(SELF_INFO_PATH, None, tok, 10, "reading the app's own info")
+    data = _call(SELF_INFO_PATH, None, tok, 10, "reading the app's own info", supervisor_api=True)
     slug = (data or {}).get("data", {}).get("slug") if isinstance(data, dict) else None
     if not isinstance(slug, str) or not _SLUG.match(slug):
         raise SupervisorError("the Supervisor didn't say the app's slug")
@@ -610,12 +913,10 @@ def parse_installed(result: Any) -> tuple[list[Installed], dict[str, int]]:
 
 def _repositories(tok: str | None = None, **kw: Any) -> Any:
     """The Marketplace's whole catalog (installed or not), via the allowlisted command."""
-    tok = tok or token()
-    if not tok:
-        raise SupervisorError("not running as a Home Assistant add-on (no SUPERVISOR_TOKEN)")
+    conn = _with(tok)
     for command in LIST_COMMANDS:
         try:
-            return core_command(command, tok, **kw)
+            return core_command(command, conn.token, **kw)
         except SupervisorError as ex:
             if "unknown_command" in str(ex):
                 continue  # not this HA's Marketplace; try the next one

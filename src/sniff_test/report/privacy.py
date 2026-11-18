@@ -15,6 +15,12 @@ Notes:
 
 Sending tokens, secrets or other integrations' data off the box is not a privacy note:
 the exfil rules score it.
+
+(0.14.0) The telemetry analyzer traces a usage-reporting send in the code. One address
+gets one entry: a scored `telemetry-shadow` / `telemetry-opt-out` finding replaces the
+note for its address, and an unscored `telemetry-usage` finding is folded into the note
+(its trace becomes "What we can't tell"; the app page doesn't list it again). The user's
+report: the same send showed twice, as a privacy note and as an FYI.
 """
 
 from __future__ import annotations
@@ -85,7 +91,92 @@ def _port_edges(report: dict[str, Any], port: int) -> list[dict[str, Any]]:
     ]
 
 
+TRACED = "telemetry-usage"  # folded into a privacy note, not listed under What we found
+_SCORED_TRACE = {"telemetry-shadow", "telemetry-opt-out"}
+_LEAD = "Sends what looks like usage reporting to "
+
+
+def _traces(report: dict[str, Any]) -> tuple[set[str], dict[str, dict[str, Any]]]:
+    """Hosts of scored telemetry findings, and host -> the unscored telemetry finding."""
+    scored: set[str] = set()
+    usage: dict[str, dict[str, Any]] = {}
+    for f in report.get("findings", []):
+        rule = f.get("rule_id")
+        host = str(f.get("evidence") or "").split(" from ", 1)[0]
+        if not host or rule not in _SCORED_TRACE | {TRACED}:
+            continue
+        if rule == TRACED:
+            usage.setdefault(host, f)
+        else:
+            scored.add(host)
+    return scored, usage
+
+
+def _trace_text(f: dict[str, Any]) -> str:
+    msg = str(f.get("message") or "")
+    head, _, rest = msg.partition(". ")
+    return rest if head.startswith(_LEAD) and rest else msg
+
+
+def _loc(f: dict[str, Any]) -> str:
+    return f"{f['file']}:{f['line']}" if f.get("line") else str(f.get("file") or "")
+
+
+def _fold(note: Note, usage: dict[str, dict[str, Any]]) -> Note:
+    """The code trace answers part of "what we can't tell" for the hosts it covers."""
+    found = [(h, usage[h]) for h in note.hosts if h in usage]
+    if not found:
+        return note
+    if len(found) == 1 and len(note.hosts) == 1:
+        told = _trace_text(found[0][1])
+    else:
+        told = " ".join(f"{h}: {_trace_text(f)}" for h, f in found)
+    rest = "" if len(found) == len(note.hosts) else " For the other addresses: " + note.unknown
+    note.unknown = (told + " Barkley can't tell what it sends." + rest).strip()
+    locs = [_loc(f) for _, f in found]
+    note.where = [*dict.fromkeys([*locs, *note.where])][:4]
+    return note
+
+
 def notes(report: dict[str, Any]) -> list[Note]:
+    out = _notes(report)
+    scored, usage = _traces(report)
+    if not scored and not usage:
+        return out
+    kept: list[Note] = []
+    for n in out:
+        if n.hosts and n.kind in ("telemetry", "developer", "analytics"):
+            keep = [i for i, h in enumerate(n.hosts) if h not in scored]
+            if not keep:
+                continue
+            if len(keep) < len(n.hosts):
+                n.hosts = [n.hosts[i] for i in keep]
+                n.edges = [n.edges[i] for i in keep if i < len(n.edges)]
+                n.classes = [n.classes[i] for i in keep if i < len(n.classes)]
+            n = _fold(n, usage)
+        kept.append(n)
+    covered = {h for n in kept for h in n.hosts}
+    loose = [h for h in usage if h not in covered and h not in scored]
+    if loose:
+        edges = {n["label"]: e for e, n in _host_edges(report)}
+        note = Note(
+            "telemetry",
+            "Telemetry",
+            "Can send usage statistics to the developer",
+            "The code has what looks like usage reporting. Any server it contacts sees your "
+            "home's internet address.",
+            "",
+            loose,
+            [],
+            [str(edges[h].get("id") or "") if h in edges else "" for h in loose],
+            [str(edges[h]["attrs"].get("class") or "") if h in edges else "" for h in loose],
+        )
+        note.unknown = "Whether it's switched on."
+        kept.insert(0, _fold(note, usage))
+    return kept
+
+
+def _notes(report: dict[str, Any]) -> list[Note]:
     out: list[Note] = []
     dev_tel: list[tuple[dict, dict]] = []
     dev_other: list[tuple[dict, dict]] = []

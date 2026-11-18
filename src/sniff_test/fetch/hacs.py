@@ -5,7 +5,8 @@ Mirrors HACS's install logic closely enough for security purposes:
   for repos without releases, the default branch, pinned here to its commit SHA;
 - integrations: `zip_release` + `filename` -> that release asset; otherwise
   `custom_components/<domain>/` from the tag's source (or repo root with `content_in_root`);
-- plugins (cards): a matching `.js` release asset, else `dist/`, else repo root.
+- plugins (cards): every asset of the release (HACS installs them all), else `dist/`,
+  else repo root.
 
 We always also download the full source tree at the resolved commit (`source_root`),
 which later analyzers use for lockfiles and release-vs-source comparison.
@@ -98,6 +99,35 @@ def _plugin_from_tree(source_root: Path, names: list[str], dest: Path) -> bool:
     return bool(js)
 
 
+# (0.14.0) Limits for a card release's assets, now that all of them are fetched. One
+# file was capped at github.MAX_DOWNLOAD_BYTES (256 MB) before; the whole set gets the
+# same cap. Real chunked cards are far below both (102 assets, 5 MB; 51 assets, 3.4 MB).
+MAX_RELEASE_ASSETS = 300
+MAX_RELEASE_BYTES = 256 * 1024 * 1024
+
+
+def _release_assets(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The assets to fetch, after the limits and a check of each name (a plain file
+    name, as HACS writes it into the card's folder). Over a limit: FetchError, so the
+    scan is never reported as if it had read everything."""
+    if len(assets) > MAX_RELEASE_ASSETS:
+        raise FetchError(
+            f"The release has {len(assets)} files; HACS would install all of them and "
+            f"Barkley reads at most {MAX_RELEASE_ASSETS}, so it can't check this version."
+        )
+    total = sum(int(a.get("size") or 0) for a in assets)
+    if total > MAX_RELEASE_BYTES:
+        raise FetchError(
+            f"The release's files add up to {total // (1024 * 1024)} MB; Barkley reads at "
+            f"most {MAX_RELEASE_BYTES // (1024 * 1024)} MB per version, so it can't check it."
+        )
+    for a in assets:
+        n = str(a.get("name", ""))
+        if not n or n in (".", "..") or "/" in n or "\\" in n or "\0" in n or len(n) > 255:
+            raise FetchError(f"A release file has a name Barkley won't write: {n[:80]!r}")
+    return assets
+
+
 HACS_RELEASE_WINDOW = 30
 
 
@@ -182,12 +212,14 @@ def fetch_remote(
 
     install = new_subdir(ws, "install")
     artifact_sha: str | None = None
+    downloads: int | None = None
 
     if kind is TargetKind.INTEGRATION:
         filename = hacs.get("filename")
         if hacs.get("zip_release") and filename and filename in assets:
             asset_path = ws / "asset.zip"
             artifact_sha = gh.download(assets[filename]["url"], asset_path)
+            downloads = _count(assets[filename])
             extract(asset_path, install)
             root = install
             install_source = "release_asset"
@@ -210,10 +242,16 @@ def fetch_remote(
             notes += more
     else:
         names = [n.lower() for n in plugin_filenames(name, hacs)]
-        matched = [a for n, a in assets.items() if n.lower() in names]
-        if matched:
-            for a in matched:
-                artifact_sha = gh.download(a["url"], install / a["name"])
+        if assets:
+            # (0.14.0) HACS installs *every* asset of the release for a card (2.0.5,
+            # `repositories/base.py` gather_files_to_download), and a card's file may
+            # import the others (bundlers split code into chunks). 0.13.0 fetched only
+            # the asset named like the card, so the chunks were never read.
+            for a in _release_assets(list(assets.values())):
+                digest = gh.download(a["url"], install / a["name"])
+                if a["name"].lower() in names:  # the card's own file, as before
+                    artifact_sha = digest
+                    downloads = _count(a)
             install_source = "release_asset"
         elif not _plugin_from_tree(source_root, names, install):
             raise FetchError("could not locate a card .js file the way HACS would")
@@ -233,7 +271,14 @@ def fetch_remote(
         notes=notes,
         requested_repo=f"{parsed[0]}/{parsed[1]}",
         repo_meta=repo,
+        stars=_count(repo, "stargazers_count"),
+        downloads=downloads,
     )
+
+
+def _count(d: dict[str, Any], key: str = "download_count") -> int | None:
+    v = d.get(key)
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
 
 
 def fetch_local(source: str, ws: Path, kind: TargetKind | None = None) -> Target:

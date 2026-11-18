@@ -24,10 +24,11 @@ plain text labelled as an AI explanation, next to the fixed explanation.
 
 ## Deep mode: Explain in context
 
-Each finding, each port and each address the app's docs don't explain gets an **Explain
-in context** button. During the scan Barkley keeps the code around it, and you can open
-it under "The code it reads" before you click. On your click, that code and the question
-go to your AI.
+The default since 0.14.0 (Settings → AI mode: Explain and read code). Each finding,
+each port and each address the app's docs don't explain gets an **Explain in context**
+button. During the scan Barkley keeps the code around it, and you can open it under
+"The code it reads" before you click. On your click, that code and the question go to
+your AI.
 
 A privacy note (telemetry, analytics, a server the developer runs, unencrypted
 addresses, MQTT without encryption) shows the button, or the AI's reading, of the

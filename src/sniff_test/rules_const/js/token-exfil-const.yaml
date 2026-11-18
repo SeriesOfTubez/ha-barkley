@@ -1,0 +1,119 @@
+# (0.14.0) A second pass over the app's JavaScript; see the comment below.
+rules:
+  # (0.14.0) The same rule with Semgrep's constant propagation on, reported under the
+  # same id (`sniff.alias`). It sees what the main rule can't: a name or key held in a
+  # constant (`const k = "hassTokens"; localStorage.getItem(k)`, `const f = "fetch";
+  # globalThis[f](…)`) and literals Semgrep folds itself (`"hass" + "Tokens"`,
+  # templates). Constant propagation misreads a destructured name that shadows a
+  # relative constant as relative, so this copy can miss such a send; the main rule
+  # still reports it. Both go through the same js_wrapper step, and one line is
+  # reported once. Keep its sources and sinks identical to rules/js/token-exfil.yaml
+  # (tests/test_js_fold.py checks).
+  #
+  # Its own Semgrep run (analyzers/semgrep.py): Semgrep 1.185 applies one taint rule's
+  # constant_propagation setting to another taint rule in the same run, so in one run
+  # either the main rule lost its destructuring catches or this copy lost its constants.
+  - id: card-token-exfil-const
+    mode: taint
+    languages: [javascript, typescript]
+    options:
+      symbolic_propagation: true
+      constant_propagation: true
+    severity: ERROR
+    message: >-
+      A Home Assistant auth token flows into a network request that is not
+      provably same-origin. A card holding your refresh token can act as you
+      from anywhere, indefinitely.
+    metadata:
+      sniff:
+        alias: card-token-exfil
+        title: Card sends HA auth token off-box
+        severity: critical
+        category: exfil
+        tags: [exfil]
+    pattern-sources:
+      - pattern: localStorage.getItem("hassTokens")
+      - pattern: window.localStorage.getItem("hassTokens")
+      # (0.14.0) By shape: storage reached through a global or a variable, and methods
+      # named by a computed key (`globalThis["localStorage"]["getItem"](…)`). The scan's
+      # js_fold step writes names that were built from pieces back in place first.
+      - pattern: $LS.getItem("hassTokens")
+      - pattern: $LS["getItem"]("hassTokens")
+      - pattern: localStorage["hassTokens"]
+      - pattern: $LS["hassTokens"]
+      - pattern: localStorage.hassTokens
+      - pattern: $LS.hassTokens
+      - pattern: $H.auth.data
+      - pattern: $H.auth.accessToken
+      - pattern: $H.connection.options.auth
+      - pattern: $X.access_token
+      - pattern: $X.refresh_token
+      - pattern: document.cookie
+      - pattern: $G.document.cookie
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: fetch($URL, ...)
+              - pattern: navigator.sendBeacon($URL, ...)
+              - pattern: new WebSocket($URL, ...)
+              - pattern: new EventSource($URL, ...)
+              - pattern: window.open($URL, ...)
+              - pattern: $XHR.open($M, $URL, ...)
+              - pattern: $IMG.src = $URL
+              # (0.14.0) The same calls reached through a global object, with a plain
+              # or computed name: `window.fetch(…)`, `globalThis["fetch"](…)`,
+              # `self.navigator.sendBeacon(…)`, `new window.WebSocket(…)`.
+              - patterns:
+                  - pattern-either:
+                      - pattern: $G.fetch($URL, ...)
+                      - pattern: $G["fetch"]($URL, ...)
+                      - pattern: $G.navigator.sendBeacon($URL, ...)
+                      - pattern: $G["navigator"]["sendBeacon"]($URL, ...)
+                      - pattern: navigator["sendBeacon"]($URL, ...)
+                      - pattern: new $G.WebSocket($URL, ...)
+                      - pattern: new $G["WebSocket"]($URL, ...)
+                      - pattern: new $G.EventSource($URL, ...)
+                      - pattern: new $G["EventSource"]($URL, ...)
+                      - pattern: $G.open($URL, ...)
+                      - pattern: $G["open"]($URL, ...)
+                  - metavariable-regex:
+                      metavariable: $G
+                      regex: ^(window|globalThis|self|top|parent|frames)$
+              # A name bound to a global object earlier (`const G = globalThis` at the
+              # top, used inside a function): Semgrep's propagation stays inside one
+              # function, so the binding is matched by shape here.
+              - patterns:
+                  - pattern-inside: |
+                      $G = $GLOBAL;
+                      ...
+                  - metavariable-regex:
+                      metavariable: $GLOBAL
+                      regex: ^(window|globalThis|self|top|parent|frames)$
+                  - pattern-either:
+                      - pattern: $G.fetch($URL, ...)
+                      - pattern: $G["fetch"]($URL, ...)
+                      - pattern: $G.navigator.sendBeacon($URL, ...)
+                      - pattern: new $G.WebSocket($URL, ...)
+                      - pattern: new $G.EventSource($URL, ...)
+                      - pattern: $G.open($URL, ...)
+          # Relative URLs and hass-built URLs stay on the HA origin. A relative URL
+          # starts with "/" and then neither "/" nor "\\" (browsers read "/\\h" as
+          # "//h"); anything appended after such a prefix can't change the origin.
+          - pattern-not: fetch("=~/^\/[^\/\\]/", ...)
+          - pattern-not: fetch("=~/^\/[^\/\\]/".concat(...), ...)
+          - pattern-not: fetch("=~/^\/[^\/\\]/" + $Y, ...)
+          - pattern-not: fetch($H.hassUrl(...), ...)
+          - pattern-not: $G.fetch("=~/^\/[^\/\\]/", ...)
+          - pattern-not: $G.fetch("=~/^\/[^\/\\]/".concat(...), ...)
+          - pattern-not: $G.fetch("=~/^\/[^\/\\]/" + $Y, ...)
+          - pattern-not: $G.fetch($H.hassUrl(...), ...)
+          - pattern-not: $XHR.open($M, "=~/^\/[^\/\\]/", ...)
+          - pattern-not: $XHR.open($M, "=~/^\/[^\/\\]/".concat(...), ...)
+          - pattern-not: $XHR.open($M, "=~/^\/[^\/\\]/" + $Y, ...)
+          - pattern-not: new WebSocket($H.hassUrl(...), ...)
+      - patterns:
+          # Anything sent over an already-open XHR / socket.
+          - pattern-either:
+              - pattern: $XHR.send($BODY)
+              - pattern: $WS.send($BODY)
+          - focus-metavariable: $BODY

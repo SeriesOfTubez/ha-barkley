@@ -88,6 +88,7 @@ def finding_json(f: Finding) -> dict[str, Any]:
         **({"dependency": dependency_json(f.dependency)} if f.dependency else {}),
         # hosts/IPs the user may mark trusted in the panel (lowercase, validated shape)
         **({"addresses": list(f.addresses)} if f.addresses else {}),
+        **({"fingerprint": f.fingerprint} if f.fingerprint else {}),
     }
 
 
@@ -164,6 +165,7 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
                 "detail": a.detail,
                 "tool_version": a.tool_version,
                 "findings": len(a.findings),
+                **({"problems": a.problems[:20]} if a.problems else {}),
             }
             for a in scan.analyzers
         ],
@@ -171,6 +173,8 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
         "graph": scan.graph if scan.graph is not None else graph.build(scan),
         "provenance": _provenance_json(scan.provenance),
         "hygiene": _hygiene_json(scan, findings),
+        # (0.14.0) shown on the app's page, never scored (popularity isn't safety)
+        "popularity": {"stars": t.stars, "downloads": t.downloads} if t.repo else None,
         "ai_brief": ai_brief(scan, findings),
         # Code from the scanned repo (untrusted), for "Explain in context". Not in ai_brief.
         "context": scan.context,

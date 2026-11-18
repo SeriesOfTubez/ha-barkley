@@ -25,6 +25,8 @@ class Explanation:
     means: str
     worry: str
     chip: str
+    # (label, https URL) pairs shown as "Read more"; fixed here, never from a report.
+    links: tuple[tuple[str, str], ...] = ()
 
 
 LEVELS = {
@@ -108,12 +110,44 @@ RULES: dict[str, Explanation] = {
         "files; reading other files there would be a problem.",
         "Reads HA's private storage",
     ),
+    "ha-own-storage-path": _E(
+        "Keeps its own file in Home Assistant's storage folder",
+        "The app writes its own file into Home Assistant's .storage folder, where Home "
+        "Assistant also keeps logins and every integration's settings. It builds the "
+        "file's path itself; Home Assistant's code has a helper (Store) that does this "
+        "for an app. Home Assistant has no documentation page saying which way to use.",
+        "No. The file is the app's own; this is shown for information and isn't scored.",
+        "Own storage file",
+        (
+            (
+                "Home Assistant's Store helper (source)",
+                "https://github.com/home-assistant/core/blob/dev/homeassistant/helpers/storage.py",
+            ),
+            (
+                "Home Assistant developer blog, 2022: Store is now a Generic class",
+                "https://contributors.home-assistant.io/blog/2022/07/08/generic-store/",
+            ),
+        ),
+    ),
     "ha-auth-internals": _E(
-        "Uses Home Assistant's user and login system",
-        "The app lists users, reads or creates login tokens, or creates accounts. Normal "
-        "apps at most look up which user is calling them.",
-        "Yes, unless that's the app's whole purpose (for example a user-management tool).",
-        "Handles users and logins",
+        "Handles Home Assistant login tokens",
+        "The app reads, creates or removes login tokens, or reaches into Home Assistant's "
+        "own login store. A login token lets whoever holds it act as that user.",
+        "Yes, unless that's the app's whole purpose (for example a login add-on).",
+        "Handles login tokens",
+    ),
+    "ha-auth-change-users": _E(
+        "Changes who can log in to Home Assistant",
+        "The app can create, enable, disable or remove user accounts.",
+        "Only if the app isn't meant to manage users. A user-management tool needs this.",
+        "Changes user accounts",
+    ),
+    "ha-auth-list-users": _E(
+        "Reads the list of Home Assistant users",
+        "The app lists every user account: names, ids and who is an administrator. Apps "
+        "do this to offer a list of people to pick from, for example in their own panel.",
+        "Usually not. The list holds no passwords or login tokens.",
+        "Lists users",
     ),
     "ha-foreign-entry-data": _E(
         "Reads other apps' saved passwords and settings",
@@ -121,6 +155,13 @@ RULES: dict[str, Explanation] = {
         "reads the entries of other apps.",
         "Yes, unless it's a tool built to manage other integrations and you trust it.",
         "Reads other apps' passwords",
+    ),
+    "ha-foreign-entry-options": _E(
+        "Reads other apps' settings",
+        "Apps keep their options (filters, chosen devices, entity lists) separately from "
+        "their passwords. This one reads the options of other apps.",
+        "Usually not. Tools that check or tidy up other integrations do this.",
+        "Reads other apps' settings",
     ),
     "ha-bulk-location-read": _E(
         "Reads where the people in your home are",
@@ -181,6 +222,14 @@ RULES: dict[str, Explanation] = {
         "the list it declares. Nobody checks those packages, and all apps share them.",
         "Yes. Ask why it doesn't declare them like other apps do.",
         "Installs software itself",
+    ),
+    "py-runtime-pip-listed": _E(
+        "Installs named software while running",
+        "The app installs Python packages itself instead of declaring them, but the "
+        "package names are written in its code, so Barkley checked those packages like "
+        "the declared ones.",
+        "Usually not. It's an old habit; the packages it installs were checked.",
+        "Installs listed packages",
     ),
     "py-shell-exec": _E(
         "Runs commands on your system",
@@ -244,13 +293,32 @@ RULES: dict[str, Explanation] = {
         "Yes. Don't install it until someone has decoded that code.",
         "Runs hidden code",
     ),
+    "card-hidden-name": _E(
+        "Its dashboard card spells out a sensitive name in pieces",
+        "The card builds a name like fetch (send data), eval (run text as code) or "
+        "hassTokens (your stored login) from pieces while running, for example "
+        "['fe','tch'].join(''). Code only does this so the name can't be found by "
+        "reading or searching it. We put the pieces together and checked what the code "
+        "does with the name; anything found is listed separately.",
+        "Yes. Find out why the card hides the name before you install it.",
+        "Hides a name",
+    ),
+    "card-eval-remote": _E(
+        "Its dashboard card runs code it gets from outside",
+        "The card takes text from a download, a message, the page address or browser "
+        "storage and runs it as code in your browser, with your Home Assistant login. That "
+        "code was never part of what we checked, and whoever controls its source controls "
+        "what runs.",
+        "Yes, unless you know where that code comes from and trust it.",
+        "Runs outside code",
+    ),
     "card-eval": _E(
         "Its dashboard card builds code while running and executes it",
-        "The card turns text into code and runs it in your browser, with your Home "
-        "Assistant login. It matters where that text comes from. Big code libraries "
-        "bundled into cards often do this harmlessly.",
-        "Worth a look. It matters where the text comes from: if it could come from the "
-        "internet, someone else could run code as you.",
+        "The card puts together a piece of code and runs it in your browser, with your "
+        "Home Assistant login. Charting and template libraries do this to make their own "
+        "code fast. We found no sign the code comes from outside the card, but we can't "
+        "follow it everywhere.",
+        "Usually not. It would matter if the pieces could come from the internet.",
         "Runs built-up code",
     ),
     "card-eval-config": _E(
@@ -312,6 +380,38 @@ RULES: dict[str, Explanation] = {
         "Depends on the bug. Most only matter in situations a Home Assistant app doesn't "
         "hit, but it's worth updating the app when a fix ships.",
         "Outdated library",
+    ),
+    "telemetry-shadow": _E(
+        "Sends usage data on its own, without telling you",
+        "The app reports how it's used to a server the developer runs, by itself (when "
+        "Home Assistant starts or on a timer). Barkley found no option in the code to "
+        "turn it off, and the app's description doesn't mention it.",
+        "It's a privacy matter, not an attack: the server learns your home's internet "
+        "address and whatever the report contains. Ask the developer what it sends.",
+        "Hidden telemetry",
+    ),
+    "telemetry-opt-out": _E(
+        "Sends usage data unless you turn it off",
+        "The app reports how it's used to a server the developer runs, by itself. It's "
+        "either on by default behind an option, or the app's description mentions it.",
+        "A privacy choice: check the app's options if you'd rather it didn't.",
+        "Telemetry, on by default",
+    ),
+    "telemetry-usage": _E(
+        "Can send usage data to the developer",
+        "The code has what looks like usage reporting to a server the developer runs. "
+        "Barkley says below what it could tell about when it's sent.",
+        "Shown for information and not scored.",
+        "Usage reporting",
+    ),
+    "dep-build-tool-vuln": _E(
+        "A build tool with known security bugs",
+        "The card lists a tool that turns its source into the JavaScript you download "
+        "(such as rollup or babel). That tool has publicly known bugs, but it only runs on "
+        "the developer's machine when the card is built; none of its code is in the card.",
+        "No, not for you: the bugs are in the developer's build step. Shown for "
+        "information and not scored.",
+        "Build tool",
     ),
     "dep-typosquat": _E(
         "Uses a code library with a name one typo away from a popular one",
@@ -398,6 +498,15 @@ RULES: dict[str, Explanation] = {
         "Not by itself. It just makes changes harder to follow.",
         "No releases",
     ),
+    "repo-release-fills-constant": _E(
+        "The download fills in a value the public code leaves empty",
+        "The code you install is the same as the code on GitHub, except for a setting "
+        "that is empty there and filled in the download, usually a key for the "
+        "developer's own service that they keep out of public view. It isn't a web "
+        "address.",
+        "Usually not. The rest of the code matches what anyone can review.",
+        "Fills in a key",
+    ),
     "repo-release-source-mismatch": _E(
         "The download differs from the code people can read",
         "The files the Marketplace installs differ from the same files in the project's "
@@ -456,7 +565,7 @@ RULES: dict[str, Explanation] = {
 # GuardDog heuristics on dependencies. The rule id is built from GuardDog's rule name,
 # so new names can appear; they fall back to _GUARDDOG.
 _GUARDDOG = _E(
-    "A code library it uses has suspicious-looking code",
+    "One of its code libraries has suspicious-looking code",
     "An automatic check of one of its code libraries found a pattern often seen in "
     "malware. It's a rule of thumb, not proof.",
     "Worth a look. Popular, well-known libraries often trip these checks harmlessly.",
@@ -516,7 +625,7 @@ def explain(rule_id: str) -> Explanation:
         what = GUARDDOG_WHAT.get(rule_id.removeprefix("dep-guarddog-"))
         if what:
             return _E(
-                f"A code library it uses {what}",
+                f"One of its code libraries {what}",
                 _GUARDDOG.means,
                 _GUARDDOG.worry,
                 _GUARDDOG.chip,
@@ -536,6 +645,10 @@ DATA_LABELS = {
     "auth and credential storage": "Login and password storage",
     ".storage files": "HA's private storage",
     "users and tokens": "Users and login tokens",
+    "login tokens": "Login tokens",
+    "user accounts": "User accounts",
+    "the user list": "The list of users",
+    "other integrations' settings": "Other apps' settings",
     "other integrations' credentials": "Other apps' passwords",
     "config entries of other integrations": "Other apps' settings",
     "household locations": "Where people are",
@@ -629,7 +742,10 @@ def can_do(report: dict[str, Any]) -> list[str]:
     for key, one, many in _CAN_DO:
         n = counts.get(key, 0)
         if n:
-            out.append(many.format(n=n) if n > 1 and many else one)
+            line = many.format(n=n) if n > 1 and many else one
+            if key == ("calls", "service"):
+                line += _high_privilege(g, nodes)
+            out.append(line)
     if reads:
         out.append("Reads " + _join(sorted(set(reads))))
     out += caps
@@ -645,6 +761,23 @@ def can_do(report: dict[str, Any]) -> list[str]:
     if bundled:
         out.append(f"Built from {bundled} code librar{'ies' if bundled != 1 else 'y'}")
     return out
+
+
+def _high_privilege(g: dict[str, Any], nodes: dict[str, Any]) -> str:
+    """ ", 2 of them high-privilege" (kinds.high_privilege, the agreed fixed list)."""
+    from sniff_test import kinds
+
+    labels = {
+        str(nodes.get(e["target"], {}).get("label", ""))
+        for e in g.get("edges", [])
+        if e["source"] == g.get("subject")
+        and e["relation"] == "calls"
+        and nodes.get(e["target"], {}).get("kind") == "service"
+    }
+    hi = sum(1 for x in labels if kinds.high_privilege(x))
+    if not hi:
+        return ""
+    return " (high-privilege)" if len(labels) == 1 else f", {hi} of them high-privilege"
 
 
 def _join(items: list[str]) -> str:

@@ -44,6 +44,7 @@ from sniff_test.analyzers.semgrep import neutralize_ignores
 from sniff_test.deps.uv import Artifact
 from sniff_test.models import AnalyzerResult, AnalyzerState, Category, Finding, Severity, Tag
 from sniff_test.paths import cache_root
+from sniff_test.report import fingerprint
 from sniff_test.trust import valid_address
 
 NAME = "guarddog"
@@ -147,7 +148,7 @@ def guarddog_version() -> str | None:
     """Even `--version` imports the typosquat module, which refreshes the lists (so it
     needs `tool_env`: under the app's AppArmor profile the plain call would crash)."""
     exe = shutil.which("guarddog")
-    return _proc.version([exe, "--version"], tool_env(exe)) if exe else None
+    return _proc.version([exe, "--version"], tool_env(exe), tool="guarddog") if exe else None
 
 
 def shipped_lists(exe: str) -> Path | None:
@@ -181,6 +182,11 @@ def tool_env(exe: str) -> dict[str, str]:
     return _proc.tool_env(GUARDDOG_TOP_PACKAGES_CACHE_LOCATION=str(cache))
 
 
+def _cache_dirs() -> tuple[Path, ...]:
+    """GuardDog refreshes its typosquat lists into our cache (tool_env)."""
+    return (cache_root() / "guarddog",)
+
+
 def _scan(
     exe: str, target: Path, run_dir: Path, env: dict[str, str] | None = None
 ) -> tuple[dict | None, str, bool]:
@@ -188,12 +194,13 @@ def _scan(
     base = [exe, "pypi", "scan", str(target), "--output-format", "json"]
     sandboxed = True
     try:
-        proc = _proc.run(base, run_dir, _TIMEOUT, env)
+        proc = _proc.run(base, run_dir, _TIMEOUT, env, tool="guarddog", write=_cache_dirs())
         if proc.returncode != 0 and "sandbox" in proc.stderr.lower():
             # No kernel sandbox here (e.g. some containers). GuardDog only parses files,
             # so fall back, but record it.
             sandboxed = False
-            proc = _proc.run([*base, "--no-sandbox"], run_dir, _TIMEOUT, env)
+            proc = _proc.run([*base, "--no-sandbox"], run_dir, _TIMEOUT, env, tool="guarddog",
+                             write=_cache_dirs())  # fmt: skip
     except subprocess.TimeoutExpired:
         return None, "timed out", sandboxed
     try:
@@ -207,6 +214,20 @@ def _platforms_for(art: Artifact, pkg: ResolvedPackage) -> frozenset[str]:
         if plat in art.filename:
             return frozenset({plat})
     return frozenset(pkg.platforms)
+
+
+def _file_hash(art: Artifact, where: str) -> str:
+    """sha256 of the file GuardDog flagged, inside the unpacked archive ("" if unknown)."""
+    if art.local is None or not where:
+        return ""
+    rel = where.rsplit(":", 1)[0] if where.rsplit(":", 1)[-1].isdigit() else where
+    base = art.local.resolve()
+    path = (base / rel).resolve() if not Path(rel).is_absolute() else Path(rel).resolve()
+    try:
+        path.relative_to(base)
+    except ValueError:
+        return ""
+    return fingerprint.file_content(path)
 
 
 def to_findings(data: dict, pkg: ResolvedPackage, art: Artifact) -> list[Finding]:
@@ -237,6 +258,9 @@ def to_findings(data: dict, pkg: ResolvedPackage, art: Artifact) -> list[Finding
                 ),
                 file="manifest.json",
                 evidence=f"{pkg.name}=={pkg.version} {where}: {match}",
+                # (0.14.0) the package and the flagged file's content, not its version:
+                # an accepted hit stays accepted until that file changes
+                fingerprint=fingerprint.other(rule, pkg.name, _file_hash(art, where)),
                 tags=frozenset({Tag.POSSIBLE}) if rule in _EXFIL else frozenset(),
                 analyzer=NAME,
                 platforms=_platforms_for(art, pkg),
@@ -244,6 +268,9 @@ def to_findings(data: dict, pkg: ResolvedPackage, art: Artifact) -> list[Finding
             )
         )
     return out
+
+
+LAST_PASS_MAX = 10  # files retried once more at the end; beyond that the network is down
 
 
 def run(resolution: Resolution | None, work: Path, jobs: int | None = None) -> AnalyzerResult:
@@ -269,20 +296,38 @@ def run(resolution: Resolution | None, work: Path, jobs: int | None = None) -> A
         _pkg, art = item
         local = fetch_artifact(art, work)
         if local is None:
-            return item, None, "download/extract failed", True
+            return item, None, "fetch failed", True
         neutralize_ignores(local)
         return (item, *_scan(exe, local, run_dir, env))
 
     findings: list[Finding] = []
     errors: list[str] = []
+    problems: list[dict] = []
     unsandboxed = 0
-    with ThreadPoolExecutor(max_workers=max(1, min(jobs or 4, 4))) as pool:
-        for (pkg, art), data, err, sandboxed in pool.map(one, jobs_list):
+    failed: list[tuple[ResolvedPackage, Artifact]] = []
+
+    def take(results) -> None:
+        nonlocal unsandboxed
+        for (pkg, art), data, err, sandboxed in results:
             unsandboxed += not sandboxed
+            if data is None and err == "fetch failed":
+                failed.append((pkg, art))
+                continue
             if data is None:
                 errors.append(f"{art.filename}: {err}")
                 continue
-            findings += to_findings(data, pkg, art)
+            findings.extend(to_findings(data, pkg, art))
+
+    with ThreadPoolExecutor(max_workers=max(1, min(jobs or 4, 4))) as pool:
+        take(pool.map(one, jobs_list))
+    # (0.14.0) one last pass over what still failed, after everything else had its time
+    if failed:
+        again, failed = failed[:LAST_PASS_MAX], failed[LAST_PASS_MAX:]
+        take(map(one, again))
+    for _pkg, art in failed:
+        problem = art.failure or {"file": art.filename, "kind": "other", "error": "fetch failed"}
+        problems.append(problem)
+        errors.append(f"{art.filename}: {problem.get('kind')}: {problem.get('error')}")
 
     # One finding per (package, rule): the same hit in each platform's wheel is one issue.
     merged: dict[tuple[str, str], Finding] = {}
@@ -299,4 +344,6 @@ def run(resolution: Resolution | None, work: Path, jobs: int | None = None) -> A
     if errors:
         state = AnalyzerState.ERROR
         detail += "; " + " | ".join(errors)[:500]
-    return AnalyzerResult(NAME, state, list(merged.values()), detail, guarddog_version())
+    return AnalyzerResult(
+        NAME, state, list(merged.values()), detail, guarddog_version(), problems=problems
+    )

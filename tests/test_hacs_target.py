@@ -147,3 +147,43 @@ def test_only_prereleases_installs_default_branch(tmp_path):
     gh = FakeGitHub(INTEGRATION_TREE, releases={"b1": {"tag_name": "b1", "prerelease": True}})
     t = hacs.fetch_remote("owner/repo", tmp_path, gh=gh)
     assert t.install_source == "default_branch"
+
+
+# (0.14.0) HACS installs every asset of a card's release; so does Barkley, within limits.
+def _plugin_gh(assets):
+    tree = {"hacs.json": json.dumps({"filename": "my-card.js"}), "dist/my-card.js": "src()"}
+    return FakeGitHub(
+        tree,
+        releases={"v1": {"tag_name": "v1", "assets": assets}},
+        assets={a["url"]: f"// {a['name']}\n".encode() for a in assets},
+    )
+
+
+def test_plugin_fetches_every_release_asset(tmp_path):
+    names = ["my-card.js", "card-Ab12.js", "chunk-Cd34.js", "my-card.js.gz", "de.json"]
+    gh = _plugin_gh([{"name": n, "url": f"u{i}", "size": 10} for i, n in enumerate(names)])
+    t = hacs.fetch_remote("owner/lovelace-my-card", tmp_path, gh=gh)
+    assert t.install_source == "release_asset"
+    assert sorted(p.name for p in t.root.iterdir()) == sorted(names)
+    assert (t.root / "chunk-Cd34.js").read_text() == "// chunk-Cd34.js\n"
+    assert t.artifact_sha256 == "assetsha"  # the card's own file, as before
+
+
+def test_plugin_release_asset_limits(tmp_path):
+    many = [
+        {"name": f"c{i}.js", "url": f"u{i}", "size": 1} for i in range(hacs.MAX_RELEASE_ASSETS + 1)
+    ]
+    with pytest.raises(hacs.FetchError, match="at most 300"):
+        hacs.fetch_remote("owner/lovelace-my-card", tmp_path, gh=_plugin_gh(many))
+    big = [{"name": "my-card.js", "url": "u0", "size": hacs.MAX_RELEASE_BYTES + 1}]
+    (tmp_path / "b").mkdir()
+    with pytest.raises(hacs.FetchError, match="MB"):
+        hacs.fetch_remote("owner/lovelace-my-card", tmp_path / "b", gh=_plugin_gh(big))
+    for bad in ("../evil.js", "a/b.js", "..", "a\\b.js"):
+        d = tmp_path / f"n{abs(hash(bad))}"
+        d.mkdir()
+        gh = _plugin_gh(
+            [{"name": "my-card.js", "url": "u0", "size": 1}, {"name": bad, "url": "u1", "size": 1}]
+        )
+        with pytest.raises(hacs.FetchError, match="name"):
+            hacs.fetch_remote("owner/lovelace-my-card", d, gh=gh)

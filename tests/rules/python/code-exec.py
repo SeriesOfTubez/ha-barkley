@@ -61,9 +61,28 @@ def shell(cmd):
 def obfuscated(xs):
     # ruleid: py-obfuscation
     s = "".join(chr(c) for c in xs)
-    # ruleid: py-obfuscation
+    # ok: py-obfuscation
     f = getattr(__builtins__, s)
     return f
+
+
+def builtins_lookup(builtins, node, part):
+    # ok: py-obfuscation
+    value = getattr(builtins, node.id)
+    # ruleid: py-obfuscation
+    run = getattr(builtins, "ev" + "al")
+    # ruleid: py-obfuscation
+    run = getattr(builtins, f"ex{part}")
+    # ruleid: py-obfuscation
+    run = getattr(builtins, "".join(["ex", "ec"]))
+    # ruleid: py-obfuscation
+    run = getattr(builtins, "lave"[::-1])
+    # ruleid: py-obfuscation
+    run = getattr(__builtins__, "exec")
+    name = "ev" + "al"
+    # ruleid: py-obfuscation
+    run = getattr(builtins, name)
+    return value, run
 
 
 def own_package(module):

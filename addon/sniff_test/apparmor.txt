@@ -78,6 +78,11 @@ profile sniff_test flags=(attach_disconnected,mediate_deleted) {
   /usr/lib/python3.13/lib-dynload/*.so{,.*} mr,
   /usr/lib/python3/{,**} r,
   /usr/local/lib/python3.13/{,**} r,
+  # (0.14.0) Barkley's own Python (HA's version), installed by uv at build time.
+  /opt/python/{,**} r,
+  /opt/python/*/bin/* ix,
+  /opt/python/barkley-python ix,
+  /opt/python/**.so{,.*} mr,
   /opt/sniff-test/{,**} r,
   /opt/sniff-test/bin/* ix,
   /opt/sniff-test/**.so{,.*} mr,

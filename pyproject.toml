@@ -1,9 +1,9 @@
 [project]
 name = "ha-sniff-test"
-version = "0.13.0"
+version = "0.14.0"
 description = "🐕 Sniffs Home Assistant Marketplace (HACS) integrations and cards before they get into the house."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
     "jsbeautifier==2.0.3",
@@ -32,6 +32,7 @@ packages = ["src/sniff_test"]
 
 [tool.ruff]
 line-length = 100
+# Formatting stays 3.13-compatible (py314 would rewrite `except (A, B):` in 25 files).
 target-version = "py313"
 # Rule test targets and fixtures are deliberately "malicious" sample code.
 extend-exclude = ["tests/rules", "tests/fixtures", "demo"]

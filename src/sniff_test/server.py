@@ -1,8 +1,10 @@
 """`sniff-test serve`: the add-on's ingress panel. Stdlib only, one scan at a time.
 
 Behind HA ingress, HA does the login and the Supervisor (172.30.32.2) is the only
-client the panel ever sees, so every other address is refused. Forms carry a
-per-process token so another page can't make the panel start scans.
+client the panel ever sees, so every other address is refused. Standalone (no
+Supervisor), the panel is reachable from the network instead, so every page but the
+login asks for a session from "log in with Home Assistant" (login.py; administrators
+only). Forms carry a per-process token so another page can't make the panel start scans.
 
 Everything shown from a report (repo names, refs, file names, evidence, hosts) came
 from scanned repos and is escaped. The JSON view is served as `application/json`
@@ -11,6 +13,7 @@ with `nosniff`, and the CSP allows no scripts at all.
 
 from __future__ import annotations
 
+import difflib
 import html
 import json
 import queue
@@ -21,14 +24,29 @@ import threading
 import time
 import urllib.parse
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from typing import Any
 
-from sniff_test import __version__, doctor, memory, recheck, supervisor, trust, ui, watch
+from sniff_test import (
+    __version__,
+    doctor,
+    ha_token,
+    kinds,
+    login,
+    memory,
+    recheck,
+    review,
+    scoring,
+    supervisor,
+    trust,
+    ui,
+    watch,
+)
+from sniff_test import settings as settings_mod
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import GitHubError, RateLimit, RateLimitError
@@ -68,6 +86,9 @@ _JOBS_KEPT = 20
 # (0.12.0) + 2 per scan: Home Assistant's original of a function the app replaces
 # (report.compare.MAX_FETCH; cached per HA release, so usually none are made).
 _GITHUB_NEED = {"scan": 12, "installed": 12, "update": 23, "auto": 23}
+# (0.14.0) Explain and read code by default: still nothing is sent before a click, and
+# what a click sends is the app's own public code, never anything from Home Assistant.
+AI_MODE_DEFAULT = "deep"
 
 
 def _need(job: Job) -> int:
@@ -85,6 +106,15 @@ _CSP = (
     "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; "
     "form-action 'self'; base-uri 'none'; frame-ancestors 'self'"
 )
+
+
+def csp_with_login(ha_url: str) -> str:
+    """(0.14.0) Standalone: browsers check form-action against where a form's redirects
+    end up, and Create token (a form) ends at Home Assistant's login page. `ha_url` is
+    login.base_url's scheme://host[:port], so nothing but an origin goes into the header."""
+    return _CSP.replace("form-action 'self'", f"form-action 'self' {ha_url}")
+
+
 _FONT_FILES = ("Geist-Variable.woff2", "GeistMono-Variable.woff2")
 
 
@@ -165,6 +195,7 @@ class Worker:
     ):
         self.recheck_fn = recheck_fn
         self.parallel = max(1, min(int(parallel), PARALLEL_MAX))
+        self.memory_gb_fn: Callable[[], int] = lambda: 0  # (0.14.0) Memory for scans
         self.store = store
         self.scan_fn = scan_fn
         self.tool_version = tool_version
@@ -184,7 +215,7 @@ class Worker:
         self._gate = threading.Lock()  # GitHub budget checks, one at a time
         self._threads = [
             threading.Thread(target=self._run, name=f"sniff-worker-{i}", daemon=True)
-            for i in range(self.parallel)
+            for i in range(PARALLEL_MAX)  # admission keeps it to `parallel` (changeable)
         ]
         for th in self._threads:
             th.start()
@@ -193,23 +224,52 @@ class Worker:
         with self._slots:
             return list(self._running)
 
-    def _room_for_another(self) -> bool:
+    def _room_for_another(self) -> str:
+        """ "" when one more scan fits beside the running ones, else why not.
+
+        Auto (Memory for scans 0): free memory must cover a reserve plus PER_SCAN for each
+        running scan (each may still grow); the reserve is WARN_BELOW on a machine Home
+        Assistant shares, CONTAINER_RESERVE inside a container's own limit. A fixed amount:
+        as many scans as fit in it at PER_SCAN each (never past a container's limit), and
+        never below REFUSE_BELOW of real free memory after the running scans' growth."""
         mem = self.memory_fn()
         if mem.available is None:
-            return False
-        return mem.available >= memory.WARN_BELOW + PER_SCAN * len(self._running)
+            return "waiting: available memory is unknown, so one scan at a time"
+        n = len(self._running)
+        gb = self.memory_gb_fn()
+        if gb:
+            budget = gb * memory.GIB
+            if mem.limited and mem.total:
+                budget = min(budget, mem.total)
+            need = memory.REFUSE_BELOW + PER_SCAN * n
+            if PER_SCAN * (n + 1) > budget:
+                fits = max(1, int(budget // PER_SCAN))
+                return (f"waiting for a running scan to finish: {gb} GB (Memory for scans "
+                        f"in Settings) fits {fits} at a time")  # fmt: skip
+        else:
+            reserve = memory.CONTAINER_RESERVE if mem.limited else memory.WARN_BELOW
+            need = reserve + PER_SCAN * n
+        if mem.available < need:
+            return (f"waiting for memory: {mem.available / memory.GIB:.1f} GB free, "
+                    f"{need / memory.GIB:.1f} GB needed beside the {n} running (Memory for "
+                    "scans in Settings)")  # fmt: skip
+        return ""
 
     def _admit(self, job: Job) -> None:
         """Wait for a slot; the job then counts as running (state set by the caller)."""
         with self._slots:
             while True:
                 same = any(j.repo.lower() == job.repo.lower() for j in self._running)
-                if not same and (not self._running or self._room_for_another()):
+                full = len(self._running) >= self.parallel  # (0.14.0) a Settings choice
+                why = "" if same or full or not self._running else self._room_for_another()
+                if not same and (not self._running or (not full and not why)):
                     break
                 job.message = (
                     "waiting for the other check of this repo"
                     if same
-                    else "waiting for memory to run beside the scans already running"
+                    else "waiting for a free slot (Parallel scans in Settings)"
+                    if full
+                    else why
                 )
                 self._slots.wait(timeout=30)  # memory can free up without a job ending
             self._running.append(job)
@@ -531,7 +591,11 @@ def _action(base: str, r: Row, token: str, back: str = "", primary: bool = False
         label = "Sniff again" if r.installed_scan else "Sniff it"
         return (f'<form method=post action="{base}/installed">{hidden}'
                 f'<button class="{cls}">{label}</button></form>')  # fmt: skip
-    return ""
+    # (0.14.0, his report: rescanning was app page by app page) a fresh scan of the
+    # installed version, never the stored one
+    return (f'<form method=post action="{base}/scan">{hidden}'
+            '<button title="Runs a fresh scan of the installed version">Sniff again</button>'
+            "</form>")  # fmt: skip
 
 
 def _diff_link(r: Row) -> str:
@@ -604,6 +668,14 @@ def render_installed(
             f'<input type=hidden name=back value="{back}">'
             f'<button class="primary">{label}</button></form>'
         )
+    elif rows and not any(r.busy for r in rows):
+        lead = (
+            f'<form method=post action="{base}/sniff-all-again">'
+            f'<input type=hidden name=token value="{token}">'
+            f'<input type=hidden name=back value="{back}">'
+            f'<button title="A fresh scan of every installed app, one after another">'
+            f"Sniff all {len(rows)} again</button></form>"
+        )
     out = (
         [ui.render_grid(base, cards, v, lead)]
         if rows
@@ -617,6 +689,23 @@ def render_installed(
         + ".</p>"
     )
     return "".join(out)
+
+
+def _token_banner(base: str, panel: Panel) -> str:
+    """Standalone: no Home Assistant token yet, or the last rotation failed."""
+    if not panel.standalone:
+        return ""
+    src = ha_token.source()
+    if not src:
+        return (
+            '<div class="banner warn"><b>Barkley needs its own Home Assistant token</b> to '
+            f'list your apps and notify you. <a href="{base}/setup">Set it up</a>.</div>'
+        )
+    meta = ha_token.Meta.load(panel.store)
+    if src == "barkley" and meta.error:
+        return (f'<div class="banner warn">{e(meta.error, 300)}. The current token keeps '
+                f'working. <a href="{base}/settings#ha-token">Settings</a></div>')  # fmt: skip
+    return ""
 
 
 def _memory_banner(mem: memory.Memory) -> str:
@@ -711,15 +800,19 @@ def render_index(
     status: str = "",
     here: str = "",
     auto: str = "",
+    account: str = "",
+    token_banner: str = "",
 ) -> bytes:
     rows = store.history(limit=100)
     against = f" against HA {e(ha)}" if ha else ""
     out = [
         f'<div class="head"><h1>{ui.logo_img()}Barkley</h1>'
-        f'<a class="small" href="{base}/?{here}">{ui.icon("refresh")} Refresh</a></div>',
+        f'<a class="small" href="{base}/?{here}">{ui.icon("refresh")} Refresh</a>'
+        f'<a class="small" href="{base}/settings">{ui.icon("wrench")} Settings</a></div>',
         status,
         _memory_banner(mem) if mem else "",
         _github_banner(github_wait),
+        token_banner,
         _search_box(base) if search else "",
         installed,
         auto,
@@ -787,36 +880,584 @@ def render_index(
             else f"Up to {parallel} scans run at once, as memory allows. "
         )
         + f'Scores never come from an AI. <a href="{base}/doctor">Diagnostics</a>: can each '
-        f'tool run on this box? <a href="{base}/trusted">Addresses you trust</a>.</p>'
+        f'tool run on this box? <a href="{e(report_issue_url(ha))}" target="_blank" '
+        'rel="noopener noreferrer" title="Opens a new public issue on Barkley\'s GitHub, with '
+        'the versions filled in">Report an issue</a>. '
+        f'<a href="{base}/settings">Settings</a>. '
+        f'<a href="{base}/trusted">Addresses you trust</a>.</p>'
     )
+    out.append(account)
     return ui.page("Barkley", "".join(out), refresh=5 if active else 0, base=base)
 
 
-AUTO_NOTE = (
-    "<b>A new integration runs as soon as it's installed:</b> Home Assistant opens its setup "
-    "right away, which loads its code. The auto-sniff of a new install comes after that, so "
-    "the protection for a new install is sniffing it from search <i>before</i> you install. "
-    "An update is sniffed <b>as soon as the Marketplace offers it</b>, so the heads-up and "
-    "what it changes come before you update; its new code waits for a restart anyway."
+WIKI_GITHUB_HELP = "https://github.com/SeriesOfTubez/ha-barkley/wiki/Options#github-token"
+WIKI_HA_SETUP = (
+    "https://github.com/SeriesOfTubez/ha-barkley/wiki/Standalone#barkleys-home-assistant-token"
 )
 
 
-def render_auto(base: str, w: watch.Watcher, token: str, now: float | None = None) -> str:
-    """The auto-sniff box: what it does, the plain timing note, settings, recent results."""
-    now = time.time() if now is None else now
-    on = w.enabled
-    targets, terr = w.targets()
-    chosen = w.notify_target
-    who = f"bell + notify.{e(chosen)}" if chosen else "bell notification"
-    ok, diag = w.diagnostics()
+def github_token_url(now: datetime | None = None) -> str:
+    """(0.14.0) GitHub's new fine-grained token page, filled in (its template URL: name up
+    to 40 characters, description, expiry in days; its docs say up
+    to 366, but its form takes 365 at most, tried 2026-11-18). No permission is asked for: Barkley
+    only reads public repositories. GitHub can't send the token back; the user pastes it."""
+    now = now or datetime.now(UTC)
+    q = urllib.parse.urlencode({
+        "name": f"Barkley {now:%Y-%m-%d}",
+        "description": "Barkley: reads public repositories for its scans (a higher rate limit)",
+        "expires_in": "365",
+    })  # fmt: skip
+    return f"https://github.com/settings/personal-access-tokens/new?{q}"
+
+
+def github_create_link(now: datetime | None = None) -> str:
+    return (f'<a class="button" href="{e(github_token_url(now))}" target="_blank" '
+            'rel="noopener noreferrer">Create token on GitHub</a>')  # fmt: skip
+
+
+GITHUB_STEPS = (
+    "On GitHub, leave Repository access on <b>Public repositories</b>, add no permissions, "
+    "click <b>Generate token</b>, copy it and paste it here."
+)
+
+
+def ha_token_block(base: str, store: Store, period: int, token: str) -> str:
+    """Standalone only: Barkley's own Home Assistant token (part 4). Never shows a token:
+    where it comes from, when it rotates, Create token, paste one, Rotate now."""
     hidden = f'<input type=hidden name=token value="{token}">'
-    opts = ['<option value="">no one else (bell notification only)</option>'] + [
-        f'<option value="{e(t)}"{" selected" if t == chosen else ""}>notify.{e(t)}</option>'
-        for t in targets
-    ]
-    if chosen and chosen not in targets:
-        opts.append(f'<option value="{e(chosen)}" selected>notify.{e(chosen)} (not offered now)'
-                    "</option>")  # fmt: skip
+    src = ha_token.source()
+    line = ha_token.status_line(store, period)
+    meta = ha_token.Meta.load(store)
+    err = (f'<p class="small" style="color:var(--orange)">{e(meta.error, 300)}</p>'
+           if meta.error and src == "barkley" else "")  # fmt: skip
+    ctl = ""
+    if src in ("", "barkley"):
+        ctl = (
+            f'<form method=post action="{base}/ha-token/create" class="setform">{hidden}'
+            f"<button{' class=primary' if not src else ''}>Create token</button></form>"
+            f'<form method=post action="{base}/ha-token" class="setform ctl">{hidden}'
+            '<input type=password name=value autocomplete=off aria-label="Home Assistant token" '
+            'placeholder="Or paste a long-lived token"><button>Save token</button></form>'
+        )
+        if src == "barkley":
+            ctl += (f'<form method=post action="{base}/ha-token/rotate" class="setform">{hidden}'
+                    "<button>Rotate now</button></form>")  # fmt: skip
+    return (
+        '<div class="setrow" id="ha-token"><div><b>Home Assistant token</b>'
+        '<p class="muted small">'
+        "Barkley's own, for reading your apps and sending notifications. An administrator's "
+        "(Home Assistant lists apps to administrators only). Create token logs you in to "
+        "Home Assistant once more and makes it; your login's own tokens are revoked right "
+        f"after. Kept in its own file, never in Barkley's database.</p>{err}</div>"
+        f'<div class="ctl"><span class="muted small">{e(line)}</span>{ctl}</div></div>'
+    )
+
+
+# "How this works" under each setting on the Settings page: what it changes, in plain
+# words, checked against the code (scoring.Policy, kinds.MINOR, review.py, watch.py).
+SETTING_HELP = {
+    "Exposure": (
+        "Public raises findings about what an app accepts from outside (pages that work "
+        "without a login, pages other websites may call, webhooks) by one level. Findings "
+        "about data leaving your home are at the top level either way. A change applies to "
+        "the next scans; a stored scan keeps the exposure it was made with."
+    ),
+    "Paranoid mode": (
+        "Off hides and doesn't count these: listing user accounts (names only), reading other "
+        "apps' settings (their options, not their stored data), writing its own files in "
+        "Home Assistant's .storage folder, a bug in a build tool that never ships in a card, "
+        "installing its own declared libraries, and usage reporting that is disclosed or "
+        "optional. An app's page says how many it left out, with a link to show them. "
+        "Changing who can log in, reading other apps' stored data or passwords, and code "
+        "Barkley couldn't read are never treated as minor."
+    ),
+    "Powerful, no threat": (
+        "A Threat is a sign of malicious behavior, such as sending your data or logins away, "
+        "disguised code or known malware. Without one, an app that can do a lot stops at 40 "
+        "instead of going lower. Only for a finished scan with no critical finding: an "
+        "unfinished scan may have missed a Threat, and a critical known bug in a library "
+        "still counts in full. Off: findings count down to 0 whatever their kind."
+    ),
+    "Pages without a login": (
+        "Some apps add a page that opens without logging in, for sign-in callbacks or image "
+        "links. If Home Assistant can't be reached from the internet, only devices on your "
+        "network can open it, so by default it's listed under what the app can do and not "
+        "counted. Count as low takes 2 points. With Exposure set to Public it always counts, "
+        "one level higher."
+    ),
+    "Hidden usage reporting": (
+        "Counted (8 points) only when Barkley is sure of all three: the app sends it by "
+        "itself (at start-up or on a timer), no setting turns it off, and nothing in its "
+        "README or setup screens mentions it. When Barkley can't be sure, it's an uncounted "
+        "privacy note instead. List only keeps it on the page without counting it."
+    ),
+    "When an accepted finding changes": (
+        "An acceptance is tied to the code around the finding, usually the function it's "
+        "in, not the line number. The same code in a new version stays accepted. Changed "
+        "code opens it again and your reviewed score counts it again. Notify me adds a line "
+        "about it to the auto-sniff notification for that version; Just reopen it doesn't."
+    ),
+    "Ask again": (
+        "After 6 or 12 months an acceptance opens again for a fresh look, even if the code "
+        "didn't change: your setup or what you know about the app may have. Never: an "
+        "acceptance lasts until its code changes."
+    ),
+    "Auto-sniff": (
+        "When the Marketplace installs or updates an app, or offers an update, Barkley "
+        "sniffs that version and notifies you. Once a day it also asks again whether the "
+        "libraries of what you have, and of updates waiting, have new known bugs or were "
+        "found to be malware. That doesn't download or scan the app's code again. A new "
+        "integration runs as soon as it's installed: Home Assistant opens its setup right "
+        "away, which loads its code before the auto-sniff can finish. So sniff a new app from "
+        "search before you install it. An update is sniffed as soon as the Marketplace offers "
+        "it, so you hear what it changes before you update."
+    ),
+    "Notify": (
+        "Every result goes to Home Assistant's bell. Pick a notify service, such as your "
+        "phone, to get it there too. A notification carries the app's name, its version, "
+        "the score and counts, never text from the app's code."
+    ),
+    "AI": (
+        "Explanations go through the Home Assistant AI Task entity you pick, so they use the "
+        "AI provider you set up in Home Assistant. Nothing is sent until you click Explain. "
+        "The AI never sets, clears or changes a score or a finding, and it's only as good "
+        "as the model behind the entity."
+    ),
+    "AI mode": (
+        "Explain only sends the findings. Explain and read code also lets you ask about one "
+        "finding, address or port, and sends the app's own code around it (public on "
+        "GitHub, kept from the scan). Nothing from your Home Assistant is ever sent."
+    ),
+    "Parallel scans": (
+        "Each scan is a separate app. Another scan starts only while there's memory for it "
+        "(see Memory for scans); otherwise it waits its turn. Two checks of the same app "
+        "never run together. Scans share the processor too: keep Parallel scans times "
+        "Semgrep jobs at or below the number of processor cores (4 on many Home Assistant "
+        "boxes). Past that, a big app's checks can run out of time and its scan comes out "
+        "Incomplete."
+    ),
+    "Semgrep jobs": (
+        "Inside one scan, Semgrep (the code checker) reads this many files at once, and "
+        "GuardDog uses the same number for an integration's libraries. It helps apps that "
+        "ship many files, such as cards split into chunks; one big file is still read by "
+        "one worker, and Barkley's passes over the code run one after another. Downloading "
+        "the app takes the same time either way. Each extra job needs its own memory. With "
+        "1 parallel scan, set this to the number of cores; with more, keep Parallel scans "
+        "times this at or below the cores."
+    ),
+    "Memory for scans": (
+        "Barkley counts 1.5 GB for each scan, the most a big one has needed. Auto starts "
+        "another scan only while free memory covers that for every running scan plus a "
+        "reserve: 2 GB on a machine Home Assistant shares, 0.5 GB inside a container with "
+        "its own memory limit. A fixed amount runs as many scans as fit in it (4 GB: two), "
+        "never past a container's limit, and never with under 1 GB really free. A scan that "
+        "runs out of memory is stopped by the system and shows as Incomplete."
+    ),
+    "Token rotation": (
+        "Barkley uses its current token to make a new one, checks that it works, saves it, "
+        "and then deletes the old one. Each token lasts twice this period plus a week, so "
+        "one missed rotation breaks nothing. A failed rotation keeps the current token, "
+        "shows why here and notifies you; it's tried again a day later."
+    ),
+    "GitHub token": (
+        "GitHub allows 60 requests an hour without a token and 5,000 with one; a scan makes "
+        "about 6 or 7. Barkley keeps it in its own file next to its database, never in the "
+        "database, and never shows it again. A token saved here wins over the one in the "
+        "app's options."
+    ),
+}
+
+
+def render_settings(
+    base: str,
+    s: settings_mod.Settings,
+    token: str,
+    *,
+    ai_entity: str = "",
+    ai_mode: str = AI_MODE_DEFAULT,
+    ai_choices: list[tuple[str, str]] | None = None,
+    watcher: watch.Watcher | None = None,
+    token_source: str = "",
+    external: bool | None = None,
+    saved: bool = False,
+    bad: str = "",
+    bad_detail: str = "",
+    mem: memory.Memory | None = None,
+    defaults: settings_mod.Settings = settings_mod.DEFAULTS,
+    ha_token_html: str = "",
+) -> bytes:
+    """Barkley's Settings page (part 3, the agreed wording 2026-11-18): Scoring, Reviews,
+    Checking and notifications. One form; each section can go back to Barkley's defaults.
+    No script: plain selects and buttons."""
+
+    def row(label: str, help_: str, control: str, more: str = "") -> str:
+        # `more`: the longer "How this works", folded (<details>: no script, works on phones)
+        more = more or SETTING_HELP.get(label, "")
+        fold = (f'<details class="more"><summary>How this works</summary>'
+                f'<p class="small">{e(more, 800)}</p></details>') if more else ""  # fmt: skip
+        return (f'<div class="setrow"><div><b>{e(label)}</b><p class="muted small">{help_}</p>'
+                f'{fold}</div><div class="ctl">{control}</div></div>')  # fmt: skip
+
+    def sel(name: str, current: Any, opts: list[tuple[Any, str]]) -> str:
+        return (f'<select name={name} aria-label="{e(name)}">' + "".join(
+            f'<option value="{e(v)}"{" selected" if str(v) == str(current) else ""}>{e(t)}</option>'
+            for v, t in opts) + "</select>")  # fmt: skip
+
+    def onoff(name: str, current: bool, on: str, off: str, default: bool) -> str:
+        return sel(name, "1" if current else "0",
+                   [("1", on + (" (default)" if default else "")),
+                    ("0", off + ("" if default else " (default)"))])  # fmt: skip
+
+    def reset(part: str) -> str:
+        return (f'<form method=post action="{base}/settings-reset" class="setform">'
+                f'<input type=hidden name=token value="{token}">'
+                f'<input type=hidden name=part value="{part}">'
+                "<button>Reset to defaults</button></form>")  # fmt: skip
+
+    hint = ""
+    if external is False:
+        hint = ('<p class="muted small">Your Home Assistant has no external URL set, so Local '
+                "only fits.</p>")  # fmt: skip
+    elif external:
+        hint = ('<p class="muted small">Your Home Assistant has an external URL set. If it can '
+                "be reached from the internet, choose Public.</p>")  # fmt: skip
+    scoring_rows = (
+        row("Exposure", "Can your Home Assistant be reached from the internet? Public raises "
+            "findings about open pages and webhooks. It never lowers anything.",
+            sel("exposure", s.exposure,
+                [(x, label + (" (default)" if defaults.exposure == x else ""))
+                 for x, label in (("local", "Local only"), ("public", "Public"))])
+            + hint)
+        + row("Paranoid mode", "Off: findings that touch no password or login, change nothing, "
+              "and usually have a plain reason (listing users, reading other apps' settings) "
+              "aren't shown or counted. On: show and count everything.",
+              onoff("paranoid", s.paranoid, "On", "Off", False))
+        + row("Powerful, no threat", "If an app has no Threat finding, what it can do won't "
+              "put its score below Very Sus (40).", onoff("floor", s.floor, "On", "Off", True))
+        + row("Pages without a login", "When Exposure is Local only: list them under what the "
+              "app can do, without counting them.",
+              sel("unauth_views", "1" if s.unauth_views else "0",
+                  [("0", "List only (default)"), ("1", "Count as low")]))
+        + row("Hidden usage reporting", "An app sends usage data by itself, with no setting to "
+              "turn it off, and doesn't tell you.",
+              sel("shadow_telemetry", "1" if s.shadow_telemetry else "0",
+                  [("1", "Count it (default)"), ("0", "List only")]))
+    )  # fmt: skip
+    review_rows = (
+        row("When an accepted finding changes", "A new version changed its code. It reopens "
+            "either way.", sel("notify_reopen", "1" if s.notify_reopen else "0",
+                               [("1", "Notify me (default)"), ("0", "Just reopen it")]))
+        + row("Ask again", "Ask you to look at accepted findings again after a while, even if "
+              "nothing changed.", sel("reconfirm_months", s.reconfirm_months,
+                                      [(0, "Never (default)"), (6, "After 6 months"),
+                                       (12, "After 12 months")]))
+    )  # fmt: skip
+    check_rows = ""
+    if watcher is not None:
+        targets, _terr = watcher.targets()
+        chosen = watcher.notify_target
+        opts = [("", "Bell only")] + [(t, f"notify.{t}") for t in targets]
+        if chosen and chosen not in targets:
+            opts.append((chosen, f"notify.{chosen} (not offered now)"))
+        check_rows += row("Auto-sniff", "Check new installs and offered updates on its own.",
+                          sel("auto_scan", "on" if watcher.enabled else "off",
+                              [("on", "On (default)"), ("off", "Off")]))  # fmt: skip
+        test = (f'<form method=post action="{base}/notify-test" class="setform">'
+                f'<input type=hidden name=token value="{token}">'
+                "<button>Send a test notification</button></form>")  # fmt: skip
+        check_rows += row("Notify", "Where results go. Counts, scores and app names only.",
+                          sel("notify_target", chosen, opts) + test)  # fmt: skip
+        check_rows += (
+            f'<div class="setrow"><div><b>Auto-sniff activity</b>'
+            f"{render_auto_activity(base, watcher)}</div><div></div></div>"
+        )
+    if ai_choices is not None:
+        opts = [("", "Off")] + [(i, f"{n} ({i})") for i, n in ai_choices]
+        if ai_entity and ai_entity not in {i for i, _ in ai_choices}:
+            opts.append((ai_entity, f"{ai_entity} (not offered now)"))
+        check_rows += row("AI", "Home Assistant's AI Task entity. Only as good as the model "
+                          "you pick.", sel("ai_entity", ai_entity, opts))  # fmt: skip
+    check_rows += row("AI mode", "Explain only, or also read the code around a finding.",
+                      sel("ai_mode", ai_mode, [
+                          ("summary", "Explain only"),
+                          ("deep", "Explain and read code (default)")]))  # fmt: skip
+    check_rows += row("Parallel scans", "How many apps Barkley scans at the same time.",
+                      sel("parallel", s.parallel,
+                          [(n, f"{n}{' (default)' if n == defaults.parallel else ''}")
+                           for n in settings_mod.CHOICES["parallel"]]))  # fmt: skip
+    check_rows += row("Semgrep jobs", "How many files one scan's code check reads at once.",
+                      sel("jobs", s.jobs,
+                          [(n, f"{n}{' (default)' if n == defaults.jobs else ''}")
+                           for n in settings_mod.CHOICES["jobs"]]))  # fmt: skip
+    now_free = ""
+    if mem is not None and mem.available is not None and mem.total:
+        of = "this container's limit of " if mem.limited else ""
+        now_free = (f'<span class="muted small">Now {mem.available / memory.GIB:.1f} GB free '
+                    f"of {of}{mem.total / memory.GIB:.1f} GB.</span>")  # fmt: skip
+        if mem.limited and s.memory_gb * memory.GIB > mem.total:
+            now_free += ('<span class="muted small">The container\'s limit (mem_limit) is '
+                         "lower, so Barkley stays within it.</span>")  # fmt: skip
+    check_rows += row("Memory for scans", "How much memory scans may use at once. Auto goes "
+                      "by what's free.",
+                      sel("memory_gb", s.memory_gb,
+                          [(n, "Auto (default)" if n == 0 else f"{n} GB")
+                           for n in settings_mod.CHOICES["memory_gb"]]) + now_free)  # fmt: skip
+    hidden = f'<input type=hidden name=token value="{token}">'
+    have = {"settings": "Set here", "option": "Set in the app's options",
+            "file": "Set by GITHUB_TOKEN_FILE"}.get(token_source, "")  # fmt: skip
+    token_ctl = (
+        (f'<span class="muted">{ui.icon("check", 14, "ok")} {e(have)}</span>' if have else "")
+        + f'<form method=post action="{base}/github-token" class="setform ctl">{hidden}'
+        '<input type=password name=value autocomplete=off aria-label="GitHub token" '
+        f'placeholder="{"Replace with a new token" if have else "Paste a token"}">'
+        f"<button>{'Replace token' if have else 'Save token'}</button></form>"
+        + (f'<form method=post action="{base}/github-token" class="setform">{hidden}'
+           '<input type=hidden name=remove value=1><button>Remove</button></form>'
+           if token_source == "settings" else "")  # noqa: S105 - a source name
+    )  # fmt: skip
+    token_row = row(
+        "GitHub token",
+        "Optional. Raises GitHub's limit from 60 to 5,000 requests an hour. It needs no "
+        f"permissions. {GITHUB_STEPS} "
+        f'<a href="{WIKI_GITHUB_HELP}" target="_blank" rel="noopener noreferrer">'
+        "More about it</a>",
+        github_create_link() + token_ctl,
+    )
+    if ha_token_html:
+        check_rows += row("Token rotation", "How often Barkley replaces its own Home "
+                          "Assistant token. The old one is deleted once the new one works.",
+                          sel("token_days", s.token_days,
+                              [(n, f"Every {n} days" + (" (default)" if n == 60 else ""))
+                               for n in settings_mod.CHOICES["token_days"]]))  # fmt: skip
+    note = ""
+    if saved:
+        note = f'<div class="banner">{ui.icon("check", 14, "ok")} Saved.</div>'
+    bad_text = {
+        "token": "That doesn't look like a GitHub token, so nothing was saved.",
+        "hatoken": "Home Assistant didn't accept that token as an administrator's, so nothing "
+        "was saved. The app's log says why.",
+        "rotate": "The token couldn't be replaced; the current one keeps working. See below.",
+        "nologin": "Create token needs the login (BARKLEY_URL). Paste a token instead.",
+        "create": bad_detail or "Barkley couldn't create its token. The app's log says why.",
+    }  # fmt: skip
+    if bad in bad_text:
+        note = f'<div class="banner warn">{e(bad_text[bad], 300)}</div>'
+    if ha_token_html:
+        token_row = ha_token_html + token_row
+
+    def section(title: str, rows: str, part: str) -> str:
+        return (f'<section class="box"><h2>{title}</h2>{rows}'
+                f'<div class="setrow"><div></div><div class="ctl"><button form="settings" '
+                f'class="primary">Save</button>{reset(part)}</div></div></section>')  # fmt: skip
+
+    body = (
+        f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>'
+        "<h1>Settings</h1>"
+        f"{note}"
+        f'<form method=post action="{base}/settings" id="settings" class="setform">{hidden}</form>'
+        + section("Scoring", scoring_rows.replace("<select ", '<select form="settings" '),
+                  "scoring")
+        + section("Reviews", review_rows.replace("<select ", '<select form="settings" '), "reviews")
+        + section("Checking and notifications",
+                  check_rows.replace("<select ", '<select form="settings" ') + token_row,
+                  "checking")
+        + '<p class="muted small">Barkley keeps these itself, the same as an app or on its own. '
+        "The app's Configuration tab only gives the starting values.</p>"
+    )  # fmt: skip
+    return _page("Barkley · Settings", body, base)
+
+
+def _code_lines(report: dict[str, Any], f: dict[str, Any]) -> list[str]:
+    """The code Barkley kept around a finding (its context snippet), else its evidence.
+    Scanned code: only ever escaped and shown, never run or parsed here."""
+    snip = ai_context.snippet_of(report, str(f.get("id"))) if report.get("context") else None
+    if isinstance(snip, dict):
+        lines: list[str] = []
+        for seg in snip.get("segments") or []:
+            if isinstance(seg, dict):
+                lines += [str(x) for x in seg.get("code") or []]
+        if lines:
+            return lines[:400]
+    return [str(f.get("evidence") or "")]
+
+
+def render_changed(
+    base: str, sid: int, new: dict[str, Any], fid: str, old: dict[str, Any] | None
+) -> bytes:
+    """What changed? A reopened finding: the code when it was accepted against the code
+    now, as Barkley kept it from each scan (no download, nothing parsed)."""
+    f = next((x for x in new.get("findings", []) if str(x.get("id")) == fid), None)
+    if f is None:
+        return _page("Barkley · What changed?", '<p class="muted">No such finding.</p>', base)
+    st = f.get("review") or {}
+    title = ui.explain.explain(str(f["rule_id"])).title
+    new_ref = str((new.get("target") or {}).get("ref") or "this version")
+    old_ref = str(st.get("ref") or "the accepted version")
+    before = None
+    if old is not None:
+        before = next((x for x in old.get("findings", [])
+                       if str(x.get("id")) == str(st.get("finding_id"))), None)  # fmt: skip
+    if before is None or old is None:
+        body_diff = ('<p class="muted">The scan where you accepted it is no longer stored, so '
+                     "Barkley can only show the code now.</p>"
+                     '<pre class="diffcode">'
+                     f"{e(chr(10).join(_code_lines(new, f)), 20000)}</pre>")  # fmt: skip
+    else:
+        a, b = _code_lines(old, before), _code_lines(new, f)
+        out = []
+        for line in difflib.unified_diff(a, b, old_ref, new_ref, lineterm="", n=3):
+            add = line.startswith("+") and not line.startswith("+++")
+            cls = "add" if add else "del" if line[:1] == "-" and line[:3] != "---" else ""
+            out.append(f'<span class="{cls}">{e(line, 2000)}</span>' if cls else e(line, 2000))
+        body_diff = (f'<pre class="diffcode">{chr(10).join(out)}</pre>' if out else
+                     '<p class="muted">The code Barkley kept looks the same; what changed is '
+                     "around it (the function it sits in).</p>")  # fmt: skip
+    body = (
+        f'<p class="crumb"><a href="{base}/scan/{sid}">{ui.icon("back")} Back to the app</a></p>'
+        f'<section class="box"><h1>What changed?</h1><p class="mt2"><b>{e(title)}</b> '
+        f'<span class="muted">({e(f.get("file") or "")}'
+        f"{':' + str(f['line']) if f.get('line') else ''})</span></p>"
+        f'<p class="sub mt2">You accepted this in {e(old_ref, 60)}. In {e(new_ref, 60)} the code '
+        "around it is different, so it's open again. Lines marked with a minus were there when "
+        "you accepted "
+        f"it; lines marked with a plus are new.</p>{body_diff}</section>"
+    )
+    return _page("Barkley · What changed?", body, base)
+
+
+def render_account(base: str, name: str, token: str) -> str:
+    """Standalone only: who is logged in, and a way out."""
+    return (
+        f'<form class="foot" method=post action="{base}/logout">'
+        f"Logged in with Home Assistant as {e(name, 100)}. "
+        f'<input type=hidden name=token value="{token}">'
+        '<button class="link">Log out</button></form>'
+    )
+
+
+def render_setup(
+    base: str,
+    store: Store,
+    token: str,
+    step: str,
+    *,
+    period: int = 60,
+    github_source: str = "",
+    error: str = "",
+    bad: str = "",
+    saved: bool = False,
+    held: bool = False,
+    now: datetime | None = None,
+) -> bytes:
+    """(0.14.0) Standalone's first run, after the login: 1. Barkley's Home Assistant token
+    (made with the login, or pasted), 2. a GitHub token (optional), then the list.
+    `held`: the first login is still held, so Create token needs no second login. No
+    script: links and plain forms."""
+    hidden = (f'<input type=hidden name=token value="{token}">'
+              "<input type=hidden name=back value=setup>")  # fmt: skip
+    src = ha_token.source()
+    if step == "github":
+        title = "2 of 2: GitHub token (optional)"
+        have = {"settings": "Barkley has a GitHub token.",
+                "option": "Barkley has a GitHub token from the app's options.",
+                "file": "Barkley has a GitHub token from GITHUB_TOKEN_FILE."}  # fmt: skip
+        have = have.get(github_source, "")
+        state = f"<p>{ui.icon('check', 14, 'ok')} {e(have)}</p>" if have else ""
+        if bad == "token":
+            state += ('<div class="banner warn">That doesn\'t look like a GitHub token, so '
+                      "nothing was saved.</div>")  # fmt: skip
+        elif saved:
+            state += f'<div class="banner">{ui.icon("check", 14, "ok")} Saved.</div>'
+        body = (
+            "<p>GitHub allows 60 requests an hour without a token, about 5 scans, and 5,000 "
+            "with one. Barkley only reads public repositories, so the token needs no "
+            f"permissions.</p>{state}"
+            + (
+                ""
+                if have
+                else f'<p>{github_create_link(now)}</p><p class="muted small">{GITHUB_STEPS}</p>'
+            )
+            + f'<form method=post action="{base}/github-token" class="setform ctl">{hidden}'
+            '<input type=password name=value autocomplete=off aria-label="GitHub token" '
+            f'placeholder="{"Replace with a new token" if have else "Paste the token"}">'
+            "<button>Save token</button></form>"
+            f'<p class="actions"><a class="button primary" href="{base}/">'
+            f"{'Done' if have else 'Skip'}</a></p>"
+        )
+    else:
+        title = "1 of 2: Home Assistant token"
+        made = ha_token.Meta.load(store)
+        if src == "barkley":
+            when = made.created[:10] or "now"
+            state = (f'<p>{ui.icon("check", 14, "ok")} Barkley has its own Home Assistant '
+                     f"token ({e(made.how or 'created')} {e(when)}). It rotates every "
+                     f"{period} days (Settings, Token rotation).</p>")  # fmt: skip
+        elif src:
+            state = (f'<p>{ui.icon("check", 14, "ok")} Barkley uses the token you set in '
+                     "its environment (HA_TOKEN_FILE or HA_TOKEN). You manage that one; "
+                     "Barkley doesn't rotate it.</p>")  # fmt: skip
+        else:
+            state = ("<p>Barkley needs its own Home Assistant token to list your apps and "
+                     "notify you. Create one with the login you just made, or paste one you "
+                     "made yourself.</p>")  # fmt: skip
+        if error:
+            state += f'<div class="banner warn">{e(error, 300)}</div>'
+        if bad == "hatoken":
+            state += ('<div class="banner warn">Home Assistant didn\'t accept that token as '
+                      "an administrator's, so nothing was saved.</div>")  # fmt: skip
+        elif saved:
+            state += f'<div class="banner">{ui.icon("check", 14, "ok")} Saved.</div>'
+        paste = (f'<form method=post action="{base}/ha-token" class="setform ctl">{hidden}'
+                 '<input type=password name=value autocomplete=off aria-label="Home Assistant '
+                 'token" placeholder="Paste a long-lived token"><button>Save token</button>'
+                 "</form>")  # fmt: skip
+        if not src:
+            label = "Create token" if held else "Create token (logs you in again)"
+            ctl = (f'<form method=post action="{base}/ha-token/create" class="setform">'
+                   f"{hidden}<button class=primary>{label}</button></form>"
+                   f"{paste}")  # fmt: skip
+        elif src == "barkley":
+            ctl = (f'<details class="more"><summary>Use a token you made instead</summary>'
+                   f"{paste}</details>")  # fmt: skip
+        else:
+            ctl = ""
+        # a form: the end of this step lets go of the held login
+        nxt = (f'<form method=post action="{base}/setup/next" class="setform">{hidden}'
+               + ("<button class=primary>Next</button>" if src
+                  else "<button>Skip for now</button>") + "</form>")  # fmt: skip
+        body = (f"{state}{ctl}<p class=\"muted small\"><a href=\"{WIKI_HA_SETUP}\" "
+                'target="_blank" rel="noopener noreferrer">About this token</a></p>'
+                f'<p class="actions">{nxt}</p>')  # fmt: skip
+    page = (f'<div class="head"><h1>{ui.logo_img()}Set up Barkley</h1></div>'
+            f'<section class="box"><h2>{e(title)}</h2>{body}</section>')  # fmt: skip
+    return ui.page("Barkley: set up", page)
+
+
+def render_login(message: str = "", first: bool = False) -> bytes:
+    """The one page a standalone panel shows before the login. `first`: Barkley has no
+    Home Assistant token yet, so this login also makes it."""
+    note = f'<p class="sev-high">{e(message, 400)}</p>' if message else ""
+    first_note = (
+        "<p><b>First time:</b> after the login, a short setup gives Barkley its own Home "
+        "Assistant token.</p>"
+        if first else ""
+    )  # fmt: skip
+    body = (
+        f'<div class="head"><h1>{ui.logo_img()}Barkley</h1></div>{note}'
+        "<p>Barkley runs next to your Home Assistant, so it asks Home Assistant who you are. "
+        f"Only Home Assistant administrators can use it.</p>{first_note}"
+        # A link, not a form: CSP form-action 'self' would stop the redirect to HA.
+        '<p><a class="button" href="/login">Log in with Home Assistant</a></p>'
+        '<p class="muted">Barkley keeps no password or token of yours, only a session that '
+        "ends after 12 hours or when Barkley restarts.</p>"
+    )
+    return ui.page("Barkley: log in", body)
+
+
+def render_auto_activity(base: str, w: watch.Watcher) -> str:
+    """(0.14.0) On Settings, under the auto-sniff rows: its state, the last test
+    notification, and recent auto-sniffs (the box on the list moved here)."""
+    ok, diag = w.diagnostics()
     rows = []
     for x in w.log()[:10]:
         ids = [int(i) for i in x.get("scan_ids", []) if isinstance(i, int)]
@@ -852,35 +1493,12 @@ def render_auto(base: str, w: watch.Watcher, token: str, now: float | None = Non
         "watching.</p>"
     )  # fmt: skip
     return (
-        f'<div class="box auto"><h2>Auto-sniff: {"on" if on else "off"} · {who}</h2>'
-        '<p class="sub">When the Marketplace offers an update, installs or updates an '
-        "integration or card, Barkley sniffs that version (reusing a stored scan of that exact "
-        "version, for example one you sniffed from search) and sends a notification: the app, "
-        "its version, the verdict and score, what's worth a look, and for an update what "
-        "changes compared with the version you have. Once a day it also asks again whether "
-        "the packages of your installed apps (and of updates waiting) have new known "
-        "vulnerabilities or were found to be malicious, and tells you only when that "
-        "changed. That re-check doesn't fetch or scan the app's code again.</p>"
-        f"<p>{AUTO_NOTE}</p>"
-        '<div class="again">'
-        f'<form method=post action="{base}/auto-scan">{hidden}'
-        f'<input type=hidden name=on value="{0 if on else 1}">'
-        f'<button class="{"" if on else "primary"}">Turn auto-sniff {"off" if on else "on"}'
-        "</button></form>"
-        f'<form method=post action="{base}/notify-target">{hidden}'
-        f"<label>Also notify <select name=target>{''.join(opts)}</select></label> "
-        "<button>Save</button></form>"
-        f'<form method=post action="{base}/notify-test">{hidden}'
-        "<button>Send a test notification</button></form>"
-        + (f'<span class="small">{e(w.last_test, 300)}</span>' if w.last_test else "")
-        + "</div>"
-        + (f'<p class="muted small">Notify targets: {e(terr, 300)}</p>' if terr else "")
+        (f'<p class="small">{e(w.last_test, 300)}</p>' if w.last_test else "")
         + f'<p class="muted small">{"" if ok else ui.icon("alert", 14, "warn") + " "}'
         f"{e(diag, 600)}. Scans of apps that "
         f"aren't installed are deleted after {w.age_out_days:g} days; scans of installed apps "
         "are kept.</p>"
         f"<details><summary>Recent auto-sniffs ({len(w.log())})</summary>{recent}</details>"
-        "</div>"
     )
 
 
@@ -959,7 +1577,7 @@ def _mode_picker(base: str, sid: int, token: str, mode: str) -> str:
 
 def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: str,
              have: dict[str, Any] | None, choices: list[tuple[str, str]] | None = None,
-             choices_err: str = "", mode: str = "summary",
+             choices_err: str = "", mode: str = AI_MODE_DEFAULT,
              readings: list[str] | None = None) -> str:  # fmt: skip
     """The "Explain this app" control. Nothing is sent until the user clicks.
     `readings`: ids of this scan's "Explain in context" answers with something shown."""
@@ -1021,7 +1639,7 @@ def render_scan(
     ai_error: str = "",
     ai_choices: list[tuple[str, str]] | None = None,
     ai_choices_err: str = "",
-    ai_mode: str = "summary",
+    ai_mode: str = AI_MODE_DEFAULT,
     item_states: dict[str, tuple[str, str]] | None = None,
     open_item: str = "",
     rechecking: bool = False,
@@ -1088,9 +1706,11 @@ def render_scan(
         rows,
         name=row.item.name if row else None,
         update=_update_box(base, row, token),
-        again=_again_box(base, report, token)
+        again=_again_box(base, report, token, sid)
         + _advisory_line(base, sid, report, store, token, rechecking),
         trust=trust_block(base, sid, report, token),
+        accept=accept_all_box(base, sid, report, token) if "review" in report else "",
+        review=review_block(base, sid, report, token) if "review" in report else None,
         ai=have,
         ai_form=_ai_form(
             base,
@@ -1127,7 +1747,7 @@ def _scan_url(base: str, sid: int, open_item: str = "", fresh: bool = False) -> 
     return e(url + (f"#ai-{open_item}" if open_item else ""))
 
 
-def _again_box(base: str, report: dict[str, Any], token: str) -> str:
+def _again_box(base: str, report: dict[str, Any], token: str, sid: int = 0) -> str:
     """Sniff this exact version again (a fresh scan, never the stored one), or pick another."""
     t = report.get("target", {})
     repo, ref = t.get("repo"), t.get("ref")
@@ -1140,7 +1760,30 @@ def _again_box(base: str, report: dict[str, Any], token: str) -> str:
         f'<input type=hidden name=ref value="{e(ref or "")}">'
         '<button class="link" title="Runs a fresh scan instead of reusing this one">'
         "Sniff this version again</button></form>"
-        f'<span class="muted">·</span> {_versions_link(base, repo)}</div>'
+        f'<span class="muted">·</span> {_versions_link(base, repo)}'
+        f"{_malware_only_form(base, report, token, sid)}</div>"
+    )
+
+
+def _malware_only_form(base: str, report: dict[str, Any], token: str, sid: int) -> str:
+    """Per app: Malware check only (replaces Off; user decision 2026-11-17). New versions
+    and re-checks still run; only Threats and known malware are shown and notified."""
+    r = report.get("review")
+    repo = str((report.get("target") or {}).get("repo") or "")
+    if r is None or not _REPO.fullmatch(repo):
+        return ""
+    on = bool(r.get("malware_only"))
+    label = "Show everything again" if on else "Malware check only"
+    tip = ("Shows every finding and the full score again" if on else
+           "Shows and notifies only Threats and known malware for this app; it is still "
+           "checked the same way")  # fmt: skip
+    return (
+        f'<span class="muted">·</span><form method=post action="{base}/malware-only">'
+        f'<input type=hidden name=token value="{token}">'
+        f'<input type=hidden name=repo value="{e(repo)}">'
+        f'<input type=hidden name=on value="{"0" if on else "1"}">'
+        f'<input type=hidden name=scan value="{sid}">'
+        f'<button class="link" title="{tip}">{label}</button></form>'
     )
 
 
@@ -1355,6 +1998,153 @@ def render_versions(
     running = any(v in ("running", "queued", "waiting") for v in busy.values())
     return ui.page(f"Barkley · versions of {name}", "".join(out), refresh=5 if running else 0,
                    base=base)  # fmt: skip
+
+
+ISSUES = "https://github.com/SeriesOfTubez/ha-barkley/issues/new"
+
+
+def issue_url(template: str, **fields: str) -> str:
+    """A pre-filled new-issue link on Barkley's own GitHub (issue forms fill their fields
+    from the query by id). No token: the user opens it in their own browser, reads it,
+    and submits it themselves, in public."""
+    q = {"template": template, **{k: v[:500] for k, v in fields.items() if v}}
+    return f"{ISSUES}?{urllib.parse.urlencode(q)}"
+
+
+def report_fp_url(report: dict[str, Any], f: dict[str, Any]) -> str:
+    """Report a false positive: the versions, the rule, the file and line filled in; the
+    user writes why it's wrong. Only text from the stored report (names are validated by
+    the scanner; the title is Barkley's own)."""
+    t = report.get("target") or {}
+    repo = str(t.get("repo") or "")
+    where = f"{f.get('file') or ''}{':' + str(f['line']) if f.get('line') else ''}"
+    return issue_url(
+        "2-scan-result.yml",
+        title=f"[Scan]: {f.get('rule_id')} on {repo.rsplit('/', 1)[-1]}"[:120],
+        repo=f"https://github.com/{repo}" if _REPO.fullmatch(repo) else "",
+        **{
+            "app-version": str(t.get("ref") or ""),
+            "barkley-version": str((report.get("tool") or {}).get("version") or __version__),
+            "ha-version": str(report.get("ha_version") or ""),
+            "rule": str(f.get("rule_id") or ""),
+            "location": where,
+        },
+    )
+
+
+def report_issue_url(ha_version: str | None) -> str:
+    return issue_url("1-bug.yml", version=__version__, **{"ha-version": ha_version or ""})
+
+
+_REPORT_TITLE = (
+    "Opens a new public issue on Barkley's GitHub, filled in with the versions, the rule, the "
+    "file and the line. You add why it's wrong, then submit it yourself."
+)
+
+
+def _ago_text(iso: str) -> str:
+    try:
+        return datetime.fromisoformat(iso).strftime("%Y-%m-%d")
+    except ValueError:
+        return ""
+
+
+def review_block(base: str, sid: int, report: dict[str, Any], token: str) -> ui.ReviewFn:
+    """The review row under each finding: Mark reviewed (with a note), ✓ Accepted with the
+    note, who and when (Undo), or for changed code What changed? and Accept again.
+    Known malware can't be accepted. Every finding gets Report a false positive."""
+
+    def form(path: str, fid: str, label: str, note: bool = False) -> str:
+        n = ('<input type=text name=note maxlength=300 aria-label="Note (optional)" '
+             'placeholder="Note (optional)">') if note else ""  # fmt: skip
+        return (f'<form method=post action="{base}/{path}">'
+                f'<input type=hidden name=token value="{token}">'
+                f'<input type=hidden name=scan value="{sid}">'
+                f'<input type=hidden name=finding value="{e(fid, 16)}">{n}'
+                f"<button>{label}</button></form>")  # fmt: skip
+
+    def block(f: dict[str, Any], fs: list[dict[str, Any]]) -> str:
+        link = (f'<a href="{e(report_fp_url(report, f), 1500)}" target="_blank" '
+                f'rel="noopener noreferrer" title="{e(_REPORT_TITLE)}">Report a false '
+                "positive</a>")  # fmt: skip
+        if report.get("review", {}).get("malware_only"):
+            return f'<div class="rev">{link}</div>'
+        fid = str(f["id"])
+        if not review.can_accept(f):
+            why = ("Known malware can't be accepted." if f.get("rule_id") in kinds.NEVER_ACCEPT
+                   else "This finding can't be accepted (it has no fingerprint).")  # fmt: skip
+            return f'<div class="rev"><span class="muted">{why}</span>{link}</div>'
+        states = [(x.get("review") or {}) for x in fs]
+        st = states[0]
+        state = st.get("state", "")
+        if state == "accepted" and all(x.get("state") == "accepted" for x in states):
+            who = f" by {e(st['who'])}" if st.get("who") else ""
+            when = _ago_text(str(st.get("at") or ""))
+            note = (
+                f' <span class="muted">“{e(st.get("note"), 300)}”</span>' if st.get("note") else ""
+            )
+            return (f'<div class="rev"><span class="done">{ui.icon("check", 14)} Accepted'
+                    f"{who}{' on ' + when if when else ''}</span>{note}"
+                    f"{form('unaccept', fid, 'Undo')}{link}</div>")  # fmt: skip
+        if state == "reopened":
+            changed = (f'<a href="{base}/changed?scan={sid}&amp;finding={e(fid, 16)}">'
+                       "What changed?</a>")  # fmt: skip
+            return (f'<div class="rev"><span class="reopen">{ui.icon("refresh", 14)} Changed since '
+                    f"you accepted it in {e(st.get('ref') or 'an earlier version', 60)}</span>"
+                    f"{changed}{form('accept', fid, 'Accept again', True)}"
+                    f"{link}</div>")  # fmt: skip
+        if state == "reconfirm":
+            when = _ago_text(str(st.get("at") or ""))
+            return (f'<div class="rev"><span class="reopen">Accepted on {e(when)}: time to look '
+                    f"again</span>{form('accept', fid, 'Accept again', True)}"
+                    f"{link}</div>")  # fmt: skip
+        ids = [str(x["id"]) for x in fs if review.can_accept(x)]
+        many = "".join(f'<input type=hidden name=also value="{e(i, 16)}">' for i in ids[1:])
+        btn = form("accept", fid, "Mark reviewed", True).replace("</form>", many + "</form>")
+        return f'<div class="rev">{btn}{link}</div>'
+
+    return block
+
+
+def accept_all_box(base: str, sid: int, report: dict[str, Any], token: str) -> str:
+    """Accept all, at the top: every finding of this version, with one tick per Threat
+    (user decision 2026-11-17). Known malware can never be accepted, so an app with any
+    never gets a reviewed score; the button then reads "Accept the rest"."""
+    r = report.get("review") or {}
+    if r.get("malware_only") or not report.get("findings"):
+        return ""
+    open_ = [
+        f
+        for f in report["findings"]
+        if review.can_accept(f) and (f.get("review") or {}).get("state") != "accepted"
+    ]
+    if not open_:
+        return ""
+    threats = [f for f in open_ if kinds.is_threat(str(f["rule_id"]))]
+    malware = [f for f in report["findings"] if f.get("rule_id") in kinds.NEVER_ACCEPT]
+    ticks = "".join(
+        f'<label><input type=checkbox name=threat value="{e(f["id"], 16)}"> '
+        f"{e(ui.explain.explain(str(f['rule_id'])).title)} "
+        f'<span class="muted">({e(f.get("file") or "")}'
+        f"{':' + str(f['line']) if f.get('line') else ''})</span></label>"
+        for f in threats
+    )
+    threat_part = (f"<p><b>Threats need their own tick</b>, one each. Unticked ones stay "
+                   f"open.</p>{ticks}") if ticks else ""  # fmt: skip
+    mal = (f'<p class="muted">Known malware ({len(malware)}) can never be accepted, so this app '
+           "never gets a reviewed score.</p>") if malware else ""  # fmt: skip
+    label = "Accept the rest" if malware or threats else "Accept all findings"
+    return (
+        '<section class="box accept"><h2>Accept all</h2>'
+        f'<form method=post action="{base}/accept-all">'
+        f'<input type=hidden name=token value="{token}">'
+        f'<input type=hidden name=scan value="{sid}">'
+        "<p>Mark every finding in this version as reviewed. Your reviewed score then shows "
+        "beside Barkley's original score.</p>"
+        f"{threat_part}{mal}"
+        '<div class="row"><input type=text name=note maxlength=300 aria-label="Note (optional)" '
+        f'placeholder="Note (optional)"><button>{label}</button></div></form></section>'
+    )
 
 
 def trust_block(base: str, sid: int, report: dict[str, Any], token: str) -> ui.TrustFn:
@@ -1650,19 +2440,38 @@ _ENTITIES_TTL = 300
 _INSTALLED_TTL = 300  # seconds; HACS itself refreshes far less often
 
 
+@dataclass(frozen=True)
+class _Inputs:
+    generation: int
+    settings: settings_mod.Settings
+    trusted: trust.Trusted
+    malware_only: set[str]
+    accepts: dict[str, list[review.Accept]]
+
+
 class Panel:
     def __init__(
         self,
         store: Store,
         worker: Worker,
-        allow: set[str],
+        allow: set[str] | None,
         installed_fn: InstalledFn | None = None,
         memory_fn: Callable[[], memory.Memory] = memory.check,
     ):
         self.store = store
-        store.trust_overlay = True  # rows show scores with the user's trusted addresses
+        # (0.14.0) rows show scores as the panel does: the user's scoring settings,
+        # trusted addresses, accepted findings, Malware check only (review.view)
+        store.overlay = self.overlay_row
         self.worker = worker
-        self.allow = allow
+        self.start_settings = settings_mod.DEFAULTS  # from the add-on options / BARKLEY_*
+        self.option_token = ""  # the add-on option's GitHub token (Remove falls back to it)
+        self._cache: _Inputs | None = None  # see _inputs()
+        self._rows: dict[int, ScanRow] = {}  # overlay_row answers for that same input
+        self.standalone = False  # (0.14.0 part 4) set by `serve`: Barkley's own HA token
+        self.allow = allow  # None: any address (standalone, behind the login)
+        self.login: login.Login | None = None  # standalone: "log in with Home Assistant"
+        self.csp = _CSP
+        self.setup_errors: dict[str, str] = {}  # session id: why Create token failed
         self.token = secrets.token_urlsafe(24)
         self.installed_fn = installed_fn
         self.memory_fn = memory_fn
@@ -1682,7 +2491,7 @@ class Panel:
         self._ai_items: dict[tuple[int, str], tuple[str, str]] = {}  # (scan, item) -> same
         self._ai_asked: dict[tuple[int, str], list[str]] = {}  # second round: what it asked for
         self._ai_lock = threading.Lock()
-        self.ai_mode = "summary"
+        self.ai_mode = AI_MODE_DEFAULT
         self.watcher: watch.Watcher | None = None  # auto-sniff (set by `serve` in an add-on)
         self.diagnostics = Diagnostics()
 
@@ -1947,12 +2756,165 @@ class Panel:
             self._reports[sid] = rep
         return self._reports[sid]
 
-    def shown_report(self, sid: int) -> dict[str, Any] | None:
-        """The report as the panel shows it (trust.view): findings whose addresses the
-        user trusts are set aside and the score counts the rest. The stored report, the
-        raw JSON link, the AI's input and diffs always use `report()`."""
+    def shown_report(self, sid: int, show_minor: bool = False) -> dict[str, Any] | None:
+        """The report as the panel shows it (review.view): Barkley's score with the user's
+        scoring settings, the reviewed score beside it, trusted findings set aside. The
+        stored report, the raw JSON link, the AI's input and diffs always use `report()`."""
         rep = self.report(sid)
-        return trust.view(rep, self.store.trusted()) if rep is not None else None
+        return self.view(rep, show_minor) if rep is not None else None
+
+    def _inputs(self) -> _Inputs:
+        """What a shown score depends on, read once and kept until the store records a
+        write to any of it (Store.generation): a page with hundreds of rows read the
+        settings, trusted addresses and reviews for each row, 1,500 database opens on
+        one render (3-4 s on a real box, 0.14.0.1)."""
+        gen = self.store.generation
+        cached = self._cache
+        if cached is not None and cached.generation == gen:
+            return cached
+        fresh = _Inputs(
+            gen,
+            settings_mod.load(self.store, self.start_settings),
+            self.store.trusted(),
+            settings_mod.malware_only(self.store),
+            self.store.all_accepts(),
+        )
+        self._cache = fresh
+        self._rows = {}
+        return fresh
+
+    @property
+    def settings(self) -> settings_mod.Settings:
+        return self._inputs().settings
+
+    def view(self, rep: dict[str, Any], show_minor: bool = False) -> dict[str, Any]:
+        repo = str((rep.get("target") or {}).get("repo") or "").lower()
+        i = self._inputs()
+        return review.view(
+            rep,
+            trusted=i.trusted,
+            settings=i.settings.review(),
+            accepts=i.accepts.get(repo, []) if repo else [],
+            malware_only=bool(repo) and repo in i.malware_only,
+            show_minor=show_minor,
+        )
+
+    def overlay_row(self, row: ScanRow) -> ScanRow:
+        """A stored scan's index row with the score the panel shows (Store.overlay). Reads
+        the report only when something could change it; the answer is kept until an
+        input changes."""
+        i = self._inputs()
+        default = i.settings.review().policy(row.exposure) == scoring.Policy(exposure=row.exposure)
+        repo = (row.repo or "").lower()
+        if (
+            default
+            and not i.trusted
+            and not (repo and repo in i.accepts)
+            and not (repo and repo in i.malware_only)
+        ):
+            return row
+        hit = self._rows.get(row.id)
+        if hit is not None:
+            return hit
+        rep = self.report(row.id)
+        if rep is None:
+            return row
+        v = self.view(rep)
+        score = int(v.get("score", row.score))
+        key = str((v.get("verdict") or {}).get("key") or row.verdict)
+        out = row
+        if score != row.score or key != row.verdict:
+            own = int((v.get("review") or {}).get("own_score", row.score))
+            out = replace(row, score=score, verdict=key, own_score=own)
+        if len(self._rows) < 5000:
+            self._rows[row.id] = out
+        return out
+
+    def save_settings(self, raw: dict[str, str]) -> None:
+        """The Settings page's one form. Every value is checked; one that isn't valid
+        keeps what was there. The AI entity and notify target must be ones HA offers."""
+        old = self.settings
+        new = settings_mod.from_dict(raw, old)
+        settings_mod.save(self.store, new)
+        self.worker.exposure = new.exposure
+        self.worker.parallel = new.parallel
+        if self.watcher is not None:
+            on = raw.get("auto_scan")
+            if on in ("on", "off") and (on == "on") != self.watcher.enabled:
+                self.watcher.set_enabled(on == "on")
+            target = raw.get("notify_target")
+            if target is not None and target != self.watcher.notify_target:
+                self.watcher.set_target(target[:100])
+        entity = raw.get("ai_entity")
+        if entity is not None and entity != self.ai_entity:
+            choices, _err = self.ai_choices(refresh=True)
+            if not entity or (choices and entity in {c[0] for c in choices}):
+                self.store.set_setting("ai_entity", entity or "off")
+                self.ai_entity = entity
+        if raw.get("ai_mode") in AI_MODES:
+            self.store.set_setting("ai_mode", raw["ai_mode"])
+            self.ai_mode = raw["ai_mode"]
+        print(f"settings saved in the panel: {settings_mod.describe(new)}", file=sys.stderr,
+              flush=True)  # fmt: skip
+
+    def reset_settings(self, part: str) -> None:
+        # the starting values: Barkley's defaults with the app's options (or BARKLEY_*)
+        s, d = self.settings, self.start_settings
+        names = settings_mod.PARTS.get(part, ())
+        new = replace(s, **{n: getattr(d, n) for n in names})
+        settings_mod.save(self.store, new)
+        self.worker.exposure = new.exposure
+        self.worker.parallel = new.parallel
+        if part == "checking":
+            if self.watcher is not None:
+                self.watcher.set_enabled(True)
+            self.store.set_setting("ai_mode", AI_MODE_DEFAULT)
+            self.ai_mode = AI_MODE_DEFAULT
+
+    def accept(self, sid: int, finding_ids: list[str], note: str, who: str) -> int:
+        """Mark findings of a stored scan reviewed; known malware is never accepted. A
+        reopened finding accepted again replaces the acceptance its old code had."""
+        rep = self.report(sid)
+        if rep is None:
+            raise StoreError(f"no stored scan @{sid}")
+        repo = str((rep.get("target") or {}).get("repo") or "").lower()
+        if not repo:
+            return 0
+        v = self.view(rep, show_minor=True)
+        by_id = {str(f["id"]): f for f in v["findings"]}
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        items, replaces = [], []
+        for fid in dict.fromkeys(finding_ids):
+            f = by_id.get(fid)
+            if f is None or not review.can_accept(f):
+                continue
+            items.append(review.Accept(repo, str(f["fingerprint"]), str(f["rule_id"]),
+                                       review.clean_note(note), review.clean_who(who), now, sid,
+                                       fid, str((rep.get("target") or {}).get("ref") or ""),
+                                       str(f.get("file") or "")))  # fmt: skip
+            old = f.get("review") or {}
+            if old.get("state") == "reopened":
+                prev = next((a for a in self.store.accepts(repo)
+                             if a.scan_id == old.get("scan_id")
+                             and a.finding_id == old.get("finding_id")), None)  # fmt: skip
+                if prev is not None:
+                    replaces.append(prev.fingerprint)
+        self.store.accept(items, replaces)
+        if items:
+            print(f"accepted by {review.clean_who(who) or 'the user'}: {len(items)} finding(s) "
+                  f"of {repo} (scan @{sid})", file=sys.stderr, flush=True)  # fmt: skip
+        return len(items)
+
+    def unaccept(self, sid: int, finding_id: str) -> bool:
+        rep = self.report(sid)
+        if rep is None:
+            return False
+        repo = str((rep.get("target") or {}).get("repo") or "")
+        f = next((x for x in rep.get("findings", []) if str(x.get("id")) == finding_id), None)
+        if not repo or f is None or not f.get("fingerprint"):
+            return False
+        self.store.unaccept(repo, [str(f["fingerprint"])])
+        return True
 
     def trust_finding(self, sid: int, finding_id: str, everywhere: bool) -> bool:
         """Mark every address of one finding trusted, for its app or for every app.
@@ -1990,6 +2952,12 @@ class Panel:
         }
         for r in rows:
             r.busy = busy.get(r.item.repo.lower(), "")
+            # (0.14.0) an accepted finding whose code changed (or is due again) needs a look
+            if r.installed_scan and self.store.accepts(r.item.repo):
+                v = self.shown_report(r.installed_scan.id)
+                if v is not None and (due := review.due(v)):
+                    r.group = "attention"
+                    r.reasons.append(f"{due} accepted finding{'s' * (due != 1)} changed")
         return st, rows
 
     def row_for(self, repo: str | None) -> Row | None:
@@ -2022,13 +2990,20 @@ class Panel:
                 return path if _INGRESS_PATH.match(path) else ""
 
             def _send(
-                self, status: int, body: bytes, ctype: str = "text/html", cache: str = "no-store"
+                self,
+                status: int,
+                body: bytes,
+                ctype: str = "text/html",
+                cache: str = "no-store",
+                cookies: tuple[str, ...] = (),
             ) -> None:
                 self.send_response(status)
+                for c in cookies:
+                    self.send_header("Set-Cookie", c)
                 charset = "" if ctype.startswith("font/") else "; charset=utf-8"
                 self.send_header("Content-Type", f"{ctype}{charset}")
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Content-Security-Policy", _CSP)
+                self.send_header("Content-Security-Policy", panel.csp)
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("Referrer-Policy", "no-referrer")
                 self.send_header("Cache-Control", cache)
@@ -2038,23 +3013,110 @@ class Panel:
             def _text(self, status: int, msg: str) -> None:
                 self._send(status, _page("Barkley", f"<p>{e(msg)}</p>", self._base()))
 
-            def _redirect(self, to: str) -> None:
+            def _redirect(self, to: str, cookies: tuple[str, ...] = ()) -> None:
+                self._see_other(local_path(to), cookies)
+
+            def _see_other(self, location: str, cookies: tuple[str, ...] = ()) -> None:
                 self.send_response(HTTPStatus.SEE_OTHER)
-                self.send_header("Location", local_path(to))
+                self.send_header("Location", location)
+                for c in cookies:
+                    self.send_header("Set-Cookie", c)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
 
+            def _session(self) -> login.Session | None:
+                if panel.login is None:
+                    return None
+                return panel.login.session(
+                    login.read_cookie(self.headers.get("Cookie"), login.SESSION_COOKIE)
+                )
+
             def _allowed(self) -> bool:
-                if self.client_address[0] in panel.allow:
+                if panel.allow is not None and self.client_address[0] not in panel.allow:
+                    self._text(HTTPStatus.FORBIDDEN, "only reachable through Home Assistant")
+                    return False
+                lg = panel.login
+                if lg is None:
                     return True
-                self._text(HTTPStatus.FORBIDDEN, "only reachable through Home Assistant")
+                path = urllib.parse.urlsplit(self.path).path
+                if self.command == "GET" and (
+                    path in ("/login", login.CALLBACK_PATH) or path.startswith("/fonts/")
+                ):
+                    return True
+                if self._session() is not None:
+                    return True
+                if self.command == "GET":
+                    self._send(HTTPStatus.UNAUTHORIZED, render_login(first=self._first()))
+                else:
+                    self._text(HTTPStatus.FORBIDDEN, "log in first")
                 return False
+
+            def _sid(self) -> str:
+                return login.read_cookie(self.headers.get("Cookie"), login.SESSION_COOKIE)
+
+            def _first(self) -> bool:
+                """Standalone with no Home Assistant token yet: the login makes one."""
+                return panel.standalone and not ha_token.source()
+
+            def _login_routes(self, url: urllib.parse.SplitResult) -> bool:
+                """/login and the way back from HA; True when one of them answered."""
+                lg = panel.login
+                if lg is None or url.path not in ("/login", login.CALLBACK_PATH):
+                    return False
+                if url.path == "/login":
+                    # The one redirect off this panel: HA's login page, built from the
+                    # configured URL, a fixed path and url-encoded values (login.ha_login_url).
+                    # (0.14.0) "for=token|setup" (Create token) only from a logged-in
+                    # session; the first login makes the token while there is none.
+                    q = urllib.parse.parse_qs(url.query)
+                    asked = (q.get("for") or [""])[0]
+                    purpose = ""
+                    if asked in login.MAKES_TOKEN and self._session():
+                        purpose = asked
+                    elif self._first():
+                        purpose = login.FIRST  # held for the setup's first step
+                    state, to = lg.start(purpose)
+                    keep = lg.cookie(login.STATE_COOKIE, state, login.STATE_SECONDS)
+                    self._see_other(login.ha_login_url(lg.ha_url, to), (keep,))
+                    return True
+                q = urllib.parse.parse_qs(url.query)
+                got = lambda k: (q.get(k) or [""])[0][:1024]  # noqa: E731
+                gone = lg.cookie(login.STATE_COOKIE, "", 0)
+                purpose = lg.purpose(got("state"))
+                made = purpose in login.MAKES_TOKEN
+                try:
+                    sid, s = lg.finish(got("code"), got("state"),
+                                       login.read_cookie(self.headers.get("Cookie"),
+                                                         login.STATE_COOKIE))  # fmt: skip
+                except login.LoginError as ex:
+                    print(f"login refused ({self.client_address[0]}): {ex}", file=sys.stderr)
+                    self._send(HTTPStatus.FORBIDDEN, render_login(str(ex), self._first()),
+                               cookies=(gone,))  # fmt: skip
+                    return True
+                did = ""
+                if made:
+                    did = (f"; {s.token_error}" if s.token_error
+                           else " and created Barkley's token")  # fmt: skip
+                print(f"login: {s.user} ({s.user_id[:8]}) logged in{did}", file=sys.stderr)
+                if purpose == "setup":
+                    to = "/setup" + ("?bad=create" if s.token_error else "")
+                elif purpose == login.FIRST:
+                    to = "/setup"
+                elif made:
+                    to = "/settings?" + ("bad=create" if s.token_error else "saved=1") + "#ha-token"
+                else:
+                    to = "/"
+                self._redirect(to, (gone, lg.cookie(login.SESSION_COOKIE, sid,
+                                                    login.SESSION_SECONDS)))  # fmt: skip
+                return True
 
             def do_GET(self) -> None:
                 if not self._allowed():
                     return
                 url = urllib.parse.urlsplit(self.path)
                 base = self._base()
+                if self._login_routes(url):
+                    return
                 try:
                     if url.path in ("", "/"):
                         jobs = list(panel.worker.jobs)
@@ -2063,14 +3125,16 @@ class Panel:
                         v = ui.View.parse(q, panel.store.setting("view") or "cards")
                         if q.get("view") and v.view != panel.store.setting("view"):
                             panel.store.set_setting("view", v.view)  # remembered for next time
-                        auto = (render_auto(base, panel.watcher, panel.token)
-                                if panel.watcher is not None else "")  # fmt: skip
+                        auto = ""  # (0.14.0) auto-sniff lives on Settings
                         body = render_index(
                             base, panel.store, jobs, panel.token,
                             panel.installed_html(base, refresh, v), panel.memory_fn(),
                             panel.worker.github_wait, panel.worker.ha_fn(),
                             panel.worker.parallel, panel.catalog_fn is not None,
                             status_html(base, jobs, panel.names(), v.qs()), v.qs(), auto,
+                            render_account(base, s.user, panel.token)
+                            if (s := self._session()) else "",
+                            _token_banner(base, panel),
                         )  # fmt: skip
                         return self._send(200, body)
                     if m := re.fullmatch(r"/fonts/([A-Za-z-]+\.woff2)", url.path):
@@ -2084,11 +3148,11 @@ class Panel:
                         if m[2]:
                             body = json.dumps(report, indent=2).encode()
                             return self._send(200, body, "application/json")
-                        report = trust.view(report, panel.store.trusted())
+                        q = urllib.parse.parse_qs(url.query)
+                        report = panel.view(report, show_minor=(q.get("minor") or [""])[0] == "1")
                         row = panel.row_for(report.get("target", {}).get("repo"))
                         state, err = panel.ai_state(sid)
                         choices, choices_err = panel.ai_choices()
-                        q = urllib.parse.parse_qs(url.query)
                         open_item = (q.get("open") or [""])[0]
                         if not re.fullmatch(r"[0-9a-f]{16}", open_item):
                             open_item = ""
@@ -2138,6 +3202,48 @@ class Panel:
                             scans, busy, panel.token, err,
                         )  # fmt: skip
                         return self._send(200, page)
+                    if url.path == "/setup" and panel.standalone:
+                        q = urllib.parse.parse_qs(url.query)
+                        bad = (q.get("bad") or [""])[0]
+                        sess = self._session()
+                        late = sess.token_error if sess is not None and bad == "create" else ""
+                        err = panel.setup_errors.pop(self._sid(), "") or late
+                        held = bool(panel.login and panel.login.held(self._sid()))
+                        return self._send(200, render_setup(
+                            base, panel.store, panel.token, (q.get("step") or [""])[0], held=held,
+                            period=panel.settings.token_days,
+                            github_source=settings_mod.token_source(panel.store.path),
+                            error=err, bad=bad, saved="saved" in q))  # fmt: skip
+                    if url.path == "/settings":
+                        q = urllib.parse.parse_qs(url.query)
+                        choices, _cerr = (panel.ai_choices() if panel.entities_fn is not None
+                                          else (None, ""))  # fmt: skip
+                        ext = (supervisor.external_url_set() if panel.installed_fn is not None
+                               else None)  # fmt: skip
+                        return self._send(200, render_settings(
+                            base, panel.settings, panel.token, ai_entity=panel.ai_entity,
+                            ai_mode=panel.ai_mode, ai_choices=choices, watcher=panel.watcher,
+                            token_source=settings_mod.token_source(panel.store.path),
+                            external=ext, saved="saved" in q,
+                            bad=(q.get("bad") or [""])[0],
+                            bad_detail=(self._session() or login.Session("", "", 0)).token_error,
+                            mem=panel.memory_fn(),
+                            defaults=panel.start_settings,
+                            ha_token_html=ha_token_block(base, panel.store,
+                                                         panel.settings.token_days, panel.token)
+                            if panel.standalone else ""))  # fmt: skip
+                    if url.path == "/changed":
+                        q = urllib.parse.parse_qs(url.query)
+                        sid, fid = int(q["scan"][0]), q["finding"][0]
+                        if not re.fullmatch(r"[0-9a-f]{16}", fid):
+                            return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                        v = panel.shown_report(sid, show_minor=True)
+                        if v is None:
+                            return self._text(HTTPStatus.NOT_FOUND, f"no stored scan @{sid}")
+                        f = next((x for x in v["findings"] if x.get("id") == fid), {})
+                        old_sid = (f.get("review") or {}).get("scan_id")
+                        old = panel.report(int(old_sid)) if isinstance(old_sid, int) else None
+                        return self._send(200, render_changed(base, sid, v, fid, old))
                     if url.path == "/trusted":
                         return self._send(200, render_trusted(
                             base, panel.store.trusted(), panel.names(), panel.token))  # fmt: skip
@@ -2180,6 +3286,12 @@ class Panel:
                 if not secrets.compare_digest(get("token"), panel.token):
                     return self._text(HTTPStatus.FORBIDDEN, "stale form; reload the page")
                 path = urllib.parse.urlsplit(self.path).path
+                if path == "/logout" and panel.login is not None:
+                    panel.login.logout(
+                        login.read_cookie(self.headers.get("Cookie"), login.SESSION_COOKIE)
+                    )
+                    gone = panel.login.cookie(login.SESSION_COOKIE, "", 0)
+                    return self._send(200, render_login("You're logged out."), cookies=(gone,))
                 # Back to the same filter, view and page (rebuilt from known values only)
                 v = ui.View.parse(urllib.parse.parse_qs(get("back")[:200]))
                 home = f"{self._base()}/?{v.qs('&')}" if get("back") else f"{self._base()}/"
@@ -2196,7 +3308,105 @@ class Panel:
                                               "offers")  # fmt: skip
                     else:
                         w.notify_test()
-                    return self._redirect(f"{self._base()}/")
+                    return self._redirect(f"{self._base()}/settings")
+                who = (self._session().user if panel.login is not None and self._session()
+                       else self.headers.get("X-Remote-User-Display-Name")
+                       or self.headers.get("X-Remote-User-Name") or "")  # fmt: skip
+                if path in ("/accept", "/accept-all", "/unaccept"):
+                    if not get("scan").isdigit():
+                        return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                    sid = int(get("scan"))
+                    ids = [get("finding"), *form.get("also", [])]
+                    if path == "/accept-all":
+                        v = panel.shown_report(sid, show_minor=True)
+                        if v is None:
+                            return self._text(HTTPStatus.NOT_FOUND, f"no stored scan @{sid}")
+                        ticked = set(form.get("threat", []))
+                        ids = [str(f["id"]) for f in v["findings"]
+                               if not kinds.is_threat(str(f["rule_id"]))
+                               or str(f["id"]) in ticked]  # fmt: skip
+                    ids = [i for i in ids if re.fullmatch(r"[0-9a-f]{16}", i)][:2000]
+                    try:
+                        if path == "/unaccept":
+                            if not ids or not panel.unaccept(sid, ids[0]):
+                                return self._text(HTTPStatus.BAD_REQUEST, "nothing to undo")
+                        else:
+                            panel.accept(sid, ids, get("note"), who)
+                    except StoreError as ex:
+                        return self._text(HTTPStatus.NOT_FOUND, str(ex))
+                    return self._redirect(f"{self._base()}/scan/{sid}")
+                if path == "/malware-only":
+                    if not settings_mod.set_malware_only(
+                        panel.store, get("repo"), get("on") == "1"
+                    ):
+                        return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                    sid = get("scan")
+                    return self._redirect(f"{self._base()}/scan/{sid}" if sid.isdigit() else home)
+                if path == "/settings":
+                    panel.save_settings({k: v[0] for k, v in form.items() if v})
+                    return self._redirect(f"{self._base()}/settings?saved=1")
+                if path == "/settings-reset":
+                    panel.reset_settings(get("part"))
+                    return self._redirect(f"{self._base()}/settings?saved=1")
+                if path == "/setup/next":
+                    # the end of the setup's Home Assistant step: let go of the first login
+                    if panel.login is not None:
+                        panel.login.release(self._sid())
+                    return self._redirect(f"{self._base()}/setup?step=github")
+                if path == "/github-token":
+                    page = ("/setup?step=github&" if get("back") == "setup"
+                            else "/settings?")  # fmt: skip
+                    if get("remove") == "1":
+                        settings_mod.remove_token(panel.store.path, panel.option_token)
+                    elif not settings_mod.set_token(panel.store.path, get("value")):
+                        return self._redirect(f"{self._base()}{page}bad=token")
+                    return self._redirect(f"{self._base()}{page}saved=1")
+                if path.startswith("/ha-token"):
+                    if not panel.standalone:
+                        return self._text(HTTPStatus.BAD_REQUEST, "only when running standalone")
+                    setup = get("back") == "setup"
+                    page = "/setup?" if setup else "/settings?"
+                    if path == "/ha-token/create":
+                        if panel.login is None:
+                            return self._redirect(f"{self._base()}{page}bad=nologin")
+                        lg = panel.login
+                        access = lg.held(self._sid()) if setup else ""
+                        if access and lg.token_fn is not None:
+                            # the first login, still held: no second login needed
+                            try:
+                                lg.token_fn(access)
+                            except supervisor.SupervisorError as ex:
+                                why = f"Couldn't create Barkley's token ({ex})."
+                                print(f"setup: {why}", file=sys.stderr)
+                                panel.setup_errors[self._sid()] = why[:300]
+                                return self._redirect(f"{self._base()}/setup?bad=create")
+                            lg.release(self._sid())
+                            print("setup: created Barkley's token", file=sys.stderr)
+                            return self._redirect(f"{self._base()}/setup?saved=1")
+                        return self._redirect(f"{self._base()}/login?for="
+                                              + ("setup" if setup else "token"))  # fmt: skip
+                    if path == "/ha-token/rotate":
+                        why = ha_token.rotate(panel.store, panel.settings.token_days)
+                        return self._redirect(f"{self._base()}/settings?"
+                                              + ("bad=rotate" if why else "saved=1"))  # fmt: skip
+                    if path == "/ha-token":
+                        try:
+                            ha_token.adopt(panel.store, get("value"), "pasted")
+                        except supervisor.SupervisorError as ex:
+                            print(f"pasted Home Assistant token refused: {ex}", file=sys.stderr)
+                            return self._redirect(f"{self._base()}{page}bad=hatoken")
+                        print("Home Assistant token: pasted in the panel", file=sys.stderr)
+                        if panel.login is not None:
+                            panel.login.release(self._sid())
+                        return self._redirect(f"{self._base()}{page}saved=1")
+                    return self._text(HTTPStatus.NOT_FOUND, "nothing here")
+                if path == "/sniff-all-again":
+                    st = panel.installed()
+                    busy = panel.busy()
+                    for it in st.items:
+                        if it.repo.lower() not in busy:
+                            panel.worker.submit("scan", it.repo, it.installed)
+                    return self._redirect(home)
                 if path == "/recheck":
                     if not get("scan").isdigit():
                         return self._text(HTTPStatus.BAD_REQUEST, "bad request")
@@ -2325,7 +3535,7 @@ def serve(
     scan_fn: ScanFn,
     host: str,
     port: int,
-    allow: set[str],
+    allow: set[str] | None,
     *,
     exposure: str = "local",
     ha_fn: Callable[[], str | None] = lambda: None,
@@ -2334,20 +3544,27 @@ def serve(
     budget_fn: Callable[[], RateLimit | None] = lambda: None,
     ai_entity: str = "",
     ai_fn: AiFn | None = None,
-    ai_mode: str = "summary",
+    ai_mode: str = AI_MODE_DEFAULT,
     parallel: int = 1,
     catalog_fn: CatalogFn | None = None,
     entities_fn: EntitiesFn | None = None,
     releases_fn: ReleasesFn | None = None,
     watcher: watch.Watcher | None = None,
+    login_cfg: login.Login | None = None,
 ) -> PanelServer:
     """Build the server (caller runs `serve_forever`); `.panel.worker` runs the scans.
-    `watcher`: auto-sniff; built by the caller with the worker from `make_worker`."""
+    `watcher`: auto-sniff; built by the caller with the worker from `make_worker`.
+    `allow`: client addresses let in (None: any). `login_cfg`: standalone, every page
+    but the login needs a session."""
     worker = Worker(
         store, scan_fn, exposure=exposure, ha_fn=ha_fn, memory_fn=memory_fn,
         budget_fn=budget_fn, parallel=parallel,
     )  # fmt: skip
     panel = Panel(store, worker, allow, installed_fn, memory_fn)
+    worker.memory_gb_fn = lambda: panel.settings.memory_gb
+    panel.login = login_cfg
+    if login_cfg is not None:
+        panel.csp = csp_with_login(login_cfg.ha_url)
     if ai_entity and not supervisor.ai_entity_ok(ai_entity):
         print(f"ignoring ai_entity {ai_entity!r}: not an ai_task.* entity", file=sys.stderr)
         ai_entity = ""
@@ -2358,9 +3575,8 @@ def serve(
         ai_entity = stored
     panel.ai_entity = ai_entity
     stored_mode = store.setting("ai_mode")  # chosen in the panel; wins over the option
-    panel.ai_mode = (
-        stored_mode if stored_mode in AI_MODES else (ai_mode if ai_mode in AI_MODES else "summary")
-    )
+    start_mode = ai_mode if ai_mode in AI_MODES else AI_MODE_DEFAULT
+    panel.ai_mode = stored_mode if stored_mode in AI_MODES else start_mode
     panel.catalog_fn = catalog_fn
     panel.entities_fn = entities_fn
     panel.releases_fn = releases_fn
@@ -2370,6 +3586,8 @@ def serve(
         panel.watcher = watcher
         watcher.worker = worker
         watcher.on_list = panel.set_installed
+        watcher.view_fn = panel.view
+        watcher.notify_reopen_fn = lambda: panel.settings.notify_reopen
         worker.on_done.append(watcher.on_job_done)
     httpd = PanelServer((host, port), panel.handler())
     httpd.panel = panel

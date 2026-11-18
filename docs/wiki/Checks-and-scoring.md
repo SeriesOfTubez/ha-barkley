@@ -31,6 +31,23 @@ the newest release, else the default branch pinned to one commit.
   new repositories, release tags that aren't on the default branch, and release zips
   whose code differs from the tagged source.
 
+## Kinds of findings
+
+Since 0.14.0 every finding has a kind, and an app's page groups them:
+
+- **Threats**: signs of malicious behavior. Sending your data or logins off the box
+  (traced, or possible), addresses used to collect stolen data, known malware, code
+  that decodes or downloads code and runs it, disguised code, and code you can't read
+  (compiled files, native modules, the `<!--` trick, names built from pieces).
+- **What it can do**: powerful things the app is able to do, such as changing who can
+  log in, reading other apps' settings or running programs. Normal for some apps; it's
+  what an attacker would get if the app were ever compromised.
+- **Known bugs in its libraries**: published vulnerabilities.
+- **How it's made**: release and dependency habits, usage reporting.
+- **What Barkley couldn't read**: code files the rules couldn't parse.
+
+The kind never changes a severity.
+
 ## The score
 
 The score starts at 100 and each finding takes points off:
@@ -59,8 +76,50 @@ than twice its first hit. Then the caps:
 
 The same findings always give the same score. No AI is involved.
 
+### Why these numbers
+
+The caps carry the meaning: one critical finding means "don't install" (BORK), and one
+high finding means "look before you trust it" (never Good Boy). The points then place an
+app inside its band, and each severity costs roughly three times the one below. One high
+finding gives 75 (Kinda Sus), two give 50 (Very Sus), one medium gives 92 (still Good
+Boy), and it takes many low ones to leave Good Boy. A repeat of the same rule costs a
+quarter, and no rule can cost more than twice its first hit, so one noisy check matching
+30 times in a big file can't sink an app on its own: the number of different problems
+matters more than the number of matches.
+
+The exact values (25 rather than 20 or 30, a quarter for repeats) are a judgment call made
+when Barkley was designed. They haven't yet been calibrated against a large set of known
+good and known bad apps; that is planned, and if it shows a problem the numbers will
+change in a release that says so.
+
+### Settings that change the score
+
+On Barkley's Settings page (the defaults are Barkley's own score):
+
+| Setting | Default | What it does |
+|---|---|---|
+| Paranoid mode | Off | Off: minor findings aren't shown or counted. They touch no password or login, change nothing, and usually have a plain reason: listing user accounts, reading other apps' settings (options, not their stored data), writing its own files in `.storage`, a bug in a build tool that never ships in a card, installing its own declared libraries, and usage reporting that is disclosed or optional. An app's page says how many it left out, with a link to show them. |
+| Powerful, no threat | On | With no Threat finding and no critical one, a complete scan doesn't go below 40 (Very Sus): what an app can do, alone, never makes it BORK. |
+| Pages without a login | List only | With exposure Local only, an app's pages that work without a login aren't counted. With exposure Public they always count. |
+| Hidden usage reporting | Count it | Usage data an app sends by itself, with no setting to turn it off, and doesn't tell you about. |
+
+### Your review
+
+You can mark findings reviewed on an app's page, one at a time or with Accept all at the
+top (each Threat needs its own tick; known malware can never be accepted). The circle then
+shows your **reviewed score**: the same formula without the findings you accepted.
+Barkley's own score is kept unchanged and shown beside it, with what your review added.
+
+An acceptance follows the code, not the line number: the same code in the next version
+stays accepted; changed code opens the finding again, notifies you (a setting), and
+"What changed?" shows the code then and now. Settings → Ask again can also reopen
+acceptances after 6 or 12 months. Addresses you trust count as reviewed too.
+
+Per app, **Malware check only** shows and notifies only Threats and known malware. The app
+is still checked the same way; it cuts noise, not memory or time.
+
 ## Exposure
 
-With the option `exposure: public` (your Home Assistant is reachable from the internet),
+With exposure set to Public (Settings) (your Home Assistant is reachable from the internet),
 findings about what an app accepts from outside are raised one level. Nothing is ever
 lowered, and exfiltration findings are top severity either way.

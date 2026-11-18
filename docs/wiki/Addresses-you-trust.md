@@ -12,10 +12,11 @@ app**. Check first that it is an address you expect the app to use.
 - The finding stays listed, under "Findings about addresses you trust", and stops
   costing points, now and in future sniffs, until the address changes. A new or changed
   address is flagged again.
-- **Barkley's own score is always shown beside yours.**
+- It counts as reviewed: the circle shows your reviewed score, and **Barkley's own score
+  is always shown beside it**, as for findings you accept (see
+  [What gets checked and how the score works](Checks-and-scoring)).
 - The stored scan is never changed. Trust is applied when a score is shown.
-- Notifications say when a score counts addresses you trust as fine, and give Barkley's
-  own score too.
+- Notifications say when the score is a reviewed one, and give Barkley's own score too.
 
 ## What can't be trusted away
 

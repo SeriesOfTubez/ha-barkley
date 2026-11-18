@@ -229,3 +229,19 @@ def test_a_running_reading_refreshes_to_a_fresh_url_that_keeps_its_sheet_open(tm
     # nothing refreshes any more: the sheet opens and closes in place again
     assert f'class="aichip" href="#ai-{FID}"' in done and f'class="x" href="#item-{FID}"' in done
     httpd.shutdown()
+
+
+def test_deep_is_the_default_and_the_panel_choice_wins(tmp_path):
+    store = Store(tmp_path / "s.db")
+    httpd = server.serve(store, lambda r, f: {}, "127.0.0.1", 0, {"127.0.0.1"})
+    assert httpd.panel.ai_mode == "deep"
+    httpd.server_close()
+    store.set_setting("ai_mode", "summary")
+    httpd = server.serve(store, lambda r, f: {}, "127.0.0.1", 0, {"127.0.0.1"})
+    assert httpd.panel.ai_mode == "summary"
+    httpd.server_close()
+    page = server.render_settings("", server.settings_mod.Settings(), "t",
+                                  ai_entity="ai_task.test").decode()  # fmt: skip
+    picked = re.search(r'<option value="(\w+)" selected', page[page.index("name=ai_mode") :])
+    assert picked and picked.group(1) == "deep"
+    assert "Explain and read code (default)" in page
