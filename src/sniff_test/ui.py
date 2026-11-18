@@ -326,7 +326,7 @@ a.button:hover { filter:brightness(1.08); }
 .setrow .ctl { display:flex; flex-wrap:wrap; gap:var(--s2); align-items:center; }
 .setrow p.muted { margin-top:var(--s1); }
 .setrow details.more { margin-top:var(--s1); }
-.setrow details.more p { margin-top:var(--s1); max-width:60ch; }
+.setrow details.more p { margin-top:var(--s1); max-width:60ch; color:var(--fg); }
 .setform { margin:0; }
 .diffcode { font:var(--t-xs)/1.5 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere;
   background:var(--soft); border-radius:var(--r3); padding:var(--s2) var(--s3); margin:0; }

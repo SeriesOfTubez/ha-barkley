@@ -886,6 +886,107 @@ def ha_token_block(base: str, store: Store, period: int, token: str) -> str:
     )
 
 
+# "How this works" under each setting on the Settings page: what it changes, in plain
+# words, checked against the code (scoring.Policy, kinds.MINOR, review.py, watch.py).
+SETTING_HELP = {
+    "Exposure": (
+        "Public raises findings about what an app accepts from outside (pages that work "
+        "without a login, pages other websites may call, webhooks) by one level. Findings "
+        "about data leaving your home are at the top level either way. A change applies to "
+        "the next scans; a stored scan keeps the exposure it was made with."
+    ),
+    "Paranoid mode": (
+        "Off hides and doesn't count these: listing user accounts (names only), reading other "
+        "apps' settings (their options, not their stored data), writing its own files in "
+        "Home Assistant's .storage folder, a bug in a build tool that never ships in a card, "
+        "installing its own declared libraries, and usage reporting that is disclosed or "
+        "optional. An app's page says how many it left out, with a link to show them. "
+        "Changing who can log in, reading other apps' stored data or passwords, and code "
+        "Barkley couldn't read are never treated as minor."
+    ),
+    "Powerful, no threat": (
+        "A Threat is a sign of malicious behavior, such as sending your data or logins away, "
+        "disguised code or known malware. Without one, an app that can do a lot stops at 40 "
+        "instead of going lower. Only for a finished scan with no critical finding: an "
+        "unfinished scan may have missed a Threat, and a critical known bug in a library "
+        "still counts in full. Off: findings count down to 0 whatever their kind."
+    ),
+    "Pages without a login": (
+        "Some apps add a page that opens without logging in, for sign-in callbacks or image "
+        "links. If Home Assistant can't be reached from the internet, only devices on your "
+        "network can open it, so by default it's listed under what the app can do and not "
+        "counted. Count as low takes 2 points. With Exposure set to Public it always counts, "
+        "one level higher."
+    ),
+    "Hidden usage reporting": (
+        "Counted (8 points) only when Barkley is sure of all three: the app sends it by "
+        "itself (at start-up or on a timer), no setting turns it off, and nothing in its "
+        "README or setup screens mentions it. When Barkley can't be sure, it's an uncounted "
+        "privacy note instead. List only keeps it on the page without counting it."
+    ),
+    "When an accepted finding changes": (
+        "An acceptance is tied to the code around the finding, usually the function it's "
+        "in, not the line number. The same code in a new version stays accepted. Changed "
+        "code opens it again and your reviewed score counts it again. Notify me adds a line "
+        "about it to the auto-sniff notification for that version; Just reopen it doesn't."
+    ),
+    "Ask again": (
+        "After 6 or 12 months an acceptance opens again for a fresh look, even if the code "
+        "didn't change: your setup or what you know about the app may have. Never: an "
+        "acceptance lasts until its code changes."
+    ),
+    "Auto-sniff": (
+        "When the Marketplace installs or updates an app, or offers an update, Barkley "
+        "sniffs that version and notifies you. Once a day it also asks again whether the "
+        "libraries of what you have, and of updates waiting, have new known bugs or were "
+        "found to be malware. That doesn't download or scan the app's code again."
+    ),
+    "Notify": (
+        "Every result goes to Home Assistant's bell. Pick a notify service, such as your "
+        "phone, to get it there too. A notification carries the app's name, its version, "
+        "the score and counts, never text from the app's code."
+    ),
+    "AI": (
+        "Explanations go through the Home Assistant AI Task entity you pick, so they use the "
+        "AI provider you set up in Home Assistant. Nothing is sent until you click Explain. "
+        "The AI never sets, clears or changes a score or a finding, and it's only as good "
+        "as the model behind the entity."
+    ),
+    "AI mode": (
+        "Explain only sends the findings. Explain and read code also lets you ask about one "
+        "finding, address or port, and sends the app's own code around it (public on "
+        "GitHub, kept from the scan). Nothing from your Home Assistant is ever sent."
+    ),
+    "Parallel scans": (
+        "Each scan is a separate app. Another scan starts only while the box has enough "
+        "free memory for it: 1.5 GB for each scan already running, on top of a 2 GB reserve. "
+        "Otherwise it waits its turn. Two checks of the same app never run together. Scans "
+        "share the processor too: keep Parallel scans times Semgrep jobs near the number of "
+        "processor cores (4 on many Home Assistant boxes)."
+    ),
+    "Semgrep jobs": (
+        "Inside one scan, Semgrep (the code checker) reads this many files at once, and "
+        "GuardDog uses the same number for an integration's libraries. It helps apps that "
+        "ship many files, such as cards split into chunks; one big file is still read by "
+        "one worker, and Barkley's passes over the code run one after another. Downloading "
+        "the app takes the same time either way. Each extra job needs its own memory. With "
+        "1 parallel scan, set this to the number of cores."
+    ),
+    "Token rotation": (
+        "Barkley uses its current token to make a new one, checks that it works, saves it, "
+        "and then deletes the old one. Each token lasts twice this period plus a week, so "
+        "one missed rotation breaks nothing. A failed rotation keeps the current token, "
+        "shows why here and notifies you; it's tried again a day later."
+    ),
+    "GitHub token": (
+        "GitHub allows 60 requests an hour without a token and 5,000 with one; a scan makes "
+        "about 6 or 7. Barkley keeps it in its own file next to its database, never in the "
+        "database, and never shows it again. A token saved here wins over the one in the "
+        "app's options."
+    ),
+}
+
+
 def render_settings(
     base: str,
     s: settings_mod.Settings,
@@ -908,6 +1009,7 @@ def render_settings(
 
     def row(label: str, help_: str, control: str, more: str = "") -> str:
         # `more`: the longer "How this works", folded (<details>: no script, works on phones)
+        more = more or SETTING_HELP.get(label, "")
         fold = (f'<details class="more"><summary>How this works</summary>'
                 f'<p class="small">{e(more, 800)}</p></details>') if more else ""  # fmt: skip
         return (f'<div class="setrow"><div><b>{e(label)}</b><p class="muted small">{help_}</p>'
@@ -948,10 +1050,7 @@ def render_settings(
               "aren't shown or counted. On: show and count everything.",
               onoff("paranoid", s.paranoid, "On", "Off", False))
         + row("Powerful, no threat", "If an app has no Threat finding, what it can do won't "
-              "put its score below Very Sus (40).", onoff("floor", s.floor, "On", "Off", True),
-              "Only for a finished scan with no critical finding: an unfinished scan may have "
-              "missed a Threat, and a critical known bug in a library still counts in full. "
-              "Off: findings count down to 0 whatever their kind.")
+              "put its score below Very Sus (40).", onoff("floor", s.floor, "On", "Off", True))
         + row("Pages without a login", "When Exposure is Local only: list them under what the "
               "app can do, without counting them.",
               sel("unauth_views", "1" if s.unauth_views else "0",
@@ -994,21 +1093,11 @@ def render_settings(
     check_rows += row("Parallel scans", "How many apps Barkley scans at the same time.",
                       sel("parallel", s.parallel,
                           [(n, f"{n}{' (default)' if n == defaults.parallel else ''}")
-                           for n in settings_mod.CHOICES["parallel"]]),
-                      "Each scan is a separate app. Another scan starts only while the box "
-                      "has enough free memory for it: 1.5 GB for each scan already running, on "
-                      "top of a 2 GB reserve. Otherwise it waits its turn. Two checks of the "
-                      "same app never run together. 1 is the safest on a small box.")  # fmt: skip
+                           for n in settings_mod.CHOICES["parallel"]]))  # fmt: skip
     check_rows += row("Semgrep jobs", "How many files one scan's code check reads at once.",
                       sel("jobs", s.jobs,
                           [(n, f"{n}{' (default)' if n == defaults.jobs else ''}")
-                           for n in settings_mod.CHOICES["jobs"]]),
-                      "Inside one scan, Semgrep (the code checker) reads this many files at "
-                      "once, and GuardDog uses the same number for an integration's libraries. "
-                      "It helps apps that ship many files, such as cards split into chunks; one "
-                      "big file is still read by one worker. Barkley's passes over the code "
-                      "still run one after another. Each extra job needs its own "
-                      "memory.")  # fmt: skip
+                           for n in settings_mod.CHOICES["jobs"]]))  # fmt: skip
     hidden = f'<input type=hidden name=token value="{token}">'
     have = {"settings": "Set here", "option": "Set in the app's options",
             "file": "Set by GITHUB_TOKEN_FILE"}.get(token_source, "")  # fmt: skip

@@ -76,6 +76,22 @@ than twice its first hit. Then the caps:
 
 The same findings always give the same score. No AI is involved.
 
+### Why these numbers
+
+The caps carry the meaning: one critical finding means "don't install" (BORK), and one
+high finding means "look before you trust it" (never Good Boy). The points then place an
+app inside its band, and each severity costs roughly three times the one below. One high
+finding gives 75 (Kinda Sus), two give 50 (Very Sus), one medium gives 92 (still Good
+Boy), and it takes many low ones to leave Good Boy. A repeat of the same rule costs a
+quarter, and no rule can cost more than twice its first hit, so one noisy check matching
+30 times in a big file can't sink an app on its own: the number of different problems
+matters more than the number of matches.
+
+The exact values (25 rather than 20 or 30, a quarter for repeats) are a judgment call made
+when Barkley was designed. They haven't yet been calibrated against a large set of known
+good and known bad apps; that is planned, and if it shows a problem the numbers will
+change in a release that says so.
+
 ### Settings that change the score
 
 On Barkley's Settings page (the defaults are Barkley's own score):
