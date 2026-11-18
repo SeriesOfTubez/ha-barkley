@@ -212,3 +212,9 @@ def test_create_token_is_not_offered_to_the_addon(tmp_path):
         assert post(base + "/ha-token", {"token": token(base), "value": "x"})[0] == 400
     finally:
         httpd.shutdown()
+
+
+def test_two_tokens_made_in_the_same_second_get_different_names():
+    """Found against a real HA: Core refuses a second long-lived token with the same name
+    ("unknown_error"), which Create token followed by Rotate now could hit."""
+    assert len({ha_token._name(NOW) for _ in range(20)}) > 1

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -115,7 +116,9 @@ def _check(token: str) -> str:
 
 
 def _name(now: datetime) -> str:
-    return f"{NAME} {now.strftime('%Y-%m-%d %H:%M')}"
+    # a user's long-lived tokens need distinct names (Core refuses a repeat), so a random
+    # suffix: two made in the same second still differ
+    return f"{NAME} {now.strftime('%Y-%m-%d %H:%M')} {secrets.token_hex(2)}"
 
 
 def create(access_token: str, period: int, now: datetime | None = None) -> tuple[str, str]:
