@@ -50,3 +50,11 @@ https://github.com/SeriesOfTubez/ha-barkley/releases
   OS doesn't ship with Landlock enabled in its kernel, so there the app relies on its
   custom AppArmor profile to confine the tools.
 - Barkley itself runs on Python 3.14, as Home Assistant does.
+
+**Known issues**
+
+- Scans take longer than in 0.13.0. Barkley now reads every file of a card's release and
+  checks JavaScript a second time for code built from pieces, to close a gap in the card
+  checks. Across 61 real apps, a full set of scans took about half again as long; a large
+  card that ships many files can take several minutes. A cache that skips work already
+  done on identical files and packages is being worked on.
