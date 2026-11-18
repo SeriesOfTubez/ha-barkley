@@ -42,8 +42,8 @@ def test_every_kept_guarddog_rule_has_plain_text():
     kept = [r.removeprefix("threat-") for r, sev in guarddog.SEVERITY.items() if sev]
     assert sorted(r for r in kept if r not in explain.GUARDDOG_WHAT) == []
     e = explain.explain("dep-guarddog-filesystem-autostart")
-    assert e.title == "A code library it uses sets something up to start automatically"
-    assert explain.explain("dep-guarddog-something-new").title.startswith("A code library")
+    assert e.title == "One of its code libraries sets something up to start automatically"
+    assert explain.explain("dep-guarddog-something-new").title.startswith("One of its code libraries")
 
 
 def test_text_is_plain_and_complete():
@@ -131,3 +131,13 @@ def test_no_rule_text_claims_home_assistant_guidance():
         text = f"{ex.means} {ex.worry}".lower()
         if "home assistant recommends" in text or "poor practice" in text:
             assert ex.links, rid
+
+
+def test_library_titles_read_naturally():
+    import itertools
+
+    """(0.14.0, the user's report) "A code library it uses uses code that's hard to read"."""
+    for key in explain.GUARDDOG_WHAT:
+        title = explain.explain(f"dep-guarddog-{key}").title
+        words = title.lower().split()  # no "uses uses"
+        assert all(a != b for a, b in itertools.pairwise(words)), title

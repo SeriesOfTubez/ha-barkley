@@ -546,7 +546,7 @@ RULES: dict[str, Explanation] = {
 # GuardDog heuristics on dependencies. The rule id is built from GuardDog's rule name,
 # so new names can appear; they fall back to _GUARDDOG.
 _GUARDDOG = _E(
-    "A code library it uses has suspicious-looking code",
+    "One of its code libraries has suspicious-looking code",
     "An automatic check of one of its code libraries found a pattern often seen in "
     "malware. It's a rule of thumb, not proof.",
     "Worth a look. Popular, well-known libraries often trip these checks harmlessly.",
@@ -606,7 +606,7 @@ def explain(rule_id: str) -> Explanation:
         what = GUARDDOG_WHAT.get(rule_id.removeprefix("dep-guarddog-"))
         if what:
             return _E(
-                f"A code library it uses {what}",
+                f"One of its code libraries {what}",
                 _GUARDDOG.means,
                 _GUARDDOG.worry,
                 _GUARDDOG.chip,
