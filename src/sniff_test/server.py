@@ -106,6 +106,15 @@ _CSP = (
     "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; "
     "form-action 'self'; base-uri 'none'; frame-ancestors 'self'"
 )
+
+
+def csp_with_login(ha_url: str) -> str:
+    """(0.14.0) Standalone: browsers check form-action against where a form's redirects
+    end up, and Create token (a form) ends at Home Assistant's login page. `ha_url` is
+    login.base_url's scheme://host[:port], so nothing but an origin goes into the header."""
+    return _CSP.replace("form-action 'self'", f"form-action 'self' {ha_url}")
+
+
 _FONT_FILES = ("Geist-Variable.woff2", "GeistMono-Variable.woff2")
 
 
@@ -2311,6 +2320,7 @@ class Panel:
         self.standalone = False  # (0.14.0 part 4) set by `serve`: Barkley's own HA token
         self.allow = allow  # None: any address (standalone, behind the login)
         self.login: login.Login | None = None  # standalone: "log in with Home Assistant"
+        self.csp = _CSP
         self.token = secrets.token_urlsafe(24)
         self.installed_fn = installed_fn
         self.memory_fn = memory_fn
@@ -2842,7 +2852,7 @@ class Panel:
                 charset = "" if ctype.startswith("font/") else "; charset=utf-8"
                 self.send_header("Content-Type", f"{ctype}{charset}")
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Content-Security-Policy", _CSP)
+                self.send_header("Content-Security-Policy", panel.csp)
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("Referrer-Policy", "no-referrer")
                 self.send_header("Cache-Control", cache)
@@ -3337,6 +3347,8 @@ def serve(
     )  # fmt: skip
     panel = Panel(store, worker, allow, installed_fn, memory_fn)
     panel.login = login_cfg
+    if login_cfg is not None:
+        panel.csp = csp_with_login(login_cfg.ha_url)
     if ai_entity and not supervisor.ai_entity_ok(ai_entity):
         print(f"ignoring ai_entity {ai_entity!r}: not an ai_task.* entity", file=sys.stderr)
         ai_entity = ""

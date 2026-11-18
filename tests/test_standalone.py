@@ -414,6 +414,29 @@ def test_every_page_needs_the_login_and_the_whole_round_trip_works(gated):
     assert _req(port, "GET", "/", f"{login.SESSION_COOKIE}={sid}")[0] == 401
 
 
+def test_forms_may_end_at_has_login_page_only_with_a_login(gated, tmp_path):
+    # Create token is a form whose redirects end at HA's login page; browsers block that
+    # unless form-action allows HA's origin (found in a real browser, 2026-11-18).
+    port, _ = gated
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    c.request("GET", "/")
+    csp = c.getresponse().getheader("Content-Security-Policy")
+    c.close()
+    assert "form-action 'self' http://ha.lan:8123;" in csp
+    assert csp == server.csp_with_login("http://ha.lan:8123")
+    assert "script-src" not in csp and "default-src 'none'" in csp
+    store = Store(tmp_path / "addon.db")
+    httpd = server.serve(store, Calls(), "127.0.0.1", 0, {"127.0.0.1"})
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=5)
+        c.request("GET", "/")
+        assert c.getresponse().getheader("Content-Security-Policy") == server._CSP
+        c.close()
+    finally:
+        httpd.shutdown()
+
+
 def test_the_addon_panel_is_unchanged_without_a_login(tmp_path):
     store = Store(tmp_path / "s.db")
     httpd = server.serve(store, Calls(), "127.0.0.1", 0, {"127.0.0.1"})
