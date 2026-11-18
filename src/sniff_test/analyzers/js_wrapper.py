@@ -152,9 +152,9 @@ def _url_arg(text: str, start: int, end: int) -> tuple[int, int] | None:
     """The URL argument of the sink matched at text[start:end]."""
     sink = text[start:end]
     m = re.match(
-        r"(?:(?:window|self|globalThis)\.)?(fetch|navigator\.sendBeacon|open)\s*\("
-        r"|new\s+(?:WebSocket|EventSource)\s*\("
-        r"|[\w$.\[\]\"']+\.open\s*\(",
+        r"(?:(?:window|self|globalThis)\.)?(fetch|navigator\.sendBeacon|open)\s*+\("
+        r"|new\s++(?:WebSocket|EventSource)\s*+\("
+        r"|[\w$.\[\]\"']+\.open\s*+\(",
         sink,
     )
     if not m:
@@ -167,11 +167,11 @@ def _url_arg(text: str, start: int, end: int) -> tuple[int, int] | None:
 
 # --- modules, imports, constants -----------------------------------------------------
 
-_IMPORT = re.compile(r"""import\s*\{([^}]*)\}\s*from\s*["'](\.{1,2}/[^"']+)["']""")
-_NS_IMPORT = re.compile(r"""import\s*\*\s*as\s+[\w$]+\s+from\s*["'](\.{1,2}/[^"']+)["']""")
-_DYN_IMPORT = re.compile(r"""import\s*\(\s*["'`](\.{1,2}/[^"'`]+)""")
-_REEXPORT = re.compile(r"""export\s*(?:\*|\{[^}]*\})\s*from\s*["'](\.{1,2}/[^"']+)["']""")
-_ESM = re.compile(r"^\s*(?:import\s*[\w{*\"']|export\s)", re.M)
+_IMPORT = re.compile(r"""import\s*+\{([^}]*)\}\s*+from\s*+["'](\.{1,2}/[^"']+)["']""")
+_NS_IMPORT = re.compile(r"""import\s*+\*\s*+as\s++[\w$]+\s++from\s*+["'](\.{1,2}/[^"']+)["']""")
+_DYN_IMPORT = re.compile(r"""import\s*+\(\s*+["'`](\.{1,2}/[^"'`]+)""")
+_REEXPORT = re.compile(r"""export\s*+(?:\*|\{[^}]*\})\s*+from\s*+["'](\.{1,2}/[^"']+)["']""")
+_ESM = re.compile(r"^[ \t]*+(?:import\s*+[\w{*\"']|export\s)", re.M)
 
 
 def _resolve(root: Path, frm: Path, spec: str) -> Path | None:
@@ -200,14 +200,14 @@ def _specifiers(block: str) -> list[tuple[str, str]]:
 
 
 _PARAMS = (
-    re.compile(r"function\s*\*?\s*[\w$]*\s*\(([^()]*)\)"),
-    re.compile(r"\(([^()]*)\)\s*=>"),
-    re.compile(r"(?<![\w$])([A-Za-z_$][\w$]*)\s*=>"),
+    re.compile(r"function\s*+\*?\s*+[\w$]*+\s*+\(([^()]*+)\)"),
+    re.compile(r"\(([^()]*+)\)\s*+=>"),
+    re.compile(r"(?<![\w$])([A-Za-z_$][\w$]*+)\s*+=>"),
     re.compile(
-        r"(?m)^\s*(?:static\s+|async\s+|get\s+|set\s+)*"
-        r"(?!(?:if|for|while|switch|catch|with|return|function)\b)[\w$]+\s*\(([^()]*)\)\s*\{"
+        r"(?m)^[ \t]*+(?:static\s++|async\s++|get\s++|set\s++)*"
+        r"(?!(?:if|for|while|switch|catch|with|return|function)\b)[\w$]+\s*+\(([^()]*+)\)\s*+\{"
     ),
-    re.compile(r"catch\s*\(([^()]*)\)"),
+    re.compile(r"catch\s*+\(([^()]*+)\)"),
 )
 
 
@@ -219,7 +219,7 @@ def _binds(text: str, name: str) -> bool:
     text = _IMPORT.sub("", text)  # `import { NAME } from …` is the binding we expect
     if name in destructured(text):
         return True
-    if re.search(rf"\b(?:const|let|var|function|class)\s+{n}\b", text):
+    if re.search(rf"\b(?:const|let|var|function|class)\s++{n}\b", text):
         return True
     return any(name in _NAME.findall(m.group(1)) for rx in _PARAMS for m in rx.finditer(text))
 
@@ -262,10 +262,10 @@ class _Index:
                 t = self.text(p)
                 for m in re.finditer(r"<script\b[^>]*>", t, re.I):
                     tag = m.group(0)
-                    src = re.search(r"""src\s*=\s*["']([^"']+)["']""", tag, re.I)
-                    if src and re.search(r"""type\s*=\s*["']module["']""", tag, re.I):
+                    src = re.search(r"""src\s*+=\s*+["']([^"']+)["']""", tag, re.I)
+                    if src and re.search(r"""type\s*+=\s*+["']module["']""", tag, re.I):
                         found.add(src.group(1).split("?")[0].rsplit("/", 1)[-1])
-                for m in re.finditer(r"""module_url\s*[=:]\s*f?["']([^"']+)["']""", t):
+                for m in re.finditer(r"""module_url\s*+[=:]\s*+f?["']([^"']+)["']""", t):
                     found.add(m.group(1).split("?")[0].rsplit("/", 1)[-1])
             self._loaded_as_module = found
         return self._loaded_as_module
@@ -299,24 +299,32 @@ class _Index:
             return None
         st = self.text(src)
         vals = re.findall(
-            rf"""export\s+const\s+{re.escape(orig)}\s*=\s*(["'])((?:(?!\1)[^\\\n])*)\1\s*[;,\n]""",
+            rf"""export\s+const\s+{re.escape(orig)}\s*=\s*+(["'])((?:(?!\1)[^\\\n])*)\1\s*[;,\n]""",
             st,
         )
-        if len(vals) == 1 and not re.search(rf"export\s+(?:let|var)\s+{re.escape(orig)}\b", st):
+        if len(vals) == 1 and not re.search(rf"export\s++(?:let|var)\s++{re.escape(orig)}\b", st):
             return vals[0][1]
         return None
 
 
 _STRING_NAMES = re.compile(
-    r"""(?:\b(?:const|let|var)\s+|[,;{(]\s*|^\s*)([A-Za-z_$][\w$]*)\s*=\s*["'`]""", re.M
+    r"""(?:\b(?:const|let|var)\s++|[,;{(]\s*+|^[ \t]*+)([A-Za-z_$][\w$]*+)\s*+=\s*+["'`]""", re.M
 )
 _DESTRUCTURE = (
     # const {C} = …  /  let [C] = …  (also `for (const {C} of …)`)
-    re.compile(r"\b(?:const|let|var)\s*([{\[][^;=]*?[}\]])\s*(?:=|of\b|in\b)"),
-    # ({C} = obj)  /  [C] = arr   (an assignment, not a comparison or an arrow)
-    re.compile(r"([{\[][^{}\[\]()=;]*[}\]])\s*=(?![=>])"),
+    re.compile(r"\b(?:const|let|var)\s*+([{\[][^;=]*?[}\]])\s*+(?:=|of\b|in\b)"),
+    # ({C} = obj)  /  [C] = arr   (an assignment, not a comparison or an arrow). A bracket
+    # right after a name, `)` or `]` is a property access (`n[e] = o`), not a pattern.
+    re.compile(r"(?<![\w$)\]])([{\[][^{}\[\]()=;]*+[}\]])\s*+=(?![=>])"),
 )
-_NAME = re.compile(r"[A-Za-z_$][\w$]*")
+_NAME = re.compile(r"[A-Za-z_$][\w$]*+")
+
+
+# What blanked code is filled with: not whitespace, a word character or punctuation, so no
+# pattern here can match inside it or run along it. Spaces made `\s*` runs of 100 000+
+# characters in minified bundles, and a pattern with several of them back to back took
+# minutes per call while holding the interpreter (a real card froze the panel, 0.14.0).
+_FILL = "\x01"
 
 
 def visible(text: str, at: int) -> str:
@@ -357,7 +365,7 @@ def visible(text: str, at: int) -> str:
             continue
         a = max(a, pos)
         out.append(text[pos:a])
-        out.append(re.sub(r"[^\n]", " ", text[a:b]))
+        out.append(re.sub(r"[^\n]", _FILL, text[a:b]))
         pos = b
     out.append(text[pos:])
     return "".join(out)
@@ -379,7 +387,7 @@ def destructured(text: str) -> frozenset[str]:
     return frozenset(out)
 
 
-_LEAD = re.compile(r"^\s*(?:`\$\{\s*([A-Za-z_$][\w$]*)\s*\}|([A-Za-z_$][\w$]*))")
+_LEAD = re.compile(r"^\s*+(?:`\$\{\s*+([A-Za-z_$][\w$]*+)\s*+\}|([A-Za-z_$][\w$]*+))")
 
 
 def propagation_trusted(
@@ -401,7 +409,9 @@ def propagation_trusted(
         return False
     before = text if at is None else text[:at]
     last = None
-    for a in re.finditer(rf"(?<![\w$.]){re.escape(name)}\s*=(?![=>])\s*([^;\n]{{0,200}})", before):
+    for a in re.finditer(
+        rf"(?<![\w$.]){re.escape(name)}\s*+=(?![=>])\s*+([^;\n]{{0,200}})", before
+    ):
         last = a
     if last is None:
         return True
@@ -418,7 +428,8 @@ def _text_safe(arg: str, index: _Index, path: Path) -> bool:
     if _SAFE_START.match(arg):
         return True
     m = re.match(
-        r"^(?:`\$\{\s*([A-Za-z_$][\w$]*)\s*\}|([A-Za-z_$][\w$]*)\s*(?:\+|\.concat\s*\(|$))", arg
+        r"^(?:`\$\{\s*+([A-Za-z_$][\w$]*+)\s*+\}|([A-Za-z_$][\w$]*+)\s*+(?:\+|\.concat\s*+\(|$))",
+        arg,
     )
     if not m:
         return False
@@ -516,10 +527,14 @@ def _by_file(results: list[dict]) -> dict[Path, list[dict]]:
 
 
 _FN_HEADS = (
-    re.compile(r"^(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)"),
-    re.compile(r"^([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?function\b[^(]*\(\s*([A-Za-z_$][\w$]*)"),
-    re.compile(r"^([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(\s*([A-Za-z_$][\w$]*)"),
-    re.compile(r"^([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*=>"),
+    re.compile(
+        r"^(?:async\s++)?function\s*+\*?\s*+([A-Za-z_$][\w$]*+)\s*+\(\s*+([A-Za-z_$][\w$]*+)"
+    ),
+    re.compile(
+        r"^([A-Za-z_$][\w$]*+)\s*+=\s*+(?:async\s++)?function\b[^(]*\(\s*+([A-Za-z_$][\w$]*+)"
+    ),
+    re.compile(r"^([A-Za-z_$][\w$]*+)\s*+=\s*+(?:async\s*+)?\(\s*+([A-Za-z_$][\w$]*+)"),
+    re.compile(r"^([A-Za-z_$][\w$]*+)\s*+=\s*+(?:async\s++)?([A-Za-z_$][\w$]*+)\s*+=>"),
 )
 
 
@@ -533,8 +548,8 @@ def _fn_head(text: str) -> tuple[str, str] | None:
 def _reassigned(body: str, param: str) -> bool:
     p = re.escape(param)
     return bool(
-        re.search(rf"(?<![\w$.]){p}\s*(?:[-+*/%&|^]|\*\*|<<|>>>?|\?\?|&&|\|\|)?=(?![=>])", body)
-        or re.search(rf"(?<![\w$.]){p}\s*(?:\+\+|--)|(?:\+\+|--)\s*{p}(?![\w$])", body)
+        re.search(rf"(?<![\w$.]){p}\s*+(?:[-+*/%&|^]|\*\*|<<|>>>?|\?\?|&&|\|\|)?=(?![=>])", body)
+        or re.search(rf"(?<![\w$.]){p}\s*+(?:\+\+|--)|(?:\+\+|--)\s*+{p}(?![\w$])", body)
     )
 
 
@@ -606,12 +621,12 @@ def _scope(index: _Index, path: Path, name: str) -> list[Path] | None:
     files = [path]
     text = index.text(path)
     exported = re.search(
-        rf"export\s+(?:default\s+)?(?:async\s+)?function\s*\*?\s*{re.escape(name)}\b"
-        rf"|export\s+(?:const|let|var)\s+{re.escape(name)}\b",
+        rf"export\s++(?:default\s++)?(?:async\s++)?function\s*+\*?\s*+{re.escape(name)}\b"
+        rf"|export\s++(?:const|let|var)\s++{re.escape(name)}\b",
         text,
     )
-    if re.search(rf"export\s*\{{[^}}]*\b{re.escape(name)}\b", text) or re.search(
-        r"export\s+default\s+" + re.escape(name) + r"\b", text
+    if re.search(rf"export\s*+\{{[^}}]*\b{re.escape(name)}\b", text) or re.search(
+        r"export\s++default\s++" + re.escape(name) + r"\b", text
     ):
         return None  # exported by a list or as default: followed by name, so keep it simple
     if not exported:
