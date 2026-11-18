@@ -26,7 +26,8 @@ A security tool that reads hostile code should be held to its own standard.
   Home Assistant token or other scans. It can run only what the image ships and connect
   only to port 443; Semgrep can't connect anywhere. It also can't signal Barkley or read
   Barkley's environment. Diagnostics shows whether the sandbox is on. It needs Linux 5.13
-  or later; the port limit needs 6.7 or later.
+  or later; the port limit needs 6.7 or later. Home Assistant OS's kernel is built without Landlock
+  (checked on 6.18), so in the app there the AppArmor profile alone confines the tools.
 
 Run [standalone](Standalone), Barkley has no Supervisor around it. It reaches Home
 Assistant with a long-lived token of an administrator, sends it only to `HA_URL`, follows
