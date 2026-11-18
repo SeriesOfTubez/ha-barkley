@@ -108,7 +108,14 @@ Scans of apps that aren't installed are deleted after 7 days (sniff-before-insta
 included, unless the app was installed by then, in which case the scan is reused). A
 scan of anything installed, at any version, is never deleted.
 
-## Options
+## Settings and options
+
+Since 0.14.0 Barkley has its own **Settings** page (the link at the top of the panel):
+the scoring settings (Paranoid mode, the no-Threat floor, pages without a login, hidden
+usage reporting), reviews, auto-sniff and notifications, AI, parallel scans, Semgrep jobs
+and the GitHub token. The options below are the starting values; once you save the
+Settings page, it wins. A GitHub token saved there is kept in its own file next to the
+database and wins over the option's.
 
 | Option | Default | Meaning |
 |---|---|---|

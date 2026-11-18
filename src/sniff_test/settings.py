@@ -46,6 +46,8 @@ class Settings:
     # Checking (parallel and jobs: the add-on's defaults)
     parallel: int = 2
     jobs: int = 1
+    # Standalone: how often Barkley replaces its own Home Assistant token (ha_token.py)
+    token_days: int = 60
 
     def review(self) -> review.Settings:
         return review.Settings(
@@ -62,7 +64,7 @@ DEFAULTS = Settings()
 PARTS = {
     "scoring": ("exposure", "paranoid", "floor", "unauth_views", "shadow_telemetry"),
     "reviews": ("notify_reopen", "reconfirm_months"),
-    "checking": ("parallel", "jobs"),
+    "checking": ("parallel", "jobs", "token_days"),
 }
 
 
@@ -77,6 +79,7 @@ CHOICES: dict[str, tuple[Any, ...]] = {
     "reconfirm_months": (0, 6, 12),
     "parallel": (1, 2, 3, 4),
     "jobs": (1, 2, 3, 4),
+    "token_days": (30, 60, 90, 180),
 }
 
 

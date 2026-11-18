@@ -3,8 +3,12 @@
 # Step by step: the wiki page "Standalone (no Supervisor)".
 #
 #   mkdir -p data && sudo chown 1000:1000 data
-#   printf '%s' 'PASTE-THE-TOKEN' > ha_token && chmod 600 ha_token
 #   docker compose up -d
+#
+# then open BARKLEY_URL, log in with Home Assistant, and click Create token on Barkley's
+# Settings page (Barkley rotates that token itself). To give it a token you manage
+# instead, uncomment HA_TOKEN_FILE and the two `secrets` blocks below and run:
+#   printf '%s' 'PASTE-THE-TOKEN' > ha_token && chmod 600 ha_token
 #
 # It is the same signed image the app store installs. The image's own start (s6 and
 # bashio, which read the Supervisor's options) belongs to the add-on, so `entrypoint`
@@ -27,7 +31,7 @@ services:
     environment:
       # Home Assistant, as this container reaches it. https when HA has it.
       HA_URL: "http://homeassistant.local:8123"
-      HA_TOKEN_FILE: /run/secrets/ha_token
+      # HA_TOKEN_FILE: /run/secrets/ha_token  # a token you manage (never rotated)
       # HA_CA_FILE: /run/secrets/ha_ca      # a private CA behind an https HA_URL
       # HA_BROWSER_URL: "https://ha.example" # if your browser reaches HA at another address
       # Barkley, as your browser reaches it: the login with Home Assistant and the links in
@@ -42,9 +46,9 @@ services:
       TMPDIR: /data/tmp
     volumes:
       - ./data:/data
-    secrets:
-      - ha_token
+    # secrets:
+    #   - ha_token
 
-secrets:
-  ha_token:
-    file: ./ha_token
+# secrets:
+#   ha_token:
+#     file: ./ha_token

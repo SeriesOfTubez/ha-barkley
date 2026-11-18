@@ -293,7 +293,7 @@ a.button:hover { filter:brightness(1.08); }
   border-radius:var(--r4); overflow:hidden; margin-top:var(--s2); font-size:var(--t-sm); }
 .split > span { display:flex; align-items:center; gap:var(--s2); padding:var(--s1) var(--s3); }
 .split .r { border-left:1px solid var(--line); color:var(--green); font-weight:600; }
-.split small { font-weight:400; color:var(--muted); font-size:var(--t-xs); white-space:nowrap; }
+.split small { font-weight:400; color:var(--muted); font-size:var(--t-xs); }
 .mini { display:inline-flex; align-items:center; justify-content:center; width:28px;
   height:28px; box-shadow:inset 0 0 0 3px currentColor; border-radius:50%;
   font-size:var(--t-xs); font-weight:700; font-variant-numeric:tabular-nums; flex:none; }

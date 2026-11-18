@@ -31,8 +31,8 @@ run, built or installed.
 
 **See what you already have.** Barkley asks the Marketplace what is installed and leads
 with what needs a look: an update that brings something important, or a scan that isn't
-a Good Boy. Updates you haven't checked come next, and everything that is fine folds
-into one line. The counts at the top are filters, and the list shows as cards or a table.
+a Good Boy. The counts at the top are filters, the list shows as cards or a table, and
+Sniff again (on each app, or for all of them) runs fresh scans.
 
 **Auto-sniff, on by default.** When the Marketplace installs or updates an integration
 or card, Barkley sniffs the version that landed and sends a notification (the bell, and
@@ -63,10 +63,19 @@ own workflows, has Dependabot or Renovate and a security policy, how many depend
 updates are waiting, and open issues that look security-related. It is context from
 public signs and never changes the score.
 
-**Addresses you trust.** Barkley can't know every host an app legitimately uses. For
-findings that are only about where an address points, you can mark the address trusted,
-for one app or for all. Barkley's own score always stays visible next to yours, and
-findings about *what* is sent can't be switched off.
+**Findings by kind, and your review.** Findings are grouped into Threats (signs of
+malicious behavior), what the app can do, known bugs in its libraries, and how it's made.
+You can mark findings reviewed, or Accept all, with a note: the circle then shows your
+reviewed score, and Barkley's own score stays unchanged beside it. Each Threat needs its
+own tick, and known malware can never be accepted. An accepted finding stays accepted
+while its code stays the same; when an update changes it, it reopens, you're notified,
+and "What changed?" shows the code then and now. Addresses you trust work the same way.
+Per app, **Malware check only** shows and notifies only Threats and known malware.
+
+**A Settings page.** The scoring choices (Paranoid mode for the minor findings, the
+no-Threat floor at Very Sus, and more), reviews, auto-sniff, AI and the GitHub token,
+each with Barkley's default. **Report a false positive** under every finding opens a
+pre-filled public issue on this repository for you to finish and submit.
 
 **AI explanations, if you want them.** Pick one of your Home Assistant AI Task entities
 and Barkley can explain an app's findings, or (in deep mode) read the code around one

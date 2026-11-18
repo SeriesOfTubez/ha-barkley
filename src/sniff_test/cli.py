@@ -9,6 +9,7 @@ import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from rich.markup import escape
@@ -387,6 +388,29 @@ def _loopback(host: str) -> bool:
         return False
 
 
+def _rotation_thread(store: Any, start: Any) -> None:
+    """Standalone: once an hour, replace Barkley's own HA token when it's due (ha_token)."""
+    import threading
+    import time
+
+    from sniff_test import ha_token, supervisor
+    from sniff_test import settings as settings_mod
+
+    def notify(title: str, message: str) -> None:
+        with contextlib.suppress(supervisor.SupervisorError):
+            supervisor.notify_persistent(title, message, "barkley_token")
+
+    def run() -> None:
+        while True:
+            period = settings_mod.load(store, start).token_days
+            if ha_token.due(store, period):
+                why = ha_token.rotate(store, period, notify=notify)
+                print(f"Home Assistant token: {why or 'rotated'}", file=sys.stderr, flush=True)
+            time.sleep(3600)
+
+    threading.Thread(target=run, name="token-rotation", daemon=True).start()
+
+
 def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     from sniff_test import server
 
@@ -395,8 +419,12 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         err.print(f"[red]🐕 serve needs --store (or ${STORE_ENV})[/]")
         return EXIT_ERROR
 
-    from sniff_test import login, supervisor, workspace
+    from sniff_test import ha_token, login, supervisor, workspace
 
+    # (0.14.0 part 4) standalone: Barkley's own token file next to the store, made or
+    # pasted in the panel; HA_TOKEN / HA_TOKEN_FILE still win
+    if not os.environ.get("SUPERVISOR_TOKEN") and os.environ.get(supervisor.HA_URL_ENV):
+        supervisor.OWN_TOKEN_FILE = ha_token.path(store.path)
     if problem := supervisor.config_problem():
         err.print(f"[red]🐕 {escape(problem)}[/]")
         return EXIT_ERROR
@@ -463,7 +491,10 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         return {**to_dict(result), recheck.KEY: result.inputs, sources.KEY: result.source}
 
     # The installed list needs HA (the Supervisor, or HA_URL standalone).
-    installed_fn = supervisor.installed_hacs if supervisor.token() else None
+    # standalone may start before it has a token (Create token in the panel): its HA
+    # calls then say so, and work once the token is there
+    have_ha = bool(supervisor.token()) or standalone
+    installed_fn = supervisor.installed_hacs if have_ha else None
     watcher = None
     if installed_fn is not None:
         from sniff_test import watch
@@ -486,17 +517,29 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         store, scan_fn, args.host, args.port, allow,
         exposure=current.exposure, ha_fn=ha_fn, installed_fn=installed_fn,
         budget_fn=lambda: GitHub.from_env().rate_limit(),
-        ai_entity=args.ai_entity.strip() if supervisor.token() else "",
+        ai_entity=args.ai_entity.strip() if have_ha else "",
         ai_mode=args.ai_mode,
         parallel=current.parallel,
-        catalog_fn=supervisor.catalog if supervisor.token() else None,
-        entities_fn=supervisor.ai_task_entities if supervisor.token() else None,
+        catalog_fn=supervisor.catalog if have_ha else None,
+        entities_fn=supervisor.ai_task_entities if have_ha else None,
         releases_fn=lambda repo: releases.recent(repo),
         watcher=watcher,
         login_cfg=login_cfg,
     )  # fmt: skip
     httpd.panel.start_settings = start
     httpd.panel.option_token = option_token
+    httpd.panel.standalone = standalone
+    if standalone:
+        if login_cfg is not None:  # Create token: made with the login, before it's revoked
+
+            def make_token(access: str) -> None:
+                period = settings_mod.load(store, start).token_days
+                tok, name = ha_token.create(access, period)
+                ha_token.adopt(store, tok, "created", name)
+
+            login_cfg.token_fn = make_token
+        _rotation_thread(store, start)
+        out.print(f"🐕 Home Assistant token: {ha_token.source() or 'none yet (Settings)'}")
     if conn is not None:
         where = "via the Supervisor" if conn.mode == "addon" else f"at {conn.base} (standalone)"
         out.print(f"🐕 Home Assistant: {where}")

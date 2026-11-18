@@ -1,18 +1,53 @@
-# Options
+# Options and Settings
 
-Settings → Apps → Barkley → Configuration. Every option has a default, and four of them
-are easier to set in the panel, where the choice wins over the option.
+Since 0.14.0 Barkley has its own **Settings** page (the link at the top of the panel). The
+app's options (Settings → Apps → Barkley → Configuration) give the starting values; once
+you save the Settings page, it wins. Standalone, the `BARKLEY_*` variables play the part
+of the options (see [Standalone](Standalone)).
 
-| Option | Default | Meaning |
+## The Settings page
+
+| Setting | Default | Meaning |
 |---|---|---|
-| `exposure` | `local` | Set `public` if your Home Assistant is reachable from the internet. Raises findings about what an app accepts from outside; never lowers anything. |
-| `jobs` | `1` | Parallel Semgrep jobs inside one scan (1 to 4). More is faster and uses more memory. |
-| `parallel_scans` | `2` | How many scans may run at once (1 to 4). A further scan starts only while the box has enough free memory; otherwise it waits. |
-| `github_token` | empty | A GitHub token with no scopes, for 5,000 requests an hour instead of 60. |
-| `ai_entity` | empty | The AI Task entity for explanations. Easier: pick it on an app's page. |
-| `ai_mode` | `summary` | `summary` or `deep`. Also set in the panel. See [AI explanations](AI-explanations). |
-| `auto_scan` | `true` | Sniff installs, updates and offered updates, and notify. Also set in the panel. |
-| `notify_target` | empty | A `notify` service name that gets each auto-sniff result besides the bell. Easier: pick it in the panel. |
+| Exposure | Local only | Public if your Home Assistant is reachable from the internet. Raises findings about what an app accepts from outside; never lowers anything. A hint under it says whether Home Assistant has an external URL set. |
+| Paranoid mode | Off | Show and count the minor findings. See [scoring](Checks-and-scoring). |
+| Powerful, no threat | On | With no Threat finding, what an app can do won't put its score below Very Sus (40). |
+| Pages without a login | List only | Count an app's pages that work without a login under Local only. |
+| Hidden usage reporting | Count it | Count usage data an app sends by itself, with no setting to turn it off, and doesn't tell you about. |
+| When an accepted finding changes | Notify me | A reopened finding is always reopened; this decides whether the notification says so. |
+| Ask again | Never | Reopen acceptances after 6 or 12 months even if nothing changed. |
+| Auto-sniff | On | Sniff installs, updates and offered updates, and notify. |
+| Notify | Bell only | A `notify` service that gets each result besides the bell. |
+| AI | Off | The AI Task entity for explanations. Only as good as the model you pick. |
+| AI mode | Explain only | Or also read the code around a finding. See [AI explanations](AI-explanations). |
+| Parallel scans | 2 (app), 1 (standalone) | How many scans may run at once (1 to 4), as memory allows. |
+| Semgrep jobs | 1 | Parallel Semgrep jobs inside one scan (1 to 4). Fewer uses less memory. |
+| GitHub token | none | See below. |
+
+Each section has **Reset to defaults**.
+
+## GitHub token
+
+Optional. Without one GitHub allows 60 requests an hour; with one, 5,000. A scan makes
+about 6 or 7. The token needs **no permissions**: on GitHub, Settings → Developer
+settings → Personal access tokens → Fine-grained tokens → Generate new token, with
+**Repository access: Public repositories** and nothing else. Paste it on Barkley's
+Settings page. Barkley keeps it in its own file next to its database (never in the
+database) and never shows it again; **Remove** deletes it. A token in the app's
+`github_token` option still works, and one saved on the Settings page wins over it.
+
+## The app's options
+
+| Option | Default | Starting value for |
+|---|---|---|
+| `exposure` | `local` | Exposure |
+| `jobs` | `1` | Semgrep jobs |
+| `parallel_scans` | `2` | Parallel scans |
+| `github_token` | empty | GitHub token |
+| `ai_entity` | empty | AI |
+| `ai_mode` | `summary` | AI mode |
+| `auto_scan` | `true` | Auto-sniff |
+| `notify_target` | empty | Notify |
 
 There is no light or dark setting: the panel follows the mode of your Home Assistant
 profile.

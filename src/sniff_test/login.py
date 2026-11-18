@@ -13,6 +13,9 @@ there, using HA's own OAuth2 (https://developers.home-assistant.io/docs/auth_api
 3. `/auth/callback` checks the state against the cookie and the ones it made, trades the
    code for tokens (server to HA), asks `auth/current_user` with them, and lets in
    **administrators only** (the add-on's panel is admin-only too).
+   (0.14.0 part 4) A login started from Create token (`start(purpose="token")`) also
+   makes Barkley's own long-lived token with the login's access token, before the
+   login's own tokens are revoked (`token_fn`, ha_token.py).
 4. It then revokes the refresh token at once: Barkley keeps no token of the person,
    only its own random session id in an HttpOnly, SameSite=Lax cookie (Secure on
    https), valid for `SESSION_SECONDS`, in memory (a restart logs everyone out).
@@ -75,7 +78,9 @@ class Login:
     user_fn: Callable[[str], supervisor.User] = supervisor.current_user
     revoke_fn: Callable[[str], None] = supervisor.auth_revoke
     now_fn: Callable[[], float] = time.time
-    _states: dict[str, float] = field(default_factory=dict)
+    # (0.14.0) Create token: called with the login's access token, before it's revoked
+    token_fn: Callable[[str], None] | None = None
+    _states: dict[str, tuple[float, str]] = field(default_factory=dict)
     _sessions: dict[str, Session] = field(default_factory=dict)
     _failures: list[float] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -97,18 +102,19 @@ class Login:
         return self.public_url.startswith("https://")
 
     def _prune(self, now: float) -> None:
-        self._states = {s: t for s, t in self._states.items() if t > now}
+        self._states = {s: t for s, t in self._states.items() if t[0] > now}
         self._sessions = {k: v for k, v in self._sessions.items() if v.expires > now}
 
-    def start(self) -> tuple[str, str]:
-        """(state, the URL of HA's login page)."""
+    def start(self, purpose: str = "") -> tuple[str, str]:
+        """(state, the URL of HA's login page). `purpose` "token": this login also makes
+        Barkley's own token (the caller checks that a session asked for it)."""
         state = secrets.token_urlsafe(24)
         now = self.now_fn()
         with self._lock:
             self._prune(now)
             if len(self._states) >= _MAX_STATES:  # oldest first out
-                self._states.pop(min(self._states, key=self._states.__getitem__))
-            self._states[state] = now + STATE_SECONDS
+                self._states.pop(min(self._states, key=lambda k: self._states[k][0]))
+            self._states[state] = (now + STATE_SECONDS, "token" if purpose == "token" else "")
         query = urllib.parse.urlencode(
             {
                 "response_type": "code",
@@ -119,13 +125,18 @@ class Login:
         )
         return state, f"{self.ha_url}/auth/authorize?{query}"
 
+    def purpose(self, state: str) -> str:
+        """What a login in progress was started for ("token" or ""), without using it up."""
+        with self._lock:
+            return self._states.get(state, (0.0, ""))[1]
+
     def finish(self, code: str, state: str, cookie_state: str) -> tuple[str, Session]:
         """The callback: (new session id, session), or LoginError."""
         now = self.now_fn()
         with self._lock:
             self._prune(now)
             known = state in self._states
-            self._states.pop(state, None)
+            purpose = self._states.pop(state, (0.0, ""))[1]
         same = bool(state) and secrets.compare_digest(state, cookie_state or "")
         if not (known and same):
             raise LoginError("That login link is stale or wasn't started here. Try again.")
@@ -145,16 +156,22 @@ class Login:
                 self._failures.append(now)
             raise LoginError(f"Home Assistant didn't accept the login ({ex}).") from ex
         try:
-            user = self.user_fn(access)
-        except SupervisorError as ex:
-            raise LoginError(f"Couldn't ask Home Assistant who logged in ({ex}).") from ex
+            try:
+                user = self.user_fn(access)
+            except SupervisorError as ex:
+                raise LoginError(f"Couldn't ask Home Assistant who logged in ({ex}).") from ex
+            if not user.is_admin:
+                raise LoginError(
+                    f"{user.name or 'That user'} isn't a Home Assistant administrator. Barkley "
+                    "starts scans and changes notifications, so it's for administrators only."
+                )
+            if purpose == "token" and self.token_fn is not None:
+                try:
+                    self.token_fn(access)
+                except SupervisorError as ex:
+                    raise LoginError(f"Couldn't create Barkley's token ({ex}).") from ex
         finally:
             self.revoke_fn(refresh)
-        if not user.is_admin:
-            raise LoginError(
-                f"{user.name or 'That user'} isn't a Home Assistant administrator. Barkley "
-                "starts scans and changes notifications, so it's for administrators only."
-            )
         sid = secrets.token_urlsafe(32)
         session = Session(user.name or "administrator", user.id, now + SESSION_SECONDS)
         with self._lock:

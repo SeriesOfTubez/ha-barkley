@@ -26,16 +26,14 @@ is the one used, and Barkley stores no AI key of its own.
 
 ## Set it up
 
-1. **A token.** In Home Assistant, it's best to make a user just for Barkley
-   (Settings → People → Users, with **Administrator** on, since the Marketplace's list is
-   for administrators). Log in as that user once, open the profile → Security →
-   Long-lived access tokens, and create one. A user of its own makes it easy to see
-   Barkley's calls in the logs and to revoke it.
+1. **A Home Assistant administrator.** Barkley needs an administrator's token, since the
+   Marketplace's list is for administrators. It's best to make a user just for Barkley
+   (Settings → People → Users, with **Administrator** on): its calls are then easy to see in
+   the logs and to revoke. You log in to Barkley as an administrator either way.
 2. **The files.** Copy [`standalone/compose.yaml`](https://github.com/SeriesOfTubez/ha-barkley/blob/main/standalone/compose.yaml)
    into a new folder, then:
    ```sh
    mkdir -p data && sudo chown 1000:1000 data
-   printf '%s' 'PASTE-THE-TOKEN' > ha_token && chmod 600 ha_token
    ```
 3. **Two addresses** in `compose.yaml`:
    - `HA_URL`: Home Assistant, as the container reaches it, such as
@@ -43,7 +41,35 @@ is the one used, and Barkley stores no AI key of its own.
      http, the token crosses your network unencrypted.
    - `BARKLEY_URL`: Barkley, as your browser reaches it, such as
      `http://192.168.1.20:8099`. The login and the links in notifications use it.
-4. `docker compose up -d`, open `BARKLEY_URL`, and log in with Home Assistant.
+4. `docker compose up -d`, open `BARKLEY_URL`, log in with Home Assistant, and on
+   Barkley's **Settings** page click **Create token** (see below).
+
+## Barkley's Home Assistant token
+
+Three ways, the last one wins:
+
+- **Create token** on the Settings page. Barkley sends you to Home Assistant's login once
+  more and, with that login, makes a long-lived access token named "Barkley" and the date
+  for the user who logged in (use the user you made for Barkley). The login's own tokens
+  are revoked right after, as with every login.
+- **Paste** a long-lived access token you made yourself (your profile → Security →
+  Long-lived access tokens) on the same row. Barkley checks that it works and is an
+  administrator's before keeping it.
+- **`HA_TOKEN_FILE`** (or `HA_TOKEN`) in `compose.yaml`: a token you manage. Barkley uses
+  it as it is and never rotates it.
+
+A token made or pasted in the panel is **rotated** by Barkley: every 60 days by default
+(Settings → Token rotation: 30, 60, 90 or 180 days), it makes a new token with the
+current one, checks it, saves it, and then deletes the old one. Each token lasts twice
+the period plus a week, so a missed rotation breaks nothing. If a rotation fails, the
+current token keeps working, the panel shows why and you get a notification; it's tried
+again a day later. **Rotate now** does it at once.
+
+Where it's kept: in its own file next to Barkley's database in `data/` (mode 600), never
+in the database, an export or Diagnostics, and out of reach of the scanner tools (the
+sandbox lets them read only their own scan folder and caches). It isn't encrypted: the
+key would have to sit next to it, on the same disk, readable by the same process, so it
+would protect nothing. Protect the `data/` folder instead.
 
 ## The login
 
@@ -87,13 +113,13 @@ auto-sniff and the notify target) are kept there once you change them.
 | Variable | What it does |
 |---|---|
 | `HA_URL` | Home Assistant, as the container reaches it: scheme, host and port only |
-| `HA_TOKEN_FILE` or `HA_TOKEN` | The long-lived access token (a file is better: it stays out of `docker inspect`) |
+| `HA_TOKEN_FILE` or `HA_TOKEN` | Optional: a long-lived access token you manage (a file is better: it stays out of `docker inspect`). Without one, create or paste Barkley's own on the Settings page |
 | `HA_CA_FILE` | A CA certificate, when an `https` Home Assistant uses a private CA |
 | `HA_BROWSER_URL` | Home Assistant, as your browser reaches it, if different |
 | `BARKLEY_URL` | Barkley, as your browser reaches it |
 | `BARKLEY_ALLOW` | Client addresses to let in, comma-separated (instead of the login, behind a proxy that does its own) |
 | `BARKLEY_PORT` | The port inside the container (8099) |
-| `BARKLEY_EXPOSURE`, `BARKLEY_PARALLEL`, `BARKLEY_JOBS` | As the app's [options](Options) `exposure`, `parallel_scans`, `jobs` |
+| `BARKLEY_EXPOSURE`, `BARKLEY_PARALLEL`, `BARKLEY_JOBS` | Starting values for the Settings page, as the app's [options](Options) `exposure`, `parallel_scans`, `jobs` |
 | `BARKLEY_AI_ENTITY`, `BARKLEY_AI_MODE`, `BARKLEY_AUTO_SCAN`, `BARKLEY_NOTIFY_TARGET` | Starting values for the panel's settings |
 | `GITHUB_TOKEN_FILE` or `GITHUB_TOKEN` | Optional, as the app's `github_token` |
 | `BARKLEY_UNSANDBOXED` | `1` starts Barkley on a kernel without Landlock, with the scanner tools unsandboxed |
