@@ -19,7 +19,7 @@ of the options (see [Standalone](Standalone)).
 | Auto-sniff | On | Sniff installs, updates and offered updates, and notify. |
 | Notify | Bell only | A `notify` service that gets each result besides the bell. |
 | AI | Off | The AI Task entity for explanations. Only as good as the model you pick. |
-| AI mode | Explain only | Or also read the code around a finding. See [AI explanations](AI-explanations). |
+| AI mode | Explain and read code | Or also read the code around a finding. See [AI explanations](AI-explanations). |
 | Parallel scans | 2 (app), 1 (standalone) | How many apps are scanned at the same time (1 to 4). Another scan starts only while there's free memory for it: 1.5 GB for each scan already running, on top of a 2 GB reserve; otherwise it waits. |
 | Semgrep jobs | 1 | Inside one scan, how many files Semgrep reads at once (1 to 4); GuardDog uses the same number for an integration's libraries. Helps apps that ship many files, such as cards split into chunks, not one big file. Barkley's passes over the code still run one after another. Each extra job needs its own memory. |
 | GitHub token | none | See below. |
@@ -46,7 +46,7 @@ database) and never shows it again; **Remove** deletes it. A token in the app's
 | `parallel_scans` | `2` | Parallel scans |
 | `github_token` | empty | GitHub token |
 | `ai_entity` | empty | AI |
-| `ai_mode` | `summary` | AI mode |
+| `ai_mode` | `deep` | AI mode |
 | `auto_scan` | `true` | Auto-sniff |
 | `notify_target` | empty | Notify |
 

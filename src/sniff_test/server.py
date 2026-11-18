@@ -86,6 +86,9 @@ _JOBS_KEPT = 20
 # (0.12.0) + 2 per scan: Home Assistant's original of a function the app replaces
 # (report.compare.MAX_FETCH; cached per HA release, so usually none are made).
 _GITHUB_NEED = {"scan": 12, "installed": 12, "update": 23, "auto": 23}
+# (0.14.0) Explain and read code by default: still nothing is sent before a click, and
+# what a click sends is the app's own public code, never anything from Home Assistant.
+AI_MODE_DEFAULT = "deep"
 
 
 def _need(job: Job) -> int:
@@ -993,7 +996,7 @@ def render_settings(
     token: str,
     *,
     ai_entity: str = "",
-    ai_mode: str = "summary",
+    ai_mode: str = AI_MODE_DEFAULT,
     ai_choices: list[tuple[str, str]] | None = None,
     watcher: watch.Watcher | None = None,
     token_source: str = "",
@@ -1088,8 +1091,9 @@ def render_settings(
         check_rows += row("AI", "Home Assistant's AI Task entity. Only as good as the model "
                           "you pick.", sel("ai_entity", ai_entity, opts))  # fmt: skip
     check_rows += row("AI mode", "Explain only, or also read the code around a finding.",
-                      sel("ai_mode", ai_mode, [("summary", "Explain only (default)"),
-                                               ("deep", "Explain and read code")]))  # fmt: skip
+                      sel("ai_mode", ai_mode, [
+                          ("summary", "Explain only"),
+                          ("deep", "Explain and read code (default)")]))  # fmt: skip
     check_rows += row("Parallel scans", "How many apps Barkley scans at the same time.",
                       sel("parallel", s.parallel,
                           [(n, f"{n}{' (default)' if n == defaults.parallel else ''}")
@@ -1412,7 +1416,7 @@ def _mode_picker(base: str, sid: int, token: str, mode: str) -> str:
 
 def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: str,
              have: dict[str, Any] | None, choices: list[tuple[str, str]] | None = None,
-             choices_err: str = "", mode: str = "summary",
+             choices_err: str = "", mode: str = AI_MODE_DEFAULT,
              readings: list[str] | None = None) -> str:  # fmt: skip
     """The "Explain this app" control. Nothing is sent until the user clicks.
     `readings`: ids of this scan's "Explain in context" answers with something shown."""
@@ -1474,7 +1478,7 @@ def render_scan(
     ai_error: str = "",
     ai_choices: list[tuple[str, str]] | None = None,
     ai_choices_err: str = "",
-    ai_mode: str = "summary",
+    ai_mode: str = AI_MODE_DEFAULT,
     item_states: dict[str, tuple[str, str]] | None = None,
     open_item: str = "",
     rechecking: bool = False,
@@ -2324,7 +2328,7 @@ class Panel:
         self._ai_items: dict[tuple[int, str], tuple[str, str]] = {}  # (scan, item) -> same
         self._ai_asked: dict[tuple[int, str], list[str]] = {}  # second round: what it asked for
         self._ai_lock = threading.Lock()
-        self.ai_mode = "summary"
+        self.ai_mode = AI_MODE_DEFAULT
         self.watcher: watch.Watcher | None = None  # auto-sniff (set by `serve` in an add-on)
         self.diagnostics = Diagnostics()
 
@@ -2701,8 +2705,8 @@ class Panel:
         if part == "checking":
             if self.watcher is not None:
                 self.watcher.set_enabled(True)
-            self.store.set_setting("ai_mode", "summary")
-            self.ai_mode = "summary"
+            self.store.set_setting("ai_mode", AI_MODE_DEFAULT)
+            self.ai_mode = AI_MODE_DEFAULT
 
     def accept(self, sid: int, finding_ids: list[str], note: str, who: str) -> int:
         """Mark findings of a stored scan reviewed; known malware is never accepted. A
@@ -3313,7 +3317,7 @@ def serve(
     budget_fn: Callable[[], RateLimit | None] = lambda: None,
     ai_entity: str = "",
     ai_fn: AiFn | None = None,
-    ai_mode: str = "summary",
+    ai_mode: str = AI_MODE_DEFAULT,
     parallel: int = 1,
     catalog_fn: CatalogFn | None = None,
     entities_fn: EntitiesFn | None = None,
@@ -3341,9 +3345,8 @@ def serve(
         ai_entity = stored
     panel.ai_entity = ai_entity
     stored_mode = store.setting("ai_mode")  # chosen in the panel; wins over the option
-    panel.ai_mode = (
-        stored_mode if stored_mode in AI_MODES else (ai_mode if ai_mode in AI_MODES else "summary")
-    )
+    start_mode = ai_mode if ai_mode in AI_MODES else AI_MODE_DEFAULT
+    panel.ai_mode = stored_mode if stored_mode in AI_MODES else start_mode
     panel.catalog_fn = catalog_fn
     panel.entities_fn = entities_fn
     panel.releases_fn = releases_fn

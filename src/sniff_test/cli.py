@@ -175,7 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument(
         "--ai-mode",
         choices=("summary", "deep"),
-        default=env("BARKLEY_AI_MODE", "summary"),
+        default=env("BARKLEY_AI_MODE", "deep"),
         help="summary: explain the findings; deep: also 'Explain in context' (reads code) "
         "(BARKLEY_AI_MODE)",
     )

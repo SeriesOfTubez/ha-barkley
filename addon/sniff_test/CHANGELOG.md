@@ -19,6 +19,8 @@ https://github.com/SeriesOfTubez/ha-barkley/releases
   no-Threat floor at Very Sus, pages without a login, hidden usage reporting, reviews,
   auto-sniff, notifications, AI, parallel scans, Semgrep jobs and the GitHub token. The
   app's options are now the starting values.
+- AI mode now starts on Explain and read code. Nothing is sent until you click, and
+  a click sends only the app's own public code around a finding.
 - Sniff again on every installed app, and Sniff all again for the list. New filters:
   needs a look, reviewed, Malware check only.
 - Report a false positive under each finding, and Report an issue, as pre-filled public

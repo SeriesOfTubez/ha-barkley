@@ -124,7 +124,7 @@ database and wins over the option's.
 | `parallel_scans` | `2` | How many scans may run at once. A second scan starts only while the box has room for another full scan above the 2 GB warning line (1.5 GB counted for each scan already running); otherwise it waits. Two checks of the same project never run together. |
 | `github_token` | empty | A GitHub token (no scopes needed) for the 5,000 requests/hour limit instead of 60. |
 | `ai_entity` | empty | Optional. Easier: pick your AI in the panel (any app's page, "Explain this app with AI"), which lists your AI Task entities. A choice made in the panel wins over this option. |
-| `ai_mode` | `summary` | `summary`: the AI explains the findings. `deep`: it can also read the code around one finding, port or unknown address when you click **Explain in context**. Also set in the panel (wins over this option). |
+| `ai_mode` | `deep` | `summary`: the AI explains the findings. `deep`: it can also read the code around one finding, port or unknown address when you click **Explain in context**. Also set in the panel (wins over this option). |
 | `auto_scan` | `true` | Sniff every Marketplace install, update and offered update, and send a notification. Also set in the panel (wins over this option). |
 | `notify_target` | empty | A `notify` service name (for example `mobile_app_my_phone`) that gets each auto-sniff result besides the bell notification. Easier: pick it in the panel, which lists your notify services (wins over this option). |
 

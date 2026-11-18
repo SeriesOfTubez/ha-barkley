@@ -50,7 +50,7 @@ options:
   parallel_scans: 2
   github_token: ""
   ai_entity: ""
-  ai_mode: summary
+  ai_mode: deep
   auto_scan: true
   notify_target: ""
 schema:
