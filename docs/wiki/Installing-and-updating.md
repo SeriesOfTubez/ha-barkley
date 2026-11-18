@@ -41,7 +41,7 @@ nothing you have to do. If you'd like to check it yourself, use the version you 
 installing:
 
 ```sh
-cosign verify ghcr.io/seriesoftubez/barkley:0.13.0 \
+cosign verify ghcr.io/seriesoftubez/barkley:0.14.0 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/SeriesOfTubez/ha-barkley/'
 ```
