@@ -78,3 +78,46 @@ def test_mqtt_1883_only():
 
 def test_old_reports_without_graph_details():
     assert privacy.notes({"score": 90}) == []
+
+
+# --- (0.14.0) one entry per usage-reporting address --------------------------------------------
+
+HOST = "app-telemetry-worker.someone.workers.dev"
+
+
+def _traced(
+    rule, how="It can run on its own, but a condition in the code decides whether it does."
+):
+    r = _report((HOST, {"class": "developer_hosted"}, 36))
+    sev = {"telemetry-usage": "info", "telemetry-opt-out": "low", "telemetry-shadow": "medium"}
+    r["findings"] = [
+        {
+            "rule_id": rule,
+            "severity": sev[rule],
+            "message": f"Sends what looks like usage reporting to {HOST}. {how}",
+            "evidence": f"{HOST} from async_maybe_ping",
+            "file": "telemetry.py",
+            "line": 246,
+        }
+    ]
+    return r
+
+
+def test_unscored_trace_is_folded_into_the_note():
+    (n,) = privacy.notes(_traced("telemetry-usage"))
+    assert n.kind == "telemetry" and n.hosts == [HOST]
+    assert n.unknown.startswith("It can run on its own, but a condition")
+    assert "Barkley can't tell what it sends." in n.unknown
+    assert n.where[0] == "telemetry.py:246" and "a.py:36" in n.where
+
+
+def test_scored_trace_replaces_the_note():
+    for rule in ("telemetry-opt-out", "telemetry-shadow"):
+        assert privacy.notes(_traced(rule)) == []
+
+
+def test_trace_on_an_address_with_no_note_gets_one():
+    r = _traced("telemetry-usage")
+    r["graph"]["edges"][0]["attrs"] = {"class": "declared"}
+    (n,) = privacy.notes(r)
+    assert n.kind == "telemetry" and n.hosts == [HOST] and n.where == ["telemetry.py:246"]

@@ -136,3 +136,28 @@ def test_diff_changes_read_as_plain_english():
     hostile = {"kind": "new_host", "sign": "+", "rank": 70, "text": f"undeclared: {HOSTILE}",
                "detail": {"target": f"host:{HOSTILE}", "class": "undeclared"}}  # fmt: skip
     assert "<script>" not in ui.change_line(hostile)[1]
+
+
+def test_usage_trace_shows_once_as_a_privacy_note():
+    """(0.14.0, the user's report) The same send showed as a privacy note and as an FYI."""
+    h = "app-telemetry-worker.someone.workers.dev"
+    tel = {
+        **FINDING,
+        "id": "t1",
+        "rule_id": "telemetry-usage",
+        "severity": "info",
+        "title": "Can send usage data to the developer",
+        "message": f"Sends what looks like usage reporting to {h}. It runs when you use the app.",
+        "evidence": f"{h} from async_ping",
+        "file": "telemetry.py",
+        "line": 246,
+    }
+    rep = _with(
+        report(findings=[tel]),
+        nodes=[{"id": f"host:{h}", "kind": "host", "label": h}],
+        edges=[_edge("connects_to", f"host:{h}", {"class": "developer_hosted", "urls": []})],
+    )
+    page = ui.render_app("", 1, rep, []).decode()
+    assert page.count("usage statistics to the developer") == 1
+    assert "Can send usage data to the developer" not in page
+    assert "It runs when you use the app." in page

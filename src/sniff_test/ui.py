@@ -2522,7 +2522,8 @@ def render_app(
     )
     notes = privacy.notes(report)
     parts.append(privacy_html(notes, (lambda i: deep(i, part="inline")) if deep else None))
-    groups = scored_findings(report)
+    # (0.14.0) an unscored usage-reporting trace is shown inside its privacy note
+    groups = [g for g in scored_findings(report) if g[0]["rule_id"] != privacy.TRACED]
     aside = report.get("trusted_findings") or []
     expl = ai.get("findings", {})
     items = (report.get("context") or {}).get("items") or {}
