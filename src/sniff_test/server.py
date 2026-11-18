@@ -964,8 +964,9 @@ SETTING_HELP = {
         "Each scan is a separate app. Another scan starts only while the box has enough "
         "free memory for it: 1.5 GB for each scan already running, on top of a 2 GB reserve. "
         "Otherwise it waits its turn. Two checks of the same app never run together. Scans "
-        "share the processor too: keep Parallel scans times Semgrep jobs near the number of "
-        "processor cores (4 on many Home Assistant boxes)."
+        "share the processor too: keep Parallel scans times Semgrep jobs at or below the "
+        "number of processor cores (4 on many Home Assistant boxes). Past that, a big app's "
+        "checks can run out of time and its scan comes out Incomplete."
     ),
     "Semgrep jobs": (
         "Inside one scan, Semgrep (the code checker) reads this many files at once, and "
@@ -973,7 +974,8 @@ SETTING_HELP = {
         "ship many files, such as cards split into chunks; one big file is still read by "
         "one worker, and Barkley's passes over the code run one after another. Downloading "
         "the app takes the same time either way. Each extra job needs its own memory. With "
-        "1 parallel scan, set this to the number of cores."
+        "1 parallel scan, set this to the number of cores; with more, keep Parallel scans "
+        "times this at or below the cores."
     ),
     "Token rotation": (
         "Barkley uses its current token to make a new one, checks that it works, saves it, "
