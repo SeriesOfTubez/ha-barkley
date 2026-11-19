@@ -54,6 +54,11 @@ class Settings:
     cache_mb: int = 1024
     # Standalone: how often Barkley replaces its own Home Assistant token (ha_token.py)
     token_days: int = 60
+    # (preview, 2026-11-19) the proposed Threat and Exposure readings (readings.py), shown
+    # beside Barkley's score; never stored or scored. `network`: where Home Assistant runs,
+    # for Exposure only (the internet is the Exposure setting above: Public)
+    preview: bool = False
+    network: str = "home"  # home | shared
 
     def review(self) -> review.Settings:
         return review.Settings(
@@ -71,6 +76,7 @@ PARTS = {
     "scoring": ("exposure", "paranoid", "floor", "unauth_views", "shadow_telemetry"),
     "reviews": ("notify_reopen", "reconfirm_months"),
     "checking": ("parallel", "jobs", "memory_gb", "libraries", "cache_mb", "token_days"),
+    "preview": ("preview", "network"),
 }
 
 
@@ -82,6 +88,7 @@ def describe(s: Settings) -> str:
 
 CHOICES: dict[str, tuple[Any, ...]] = {
     "exposure": ("local", "public"),
+    "network": ("home", "shared"),
     "reconfirm_months": (0, 6, 12),
     "parallel": (1, 2, 3, 4),
     "jobs": (1, 2, 3, 4),

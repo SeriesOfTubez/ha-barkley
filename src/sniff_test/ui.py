@@ -269,6 +269,22 @@ a.button:hover { filter:brightness(1.08); }
   align-items:center; }
 .ring { width:84px; height:84px; }
 .ring text { font:700 var(--t-xl) var(--font); font-variant-numeric:tabular-nums; }
+/* (preview) the proposed Threat and Exposure readings beside Barkley's score */
+.rd { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:var(--s2); }
+.rdial { display:grid; grid-template-columns:auto minmax(0,1fr); gap:var(--s2); align-items:center;
+  padding:var(--s2); border-radius:var(--r3); background:var(--soft); min-width:0; }
+.rdial svg { width:48px; height:48px; }
+.rdial text { font:700 var(--t-sm) var(--font); font-variant-numeric:tabular-nums; }
+.rdial .k { display:block; font-size:var(--t-xs); font-weight:600; letter-spacing:0.06em;
+  text-transform:uppercase; color:var(--muted); }
+.rdial .w { display:block; font-weight:600; overflow-wrap:anywhere; }
+.rd-green { color:var(--green); } .rd-yellow { color:var(--yellow); }
+.rd-orange { color:var(--orange); } .rd-red { color:var(--red); }
+.rdwhy { margin:var(--s3) 0 var(--s2); padding-left:var(--s4); display:flex;
+  flex-direction:column; gap:var(--s1); }
+.banner.threat { background:var(--red-bg); border:1px solid var(--red-edge); padding:var(--s3) var(--s4); }
+.banner.threat b { display:block; color:var(--red); font-size:var(--t-lg); line-height:1.25; }
+.app .rd { margin-top:var(--s2); }
 .verdict { font-weight:600; }
 .inshort { font-size:var(--t-md); line-height:1.55; max-width:72ch; }
 .two { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:var(--s4);
@@ -807,6 +823,7 @@ def card_html(base: str, c: Card) -> str:
         f'<div class="app {b}{" busy" if c.busy else ""}"><div class="app-top"><div>{name}'
         f'<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}</div></div>'
         f'<div class="badge {b}">{score}<small>{label}</small></div></div>'
+        f"{readings_dials(c.report['readings']) if (c.report or {}).get('readings') else ''}"
         f"{card_state(c)}"
         f'<div class="say">{e(card_sentence(c), 400)}</div>'
         f'<div class="chips">{chips}</div>{actions}</div>'
@@ -920,7 +937,8 @@ def card_row(base: str, c: Card) -> str:
         f'<tr{" class=busy" if c.busy else ""}><td><span class="badge {b}">{score}'
         f"<small>{label}</small></span></td>"
         f'<td>{name}<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}'
-        f'</div><div class="small">{e(card_sentence(c), 400)}</div></td>'
+        f'</div><div class="small">{e(card_sentence(c), 400)}</div>'
+        f"{readings_dials(c.report['readings']) if (c.report or {}).get('readings') else ''}</td>"
         f'<td><div class="chips">{chips}</div></td>'
         f'<td class="actcell">{act}</td></tr>'
     )
@@ -2856,6 +2874,76 @@ def trust_line(report: dict[str, Any]) -> str:
     )
 
 
+# --- (preview) proposed readings ---------------------------------------------------------------
+
+_T_WORD = {"none": "None found", "possible": "Possible", "found": "Found"}
+_T_COLOR = {"none": "green", "possible": "yellow", "found": "red"}
+_E_WORD = {"low": "Low", "medium": "Medium", "high": "High"}
+_E_COLOR = {"low": "green", "medium": "yellow", "high": "orange"}
+
+
+def _num(x: Any) -> str:
+    v = float(x or 0)
+    return f"{v:.0f}" if v == int(v) else f"{v:.2f}".rstrip("0")
+
+
+def _rdial(label: str, value: Any, word: str, color: str) -> str:
+    c = 113.1  # 2πr, r = 18
+    v = max(0.0, min(10.0, float(value or 0)))
+    arc = (f'<circle cx="24" cy="24" r="18" fill="none" stroke="currentColor" stroke-width="5" '
+           f'stroke-dasharray="{v / 10 * c:.1f} {c}" stroke-linecap="round" '
+           'transform="rotate(-90 24 24)"/>') if v else ""  # fmt: skip
+    return (
+        f'<div class="rdial rd-{color}"><svg viewBox="0 0 48 48" role="img" '
+        f'aria-label="{e(label)} {_num(value)} of 10">'
+        '<circle cx="24" cy="24" r="18" fill="none" stroke="var(--line)" stroke-width="5"/>'
+        f'{arc}<text x="24" y="29" text-anchor="middle" fill="currentColor">{_num(value)}</text>'
+        f'</svg><div><span class="k">{e(label)}</span><span class="w">{e(word)}</span></div></div>'
+    )
+
+
+def readings_dials(r: dict[str, Any]) -> str:
+    t, x = str(r.get("threat_level")), str(r.get("exposure_level"))
+    tword = _T_WORD.get(t, t)
+    if t == "none" and not r.get("complete", True):
+        tword = "None found so far"
+    return ('<div class="rd">'
+            + _rdial("Threat", r.get("threat"), tword, _T_COLOR.get(t, "yellow"))
+            + _rdial("Exposure", r.get("exposure"), _E_WORD.get(x, x), _E_COLOR.get(x, "yellow"))
+            + "</div>")  # fmt: skip
+
+
+def threat_banner(r: dict[str, Any] | None, many: int = 0) -> str:
+    """The one sentence for a found threat. `many`: on the installed list, how many apps."""
+    if not r and not many:
+        return ""
+    if many:
+        return (f'<div class="banner threat"><b>🚨 {_plural(many, "app")} '
+                f"{'shows' if many == 1 else 'show'} malicious behavior. Remove "
+                f"{'it' if many == 1 else 'them'}.</b></div>")  # fmt: skip
+    if (r or {}).get("threat_level") != "found":
+        return ""
+    return (f'<div class="banner threat"><b>🚨 This app {e(r.get("threat_reason"), 200)}. '
+            "Don't install it.</b><span class=small>If it's installed, remove it, then log out "
+            "of Home Assistant everywhere and change the passwords it could reach.</span></div>")  # fmt: skip
+
+
+def readings_box(r: dict[str, Any]) -> str:
+    why = r.get("exposure_reasons") or []
+    where = {"home": "a home network", "shared": "a shared or work network",
+             "internet": "reachable from the internet"}.get(str(r.get("network")), "")  # fmt: skip
+    return (
+        '<section class="box"><h2>Proposed readings <span class="muted small">(preview)</span>'
+        f"</h2>{readings_dials(r)}"
+        + ('<ul class="rdwhy small">' + "".join(f"<li>{e(w, 400)}</li>" for w in why) + "</ul>"
+           if why else '<p class="small muted">Nothing it opens up to someone who isn\'t an '
+           "administrator.</p>")
+        + f'<p class="small muted">A test of a new way to show results, beside Barkley\'s '
+        f"score above, which doesn't change. Exposure is worked out for {e(where)} "
+        "(Settings). Turn it off under Settings → Proposed readings.</p></section>"
+    )  # fmt: skip
+
+
 def render_app(
     base: str,
     sid: int,
@@ -2917,6 +3005,11 @@ def render_app(
         f"{'' if rv else trust_line(report)}{again}</div></section>"
     )
     parts = [f'<div class="stack">{head}{update}</div>' if update else head]
+    rd = report.get("readings")
+    if rd:  # (preview) beside Barkley's score, never instead of it; a found threat's one
+        # sentence goes right under "All apps", above everything else
+        parts[0] = parts[0].replace("</p>", "</p>" + threat_banner(rd), 1)
+        parts.append(readings_box(rd))
     if accept:  # Accept all sits right under the head (user decision 2026-11-18)
         parts.append(accept)
     missing = [

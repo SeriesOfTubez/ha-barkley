@@ -35,6 +35,7 @@ PANEL_ONLY = frozenset(
         "memory.py",
         "doctor.py",
         "review.py",
+        "readings.py",  # (preview) the proposed readings, worked out when a page is shown
         "diff.py",
         "releases.py",
         "report/ai.py",

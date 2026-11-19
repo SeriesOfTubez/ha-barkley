@@ -38,6 +38,7 @@ from sniff_test import (
     kinds,
     login,
     memory,
+    readings,
     recheck,
     review,
     scancache,
@@ -677,8 +678,11 @@ def render_installed(
             f'<button title="A fresh scan of every installed app, one after another">'
             f"Sniff all {len(rows)} again</button></form>"
         )
+    found = sum(  # (preview) a found threat puts one sentence above the list
+        1 for c in cards if ((c.report or {}).get("readings") or {}).get("threat_level") == "found"
+    )
     out = (
-        [ui.render_grid(base, cards, v, lead)]
+        [ui.threat_banner(None, found) + ui.render_grid(base, cards, v, lead)]
         if rows
         else ['<p class="muted">The Marketplace lists no installed integrations or cards.</p>']
     )
@@ -1146,6 +1150,23 @@ def render_settings(
               sel("shadow_telemetry", "1" if s.shadow_telemetry else "0",
                   [("1", "Count it (default)"), ("0", "List only")]))
     )  # fmt: skip
+    preview_rows = (
+        row("Proposed readings", "A test of a new way to show results: how likely an app is "
+            "to be trying to hurt you (Threat), and what it opens up to someone who isn't an "
+            "administrator (Exposure), both 0 to 10, shown beside Barkley's score. Nothing "
+            "is stored or notified, and Barkley's score doesn't change.",
+            onoff("preview", s.preview, "Show", "Hide", False),
+            "Threat counts only signs of malicious behavior. Exposure counts pages that skip "
+            "Home Assistant's login, login tokens the app may hand out, and published bugs in "
+            "its libraries; something only an administrator can do adds nothing. Both are "
+            "worked out from the stored scan each time a page is shown, so no re-sniff is "
+            "needed.")
+        + row("Where Home Assistant runs", "For Exposure only. A shared or work network raises "
+              "it a quarter. Reachable from the internet is the Exposure setting above "
+              "(Public), which raises it a half.",
+              sel("network", s.network,
+                  [("home", "Home network (default)"), ("shared", "A shared or work network")]))
+    )  # fmt: skip
     review_rows = (
         row("When an accepted finding changes", "A new version changed its code. It reopens "
             "either way.", sel("notify_reopen", "1" if s.notify_reopen else "0",
@@ -1278,6 +1299,8 @@ def render_settings(
         + section("Scoring", scoring_rows.replace("<select ", '<select form="settings" '),
                   "scoring")
         + section("Reviews", review_rows.replace("<select ", '<select form="settings" '), "reviews")
+        + section("Proposed readings (preview)",
+                  preview_rows.replace("<select ", '<select form="settings" '), "preview")
         + section("Checking and notifications",
                   check_rows.replace("<select ", '<select form="settings" ') + token_row,
                   "checking")
@@ -2815,7 +2838,7 @@ class Panel:
     def view(self, rep: dict[str, Any], show_minor: bool = False) -> dict[str, Any]:
         repo = str((rep.get("target") or {}).get("repo") or "").lower()
         i = self._inputs()
-        return review.view(
+        shown = review.view(
             rep,
             trusted=i.trusted,
             settings=i.settings.review(),
@@ -2823,6 +2846,9 @@ class Panel:
             malware_only=bool(repo) and repo in i.malware_only,
             show_minor=show_minor,
         )
+        if i.settings.preview:  # shown only; from the stored findings, Barkley's own reading
+            shown["readings"] = readings.compute(rep, i.settings.network).to_dict()
+        return shown
 
     def overlay_row(self, row: ScanRow) -> ScanRow:
         """A stored scan's index row with the score the panel shows (Store.overlay). Reads
