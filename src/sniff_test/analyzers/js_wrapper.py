@@ -230,6 +230,10 @@ class _Index:
         self._texts: dict[Path, str] = {}
         self._loaded_as_module: set[str] | None = None
         self.card = False
+        # (0.14.1) visible() per scope: hundreds of calls in one bundle see a handful of
+        # scopes, and each view of a 1 MB file took tens of milliseconds to build.
+        self._scopes: dict[Path, list[tuple[int, int, int]]] = {}
+        self._views: dict[tuple[Path, tuple[int, ...]], tuple[str, frozenset[str]]] = {}
 
     def text(self, path: Path) -> str:
         if path not in self._texts:
@@ -274,8 +278,22 @@ class _Index:
         """propagation_trusted, judged on the code that can see offset `at`: every
         function (parameters and body) that doesn't contain `at` is blanked out first, so
         a minified bundle's unrelated `({i}) => …` elsewhere doesn't count."""
-        text = visible(self.text(path), at)
-        return propagation_trusted(text, arg, destructured(text), at)
+        text, names = self._view(path, at)
+        return propagation_trusted(text, arg, names, at)
+
+    def _view(self, path: Path, at: int) -> tuple[str, frozenset[str]]:
+        """visible(text, at) and its destructured names, built once per scope."""
+        full = self.text(path)
+        if path not in self._scopes:
+            self._scopes[path] = _functions(full)
+        fns = self._scopes[path]
+        key = (path, tuple(i for i, (bs, be, _cs) in enumerate(fns) if bs <= at < be))
+        if key not in self._views:
+            if len(self._views) >= _MAX_VIEWS:
+                self._views.pop(next(iter(self._views)))
+            text = _blank(full, fns, at)
+            self._views[key] = (text, destructured(text))
+        return self._views[key]
 
     def is_module(self, path: Path) -> bool:
         if self.card or _ESM.search(self.text(path)):
@@ -327,11 +345,20 @@ _NAME = re.compile(r"[A-Za-z_$][\w$]*+")
 _FILL = "\x01"
 
 
+_MAX_VIEWS = 16
+
+
 def visible(text: str, at: int) -> str:
     """`text` with every function that doesn't contain offset `at` blanked (same length):
     its parameter list and its `{…}` body, for `function (…) {…}`, methods and arrows
     with a block body. What's left is the scope chain around `at` (plus expression-bodied
     arrows, which only make the check stricter)."""
+    return _blank(text, _functions(text), at)
+
+
+def _functions(text: str) -> list[tuple[int, int, int]]:
+    """Every function body in `text` as (body start, body end, cut start): the `{…}`
+    after `)` or `=>`, cut from its parameter list on."""
     from sniff_test.report.fingerprint import _parsed
 
     toks, braces = _parsed(text)
@@ -342,23 +369,27 @@ def visible(text: str, at: int) -> str:
             stack.append(i)
         elif v == ")" and stack:
             parens[i] = stack.pop()
-    cut: list[tuple[int, int]] = []
+    out: list[tuple[int, int, int]] = []
     for open_i, close_i in braces.items():
-        start, end = toks[open_i][2], toks[close_i][2] + 1
-        if start <= at < end or open_i == 0:
+        if open_i == 0:
             continue
+        start, end = toks[open_i][2], toks[close_i][2] + 1
         prev = toks[open_i - 1][1]
         if prev == ")" and (open_i - 1) in parens:
-            start = toks[parens[open_i - 1]][2]
+            cut = toks[parens[open_i - 1]][2]
         elif prev == "=>" and open_i >= 2:
             q = open_i - 2
-            start = toks[parens[q]][2] if toks[q][1] == ")" and q in parens else toks[q][2]
+            cut = toks[parens[q]][2] if toks[q][1] == ")" and q in parens else toks[q][2]
         else:
             continue
-        cut.append((start, end))
+        out.append((start, end, cut))
+    return out
+
+
+def _blank(text: str, fns: list[tuple[int, int, int]], at: int) -> str:
+    cut = sorted((c, end) for start, end, c in fns if not start <= at < end)
     if not cut:
         return text
-    cut.sort()
     out, pos = [], 0
     for a, b in cut:
         if b <= pos:
@@ -556,6 +587,37 @@ def _reassigned(body: str, param: str) -> bool:
 # --- the check ------------------------------------------------------------------------
 
 
+class _Runs:
+    """(0.14.1) One scan's Semgrep runs for this check. The function list (`fns`) of a
+    file never changes within a scan, but it was asked again with every rule set, and on
+    a 1.15 MB bundle it is 14 of a 16 s run; so it rides along only in the first run that
+    reads a file, and is reused after. A run with the same rules on the same files (two
+    token hits inside one minified wrapper) is answered from the first. Errors are not
+    remembered: the caller gives up, as before."""
+
+    def __init__(self, run: Runner):
+        self._run = run
+        self._memo: dict[tuple[str, tuple[Path, ...]], list[dict]] = {}
+        self._fns: dict[Path, list[dict]] = {}
+
+    def __call__(self, rules: str, files: list[Path]) -> list[dict]:
+        """`rules` (without `fns`) on `files`, plus the function list of those files."""
+        key = (rules, tuple(files))
+        if key not in self._memo:
+            need = [f for f in files if f not in self._fns]
+            if need:
+                res = self._run(rules + _FNS, files)
+                found: dict[Path, list[dict]] = {f: [] for f in need}
+                for r in res:
+                    if _rid(r) == "fns" and (p := Path(r["path"]).resolve()) in found:
+                        found[p].append(r)
+                self._memo[key] = [r for r in res if _rid(r) != "fns"]
+                self._fns.update(found)
+            else:
+                self._memo[key] = self._run(rules, files)
+        return self._memo[key] + [r for f in files for r in self._fns.get(f, [])]
+
+
 def precise(hits: list[Hit], root: Path, run: Runner, card: bool = False) -> set[int]:
     """ids (Python `id()`) of the findings in `hits` that are proven same-origin."""
     if not hits:
@@ -566,12 +628,12 @@ def precise(hits: list[Hit], root: Path, run: Runner, card: bool = False) -> set
     sink_ids = [f"sink{i}" for i in range(len(_SINKS))] + ["sinkxhr"]
     rules = (
         "rules:\n"
-        + _FNS
         + "".join(_proof_rules(f"sink{i}", s) for i, s in enumerate(_SINKS))
         + _proof_rules("sinkxhr", "$X.open", "$M, ")
     )
+    runs = _Runs(run)
     try:
-        first = _by_file(run(rules, files))
+        first = _by_file(runs(rules, files))
     except (OSError, ValueError, subprocess.SubprocessError):
         return set()
     dropped: set[int] = set()
@@ -609,7 +671,7 @@ def precise(hits: list[Hit], root: Path, run: Runner, card: bool = False) -> set
             continue
         wrappers[id(h.finding)] = (path, s, e, name, param)
     for fid, (path, s, e, name, param) in wrappers.items():
-        if _wrapper_safe(index, run, path, s, e, name, param, 1):
+        if _wrapper_safe(index, runs, path, s, e, name, param, 1):
             dropped.add(fid)
     return dropped
 
@@ -655,13 +717,13 @@ def _scope(index: _Index, path: Path, name: str) -> list[Path] | None:
 
 
 def _wrapper_safe(
-    index: _Index, run: Runner, path: Path, s: int, e: int, name: str, param: str, depth: int
+    index: _Index, run: _Runs, path: Path, s: int, e: int, name: str, param: str, depth: int
 ) -> bool:
     files = _scope(index, path, name)
     if files is None:
         return False
     try:
-        results = _by_file(run("rules:\n" + _call_rules(name) + _FNS, files))
+        results = _by_file(run("rules:\n" + _call_rules(name), files))
     except (OSError, ValueError, subprocess.SubprocessError):
         return False
     for f in files:
