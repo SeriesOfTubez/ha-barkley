@@ -118,13 +118,29 @@ def test_the_panel_adds_readings_only_when_the_preview_is_on(tmp_path):
     assert "readings" not in json.dumps(panel.store.report(sid))
 
 
-def test_the_app_page_shows_the_dials_beside_the_score(tmp_path):
+def test_the_preview_switches_the_page_from_the_score_to_the_readings(tmp_path):
+    """His report 2026-11-19: the switch should swap the views, not mix them."""
+    panel, sid = _panel(tmp_path, _report())
+    off = ui.render_app("", sid, panel.shown_report(sid), []).decode()
+    assert 'aria-label="Score 50 of 100"' in off and "Exposure 1.25 of 10" not in off
+    panel.save_settings({"preview": "1"})
+    on = ui.render_app("", sid, panel.shown_report(sid), []).decode()
+    assert 'aria-label="Exposure 1.25 of 10"' in on and "Why these readings" in on
+    assert 'aria-label="Score 50 of 100"' not in on and "Very Sus" not in on
+    assert "Good Boy · no signs of malicious behavior" in on
+    assert "banner threat" not in on
+
+
+def test_the_list_shows_the_readings_in_the_score_s_place(tmp_path):
     panel, sid = _panel(tmp_path, _report())
     panel.save_settings({"preview": "1"})
-    page = ui.render_app("", sid, panel.shown_report(sid), []).decode()
-    assert "Proposed readings" in page and 'aria-label="Exposure 1.25 of 10"' in page
-    assert 'aria-label="Score 50 of 100"' in page  # today's ring is still there
-    assert "banner threat" not in page
+    row, shown = panel.store.get(sid), panel.shown_report(sid)
+    c = ui.Card(repo="someone/an-app", name="An app", kind="integration", installed="v1",
+                available=None, scan=row, report=shown)  # fmt: skip
+    for html in (ui.card_html("", c), ui.card_row("", c)):
+        assert 'class="badge' not in html and "Exposure 1.3 of 10" not in html
+        assert 'aria-label="Exposure 1.25 of 10"' in html and ">1.3<" in html
+    assert c.band == "green"
 
 
 def test_a_found_threat_gets_the_banner():

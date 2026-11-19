@@ -2124,6 +2124,15 @@ def review_block(base: str, sid: int, report: dict[str, Any], token: str) -> ui.
             return f'<div class="rev"><span class="muted">{why}</span>{link}</div>'
         states = [(x.get("review") or {}) for x in fs]
         st = states[0]
+        # a finding shown once for several places: every form carries all of them, so Undo
+        # and Accept again cover what Mark reviewed accepted (his report 2026-11-19: Undo
+        # left the other places accepted, +8 stayed)
+        ids = [str(x["id"]) for x in fs if review.can_accept(x)]
+        many = "".join(f'<input type=hidden name=also value="{e(i, 16)}">' for i in ids[1:])
+
+        def all_of(html: str) -> str:
+            return html.replace("</form>", many + "</form>")
+
         state = st.get("state", "")
         if state == "accepted" and all(x.get("state") == "accepted" for x in states):
             who = f" by {e(st['who'])}" if st.get("who") else ""
@@ -2133,22 +2142,20 @@ def review_block(base: str, sid: int, report: dict[str, Any], token: str) -> ui.
             )
             return (f'<div class="rev"><span class="done">{ui.icon("check", 14)} Accepted'
                     f"{who}{' on ' + when if when else ''}</span>{note}"
-                    f"{form('unaccept', fid, 'Undo')}{link}</div>")  # fmt: skip
+                    f"{all_of(form('unaccept', fid, 'Undo'))}{link}</div>")  # fmt: skip
         if state == "reopened":
             changed = (f'<a href="{base}/changed?scan={sid}&amp;finding={e(fid, 16)}">'
                        "What changed?</a>")  # fmt: skip
             return (f'<div class="rev"><span class="reopen">{ui.icon("refresh", 14)} Changed since '
                     f"you accepted it in {e(st.get('ref') or 'an earlier version', 60)}</span>"
-                    f"{changed}{form('accept', fid, 'Accept again', True)}"
+                    f"{changed}{all_of(form('accept', fid, 'Accept again', True))}"
                     f"{link}</div>")  # fmt: skip
         if state == "reconfirm":
             when = _ago_text(str(st.get("at") or ""))
             return (f'<div class="rev"><span class="reopen">Accepted on {e(when)}: time to look '
-                    f"again</span>{form('accept', fid, 'Accept again', True)}"
+                    f"again</span>{all_of(form('accept', fid, 'Accept again', True))}"
                     f"{link}</div>")  # fmt: skip
-        ids = [str(x["id"]) for x in fs if review.can_accept(x)]
-        many = "".join(f'<input type=hidden name=also value="{e(i, 16)}">' for i in ids[1:])
-        btn = form("accept", fid, "Mark reviewed", True).replace("</form>", many + "</form>")
+        btn = all_of(form("accept", fid, "Mark reviewed", True))
         return f'<div class="rev">{btn}{link}</div>'
 
     return block
@@ -2187,8 +2194,13 @@ def accept_all_box(base: str, sid: int, report: dict[str, Any], token: str) -> s
         f'<form method=post action="{base}/accept-all">'
         f'<input type=hidden name=token value="{token}">'
         f'<input type=hidden name=scan value="{sid}">'
-        "<p>Mark every finding in this version as reviewed. Your reviewed score then shows "
-        "beside Barkley's original score.</p>"
+        "<p>Mark every finding in this version as reviewed."
+        + (
+            ""
+            if report.get("readings")
+            else " Your reviewed score then shows beside Barkley's original score."
+        )  # (preview) no score on the page to show it beside
+        + "</p>"
         f"{threat_part}{mal}"
         '<div class="row"><input type=text name=note maxlength=300 aria-label="Note (optional)" '
         f'placeholder="Note (optional)"><button>{label}</button></div></form></section>'
@@ -2956,15 +2968,18 @@ class Panel:
                   f"of {repo} (scan @{sid})", file=sys.stderr, flush=True)  # fmt: skip
         return len(items)
 
-    def unaccept(self, sid: int, finding_id: str) -> bool:
+    def unaccept(self, sid: int, finding_ids: list[str]) -> bool:
+        """Undo: every place of the finding the user clicked (the form carries them all)."""
         rep = self.report(sid)
         if rep is None:
             return False
         repo = str((rep.get("target") or {}).get("repo") or "")
-        f = next((x for x in rep.get("findings", []) if str(x.get("id")) == finding_id), None)
-        if not repo or f is None or not f.get("fingerprint"):
+        wanted = set(finding_ids)
+        prints = [str(x["fingerprint"]) for x in rep.get("findings", [])
+                  if str(x.get("id")) in wanted and x.get("fingerprint")]  # fmt: skip
+        if not repo or not prints:
             return False
-        self.store.unaccept(repo, [str(f["fingerprint"])])
+        self.store.unaccept(repo, list(dict.fromkeys(prints)))
         return True
 
     def trust_finding(self, sid: int, finding_id: str, everywhere: bool) -> bool:
@@ -3379,7 +3394,7 @@ class Panel:
                     ids = [i for i in ids if re.fullmatch(r"[0-9a-f]{16}", i)][:2000]
                     try:
                         if path == "/unaccept":
-                            if not ids or not panel.unaccept(sid, ids[0]):
+                            if not ids or not panel.unaccept(sid, ids):
                                 return self._text(HTTPStatus.BAD_REQUEST, "nothing to undo")
                         else:
                             panel.accept(sid, ids, get("note"), who)

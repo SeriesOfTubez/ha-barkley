@@ -278,6 +278,8 @@ a.button:hover { filter:brightness(1.08); }
 .rdial .k { display:block; font-size:var(--t-xs); font-weight:600; letter-spacing:0.06em;
   text-transform:uppercase; color:var(--muted); }
 .rdial .w { display:block; font-weight:600; }
+.dhead.rdhead { grid-template-columns:minmax(0,1fr); }
+.rdhead .rd { margin-top:var(--s3); }
 /* the list's compact form: two short lines, a small ring and "Threat · None found" */
 .rdc { display:grid; gap:var(--s1); margin-top:var(--s2); }
 .rdi { display:flex; align-items:center; gap:var(--s2); font-size:var(--t-sm); min-width:0; }
@@ -287,7 +289,7 @@ a.button:hover { filter:brightness(1.08); }
 .rdi .w { font-weight:600; }
 .rd-green { color:var(--green); } .rd-yellow { color:var(--yellow); }
 .rd-orange { color:var(--orange); } .rd-red { color:var(--red); }
-.rdwhy { margin:var(--s3) 0 var(--s2); padding-left:var(--s4); display:flex;
+.rdwhy { margin:0 0 var(--s2); padding-left:var(--s4); display:flex;
   flex-direction:column; gap:var(--s1); }
 .banner.threat { background:var(--red-bg); border:1px solid var(--red-edge); padding:var(--s3) var(--s4); }
 .banner.threat b { display:block; color:var(--red); font-size:var(--t-lg); line-height:1.25; }
@@ -677,6 +679,9 @@ class Card:
 
     @property
     def band(self) -> str:
+        rd = (self.report or {}).get("readings")
+        if rd:  # (preview) the outline follows the readings, not the score
+            return readings_band(rd)
         return band(self.scan.score, self.scan.complete) if self.scan else "grey"
 
     def notes(self) -> list[privacy.Note]:
@@ -825,12 +830,16 @@ def card_html(base: str, c: Card) -> str:
     if c.diff_link:
         links = f'<a href="{base}/diff?{c.diff_link}">what the update changes</a>'
     actions = f'<div class="act">{act}{links}</div>' if (act or links) else ""
+    rd = (c.report or {}).get("readings")
+    top = (  # (preview) the readings take the score's place
+        f"</div>{readings_compact(rd)}"
+        if rd
+        else f'<div class="badge {b}">{score}<small>{label}</small></div></div>'
+    )
     return (
         f'<div class="app {b}{" busy" if c.busy else ""}"><div class="app-top"><div>{name}'
         f'<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}</div></div>'
-        f'<div class="badge {b}">{score}<small>{label}</small></div></div>'
-        f"{readings_compact(c.report['readings']) if (c.report or {}).get('readings') else ''}"
-        f"{card_state(c)}"
+        f"{top}{card_state(c)}"
         f'<div class="say">{e(card_sentence(c), 400)}</div>'
         f'<div class="chips">{chips}</div>{actions}</div>'
     )
@@ -838,18 +847,20 @@ def card_html(base: str, c: Card) -> str:
 
 def card_state(c: Card) -> str:
     """(0.14.0) One line for the review state: changed since accepted, reviewed (with the
-    split pill), or Malware check only."""
+    split pill), or Malware check only. (preview) With the proposed readings shown there is
+    no score, so no split pill."""
     if c.scan is None or c.report is None:
         return ""
     if c.malware_only:
         return ('<div class="rev"><span class="muted">Malware check only: shows Threats and '
                 "known malware only</span></div>")  # fmt: skip
+    pill = "" if c.report.get("readings") else split_pill(c.report)
     if c.due:
         return (f'<div class="rev"><span class="reopen">{icon("refresh", 14)} {c.due} accepted '
-                f"finding{'s' * (c.due != 1)} changed</span></div>{split_pill(c.report)}")  # fmt: skip
+                f"finding{'s' * (c.due != 1)} changed</span></div>{pill}")  # fmt: skip
     if c.reviewed:
         return (f'<div class="rev"><span class="done">{icon("check", 14)} Reviewed by you</span>'
-                f"</div>{split_pill(c.report)}")  # fmt: skip
+                f"</div>{pill}")  # fmt: skip
     return ""
 
 
@@ -939,12 +950,13 @@ def card_row(base: str, c: Card) -> str:
     if c.diff_link:
         act += f' <a href="{base}/diff?{c.diff_link}">what the update changes</a>'
     act = f'<div class="act">{act}</div>' if act else ""
+    rd = (c.report or {}).get("readings")
+    first = (readings_compact(rd) if rd
+             else f'<span class="badge {b}">{score}<small>{label}</small></span>')  # fmt: skip
     return (
-        f'<tr{" class=busy" if c.busy else ""}><td><span class="badge {b}">{score}'
-        f"<small>{label}</small></span></td>"
+        f"<tr{' class=busy' if c.busy else ''}><td>{first}</td>"
         f'<td>{name}<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}'
-        f'</div><div class="small">{e(card_sentence(c), 400)}</div>'
-        f"{readings_compact(c.report['readings']) if (c.report or {}).get('readings') else ''}</td>"
+        f'</div><div class="small">{e(card_sentence(c), 400)}</div></td>'
         f'<td><div class="chips">{chips}</div></td>'
         f'<td class="actcell">{act}</td></tr>'
     )
@@ -2888,6 +2900,24 @@ _E_WORD = {"low": "Low", "medium": "Medium", "high": "High"}
 _E_COLOR = {"low": "green", "medium": "yellow", "high": "orange"}
 
 
+def readings_band(r: dict[str, Any]) -> str:
+    """The card outline with the readings shown: a found threat red, a possible one yellow,
+    high exposure orange, else no outline (green, as "no concerns" today)."""
+    t, x = r.get("threat_level"), r.get("exposure_level")
+    if t == "found":
+        return "red"
+    if t == "possible":
+        return "yellow"
+    return "orange" if x == "high" else "green"
+
+
+_T_VERDICT = {
+    "none": "🦴 Good Boy · no signs of malicious behavior",
+    "possible": "🐕 Sus · a possible sign of malicious behavior",
+    "found": "🚨 BORK BORK BORK · malicious behavior found",
+}
+
+
 def _num(x: Any) -> str:
     v = float(x or 0)
     return f"{v:.0f}" if v == int(v) else f"{v:.2f}".rstrip("0")
@@ -2911,7 +2941,8 @@ def _rdial(label: str, value: Any, word: str, color: str) -> str:
 def _rmini(label: str, value: Any, word: str, color: str) -> str:
     c = 87.96  # 2πr, r = 14
     v = max(0.0, min(10.0, float(value or 0)))
-    shown = f"{v:.0f}" if v == int(v) else f"{v:.1f}"  # one decimal fits the small ring
+    tenth = int(v * 10 + 0.5) / 10  # one decimal fits the small ring; half rounds up (1.25: 1.3)
+    shown = f"{tenth:.0f}" if tenth == int(tenth) else f"{tenth:.1f}"
     arc = (f'<circle cx="18" cy="18" r="14" fill="none" stroke="currentColor" stroke-width="4" '
            f'stroke-dasharray="{v / 10 * c:.1f} {c}" stroke-linecap="round" '
            'transform="rotate(-90 18 18)"/>') if v else ""  # fmt: skip
@@ -2964,14 +2995,15 @@ def readings_box(r: dict[str, Any]) -> str:
     where = {"home": "a home network", "shared": "a shared or work network",
              "internet": "reachable from the internet"}.get(str(r.get("network")), "")  # fmt: skip
     return (
-        '<section class="box"><h2>Proposed readings <span class="muted small">(preview)</span>'
-        f"</h2>{readings_dials(r)}"
+        '<section class="box"><h2>Why these readings <span class="muted small">(preview)</span>'
+        "</h2>"
         + ('<ul class="rdwhy small">' + "".join(f"<li>{e(w, 400)}</li>" for w in why) + "</ul>"
            if why else '<p class="small muted">Nothing it opens up to someone who isn\'t an '
            "administrator.</p>")
-        + f'<p class="small muted">A test of a new way to show results, beside Barkley\'s '
-        f"score above, which doesn't change. Exposure is worked out for {e(where)} "
-        "(Settings). Turn it off under Settings → Proposed readings.</p></section>"
+        + '<p class="small muted">A test of a new way to show results. Barkley\'s own score '
+        "doesn't change: it's in the technical report, and on this page when the preview is "
+        f"off. Exposure is worked out for {e(where)} (Settings). Turn it off under Settings → "
+        "Proposed readings.</p></section>"
     )  # fmt: skip
 
 
@@ -3022,9 +3054,17 @@ def render_app(
         vline = f"{vtext} · {due} finding{'s' * (due != 1)} to look at again"
     else:
         vline = f"{vtext} · {plain}"
+    rd = report.get("readings")
+    left = f"<div>{ring(int(report.get('score', 0)), b)}{tag}</div>"
+    if rd:  # (preview) the readings take the score's place: no ring, verdict or score pill
+        b = readings_band(rd)
+        vline = _T_VERDICT.get(str(rd.get("threat_level")), "")
+        if rv.get("reviewed"):
+            vline += " · reviewed by you"
+        left, pw = "", ""
     head = (
         f'<p class="crumb"><a href="{base}/">{icon("back")} All apps</a></p>'
-        f'<section class="box dhead"><div>{ring(int(report.get("score", 0)), b)}{tag}</div>'
+        f'<section class="box dhead{" rdhead" if rd else ""}">{left}'
         f'<div style="min-width:0"><h1>{e(title, 80)}{pw}</h1>'
         f'<div><span class="verdict" style="color:var(--{b})">'
         f"{e(vline)}</span> "
@@ -3032,13 +3072,13 @@ def render_app(
         f'<div class="muted small">Checked with Barkley {e(report.get("tool", {}).get("version"))}: '
         f"{e(_SOURCE.get(str(t.get('install_source')), t.get('install_source')))}"
         f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}.</div>"
-        f"{split_pill(report)}{facts_line(report)}{cache_text(report)}"
-        f"{'' if rv else trust_line(report)}{again}</div></section>"
+        f"{'' if rd else split_pill(report)}{facts_line(report)}{cache_text(report)}"
+        f"{'' if rv else trust_line(report)}{again}"
+        f"{readings_dials(rd) if rd else ''}</div></section>"
     )
     parts = [f'<div class="stack">{head}{update}</div>' if update else head]
-    rd = report.get("readings")
-    if rd:  # (preview) beside Barkley's score, never instead of it; a found threat's one
-        # sentence goes right under "All apps", above everything else
+    if rd:  # (preview) a found threat's one sentence goes right under "All apps"; the
+        # reasons for the readings follow the head (Barkley's score: the technical report)
         parts[0] = parts[0].replace("</p>", "</p>" + threat_banner(rd), 1)
         parts.append(readings_box(rd))
     if accept:  # Accept all sits right under the head (user decision 2026-11-18)

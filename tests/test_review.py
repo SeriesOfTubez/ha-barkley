@@ -266,6 +266,25 @@ def test_mark_reviewed_and_undo_in_the_panel(panel):  # noqa: F811
     assert post(f"{base}/accept", {"token": "x", "scan": sid, "finding": a["id"]})[0] == 403
 
 
+def test_undo_on_a_finding_shown_for_several_places_undoes_them_all(panel):  # noqa: F811
+    """His report 2026-11-19: one finding shown for two places, Mark reviewed accepted both,
+    Undo removed only the first, and "+8 from your review" stayed."""
+    store, _scan, base, _httpd = panel
+    a, b = fnd(1, "card-eval", "medium", line=3), fnd(2, "card-eval", "medium", line=9)
+    sid = _saved(store, [a, b])
+    tok = token(base)
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert page.count(">Mark reviewed<") == 1 and f'name=also value="{b["id"]}"' in page
+    post(f"{base}/accept", {"token": tok, "scan": sid, "finding": a["id"], "also": b["id"]})
+    assert {x.fingerprint for x in store.accepts(REPO)} == {"fp1", "fp2"}
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert "Undo" in page and f'name=also value="{b["id"]}"' in page  # Undo carries both
+    post(f"{base}/unaccept", {"token": tok, "scan": sid, "finding": a["id"], "also": b["id"]})
+    assert store.accepts(REPO) == []
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert ">Reviewed<" not in page and "from your review" not in page
+
+
 def test_accept_all_needs_a_tick_per_threat(panel):  # noqa: F811
     store, _scan, base, _httpd = panel
     t1, t2, cap = fnd(1, "py-obfuscation"), fnd(2, "card-hidden-name"), fnd(3, "py-shell-exec")
