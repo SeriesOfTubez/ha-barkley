@@ -23,7 +23,7 @@ from sniff_test import __version__, kinds, known, scancache
 from sniff_test.analyzers.correlate import SENSITIVE_NODES
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
 from sniff_test.fetch import retry
-from sniff_test.models import STALE_YEARS, fix_phrase, years_since
+from sniff_test.models import STALE_YEARS, fix_phrase, version_key, years_since
 from sniff_test.report import explain, privacy
 from sniff_test.report.json_report import sanitize_untrusted
 
@@ -2570,8 +2570,8 @@ def libraries_html(report: dict[str, Any]) -> str:
 
 
 def cache_text(report: dict[str, Any]) -> str:
-    """(0.14.1) " 128 of 130 files from the cache (about 4 min saved)." for a scan that used
-    the cache (scancache), or nothing."""
+    """(0.14.1) "124 of 124 files from the cache, about 3 min saved" on its own line under
+    the facts, for a scan that used the cache (scancache); nothing otherwise."""
     c = report.get("cache")
     if not isinstance(c, dict):
         return ""
@@ -2579,11 +2579,14 @@ def cache_text(report: dict[str, Any]) -> str:
     if not (isinstance(hits, int) and isinstance(files, int) and hits > 0):
         return ""
     when = (
-        f" ({scancache.saved_text(float(saved))} saved)"
+        f", {scancache.saved_text(float(saved))} saved"
         if isinstance(saved, (int, float)) and saved >= 1
         else ""
     )
-    return f" {hits} of {files} files from the cache{when}."
+    return (
+        f'<p class="facts">{icon("check", 12, "ok")} {hits:,} of {files:,} files from the '
+        f"cache of code already read{when}</p>"
+    )
 
 
 def rules_label(v: str) -> str:
@@ -2609,10 +2612,16 @@ def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow
         elif prev.ref == r.ref:
             cause = "checked again"
         else:
-            cause = (
-                f"update {e(prev.ref or '?', 40)} → {e(r.ref or '?', 40)} · "
-                f'<a href="{base}/diff?old={prev.id}&amp;new={r.id}">what changed</a>'
-            )
+            link = f'<a href="{base}/diff?old={prev.id}&amp;new={r.id}">what changed</a>'
+            older = False
+            try:  # scan order isn't release order: an older release sniffed later
+                older = version_key("npm", r.ref or "") < version_key("npm", prev.ref or "")
+            except (TypeError, ValueError):
+                older = False
+            if older:
+                cause = f"an older release than {e(prev.ref or '?', 40)} · {link}"
+            else:
+                cause = f"update {e(prev.ref or '?', 40)} → {e(r.ref or '?', 40)} · {link}"
         here = " <b>(this page)</b>" if r.id == sid else ""
         items.append(
             f"<li><b>{what}</b> · {score} · {cause} · "
@@ -2620,6 +2629,8 @@ def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow
             f"</span>{here}</li>"
         )
         prev = r
+    # (0.14.1, his pick) newest first; each line still compares with the scan before it
+    items.reverse()
     p = report.get("provenance") or {}
     pubs = p.get("publishers") if isinstance(p, dict) else None
     pubs = [x for x in pubs if isinstance(x, dict)] if isinstance(pubs, list) else []
@@ -2885,9 +2896,8 @@ def render_app(
         f'<span class="muted">· {e(kind)}{" · " + e(t["ref"], 60) if t.get("ref") else ""} · {e(t.get("repo") or t.get("input"), 120)}</span></div>'
         f'<div class="muted small">Checked with Barkley {e(report.get("tool", {}).get("version"))}: '
         f"{e(_SOURCE.get(str(t.get('install_source')), t.get('install_source')))}"
-        f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}."
-        f"{cache_text(report)}</div>"
-        f"{split_pill(report)}{facts_line(report)}"
+        f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}.</div>"
+        f"{split_pill(report)}{facts_line(report)}{cache_text(report)}"
         f"{'' if rv else trust_line(report)}{again}</div></section>"
     )
     parts = [f'<div class="stack">{head}{update}</div>' if update else head]
