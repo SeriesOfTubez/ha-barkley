@@ -29,6 +29,15 @@ Home Assistant sets no memory limit for apps, so Barkley guards itself. With und
 available on the box the panel warns; under 1 GB it refuses to start a scan. Plan for
 0.5 to 1 GB while a scan runs. Lower `parallel_scans` on a small box.
 
+## Every scan fails: "CPU ISA level is lower than required"
+
+The scanner tools need a CPU with the x86-64-v2 instructions. A virtual machine whose
+CPU type hides them (Proxmox's default, `kvm64`, does) can't run them, so every scan is
+Unfinished. Since 0.14.1 the scan says so with the fix, and Diagnostics checks the CPU
+before any scan runs. The fix: set the VM's CPU type to one that passes the instructions
+through (on Proxmox: x86-64-v2-AES or host), then shut the VM down completely and start
+it again; a restart from inside the VM isn't enough.
+
 ## "Out of temporary space"
 
 An integration's libraries are downloaded and unpacked into the temporary folder while

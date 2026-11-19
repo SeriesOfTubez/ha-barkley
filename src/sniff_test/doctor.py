@@ -151,6 +151,19 @@ def python_check() -> Check:
     )  # fmt: skip
 
 
+def cpu_check(missing: list[str] | bool | None = False) -> Check:
+    """(0.14.1, #18) The scanner tools need x86-64-v2. A VM's default CPU type may not
+    offer it, and then every scan fails; say so before one does."""
+    from sniff_test import cpu
+
+    gap = cpu.missing_v2() if missing is False else missing
+    if gap is None:
+        return Check("CPU", True, "not an x86-64 CPU, or its flags can't be read: nothing to check")
+    if not gap:
+        return Check("CPU", True, "x86-64-v2 instructions present")
+    return Check("CPU", False, f"missing {', '.join(gap)}. {cpu.FIX}")
+
+
 def memory_check(mem: memory.Memory | None = None) -> Check:
     """The scan guard: warn under ~2 GB available, refuse under ~1 GB."""
     mem = mem or memory.check()
@@ -297,6 +310,7 @@ def steps(addon: bool = False) -> list[Step]:
         ("environment", lambda s, r: _facts()),
         ("Barkley's Python", lambda s, r: python_check()),
         ("memory guard", lambda s, r: memory_check()),
+        ("CPU", lambda s, r: cpu_check()),
         ("tool sandbox", lambda s, r: sandbox_check()),
         ("GitHub API", lambda s, r: github_check()),
     ]

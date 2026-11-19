@@ -6,7 +6,7 @@ import dataclasses
 from collections.abc import Callable
 from pathlib import Path
 
-from sniff_test import logic, recheck, scancache, sources
+from sniff_test import cpu, logic, recheck, scancache, sources
 from sniff_test.analyzers import (
     bytecode,
     correlate,
@@ -211,6 +211,9 @@ def scan(
             findings = _label_test_code(findings, target)
         findings = apply_exposure(_dedupe(findings), exposure)
         findings = _fingerprints(findings, target)
+        for r in results:  # (#18) a tool that can't load on this CPU: say why and the fix
+            if r.state is AnalyzerState.ERROR and r.detail:
+                r.detail = cpu.explain(r.detail)
         complete = all(r.state in (AnalyzerState.OK, AnalyzerState.NOT_APPLICABLE) for r in results)
         result = ScanResult(
             target=target,
