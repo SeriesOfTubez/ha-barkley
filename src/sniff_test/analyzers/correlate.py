@@ -38,6 +38,7 @@ SENSITIVE_NODES: dict[str, tuple[str, str]] = {
     "ha-raw-storage-access": ("data", ".storage files"),
     "ha-auth-internals": ("auth", "login tokens"),
     "ha-auth-change-users": ("auth", "user accounts"),
+    "ha-auth-token-check": ("auth", "login token checks"),
     "ha-auth-list-users": ("auth", "the user list"),
     "ha-foreign-entry-data": ("data", "other integrations' credentials"),
     "ha-foreign-entry-options": ("data", "other integrations' settings"),

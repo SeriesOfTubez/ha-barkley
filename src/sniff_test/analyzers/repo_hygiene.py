@@ -46,6 +46,25 @@ SCANNERS: list[tuple[re.Pattern[str], str, str]] = [
         (r"ossf/scorecard-action", "OpenSSF Scorecard", "practices"),
     )
 ]
+# (0.14.1, #21) Security hooks run through pre-commit (`id:` in .pre-commit-config.yaml)
+PRE_COMMIT_HOOKS: dict[str, tuple[str, str]] = {
+    "gitleaks": ("Gitleaks", "secrets"),
+    "detect-private-key": ("detect-private-key", "secrets"),
+    "detect-secrets": ("detect-secrets", "secrets"),
+    "trufflehog": ("TruffleHog", "secrets"),
+    "bandit": ("Bandit", "code"),
+    "semgrep": ("Semgrep", "code"),
+    "pip-audit": ("pip-audit", "deps"),
+    "osv-scanner": ("OSV-Scanner", "deps"),
+}
+_PRE_COMMIT = (".pre-commit-config.yaml", ".pre-commit-config.yml")
+# Linear on hostile files: no \\s (it would run across newlines from every line start).
+_HOOK_ID = re.compile(r"^[ \t]*+(?:-[ \t]*+)?id[ \t]*+:[ \t]*+[\"']?([A-Za-z0-9_.-]{1,60})", re.M)
+_RUFF_IDS = frozenset({"ruff", "ruff-check"})
+_SELECT_OPEN = re.compile(r"select[ \t]*+=[ \t]*+$")
+_S_RULE = re.compile(r"[\"']S\d{0,3}[\"']")
+# a workflow runs pre-commit: `pre-commit run`, pre-commit/action, `tox -e precommit`
+_RUNS_PRE_COMMIT = re.compile(r"pre-commit/action|\bpre-?commit\b", re.I)
 _DEPENDABOT = (".github/dependabot.yml", ".github/dependabot.yaml")
 _RENOVATE = (
     "renovate.json", "renovate.json5", ".renovaterc", ".renovaterc.json",
@@ -100,6 +119,40 @@ def scan_files(root: Path) -> Hygiene:
                 if name not in seen and pat.search(lines):
                     seen.add(name)
                     h.scanners.append({"name": name, "kind": kind, "workflow": p.name[:100]})
+    ci_pre_commit = False
+    if wf.is_dir() and not wf.is_symlink():
+        for p in sorted(p for p in wf.iterdir() if p.suffix in (".yml", ".yaml"))[:_MAX_WORKFLOWS]:
+            text = _read(root, f".github/workflows/{p.name}") or ""
+            # what runs, not what a step is called or a comment
+            commands = "\n".join(
+                ln
+                for ln in text.splitlines()
+                if not ln.lstrip().startswith("#")
+                and not ln.lstrip().lstrip("- ").startswith("name:")
+            )
+            if _RUNS_PRE_COMMIT.search(commands):
+                ci_pre_commit = True
+                break
+    pc = next((t for rel in _PRE_COMMIT if (t := _read(root, rel)) is not None), None)
+    if pc is not None:
+        lines = "\n".join(ln for ln in pc.splitlines() if not ln.lstrip().startswith("#"))
+        found = [PRE_COMMIT_HOOKS[i] for i in _HOOK_ID.findall(lines) if i in PRE_COMMIT_HOOKS]
+        if _RUFF_IDS & set(_HOOK_ID.findall(lines)) and ruff_security_rules(
+            _read(root, "pyproject.toml") or ""
+        ):
+            found.append(("Ruff security rules", "code"))
+        for name, kind in found:
+            if name not in seen:
+                seen.add(name)
+                h.scanners.append(
+                    {
+                        "name": name,
+                        "kind": kind,
+                        "workflow": ".pre-commit-config.yaml",
+                        "via": "pre-commit",
+                        "ci": ci_pre_commit,
+                    }
+                )
     for rel in _DEPENDABOT:
         if (text := _read(root, rel)) is not None:
             h.dependabot = sorted({m.lower() for m in _ECOSYSTEM.findall(text)})
@@ -107,6 +160,21 @@ def scan_files(root: Path) -> Hygiene:
     h.renovate = any(_read(root, rel) is not None for rel in _RENOVATE)
     h.security_policy = next((rel for rel in _SECURITY_MD if _read(root, rel) is not None), None)
     return h
+
+
+def ruff_security_rules(pyproject: str) -> bool:
+    """Ruff's flake8-bandit rules ("S", "S102", …) in a `select`/`extend-select` list.
+    One pass over the text: each list is the piece before a "]", and only the last 200
+    characters before its "[" are looked at."""
+    for piece in pyproject.split("]"):
+        i = piece.rfind("[")
+        if i < 0 or not _SELECT_OPEN.search(
+            piece[max(0, i - 200) : i].rstrip("\n").split("\n")[-1]
+        ):
+            continue
+        if _S_RULE.search(piece[i + 1 :]):
+            return True
+    return False
 
 
 def _days(ts: str | None, now: datetime) -> int | None:

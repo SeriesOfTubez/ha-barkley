@@ -682,3 +682,105 @@ def supervisor_presence_only(f: Finding, res: Resolver) -> bool:
         return False
 
     return all(tested(n) for n in reads)
+
+
+# --- (0.14.1, #21) checking a login token sent to the app --------------------------------
+
+CHECK_RULE = "ha-auth-token-check"
+_CHECK_CALLS = frozenset({"async_validate_access_token", "async_get_refresh_token"})
+# What a check may read from the token it found: whose it is, nothing secret (.token and
+# .jwt_key are the token itself and the key that signs its access tokens)
+_CHECK_ATTRS = frozenset({"user", "id", "user_id"})
+
+
+def _none_test(node: ast.AST, up: dict[ast.AST, ast.AST]) -> bool:
+    """`node` is only tested: `node is None`, `node is not None`, `not node`, `if node:`."""
+    p = up.get(node)
+    if isinstance(p, ast.Compare) and len(p.ops) == 1 and isinstance(p.ops[0], (ast.Is, ast.IsNot)):
+        other = p.comparators[0] if p.left is node else p.left
+        return isinstance(other, ast.Constant) and other.value is None
+    if isinstance(p, ast.UnaryOp) and isinstance(p.op, ast.Not):
+        return True
+    return isinstance(p, (ast.If, ast.While, ast.IfExp, ast.Assert)) and p.test is node
+
+
+def _enclosing(node: ast.AST, up: dict[ast.AST, ast.AST]) -> ast.AST | None:
+    while node in up:
+        node = up[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return node
+    return None
+
+
+def token_check_only(f: Finding, res: Resolver) -> Finding | None:
+    """An `ha-auth-internals` hit that only checks a token sent to the app becomes
+    `ha-auth-token-check` (low, never paired with a destination): the call's result is
+    only tested for None, or kept in one name that is only tested or read for `.user`,
+    `.id` or `.user_id`, as Home Assistant's own signed-link check does. Anything else
+    (the token itself, its signing key, the object passed on) stays as it is."""
+    if f.rule_id != "ha-auth-internals" or not f.file or not f.line:
+        return None
+    tree = res.tree(f.file)
+    if tree is None:
+        return None
+    up = parents(tree)
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr in _CHECK_CALLS
+        and n.func.lineno == f.line
+        and isinstance(n.func.value, ast.Attribute)
+        and n.func.value.attr == "auth"
+    ]
+    if len(calls) != 1:
+        return None
+    call = calls[0]
+    node: ast.AST = call
+    if isinstance(up.get(node), ast.Await):
+        node = up[node]
+    if _none_test(node, up):
+        return _token_check(f)
+    target = up.get(node)
+    if isinstance(target, ast.Assign) and len(target.targets) == 1:
+        name = target.targets[0]
+    elif isinstance(target, ast.NamedExpr):
+        name = target.target
+    else:
+        return None
+    if not isinstance(name, ast.Name):
+        return None
+    scope = _enclosing(call, up)
+    if scope is None:
+        return None
+    stores = [
+        n for n in ast.walk(scope)
+        if isinstance(n, ast.Name) and n.id == name.id and isinstance(n.ctx, ast.Store)
+    ]  # fmt: skip
+    if len(stores) != 1:
+        return None
+    for n in ast.walk(scope):
+        if not (isinstance(n, ast.Name) and n.id == name.id and isinstance(n.ctx, ast.Load)):
+            continue
+        p = up.get(n)
+        if _none_test(n, up):
+            continue
+        if isinstance(p, ast.Attribute) and p.value is n and p.attr in _CHECK_ATTRS:
+            continue
+        return None
+    return _token_check(f)
+
+
+def _token_check(f: Finding) -> Finding:
+    return dataclasses.replace(
+        f,
+        rule_id=CHECK_RULE,
+        title="Checks login tokens sent to it",
+        severity=Severity.LOW,
+        message=(
+            "Checks whether a login token or a signed link someone sent to the app is "
+            "valid, and whose it is, the way Home Assistant's own login check does. Only "
+            "that is used: the token itself and the key that signs it aren't read."
+        ),
+    )

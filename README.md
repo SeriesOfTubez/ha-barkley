@@ -59,7 +59,7 @@ unencrypted connections), what the app hooks into in Home Assistant, and the sca
 history of that app.
 
 **The developer's security habits.** Whether the project runs security scanners in its
-own workflows, has Dependabot or Renovate and a security policy, how many dependency
+own workflows or through pre-commit, has Dependabot or Renovate and a security policy, how many dependency
 updates are waiting, and open issues that look security-related. It is context from
 public signs and never changes the score.
 

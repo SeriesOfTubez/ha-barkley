@@ -2457,15 +2457,26 @@ def hygiene_html(report: dict[str, Any]) -> str:
     repo = str(report.get("target", {}).get("repo") or "")
     yes, no = icon("check", 14, "ok"), icon("minus", 14, "muted")
     li = []
-    sc = h.get("scanners") or []
-    if sc:
-        names = ", ".join(
-            f"{e(x.get('name'))} ({_SCAN_KIND.get(x.get('kind'), 'checks')})" for x in sc
+    sc = [x for x in h.get("scanners") or [] if isinstance(x, dict)]
+
+    def listed(items: list[dict[str, Any]]) -> str:
+        return ", ".join(
+            f"{e(x.get('name'))} ({_SCAN_KIND.get(x.get('kind'), 'checks')})" for x in items
         )
-        li.append(f"{yes} Runs security scans in its GitHub workflows: {names}.")
-    else:
-        li.append(f"{no} No security scanner in its GitHub workflows (CodeQL, Semgrep, Bandit, "
-                  "Trivy, OSV-Scanner, pip-audit, Gitleaks…).")  # fmt: skip
+
+    in_ci = [x for x in sc if x.get("via") != "pre-commit"]
+    hooks = [x for x in sc if x.get("via") == "pre-commit"]
+    if in_ci:
+        li.append(f"{yes} Runs security scans in its GitHub workflows: {listed(in_ci)}.")
+    if hooks and any(x.get("ci") for x in hooks):
+        li.append(f"{yes} Runs security checks with pre-commit, and in its GitHub workflows: "
+                  f"{listed(hooks)}.")  # fmt: skip
+    elif hooks:
+        li.append(f"{yes} Runs security checks before each commit (pre-commit; not seen in its "
+                  f"GitHub workflows): {listed(hooks)}.")  # fmt: skip
+    if not sc:
+        li.append(f"{no} No security scanner in its GitHub workflows or pre-commit hooks "
+                  "(CodeQL, Semgrep, Bandit, Trivy, OSV-Scanner, pip-audit, Gitleaks…).")  # fmt: skip
     dep = h.get("dependabot")
     if dep is not None:
         what = ", ".join(_ECO.get(x, x) for x in dep) or "its dependencies"
@@ -2807,8 +2818,13 @@ def all_green(h: Any) -> bool:
     oldest = prs.get("oldest_days")
     if waiting and not (isinstance(oldest, int) and oldest < HABITS_GRACE_DAYS):
         return False
+    # (0.14.1) a scanner counts when it runs in CI: a workflow, or pre-commit run by one
+    ci = [
+        x for x in h.get("scanners") or []
+        if isinstance(x, dict) and (x.get("via") != "pre-commit" or x.get("ci"))
+    ]  # fmt: skip
     return (
-        bool(h.get("scanners"))
+        bool(ci)
         and (h.get("dependabot") is not None or bool(h.get("renovate")))
         and bool(h.get("security_policy"))
         and isinstance(iss, dict)

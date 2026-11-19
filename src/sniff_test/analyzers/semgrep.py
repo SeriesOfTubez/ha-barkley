@@ -371,6 +371,9 @@ def _precise(findings: list[Finding], root: Path, target: Target) -> list[Findin
                 level = py_precision.own_storage(f)  # unparseable file: the old text check
             out.append(level or f)
             continue
+        if (checked := py_precision.token_check_only(f, res)) is not None:
+            out.append(checked)  # (#21) a token check, not a reach into the auth store
+            continue
         if (listed := py_precision.pip_listed(f, res)) is not None:
             out.append(listed[0])
             for spec in listed[1]:

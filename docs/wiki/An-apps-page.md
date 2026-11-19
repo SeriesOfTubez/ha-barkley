@@ -32,7 +32,8 @@ Every scan has a page. From top to bottom:
   behind it.
 - **What it can do inside Home Assistant:** the services, views and events it hooks into.
 - **The developer's security habits:** whether the project runs security scanners in its
-  workflows, has Dependabot or Renovate and a SECURITY.md, how many dependency-update
+  workflows or through pre-commit (Gitleaks, detect-private-key, Ruff's security rules and
+  the like; since 0.14.1, and only checks a workflow runs count toward the star), has Dependabot or Renovate and a SECURITY.md, how many dependency-update
   pull requests wait, and open issues that look security-related. This is context from
   public signs and never changes the score. When every check is green, a gold star says
   **A+ security habits**; a dependency-update pull request younger than 7 days doesn't

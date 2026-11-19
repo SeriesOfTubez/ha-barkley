@@ -136,6 +136,14 @@ RULES: dict[str, Explanation] = {
         "Yes, unless that's the app's whole purpose (for example a login add-on).",
         "Handles login tokens",
     ),
+    "ha-auth-token-check": _E(
+        "Checks login tokens sent to it",
+        "The app checks whether a login token or a signed link someone sent it is valid, and "
+        "whose it is, as Home Assistant does for its own pages. It doesn't read the token "
+        "itself or the key that signs it.",
+        "Rarely. Apps that serve their own web pages or streams do this to check who's asking.",
+        "Checks login tokens",
+    ),
     "ha-auth-change-users": _E(
         "Changes who can log in to Home Assistant",
         "The app can create, enable, disable or remove user accounts.",

@@ -25,6 +25,22 @@ https://github.com/SeriesOfTubez/ha-barkley/releases
   read again (an app's new release, Sniff again). 1 GB by default; Settings → Cache of
   code already read. An app's page says how many files came from it.
 
+**Fixes from the issue tracker**
+
+- A login-token check is not a reach into the auth store: an app that only checks
+  whether a token or signed link sent to it is valid (as Home Assistant's own check
+  does) gets a low "Checks login tokens sent to it", and that is never paired with the
+  app's outside addresses as possible data leaving.
+- Security checks run through pre-commit (Gitleaks, detect-private-key, Ruff's security
+  rules, …) count as the developer's security habits; only checks a workflow runs count
+  toward the A+ star.
+- Several calls of the same kind in one Python function are one finding; an admin-only
+  websocket command says so.
+- A full temporary folder says "out of temporary space: N MB free", and a scan keeps only
+  a few library archives there at a time.
+- A CPU without the x86-64-v2 instructions (a VM's default CPU type) says so, with the
+  fix, on the scan and in Diagnostics.
+
 **Exposure decides how much a library's known bug counts**
 
 - Local only (the default): a known vulnerability in a dependency is at most medium,
