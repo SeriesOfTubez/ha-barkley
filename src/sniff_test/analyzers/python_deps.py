@@ -40,7 +40,7 @@ from sniff_test.models import (
     TargetKind,
 )
 from sniff_test.paths import cache_root
-from sniff_test.workspace import UnsafeArchiveError, extract, single_top_dir
+from sniff_test.workspace import UnsafeArchiveError, extract, single_top_dir, space_hint
 
 NAME = "python-deps"
 PYPI_JSON = "https://pypi.org/pypi/{name}/json"
@@ -158,11 +158,24 @@ def fetch_artifact(art: Artifact, work: Path) -> Path | None:
     except (UnsafeArchiveError, OSError) as e:
         shutil.rmtree(dest, ignore_errors=True)  # a half-unpacked folder is never reused
         kind = "unsafe" if isinstance(e, UnsafeArchiveError) else "other"
-        art.failure = retry.Failure(art.filename, host, 1, 0.0, kind, str(e)[:300]).as_dict()
+        why = str(e)[:300] + space_hint(str(e), work)
+        art.failure = retry.Failure(art.filename, host, 1, 0.0, kind, why).as_dict()
         return None
     art.failure = None
     art.local = dest
     return dest
+
+
+def discard_artifact(art: Artifact, work: Path) -> None:
+    """(0.14.1, #22) Delete an archive and its unpacked copy once nothing reads them any
+    more (GuardDog is the last reader), so a scan keeps a few in the temp folder at a
+    time instead of all of them (one real integration peaked at 354 MB)."""
+    dl = work / "dists"
+    key = (art.sha256 or re.sub(r"[^A-Za-z0-9]", "_", art.filename))[:32]
+    archive = dl / f"{key}-{re.sub(r'[^A-Za-z0-9._-]', '_', art.filename)}"
+    shutil.rmtree(dl / f"{key}.d", ignore_errors=True)
+    archive.unlink(missing_ok=True)
+    art.local = None
 
 
 def static_requires(sdist_dir: Path) -> list[str]:

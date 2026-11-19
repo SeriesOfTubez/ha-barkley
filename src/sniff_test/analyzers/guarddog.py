@@ -39,13 +39,19 @@ from urllib.parse import urlsplit
 from sniff_test.analyzers import _proc
 from sniff_test.analyzers.endpoints import never_trustable
 from sniff_test.analyzers.pypi_meta import is_popular
-from sniff_test.analyzers.python_deps import Resolution, ResolvedPackage, fetch_artifact
+from sniff_test.analyzers.python_deps import (
+    Resolution,
+    ResolvedPackage,
+    discard_artifact,
+    fetch_artifact,
+)
 from sniff_test.analyzers.semgrep import neutralize_ignores
 from sniff_test.deps.uv import Artifact
 from sniff_test.models import AnalyzerResult, AnalyzerState, Category, Finding, Severity, Tag
 from sniff_test.paths import cache_root
 from sniff_test.report import fingerprint
 from sniff_test.trust import valid_address
+from sniff_test.workspace import space_hint
 
 NAME = "guarddog"
 _TIMEOUT = 300
@@ -293,12 +299,17 @@ def run(resolution: Resolution | None, work: Path, jobs: int | None = None) -> A
                 jobs_list.append((pkg, art))
 
     def one(item: tuple[ResolvedPackage, Artifact]):
-        _pkg, art = item
+        """Fetch, scan and turn into findings (which read the unpacked files), then free
+        the archive's space at once (#22)."""
+        pkg, art = item
         local = fetch_artifact(art, work)
         if local is None:
             return item, None, "fetch failed", True
         neutralize_ignores(local)
-        return (item, *_scan(exe, local, run_dir, env))
+        data, err, sandboxed = _scan(exe, local, run_dir, env)
+        found = to_findings(data, pkg, art) if data is not None else None
+        discard_artifact(art, work)
+        return item, found, err, sandboxed
 
     findings: list[Finding] = []
     errors: list[str] = []
@@ -316,7 +327,7 @@ def run(resolution: Resolution | None, work: Path, jobs: int | None = None) -> A
             if data is None:
                 errors.append(f"{art.filename}: {err}")
                 continue
-            findings.extend(to_findings(data, pkg, art))
+            findings.extend(data)
 
     with ThreadPoolExecutor(max_workers=max(1, min(jobs or 4, 4))) as pool:
         take(pool.map(one, jobs_list))
@@ -343,7 +354,8 @@ def run(resolution: Resolution | None, work: Path, jobs: int | None = None) -> A
     state = AnalyzerState.OK
     if errors:
         state = AnalyzerState.ERROR
-        detail += "; " + " | ".join(errors)[:500]
+        # (#22) a full temp folder first, in plain words, then the tools' own messages
+        detail += space_hint(" ".join(errors), work) + "; " + " | ".join(errors)[:500]
     return AnalyzerResult(
         NAME, state, list(merged.values()), detail, guarddog_version(), problems=problems
     )

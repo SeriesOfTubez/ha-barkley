@@ -29,6 +29,17 @@ Home Assistant sets no memory limit for apps, so Barkley guards itself. With und
 available on the box the panel warns; under 1 GB it refuses to start a scan. Plan for
 0.5 to 1 GB while a scan runs. Lower `parallel_scans` on a small box.
 
+## "Out of temporary space"
+
+An integration's libraries are downloaded and unpacked into the temporary folder while
+GuardDog reads them. Since 0.14.1 each one is deleted as soon as it has been read, so a
+scan keeps only a few there at a time (before, one real integration peaked at about
+354 MB with every library kept to the end), but a library with large files still needs
+room. When the folder fills up, the scan is Unfinished and says "out of temporary space:
+N MB free in …". Diagnostics shows the free space next to `TMPDIR`. In the app the temporary folder is on
+Home Assistant's data disk. Standalone uses `/data/tmp`; on the command line, set
+`TMPDIR` to a folder with about 1 GB free.
+
 ## Scans wait: GitHub's hourly limit
 
 Without a token GitHub allows 60 requests an hour, and a sniff may need up to twelve. When the

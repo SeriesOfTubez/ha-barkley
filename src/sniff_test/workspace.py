@@ -43,6 +43,30 @@ def workspace(keep: bool = False) -> Iterator[Path]:
 
 
 STALE_AFTER = 24 * 3600
+# (0.14.1, #22) Python reports a full temp folder as "No usable temporary directory
+# found", which points at the wrong thing; these words mean the disk was full.
+_FULL_WORDS = ("No usable temporary directory", "No space left on device", "Errno 28")
+LOW_SPACE_MB = 100
+
+
+def free_mb(path: Path | str | None = None) -> int | None:
+    """Free space in MB where `path` lives (the temp folder by default)."""
+    try:
+        return shutil.disk_usage(path or tempfile.gettempdir()).free // (1024 * 1024)
+    except OSError:
+        return None
+
+
+def space_hint(error: str, path: Path | str | None = None) -> str:
+    """ "; out of temporary space: 12 MB free in /tmp; set TMPDIR to a folder with more
+    room" when `error` looks like a full disk (or the folder has almost nothing left),
+    else ""."""
+    where = Path(path or tempfile.gettempdir())
+    free = free_mb(where)
+    if not any(w in error for w in _FULL_WORDS) and (free is None or free >= LOW_SPACE_MB):
+        return ""
+    have = f"{free} MB free" if free is not None else "almost no space"
+    return f"; out of temporary space: {have} in {where}; set TMPDIR to a folder with more room"
 
 
 def sweep_stale(root: Path | None = None, now: float | None = None) -> int:

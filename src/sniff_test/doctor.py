@@ -91,11 +91,21 @@ def _run(name: str, cmd: list[str], cwd: Path, env: dict[str, str], timeout: int
     )
 
 
+def _free() -> str:
+    """(#22) Free space in the temp folder: a scan of an integration with big libraries
+    keeps a few of their archives there at a time (about 0.5 GB is plenty)."""
+    from sniff_test.workspace import free_mb
+
+    mb = free_mb()
+    return "unknown" if mb is None else f"{mb:,} MB"
+
+
 def _facts() -> Check:
     lines = [
         f"uid={os.getuid()} gid={os.getgid()}",
         f"HOME={os.environ.get('HOME', '(unset)')}",
-        f"TMPDIR={os.environ.get('TMPDIR', '(unset)')} tempdir={tempfile.gettempdir()}",
+        f"TMPDIR={os.environ.get('TMPDIR', '(unset)')} tempdir={tempfile.gettempdir()}"
+        f" free={_free()}",
         f"cpus={os.cpu_count()}",
     ]
     try:
