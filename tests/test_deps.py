@@ -412,7 +412,7 @@ def test_python_cve_alone_is_never_critical_but_stays_inbound():
 def test_bundled_npm_cve_is_capped_at_high_without_inbound():
     # (0.14.1, user decision 2026-11-18) browser code is rated like Python packages, at
     # most high; it was capped at medium before
-    p = _pkg("yaml-lite", _CRIT, [{"ids": ["C"], "max_severity": "9.8"}], "npm")
+    p = _pkg("acme-yaml-parser", _CRIT, [{"ids": ["C"], "max_severity": "9.8"}], "npm")
     [f] = osv.to_findings([p], "package-lock.json", set(), osv.NPM_POLICY)
     assert f.severity is Severity.HIGH and Tag.INBOUND not in f.tags
     assert "bundled into the card" in f.message
