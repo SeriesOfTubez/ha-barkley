@@ -12,6 +12,7 @@ from sniff_test.analyzers import (
     correlate,
     endpoints,
     guarddog,
+    libraries,
     osv,
     py_precision,
     pypi_meta,
@@ -159,15 +160,27 @@ def scan(
     progress: Callable[[str], None] | None = None,
     ha_version: str | None = None,
     offline: bool = False,
+    recognise_libraries: bool = True,
 ) -> ScanResult:
     say = progress or (lambda _msg: None)
     with workspace(keep=keep_workspace) as ws:
         say("fetching")
         target = fetch(source, ws, ref=ref, kind=kind)
-        say("semgrep")
-        results: list[AnalyzerResult] = [semgrep.run(target, ws, jobs=jobs)]
-        say("endpoints")
-        results.append(endpoints.run(target))
+        # (0.14.1) unchanged published libraries (analyzers/libraries.py): set aside while
+        # the code is read, put back before anything compares files
+        if offline:
+            libs = libraries.Result(
+                AnalyzerResult(libraries.NAME, AnalyzerState.NOT_APPLICABLE, detail="offline")
+            )
+        else:
+            say("published libraries")
+            libs = libraries.recognise(target, ws, enabled=recognise_libraries)
+        with libraries.set_aside(target.root, libs.aside, ws):
+            say("semgrep")
+            results: list[AnalyzerResult] = [semgrep.run(target, ws, jobs=jobs)]
+            say("endpoints")
+            results.append(endpoints.run(target))
+        results.append(libs.analyzer)
         say("repo signals")
         repo_result, provenance = repo_signals.run(target)
         results.append(repo_result)
@@ -205,6 +218,7 @@ def scan(
             hygiene=hygiene,
             resolution=resolution,
             ha_version=env.version if env else None,
+            libraries=libs.libraries,
         )
         # Built while the workspace still exists: it reads manifests and parses files.
         result.graph = graph.build(result)

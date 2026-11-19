@@ -409,10 +409,12 @@ def test_python_cve_alone_is_never_critical_but_stays_inbound():
     assert f.severity is Severity.HIGH and Tag.INBOUND in f.tags
 
 
-def test_bundled_npm_cve_is_capped_at_medium_without_inbound():
-    p = _pkg("js-yaml", _CRIT, [{"ids": ["C"], "max_severity": "9.8"}], "npm")
+def test_bundled_npm_cve_is_capped_at_high_without_inbound():
+    # (0.14.1, user decision 2026-11-18) browser code is rated like Python packages, at
+    # most high; it was capped at medium before
+    p = _pkg("yaml-lite", _CRIT, [{"ids": ["C"], "max_severity": "9.8"}], "npm")
     [f] = osv.to_findings([p], "package-lock.json", set(), osv.NPM_POLICY)
-    assert f.severity is Severity.MEDIUM and Tag.INBOUND not in f.tags
+    assert f.severity is Severity.HIGH and Tag.INBOUND not in f.tags
     assert "bundled into the card" in f.message
 
 
@@ -683,8 +685,9 @@ def test_a_cards_build_tool_advisory_is_shown_but_not_scored():
     assert got == {
         ("rollup", "dep-build-tool-vuln", Severity.INFO),
         ("babel/plugin-transform-modules-systemjs", "dep-build-tool-vuln", Severity.INFO),
-        ("babel/runtime", "dep-vuln", Severity.MEDIUM),
-        ("rollup/plugin-commonjs", "dep-vuln", Severity.MEDIUM),
+        # (0.14.1) rated by GitHub's label, at most high (was capped at medium)
+        ("babel/runtime", "dep-vuln", Severity.HIGH),
+        ("rollup/plugin-commonjs", "dep-vuln", Severity.HIGH),
         ("esbuild", "dep-malicious", Severity.CRITICAL),
     }
     info = [f for f in fs if f.rule_id == "dep-build-tool-vuln"]

@@ -15,7 +15,18 @@ the newest release, else the default branch pinned to one commit.
   package Home Assistant doesn't already ship.
 - **npm dependencies** (cards): the repository's lockfile, checked with osv-scanner.
   Known malware is reported for every package; vulnerabilities only for packages bundled
-  into the card.
+  into the card. Since 0.14.1 a vulnerability in browser code is rated like a Python
+  package's (GitHub's rating, else its CVSS score, at most high), because a card's or
+  panel's JavaScript runs on Home Assistant's own origin. One that can only slow or stop
+  the page (no confidentiality or integrity impact in its CVSS vector, such as a slow
+  regular expression) is at most medium.
+- **Published libraries** (integrations, since 0.14.1): a JavaScript file of 64 KB or more
+  that is byte for byte a file of a well-known npm package (that version published at
+  least 30 days ago, 10,000 downloads in the last week, no malware advisory) isn't read as
+  code. It's listed on the app's page as a library and checked for advisories like any
+  dependency. Barkley asks jsDelivr by the file's SHA-256. Anything else, including no
+  answer or a rate limit, means the file is read in full; skipping by folder or file name
+  never happens. Off with [Published libraries](Options) on the Settings page.
 - **Addresses:** every host and IP in the shipped code, sorted into declared, local,
   infrastructure or undeclared. Paste sites, request catchers, tunnels, chat webhooks
   with a built-in token and URLs with a hardcoded public IP are findings.

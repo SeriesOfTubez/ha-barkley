@@ -3,6 +3,21 @@
 Barkley is AI-assisted. The full release notes are on GitHub:
 https://github.com/SeriesOfTubez/ha-barkley/releases
 
+## 0.14.1
+
+**Faster scans of big integrations**
+
+- Published libraries: an integration's large JavaScript file that is byte for byte a
+  file of a well-known npm package (a month old, 10,000 downloads a week, no malware
+  advisory) isn't read as code. It's listed on the app's page and checked for
+  advisories like any dependency. Barkley asks jsDelivr by the file's SHA-256; no
+  answer means the file is read. On by default; Settings → Published libraries.
+- The check that a login token only goes to Home Assistant itself reuses its work
+  within a scan. Same findings, less time.
+- A known vulnerability in a card's or panel's JavaScript is now rated by GitHub's
+  rating (at most high) instead of always medium; one that can only slow or stop the
+  page stays at most medium.
+
 ## 0.14.0
 
 **Reviews and a Settings page**

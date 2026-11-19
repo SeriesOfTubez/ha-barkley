@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sniff_test import __version__
+from sniff_test.analyzers import libraries
 from sniff_test.analyzers.python_deps import Resolution
 from sniff_test.analyzers.repo_signals import Provenance
 from sniff_test.models import AnalyzerResult, AnalyzerState, DepFacts, Fact, Finding, Target
@@ -61,6 +62,8 @@ class ScanResult:
     # they go beside it in the store.
     inputs: dict[str, Any] | None = None
     source: dict[str, Any] | None = None  # (0.11.0) sources.capture(); kept beside the scan
+    # (0.14.1) unchanged published libraries not read as code (analyzers/libraries.py)
+    libraries: list[Any] = field(default_factory=list)
 
 
 def sanitize_untrusted(text: str | None, limit: int = _UNTRUSTED_MAX) -> str:
@@ -175,6 +178,9 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
         "hygiene": _hygiene_json(scan, findings),
         # (0.14.0) shown on the app's page, never scored (popularity isn't safety)
         "popularity": {"stars": t.stars, "downloads": t.downloads} if t.repo else None,
+        # (0.14.1) files identical to a published npm file, not read as code; values come
+        # from jsDelivr and npm, checked against npm's name and version rules
+        "libraries": libraries.to_json(scan.libraries),
         "ai_brief": ai_brief(scan, findings),
         # Code from the scanned repo (untrusted), for "Explain in context". Not in ai_brief.
         "context": scan.context,

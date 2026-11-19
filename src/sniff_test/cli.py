@@ -82,6 +82,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip checks that need PyPI/OSV (local scans only; the scan is marked incomplete)",
     )
+    s.add_argument(
+        "--no-library-lookup",
+        action="store_true",
+        help="read every JavaScript file as code; don't ask jsDelivr which published "
+        "library a file is (sends the SHA-256 of larger JS files of an integration)",
+    )
     _add_store(s, "also save the scan in this SQLite scan store")
     d = sub.add_parser(
         "diff",
@@ -295,6 +301,7 @@ def _load_or_scan(
             jobs=args.jobs,
             ha_version=ha or args.ha_version,
             offline=args.offline,
+            recognise_libraries=not getattr(args, "no_library_lookup", False),
         )
     except (FetchError, GitHubError, UnsafeArchiveError) as e:
         err.print(f"[red]🐕 couldn't get a sniff of {escape(spec)}:[/] {e}")
@@ -488,7 +495,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     def scan_fn(repo: str, ref: str | None) -> dict:
         now = settings_mod.load(store, start)
         result = scan(repo, ref=ref, exposure=Exposure(now.exposure), jobs=now.jobs,
-                      ha_version=ha_fn())  # fmt: skip
+                      ha_version=ha_fn(), recognise_libraries=now.libraries)  # fmt: skip
         # the lockfiles for later advisory re-checks ride along; Store.save takes them out
         return {**to_dict(result), recheck.KEY: result.inputs, sources.KEY: result.source}
 
@@ -647,6 +654,7 @@ def main(argv: list[str] | None = None) -> int:
             jobs=args.jobs,
             ha_version=args.ha_version,
             offline=args.offline,
+            recognise_libraries=not args.no_library_lookup,
         )
     except (FetchError, GitHubError, UnsafeArchiveError) as e:
         err.print(f"[red]🐕 couldn't get a sniff:[/] {e}")

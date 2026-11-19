@@ -2505,6 +2505,41 @@ def hygiene_html(report: dict[str, Any]) -> str:
     )
 
 
+def libraries_html(report: dict[str, Any]) -> str:
+    """(0.14.1) Files identical to a published npm file, not read as code
+    (analyzers/libraries.py). Names, versions and dates come from jsDelivr and npm and the
+    file names from the app: all escaped."""
+    libs = [x for x in report.get("libraries") or [] if isinstance(x, dict)]
+    if not libs:
+        return ""
+    items = []
+    for lib in libs:
+        files = [f for f in lib.get("files") or [] if isinstance(f, str)]
+        facts = []
+        if lib.get("published"):
+            facts.append(f"published {e(lib['published'], 20)}")
+        weekly = lib.get("weekly_downloads")
+        if isinstance(weekly, int):
+            facts.append(f"{weekly:,} downloads last week")
+        n = len(files)
+        items.append(
+            f"<li><b>{e(lib.get('name'), 120)} {e(lib.get('version'), 80)}</b>"
+            f' <span class="muted">{n} file{"s" * (n != 1)}'
+            + (f", {', '.join(facts)}" if facts else "")
+            + '</span><ul class="plain">'
+            + "".join(f"<li><code>{e(f, 300)}</code></li>" for f in files[:20])
+            + "</ul></li>"
+        )
+    return (
+        '<section class="box"><h2>Published libraries it ships</h2><p class="sub">These '
+        "files are exactly the files these npm packages publish, so Barkley didn't read them "
+        "as code. Their known advisories are checked like any dependency's. Only a "
+        "well-known package counts: a month old, 10,000 downloads a week, no malware "
+        "advisory. A file that differs by a single byte is read in full.</p>"
+        '<ul class="plain">' + "".join(items) + "</ul></section>"
+    )
+
+
 def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow]) -> str:
     items = []
     ordered = sorted(rows, key=lambda r: r.id)
@@ -2917,6 +2952,7 @@ def render_app(
         "mentions it, not that it was seen connecting. Web addresses drop anything after "
         f"<code>?</code>, which can hold keys.</p>{zones_html(report, dfn if deep else None)}</section>"
     )
+    parts.append(libraries_html(report))
     parts.append(hygiene_html(report))
     can = explain.can_do(report)
     parts.append(

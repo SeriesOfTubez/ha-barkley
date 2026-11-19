@@ -24,8 +24,15 @@ ALLOWED_HOSTS = frozenset(
         "pypi.org",
         "files.pythonhosted.org",
         "wheels.home-assistant.io",
-        # (0.7.4) newest release and its date for a card's vulnerable npm dependency
+        # (0.7.4) newest release and its date for a card's vulnerable npm dependency;
+        # (0.14.1) also a recognised library's publish date (analyzers/libraries.py)
         "registry.npmjs.org",
+        # (0.14.1) analyzers/libraries.py, only with "Recognise published libraries" on:
+        # the SHA-256 of an integration's larger JavaScript files (public code from the
+        # app, never anything of the user's) to name an unchanged published npm file,
+        # and that package's downloads last week. A failure means the file is read.
+        "data.jsdelivr.com",
+        "api.npmjs.org",
     }
 )
 MAX_JSON_BYTES = 32 * 1024 * 1024
@@ -62,13 +69,13 @@ def _check_url(url: str) -> None:
         raise err
 
 
-def _open(url: str):
+def _open(url: str, timeout: float = _TIMEOUT):
     _check_url(url)
     req = urllib.request.Request(url)  # noqa: S310 - scheme and host checked above
     req.add_header("User-Agent", f"sniff-test/{__version__}")
     opener = urllib.request.build_opener(_AllowlistRedirects())
     try:
-        return opener.open(req, timeout=_TIMEOUT)
+        return opener.open(req, timeout=timeout)
     except urllib.error.HTTPError as e:
         if e.code == 404:
             raise NotFoundError(f"HTTP 404 for {url}") from e
@@ -80,7 +87,7 @@ def _open(url: str):
     except urllib.error.URLError as e:
         raise HttpError(f"network error for {url}: {e.reason}") from e
     except TimeoutError as e:
-        raise HttpError(f"timed out after {_TIMEOUT} s: {url}") from e
+        raise HttpError(f"timed out after {timeout} s: {url}") from e
 
 
 def _host(url: str) -> str:
@@ -95,6 +102,27 @@ def get_json(url: str) -> Any:
         source=_host(url),
         retry=(HttpError, OSError, http.client.HTTPException),
     )
+
+
+def lookup_json(url: str, timeout: float, max_bytes: int = 8 * 1024 * 1024) -> Any | None:
+    """(0.14.1) One try with a short timeout, no retry, for lookups where a failure only
+    means "not recognised" (analyzers/libraries.py). None on 404; HttpError otherwise
+    (a rate limit included: the caller reads the file, it never waits)."""
+    try:
+        with _open(url, timeout) as resp:
+            data = resp.read(max_bytes + 1)
+    except NotFoundError:
+        return None
+    except (OSError, http.client.HTTPException) as e:
+        if isinstance(e, HttpError):
+            raise
+        raise HttpError(f"{type(e).__name__} for {url}") from e
+    if len(data) > max_bytes:
+        raise HttpError(f"response too large: {url}")
+    try:
+        return json.loads(data)
+    except ValueError as e:
+        raise HttpError(f"invalid JSON from {url}") from e
 
 
 def _get_json_once(url: str) -> Any:

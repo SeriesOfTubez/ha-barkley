@@ -1189,6 +1189,13 @@ def render_settings(
                       sel("jobs", s.jobs,
                           [(n, f"{n}{' (default)' if n == defaults.jobs else ''}")
                            for n in settings_mod.CHOICES["jobs"]]))  # fmt: skip
+    check_rows += row("Published libraries", "A large JavaScript file of an integration that "
+                      "is exactly a well-known published npm file (a month old, 10,000 "
+                      "downloads a week, no malware advisory) isn't read as code: it's listed "
+                      "and checked for advisories instead. Barkley sends the file's SHA-256 to "
+                      "jsDelivr to ask. Off: every file is read.",
+                      sel("libraries", "1" if s.libraries else "0",
+                          [("1", "Recognise them (default)"), ("0", "Off")]))  # fmt: skip
     now_free = ""
     if mem is not None and mem.available is not None and mem.total:
         of = "this container's limit of " if mem.limited else ""

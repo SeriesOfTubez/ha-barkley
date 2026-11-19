@@ -23,8 +23,11 @@ good as the model you pick. See [AI explanations](AI-explanations).
 
 **What does Barkley contact on the internet?**
 GitHub (the code, releases and repository facts), PyPI and Home Assistant's wheel index
-(to resolve dependencies), the OSV advisory database through osv-scanner, and a list of
-popular package names that GuardDog refreshes. Your AI provider is contacted only when
+(to resolve dependencies), the OSV advisory database through osv-scanner, a list of
+popular package names that GuardDog refreshes, and the npm registry (the newest release
+of a vulnerable card package). With Published libraries on (the default), it also sends
+jsDelivr the SHA-256 of an integration's larger JavaScript files and asks npm about the
+packages it names (publish date, downloads). Your AI provider is contacted only when
 you click an AI button. No address found in a scan is ever sent to a lookup service.
 
 **Does it read my Home Assistant configuration?**

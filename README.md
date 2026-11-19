@@ -131,7 +131,13 @@ next to Home Assistant or on another machine, with a login through Home Assistan
   looked up) and changes no score.
 - **npm dependencies** (cards): the repo's lockfile, checked with osv-scanner. Known
   malware is reported for every package; CVEs only for packages bundled into the card,
-  not for build-only tools.
+  not for build-only tools. A CVE in browser code is rated by GitHub's rating (else CVSS),
+  at most high; one that can only slow or stop the page is at most medium.
+- **Published libraries** (integrations): a JavaScript file of 64 KB or more that is byte
+  for byte a file of a well-known npm package (published at least 30 days ago, 10,000
+  downloads a week, no malware advisory), asked from jsDelivr by its SHA-256, isn't read
+  as code: it's listed and checked for advisories instead. No answer means the file is
+  read. Off on the Settings page or with `--no-library-lookup`.
 
 - **Endpoints**: every host and IP literal in the shipped code, classified as declared
   (the manifest's documentation/issue tracker, or the integration's own name), local,

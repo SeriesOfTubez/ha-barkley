@@ -48,6 +48,8 @@ class Settings:
     jobs: int = 1
     # (0.14.0) memory Barkley may give scans, in GB; 0 is Auto (what's free, less a reserve)
     memory_gb: int = 0
+    # (0.14.1) analyzers/libraries.py: unchanged published npm files aren't read as code
+    libraries: bool = True
     # Standalone: how often Barkley replaces its own Home Assistant token (ha_token.py)
     token_days: int = 60
 
@@ -66,7 +68,7 @@ DEFAULTS = Settings()
 PARTS = {
     "scoring": ("exposure", "paranoid", "floor", "unauth_views", "shadow_telemetry"),
     "reviews": ("notify_reopen", "reconfirm_months"),
-    "checking": ("parallel", "jobs", "memory_gb", "token_days"),
+    "checking": ("parallel", "jobs", "memory_gb", "libraries", "token_days"),
 }
 
 

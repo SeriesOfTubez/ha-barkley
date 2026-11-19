@@ -124,6 +124,25 @@ def _network_vector(group: dict[str, Any], vulns: dict[str, dict[str, Any]]) -> 
     return False
 
 
+_IMPACT = re.compile(r"(?:^|/)(V?[CI]|S[CI]):([A-Z])")
+
+
+def availability_only(group: dict[str, Any], vulns: dict[str, dict[str, Any]]) -> bool:
+    """Every CVSS vector of the group's records says no confidentiality and no integrity
+    impact (v3 C:N/I:N; v4 VC/VI/SC/SI all N). False when there is no vector at all."""
+    seen = False
+    for vid in group.get("ids", []):
+        for sev in (vulns.get(vid) or {}).get("severity") or []:
+            vector = str(sev.get("score", ""))
+            parts = dict(_IMPACT.findall(vector))
+            if not parts:
+                continue
+            seen = True
+            if any(v != "N" for v in parts.values()):
+                return False
+    return seen
+
+
 def _ids_text(ids: list[str]) -> str:
     more = f" (+{len(ids) - _MAX_IDS} more)" if len(ids) > _MAX_IDS else ""
     return ", ".join(ids[:_MAX_IDS]) + more
@@ -134,10 +153,21 @@ class VulnPolicy:
     max_severity: Severity
     inbound: bool  # tag network-vector CVEs as inbound surface
     where: str  # how the package reaches the user, for the message
+    # (0.14.1) cap for an advisory whose every CVSS vector says no confidentiality and no
+    # integrity impact (ReDoS, DoS): in a browser that is a frozen tab
+    availability_max: Severity | None = None
 
 
 PYTHON_POLICY = VulnPolicy(Severity.HIGH, True, "installed into Home Assistant's Python")
-NPM_POLICY = VulnPolicy(Severity.MEDIUM, False, "bundled into the card's JavaScript")
+# (0.14.1, user decision 2026-11-18) Browser code: rated like Python packages (GitHub's
+# label, else CVSS, at most high), because a panel's or card's JavaScript runs on Home
+# Assistant's own origin, where a code-execution or XSS bug can reach the user's token;
+# availability-only advisories at most medium. Was capped at medium (2026-11-08).
+NPM_POLICY = VulnPolicy(Severity.HIGH, False, "bundled into the card's JavaScript", Severity.MEDIUM)
+# An unchanged published library an integration ships (analyzers/libraries.py).
+VENDORED_POLICY = VulnPolicy(
+    Severity.HIGH, False, "shipped unchanged in the app's web files", Severity.MEDIUM
+)
 
 # (0.14.0, user decision 2026-11-17) Tools that only transform code when the card is
 # built: they run on the developer's machine and none of their code ends up in the
@@ -329,6 +359,8 @@ def to_findings(
         best_score, best = max(scored, key=lambda sg: sg[0] if sg[0] is not None else 5.0)
         severity = _severity_for(best_score) if best_score is not None else Severity.MEDIUM
         severity = min(severity, policy.max_severity)
+        if policy.availability_max is not None and availability_only(best, p.vulns):
+            severity = min(severity, policy.availability_max)
         ids = [g["ids"][0] for _s, g in scored if g.get("ids")]
         inbound = policy.inbound and _network_vector(best, p.vulns)
         tags = frozenset({Tag.INBOUND}) if inbound else frozenset()
