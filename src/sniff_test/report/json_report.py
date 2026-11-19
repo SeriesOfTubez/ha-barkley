@@ -64,6 +64,11 @@ class ScanResult:
     source: dict[str, Any] | None = None  # (0.11.0) sources.capture(); kept beside the scan
     # (0.14.1) unchanged published libraries not read as code (analyzers/libraries.py)
     libraries: list[Any] = field(default_factory=list)
+    # (0.14.1) the scan-logic key (logic.key()) this scan was made with
+    logic: str | None = None
+    # (0.14.1) what the scan cache answered: files of the main pass, from the cache, and
+    # the seconds those answers took when they were made (scancache.Stats)
+    cache: dict[str, Any] | None = None
 
 
 def sanitize_untrusted(text: str | None, limit: int = _UNTRUSTED_MAX) -> str:
@@ -141,7 +146,11 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
         counts[str(f.severity)] = counts.get(str(f.severity), 0) + 1
     return {
         "schema_version": SCHEMA_VERSION,
-        "tool": {"name": "sniff-test", "version": __version__},
+        "tool": {
+            "name": "sniff-test",
+            "version": __version__,
+            **({"logic": scan.logic} if scan.logic else {}),
+        },
         "target": {
             "input": t.source,
             "kind": str(t.kind),
@@ -190,6 +199,7 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
         # (0.14.1) files identical to a published npm file, not read as code; values come
         # from jsDelivr and npm, checked against npm's name and version rules
         "libraries": libraries.to_json(scan.libraries),
+        "cache": scan.cache,
         "ai_brief": ai_brief(scan, findings),
         # Code from the scanned repo (untrusted), for "Explain in context". Not in ai_brief.
         "context": scan.context,

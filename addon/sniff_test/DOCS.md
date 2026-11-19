@@ -19,8 +19,8 @@ repos that changed hands.
   most important first: new publishers, new data flows, new hosts, new findings. Stored
   scans are reused on both sides, and the comparison never changes a score.
 - **One button for the rest:** "Sniff the N not yet sniffed" scans every installed app
-  that has no scan by this version of Barkley (after an update of Barkley, that is all
-  of them). "Sniff the N unfinished again" repeats every scan that didn't finish. Apps
+  that has no scan with Barkley's current rules (after an update of Barkley that
+  changed what a scan finds, that is all of them; an update that didn't keeps them). "Sniff the N unfinished again" repeats every scan that didn't finish. Apps
   already queued or running are skipped.
 - **The list:** the counts at the top are filters (worth a look, no concerns found,
   with privacy notes, updates waiting, not checked). Switch between cards and a table;

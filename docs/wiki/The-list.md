@@ -36,8 +36,9 @@ A purple chip marks a privacy note. Privacy notes are never scored.
   fresh scan of it instead of reusing the stored one.
 - **Check update** scans the offered version and shows what the update would change. See
   [What an update would change](Update-comparison).
-- **Sniff the N not yet sniffed** scans every installed app that has no scan by this
-  version of Barkley. **Sniff the N unfinished again** repeats every scan that didn't
+- **Sniff the N not yet sniffed** scans every installed app that has no scan with
+  Barkley's current rules. Since 0.14.1 a Barkley update keeps its stored scans unless it
+  changed what a scan finds (its rules, its checks or the scanner tools). **Sniff the N unfinished again** repeats every scan that didn't
   finish. When every app has a scan, **Sniff all N again** runs a fresh scan of each, one
   after another (the memory guard still checks each one). Apps already queued or running
   are skipped.

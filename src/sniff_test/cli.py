@@ -16,7 +16,7 @@ from typing import Any
 from rich.console import Console
 from rich.markup import escape
 
-from sniff_test import __version__, recheck, releases, sources
+from sniff_test import __version__, logic, recheck, releases, sources
 from sniff_test.deps import ha_env
 from sniff_test.deps.ha_env import valid_version
 from sniff_test.diff import diff as diff_reports
@@ -87,6 +87,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="read every JavaScript file as code; don't ask jsDelivr which published "
         "library a file is (sends the SHA-256 of larger JS files of an integration)",
+    )
+    s.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="read every file again; don't use or fill the cache of code already read",
     )
     _add_store(s, "also save the scan in this SQLite scan store")
     d = sub.add_parser(
@@ -283,7 +288,7 @@ def _load_or_scan(
             repo,
             ref,
             exposure=args.exposure,
-            tool_version=__version__,
+            tool_version=logic.key(),
             ha_version=ha or _requested_ha(args),
         )
         if hit is not None:
@@ -495,7 +500,8 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     def scan_fn(repo: str, ref: str | None) -> dict:
         now = settings_mod.load(store, start)
         result = scan(repo, ref=ref, exposure=Exposure(now.exposure), jobs=now.jobs,
-                      ha_version=ha_fn(), recognise_libraries=now.libraries)  # fmt: skip
+                      ha_version=ha_fn(), recognise_libraries=now.libraries,
+                      cache_mb=now.cache_mb)  # fmt: skip
         # the lockfiles for later advisory re-checks ride along; Store.save takes them out
         return {**to_dict(result), recheck.KEY: result.inputs, sources.KEY: result.source}
 
@@ -534,6 +540,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         releases_fn=lambda repo: releases.recent(repo),
         watcher=watcher,
         login_cfg=login_cfg,
+        tool_version=logic.key(),
     )  # fmt: skip
     httpd.panel.start_settings = start
     httpd.panel.option_token = option_token
@@ -655,6 +662,7 @@ def main(argv: list[str] | None = None) -> int:
             ha_version=args.ha_version,
             offline=args.offline,
             recognise_libraries=not args.no_library_lookup,
+            cache_mb=0 if args.no_cache else 1024,
         )
     except (FetchError, GitHubError, UnsafeArchiveError) as e:
         err.print(f"[red]🐕 couldn't get a sniff:[/] {e}")

@@ -6,7 +6,7 @@ import dataclasses
 from collections.abc import Callable
 from pathlib import Path
 
-from sniff_test import recheck, sources
+from sniff_test import logic, recheck, scancache, sources
 from sniff_test.analyzers import (
     bytecode,
     correlate,
@@ -161,6 +161,7 @@ def scan(
     ha_version: str | None = None,
     offline: bool = False,
     recognise_libraries: bool = True,
+    cache_mb: int = 0,
 ) -> ScanResult:
     say = progress or (lambda _msg: None)
     with workspace(keep=keep_workspace) as ws:
@@ -177,7 +178,11 @@ def scan(
             libs = libraries.recognise(target, ws, enabled=recognise_libraries)
         with libraries.set_aside(target.root, libs.aside, ws):
             say("semgrep")
-            results: list[AnalyzerResult] = [semgrep.run(target, ws, jobs=jobs)]
+            # (0.14.1) answers for code already read (scancache); 0 MB: off
+            cache = scancache.Cache(logic.key(), cache_mb) if cache_mb > 0 else None
+            results: list[AnalyzerResult] = [semgrep.run(target, ws, jobs=jobs, cache=cache)]
+            if cache is not None:
+                cache.prune()
             say("endpoints")
             results.append(endpoints.run(target))
         results.append(libs.analyzer)
@@ -219,6 +224,16 @@ def scan(
             resolution=resolution,
             ha_version=env.version if env else None,
             libraries=libs.libraries,
+            logic=logic.key(),
+            cache=(
+                {
+                    "files": cache.stats.files,
+                    "hits": cache.stats.hits,
+                    "saved_secs": round(cache.stats.saved, 1),
+                }
+                if cache is not None
+                else None
+            ),
         )
         # Built while the workspace still exists: it reads manifests and parses files.
         result.graph = graph.build(result)

@@ -161,6 +161,9 @@ def test_cli_reuses_stored_scans_for_from_to(tmp_path, monkeypatch):
         raise AssertionError("should have used the stored scans")
 
     monkeypatch.setattr(cli, "scan", no_scan)
+    # (0.14.1) stored scans are found by the scan-logic key; these reports carry only the
+    # tool version, which stands in for it here
+    monkeypatch.setattr(cli.logic, "key", lambda: report()["tool"]["version"])
     out = tmp_path / "d.json"
     args = ["diff", "acme/acme", "--from", "v1", "--to", "v2", "--ha-version", "2026.11.0"]
     assert cli.main([*args, "--store", str(db), "--json", "-o", str(out)]) == 0

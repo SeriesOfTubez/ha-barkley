@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, replace
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
-from sniff_test import __version__, kinds, known
+from sniff_test import __version__, kinds, known, scancache
 from sniff_test.analyzers.correlate import SENSITIVE_NODES
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
 from sniff_test.fetch import retry
@@ -2568,6 +2568,29 @@ def libraries_html(report: dict[str, Any]) -> str:
     )
 
 
+def cache_text(report: dict[str, Any]) -> str:
+    """(0.14.1) " 128 of 130 files from the cache (about 4 min saved)." for a scan that used
+    the cache (scancache), or nothing."""
+    c = report.get("cache")
+    if not isinstance(c, dict):
+        return ""
+    hits, files, saved = c.get("hits"), c.get("files"), c.get("saved_secs")
+    if not (isinstance(hits, int) and isinstance(files, int) and hits > 0):
+        return ""
+    when = (
+        f" ({scancache.saved_text(float(saved))} saved)"
+        if isinstance(saved, (int, float)) and saved >= 1
+        else ""
+    )
+    return f" {hits} of {files} files from the cache{when}."
+
+
+def rules_label(v: str) -> str:
+    """(0.14.1) A stored scan's rules: a scan-logic key (logic.py) as its first 7 hex
+    digits, an older scan's tool version as it is."""
+    return v.removeprefix("logic-")[:7] if v.startswith("logic-") else v
+
+
 def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow]) -> str:
     items = []
     ordered = sorted(rows, key=lambda r: r.id)
@@ -2578,7 +2601,10 @@ def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow
         if prev is None:
             cause = "first check"
         elif prev.ref == r.ref and prev.tool_version != r.tool_version:
-            cause = f"our rules changed ({e(prev.tool_version)} → {e(r.tool_version)})"
+            cause = (
+                f"our rules changed ({e(rules_label(prev.tool_version))} → "
+                f"{e(rules_label(r.tool_version))})"
+            )
         elif prev.ref == r.ref:
             cause = "checked again"
         else:
@@ -2589,7 +2615,8 @@ def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow
         here = " <b>(this page)</b>" if r.id == sid else ""
         items.append(
             f"<li><b>{what}</b> · {score} · {cause} · "
-            f'<span class="muted">{e(r.scanned_at[:10])}, rules {e(r.tool_version)}</span>{here}</li>'
+            f'<span class="muted">{e(r.scanned_at[:10])}, rules {e(rules_label(r.tool_version))}'
+            f"</span>{here}</li>"
         )
         prev = r
     p = report.get("provenance") or {}
@@ -2857,7 +2884,8 @@ def render_app(
         f'<span class="muted">· {e(kind)}{" · " + e(t["ref"], 60) if t.get("ref") else ""} · {e(t.get("repo") or t.get("input"), 120)}</span></div>'
         f'<div class="muted small">Checked with Barkley {e(report.get("tool", {}).get("version"))}: '
         f"{e(_SOURCE.get(str(t.get('install_source')), t.get('install_source')))}"
-        f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}.</div>"
+        f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}."
+        f"{cache_text(report)}</div>"
         f"{split_pill(report)}{facts_line(report)}"
         f"{'' if rv else trust_line(report)}{again}</div></section>"
     )

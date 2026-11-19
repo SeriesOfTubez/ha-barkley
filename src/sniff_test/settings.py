@@ -50,6 +50,8 @@ class Settings:
     memory_gb: int = 0
     # (0.14.1) analyzers/libraries.py: unchanged published npm files aren't read as code
     libraries: bool = True
+    # (0.14.1) disk for answers about code already read (scancache), in MB; 0: off
+    cache_mb: int = 1024
     # Standalone: how often Barkley replaces its own Home Assistant token (ha_token.py)
     token_days: int = 60
 
@@ -68,7 +70,7 @@ DEFAULTS = Settings()
 PARTS = {
     "scoring": ("exposure", "paranoid", "floor", "unauth_views", "shadow_telemetry"),
     "reviews": ("notify_reopen", "reconfirm_months"),
-    "checking": ("parallel", "jobs", "memory_gb", "libraries", "token_days"),
+    "checking": ("parallel", "jobs", "memory_gb", "libraries", "cache_mb", "token_days"),
 }
 
 
@@ -84,6 +86,7 @@ CHOICES: dict[str, tuple[Any, ...]] = {
     "parallel": (1, 2, 3, 4),
     "jobs": (1, 2, 3, 4),
     "memory_gb": (0, 2, 3, 4, 6, 8, 12, 16),
+    "cache_mb": (0, 512, 1024, 2048, 4096),
     "token_days": (30, 60, 90, 180),
 }
 

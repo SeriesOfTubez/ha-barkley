@@ -18,6 +18,13 @@ https://github.com/SeriesOfTubez/ha-barkley/releases
   rating (at most high) instead of always medium; one that can only slow or stop the
   page stays at most medium.
 
+- An update of Barkley no longer sniffs every app again unless it changed what a scan
+  finds (its rules, its checks or the scanner tools). Barkley works this out from its
+  own files when it starts.
+- A cache of code already read: a file Barkley has read before, byte for byte, isn't
+  read again (an app's new release, Sniff again). 1 GB by default; Settings → Cache of
+  code already read. An app's page says how many files came from it.
+
 **Exposure decides how much a library's known bug counts**
 
 - Local only (the default): a known vulnerability in a dependency is at most medium,

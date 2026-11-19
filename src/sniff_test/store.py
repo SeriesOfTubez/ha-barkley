@@ -283,7 +283,9 @@ class Store:
                 t.get("domain"),
                 report["exposure"],
                 report.get("ha_version"),
-                report["tool"]["version"],
+                # (0.14.1) the scan-logic key decides reuse (logic.py); older reports
+                # have only the tool version, which no current key equals
+                report["tool"].get("logic") or report["tool"]["version"],
                 report["schema_version"],
                 int(bool(report["complete"])),
                 int(report["score"]),
@@ -656,8 +658,9 @@ class Store:
     ) -> ScanRow | None:
         """The newest scan of `repo@ref` that a fresh scan would reproduce.
 
-        Same exposure and tool version; for integrations also the same HA release
-        (dependencies resolve against it). Cards don't depend on the HA release.
+        Same exposure and scan-logic key (logic.py; the tool version before 0.14.1); for
+        integrations also the same HA release (dependencies resolve against it). Cards
+        don't depend on the HA release.
         Incomplete scans are never reused: what stopped them (a network error, GitHub's
         rate limit) is usually gone, so a fresh scan wouldn't reproduce them.
         """

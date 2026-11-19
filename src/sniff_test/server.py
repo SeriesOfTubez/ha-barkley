@@ -40,6 +40,7 @@ from sniff_test import (
     memory,
     recheck,
     review,
+    scancache,
     scoring,
     supervisor,
     trust,
@@ -656,10 +657,10 @@ def render_installed(
     lead = ""
     if never or again:  # the list's one primary action; nothing when everything is sniffed
         if never and again:
-            label = (f"Sniff the {never} not yet sniffed by Barkley {e(__version__)} "
+            label = (f"Sniff the {never} not yet sniffed with Barkley's current rules "
                      f"and the {again} unfinished")  # fmt: skip
         elif never:
-            label = f"Sniff the {never} not yet sniffed by Barkley {e(__version__)}"
+            label = f"Sniff the {never} not yet sniffed with Barkley's current rules"
         else:
             label = f"Sniff the {again} unfinished again"
         lead = (
@@ -859,7 +860,7 @@ def render_index(
                    "<th>when</th></tr>")  # fmt: skip
         for r in rows:
             extra = r.kind + (f" · HA {r.ha_version}" if r.ha_version else "")
-            extra += f" · rules {r.tool_version}"
+            extra += f" · rules {ui.rules_label(r.tool_version)}"
             if not r.complete:
                 extra += " · incomplete"
             out.append(
@@ -1198,6 +1199,16 @@ def render_settings(
                       "jsDelivr to ask. Off: every file is read.",
                       sel("libraries", "1" if s.libraries else "0",
                           [("1", "Recognise them (default)"), ("0", "Off")]))  # fmt: skip
+    used = scancache.size_mb()
+    check_rows += row("Cache of code already read", "Barkley keeps what it found in each "
+                      "file, by its content, so a file it has read before isn't read again "
+                      "(a new release of an app, Sniff again). New rules or scanner tools "
+                      f"start a fresh cache. Now {used:,.0f} MB.",
+                      sel("cache_mb", s.cache_mb,
+                          [(n, "Off" if n == 0 else
+                            (f"{n // 1024} GB" if n >= 1024 else f"{n} MB")
+                            + (" (default)" if n == defaults.cache_mb else ""))
+                           for n in settings_mod.CHOICES["cache_mb"]]))  # fmt: skip
     now_free = ""
     if mem is not None and mem.available is not None and mem.total:
         of = "this container's limit of " if mem.limited else ""
@@ -1801,6 +1812,11 @@ def _utc(iso: str) -> str:
     return f"{iso[:10]} {iso[11:16]} UTC" if len(iso) >= 16 else iso
 
 
+# (0.14.1) The scan-logic key stored scans are compared with (logic.key(); serve sets it).
+# A scan made by other rules isn't offered an advisory re-check: it'll be sniffed again.
+CURRENT_RULES = __version__
+
+
 def _advisory_line(
     base: str, sid: int, report: dict[str, Any], store: Store, token: str, busy: bool = False
 ) -> str:
@@ -1836,7 +1852,7 @@ def _advisory_line(
         and row.repo
         and row.ref
         and row.complete
-        and row.tool_version == __version__
+        and row.tool_version == CURRENT_RULES
         and sid in store.has_inputs()
         and not (last and last[1].startswith("changed:"))
     )
@@ -3560,14 +3576,18 @@ def serve(
     releases_fn: ReleasesFn | None = None,
     watcher: watch.Watcher | None = None,
     login_cfg: login.Login | None = None,
+    tool_version: str = __version__,
 ) -> PanelServer:
     """Build the server (caller runs `serve_forever`); `.panel.worker` runs the scans.
+    `tool_version`: the key a stored scan must have to be reused (logic.key(), 0.14.1).
     `watcher`: auto-sniff; built by the caller with the worker from `make_worker`.
     `allow`: client addresses let in (None: any). `login_cfg`: standalone, every page
     but the login needs a session."""
+    global CURRENT_RULES
+    CURRENT_RULES = tool_version
     worker = Worker(
         store, scan_fn, exposure=exposure, ha_fn=ha_fn, memory_fn=memory_fn,
-        budget_fn=budget_fn, parallel=parallel,
+        budget_fn=budget_fn, parallel=parallel, tool_version=tool_version,
     )  # fmt: skip
     panel = Panel(store, worker, allow, installed_fn, memory_fn)
     worker.memory_gb_fn = lambda: panel.settings.memory_gb

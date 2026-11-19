@@ -39,8 +39,9 @@ No. It has no access to the configuration folder. See
 **Why did an app's score change when its code didn't?**
 Either a new advisory was published for one of its packages (see
 [Advisory re-checks](Advisory-re-checks)), or Barkley was updated and its rules changed.
-After an update of Barkley, the list offers one button to sniff everything again with
-the new rules.
+After an update of Barkley that changed its rules, its checks or its scanner tools, the
+list offers one button to sniff everything again with the new rules. An update that
+changed none of them keeps the stored scans.
 
 **Why is a brand-new install sniffed only after it ran?**
 Home Assistant sets a new integration up as soon as it is installed. Sniff it from

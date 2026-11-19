@@ -297,6 +297,8 @@ uv run sniff-test scan owner/repo --exposure public             # HA reachable f
 uv run sniff-test scan owner/repo --json -o report.json         # machine-readable report
 uv run sniff-test scan owner/repo --ha-version 2026.10.2        # resolve deps for a specific HA release
 uv run sniff-test scan ./path/to/repo --offline                 # no PyPI/OSV lookups (marked incomplete)
+uv run sniff-test scan owner/repo --no-cache                    # read every file again (no cache of code already read)
+uv run sniff-test scan owner/repo --no-library-lookup           # read every JS file; don't ask jsDelivr
 
 uv run sniff-test diff old.json new.json                        # what an update changes (reports from scan -o)
 uv run sniff-test diff owner/repo --from v1.2.3                 # scan v1.2.3 and what HACS installs now, compare
