@@ -1357,8 +1357,36 @@ def advisory_lines(d: dict[str, Any]) -> str:
         link = (f'<a href="https://osv.dev/vulnerability/{vid}" target="_blank" '
                 f'rel="noopener noreferrer">{label}</a>')  # fmt: skip
         summary = str(a.get("summary") or "") or str(a.get("details") or "")[:200]
-        out.append(f"{link}: {e(summary, 300)}" if summary else link)
+        line = f"{link}: {e(summary, 300)}" if summary else link
+        if cisa := ssvc_phrase(a.get("ssvc")):
+            line += f' <span class="muted">({cisa})</span>'
+        out.append(line)
     return "<br>".join(out)
+
+
+_EXPLOITATION = {
+    "active": "exploited in the wild",
+    "poc": "a proof of concept exists",
+    "none": "no known exploitation",
+}
+
+
+def ssvc_phrase(v: Any) -> str:
+    """(0.14.1) CISA's assessment of the CVE in plain words; only SSVC's own values."""
+    if not isinstance(v, dict):
+        return ""
+    bits = []
+    if v.get("kev") is True:
+        bits.append("in CISA's Known Exploited Vulnerabilities list")
+    if (x := _EXPLOITATION.get(str(v.get("exploitation")))) and not (
+        v.get("kev") is True and x != "exploited in the wild"
+    ):
+        bits.append(x)
+    if v.get("automatable") in ("yes", "no"):
+        bits.append("automatable" if v["automatable"] == "yes" else "not automatable")
+    if v.get("impact") in ("partial", "total"):
+        bits.append(f"{v['impact']} impact")
+    return "CISA: " + ", ".join(bits) if bits else ""
 
 
 def dependency_line(d: dict[str, Any]) -> str:

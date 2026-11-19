@@ -1123,7 +1123,9 @@ def render_settings(
                 "be reached from the internet, choose Public.</p>")  # fmt: skip
     scoring_rows = (
         row("Exposure", "Can your Home Assistant be reached from the internet? Public raises "
-            "findings about open pages and webhooks. It never lowers anything.",
+            "findings about open pages and webhooks. A known bug in a library is at most "
+            "medium while Local only, and critical when Public if it's exploited in the "
+            "wild. Threats are never lowered. Applies to the next sniff.",
             sel("exposure", s.exposure,
                 [(x, label + (" (default)" if defaults.exposure == x else ""))
                  for x, label in (("local", "Local only"), ("public", "Public"))])

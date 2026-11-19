@@ -71,6 +71,20 @@ class Advisory:
     details: str = ""
     fixed: str | None = None  # first fixed version above ours; "" = OSV lists none; None = unknown
     aliases: tuple[str, ...] = ()  # e.g. the CVE id of a GHSA advisory
+    # (0.14.1) CISA's SSVC decision points from the CVE record (osv.ssvc), "" when unknown:
+    # exploitation none | poc | active; automatable yes | no; impact partial | total;
+    # kev: the CVE is in CISA's Known Exploited Vulnerabilities catalog
+    exploitation: str = ""
+    automatable: str = ""
+    impact: str = ""
+    kev: bool = False
+
+    @property
+    def worst_case(self) -> bool:
+        """Exploited in the wild (SSVC active, or listed in KEV: SSVC's exploitation
+        field lags), automatable, total technical impact."""
+        exploited = self.exploitation == "active" or self.kev
+        return exploited and self.automatable == "yes" and self.impact == "total"
 
 
 @dataclass(frozen=True, slots=True)

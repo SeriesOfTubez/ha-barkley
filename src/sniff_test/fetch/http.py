@@ -33,6 +33,9 @@ ALLOWED_HOSTS = frozenset(
         # and that package's downloads last week. A failure means the file is read.
         "data.jsdelivr.com",
         "api.npmjs.org",
+        # (0.14.1) the CVE record of a dependency's advisory (CVE id only), for CISA's
+        # SSVC decision and KEV listing, which set its severity by exposure (osv.ssvc)
+        "cveawg.mitre.org",
     }
 )
 MAX_JSON_BYTES = 32 * 1024 * 1024

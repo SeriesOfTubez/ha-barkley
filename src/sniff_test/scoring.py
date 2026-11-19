@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from sniff_test import kinds
@@ -111,20 +111,60 @@ class ScoreResult:
     caps: list[str] = field(default_factory=list)
 
 
-def apply_exposure(findings: list[Finding], exposure: Exposure) -> list[Finding]:
-    """Public exposure raises inbound-surface findings by one level.
+DEP_VULN = "dep-vuln"
 
-    It only ever raises. Exfil findings are untouched (they're already top severity);
-    nothing is ever lowered.
+
+def apply_exposure(findings: list[Finding], exposure: Exposure) -> list[Finding]:
+    """Public exposure raises inbound-surface findings by one level. Exfiltration and
+    malware are never touched (already top severity).
+
+    (0.14.1, user decision 2026-11-18) A known vulnerability in a dependency depends on
+    whether an attacker can reach Home Assistant: on a box that isn't exposed to the
+    internet it is at most medium, and the finding says so; when exposed it keeps its
+    rating (at most high), and one that CISA says is exploited in the wild (SSVC active
+    or listed in KEV), automatable and of total impact is critical. This is the one case
+    where exposure lowers a severity.
     """
-    if exposure is not Exposure.PUBLIC:
-        return list(findings)
     out = []
     for f in findings:
-        if Tag.INBOUND in f.tags and Tag.EXFIL not in f.tags:
+        if f.rule_id == DEP_VULN:
+            f = _dependency_by_exposure(f, exposure)
+        elif exposure is Exposure.PUBLIC and Tag.INBOUND in f.tags and Tag.EXFIL not in f.tags:
             f = f.with_severity(f.severity.bumped())
         out.append(f)
     return out
+
+
+def _dependency_by_exposure(f: Finding, exposure: Exposure) -> Finding:
+    advisories = f.dependency.advisories if f.dependency else ()
+    worst = next((a for a in advisories if a.worst_case), None)
+    if exposure is Exposure.PUBLIC:
+        if worst is not None:
+            return replace(
+                f.with_severity(Severity.CRITICAL),
+                message=f.message + " CISA lists it as exploited in the wild, automatable and "
+                "of total impact, and your Home Assistant is exposed to the internet, so "
+                "it's critical.",
+            )
+        if Tag.INBOUND in f.tags:
+            return f.with_severity(f.severity.bumped())
+        return f
+    if f.severity <= Severity.MEDIUM and worst is None:
+        return f
+    rated = str(f.severity)
+    why = (
+        "CISA lists it as exploited in the wild, automatable and of total impact, which "
+        "would make it critical if your Home Assistant were exposed to the internet"
+        if worst is not None
+        else f"It is rated {rated}"
+    )
+    if f.severity <= Severity.MEDIUM:  # the worst case, rated low or medium: say so only
+        return replace(f, message=f.message + f" {why}; your Home Assistant isn't exposed.")
+    return replace(
+        f.with_severity(Severity.MEDIUM),
+        message=f.message + f" {why}; Barkley counts it as medium because your Home "
+        "Assistant isn't exposed to the internet (Settings: Exposure).",
+    )
 
 
 def score(findings: list[Finding], complete: bool, policy: Policy | None = None) -> ScoreResult:

@@ -114,6 +114,15 @@ def dependency_json(d: DepFacts) -> dict[str, Any]:
                 "aliases": [sanitize_untrusted(x, 40) for x in a.aliases],
                 "summary": sanitize_untrusted(a.summary, 300),
                 "details": sanitize_untrusted(a.details, 1500),
+                # (0.14.1) values checked against SSVC's own words (osv.ssvc)
+                "ssvc": {
+                    "exploitation": a.exploitation,
+                    "automatable": a.automatable,
+                    "impact": a.impact,
+                    "kev": a.kev,
+                }
+                if a.exploitation or a.kev
+                else None,
             }
             for a in d.advisories
         ],

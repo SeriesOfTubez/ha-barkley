@@ -19,6 +19,7 @@ pass our own empty `--config`.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import shutil
@@ -267,17 +268,94 @@ def latest_release(
     return latest, (dates.get(latest) or "")[:10] or None, behind
 
 
+_CVE = re.compile(r"^CVE-\d{4}-\d{4,7}$")
+_SSVC_WORDS = {
+    "Exploitation": ("none", "poc", "active"),
+    "Automatable": ("yes", "no"),
+    "Technical Impact": ("partial", "total"),
+}
+SSVC_TIMEOUT = 10.0
+SSVC_CACHE_SECONDS = 24 * 3600
+
+
+def _ssvc_cache(cve: str) -> Path:
+    from sniff_test import paths
+
+    return paths.cache_root() / "ssvc" / f"{cve}.json"
+
+
+def ssvc(cve: str) -> tuple[str, str, str, bool] | None:
+    """(0.14.1) CISA's SSVC decision points and KEV listing for one CVE, from the CVE
+    record (CISA's ADP container): (exploitation, automatable, impact, kev). None when
+    the record has none or couldn't be read: then nothing is raised or explained, and
+    the lookup never becomes a scan result. Answers are kept 24 hours."""
+    import time
+
+    from sniff_test import paths
+
+    if not _CVE.match(cve):
+        return None
+    cache = _ssvc_cache(cve)
+    try:
+        data = json.loads(cache.read_text("utf-8"))
+        if time.time() - float(data["t"]) < SSVC_CACHE_SECONDS:
+            got = data["ssvc"]
+            return tuple(got) if got else None  # type: ignore[return-value]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    try:
+        rec = http.lookup_json(f"https://cveawg.mitre.org/api/cve/{cve}", SSVC_TIMEOUT)
+    except http.HttpError:
+        return None
+    out: tuple[str, str, str, bool] | None = None
+    options: dict[str, str] = {}
+    kev = False
+    adps = ((rec or {}).get("containers") or {}).get("adp") if isinstance(rec, dict) else None
+    for adp in adps if isinstance(adps, list) else []:
+        for m in (adp.get("metrics") or []) if isinstance(adp, dict) else []:
+            other = m.get("other") if isinstance(m, dict) else None
+            if not isinstance(other, dict):
+                continue
+            if other.get("type") == "kev":
+                kev = True
+            if other.get("type") == "ssvc":
+                for opt in (other.get("content") or {}).get("options") or []:
+                    if isinstance(opt, dict):
+                        for k, v in opt.items():
+                            if k in _SSVC_WORDS and str(v).lower() in _SSVC_WORDS[k]:
+                                options[k] = str(v).lower()
+    if options or kev:
+        out = (
+            options.get("Exploitation", ""),
+            options.get("Automatable", ""),
+            options.get("Technical Impact", ""),
+            kev,
+        )
+    with contextlib.suppress(OSError):
+        paths.atomic_write(cache, json.dumps({"t": time.time(), "ssvc": out}))
+    return out
+
+
 def _dep_facts(p: _Pkg, ids: list[str], direct: set[str] | None, lookup: Lookup | None) -> DepFacts:
     advisories = []
     for vid in ids:
         rec = p.vulns.get(vid) or {}
+        aliases = tuple(str(a) for a in (rec.get("aliases") or [])[:4])
+        cves = [a for a in (vid, *aliases) if _CVE.match(a)]
+        # online only (`lookup` is None offline), like the newest-release facts
+        found = ssvc(cves[0]) if cves and lookup is not None else None
+        exploitation, automatable, impact, kev = found or ("", "", "", False)
         advisories.append(
             Advisory(
                 id=vid,
                 summary=str(rec.get("summary") or "")[:300],
                 details=str(rec.get("details") or "")[:_DETAILS_MAX],
                 fixed=fixed_for(rec, p.name, p.ecosystem, p.version),
-                aliases=tuple(str(a) for a in (rec.get("aliases") or [])[:4]),
+                aliases=aliases,
+                exploitation=exploitation,
+                automatable=automatable,
+                impact=impact,
+                kev=kev,
             )
         )
     latest = date = behind = None

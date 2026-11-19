@@ -27,7 +27,9 @@ GitHub (the code, releases and repository facts), PyPI and Home Assistant's whee
 popular package names that GuardDog refreshes, and the npm registry (the newest release
 of a vulnerable card package). With Published libraries on (the default), it also sends
 jsDelivr the SHA-256 of an integration's larger JavaScript files and asks npm about the
-packages it names (publish date, downloads). Your AI provider is contacted only when
+packages it names (publish date, downloads). For a dependency with a known
+vulnerability it reads the CVE record from `cveawg.mitre.org` (the CVE id only), for CISA's
+assessment of how it's exploited. Your AI provider is contacted only when
 you click an AI button. No address found in a scan is ever sent to a lookup service.
 
 **Does it read my Home Assistant configuration?**

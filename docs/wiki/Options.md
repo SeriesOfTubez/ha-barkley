@@ -9,7 +9,7 @@ of the options (see [Standalone](Standalone)).
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Exposure | Local only | Public if your Home Assistant is reachable from the internet. Raises findings about what an app accepts from outside; never lowers anything. A hint under it says whether Home Assistant has an external URL set. |
+| Exposure | Local only | Public if your Home Assistant is reachable from the internet. Raises findings about what an app accepts from outside. A known vulnerability in a library is at most medium while Local only, and critical when Public if CISA lists it as exploited in the wild, automatable and of total impact (see [Exposure](Checks-and-scoring#exposure)). Threats (malware, data leaving) are never lowered. A hint under it says whether Home Assistant has an external URL set. |
 | Paranoid mode | Off | Show and count the minor findings. See [scoring](Checks-and-scoring). |
 | Powerful, no threat | On | With no Threat finding, what an app can do won't put its score below Very Sus (40). Only for a finished scan with no critical finding. |
 | Pages without a login | List only | Count an app's pages that work without a login under Local only. |

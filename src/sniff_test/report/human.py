@@ -78,7 +78,8 @@ def _finding_block(console: Console, f: Finding) -> None:
     if Tag.POSSIBLE in f.tags:
         head.append("  (possible)", style="italic")
     if f.base_severity is not None:
-        head.append(f"  [raised from {f.base_severity} by public exposure]", style="dim")
+        moved = "raised" if f.severity > f.base_severity else "lowered"
+        head.append(f"  [{moved} from {f.base_severity} by exposure]", style="dim")
     console.print(head)
     loc = _location(f)
     console.print(Padding(Text(f.rule_id + (f"  {loc}" if loc else ""), style="dim"), _INDENT))

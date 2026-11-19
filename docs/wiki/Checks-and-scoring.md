@@ -19,7 +19,7 @@ the newest release, else the default branch pinned to one commit.
   package's (GitHub's rating, else its CVSS score, at most high), because a card's or
   panel's JavaScript runs on Home Assistant's own origin. One that can only slow or stop
   the page (no confidentiality or integrity impact in its CVSS vector, such as a slow
-  regular expression) is at most medium.
+  regular expression) is at most medium. Exposure then applies (see [Exposure](#exposure)).
 - **Published libraries** (integrations, since 0.14.1): a JavaScript file of 64 KB or more
   that is byte for byte a file of a well-known npm package (that version published at
   least 30 days ago, 10,000 downloads in the last week, no malware advisory) isn't read as
@@ -132,5 +132,19 @@ is still checked the same way; it cuts noise, not memory or time.
 ## Exposure
 
 With exposure set to Public (Settings) (your Home Assistant is reachable from the internet),
-findings about what an app accepts from outside are raised one level. Nothing is ever
-lowered, and exfiltration findings are top severity either way.
+findings about what an app accepts from outside are raised one level. Exfiltration and
+known malware are top severity either way.
+
+Since 0.14.1, a known vulnerability in one of an app's libraries depends on exposure,
+because a bug an attacker can't reach is a smaller risk:
+
+- **Local only:** at most medium. A finding rated higher says so, and why it's counted as
+  medium.
+- **Public:** its rating (GitHub's, else its CVSS score, at most high). If CISA's
+  assessment of the CVE (SSVC, in the CVE record) says it's exploited in the wild, or it's
+  in CISA's Known Exploited Vulnerabilities catalog, and it's automatable and of total
+  impact, it's critical.
+
+Barkley reads that assessment from the CVE record at `cveawg.mitre.org`. When it can't be
+read, nothing is raised. Exposure is fixed when an app is sniffed; change it on the
+Settings page and sniff again.

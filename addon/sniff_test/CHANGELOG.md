@@ -18,6 +18,13 @@ https://github.com/SeriesOfTubez/ha-barkley/releases
   rating (at most high) instead of always medium; one that can only slow or stop the
   page stays at most medium.
 
+**Exposure decides how much a library's known bug counts**
+
+- Local only (the default): a known vulnerability in a dependency is at most medium,
+  and the finding says why. Public: its rating, and critical when CISA lists it as
+  exploited in the wild, automatable and of total impact (read from the CVE record).
+  Malware and data leaving are never lowered.
+
 ## 0.14.0
 
 **Reviews and a Settings page**

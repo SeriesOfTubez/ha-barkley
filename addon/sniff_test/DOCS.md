@@ -119,7 +119,7 @@ database and wins over the option's.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `exposure` | `local` | `public` if your HA is reachable from the internet. Raises inbound findings; never lowers exfiltration findings. |
+| `exposure` | `local` | `public` if your HA is reachable from the internet. Raises inbound findings; a known vulnerability in a library is at most medium while `local`. Never lowers exfiltration or malware findings. |
 | `jobs` | `1` | Parallel Semgrep jobs inside one scan. More is faster and uses more memory. |
 | `parallel_scans` | `2` | How many scans may run at once. A second scan starts only while the box has room for another full scan above the 2 GB warning line (1.5 GB counted for each scan already running); otherwise it waits. Two checks of the same project never run together. |
 | `github_token` | empty | A GitHub token (no scopes needed) for the 5,000 requests/hour limit instead of 60. |
