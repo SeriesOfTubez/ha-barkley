@@ -277,14 +277,20 @@ a.button:hover { filter:brightness(1.08); }
 .rdial text { font:700 var(--t-sm) var(--font); font-variant-numeric:tabular-nums; }
 .rdial .k { display:block; font-size:var(--t-xs); font-weight:600; letter-spacing:0.06em;
   text-transform:uppercase; color:var(--muted); }
-.rdial .w { display:block; font-weight:600; overflow-wrap:anywhere; }
+.rdial .w { display:block; font-weight:600; }
+/* the list's compact form: two short lines, a small ring and "Threat · None found" */
+.rdc { display:grid; gap:var(--s1); margin-top:var(--s2); }
+.rdi { display:flex; align-items:center; gap:var(--s2); font-size:var(--t-sm); min-width:0; }
+.rdi svg { width:36px; height:36px; flex:none; }
+.rdi text { font:700 var(--t-xs) var(--font); font-variant-numeric:tabular-nums; }
+.rdi .k { color:var(--muted); font-weight:600; }
+.rdi .w { font-weight:600; }
 .rd-green { color:var(--green); } .rd-yellow { color:var(--yellow); }
 .rd-orange { color:var(--orange); } .rd-red { color:var(--red); }
 .rdwhy { margin:var(--s3) 0 var(--s2); padding-left:var(--s4); display:flex;
   flex-direction:column; gap:var(--s1); }
 .banner.threat { background:var(--red-bg); border:1px solid var(--red-edge); padding:var(--s3) var(--s4); }
 .banner.threat b { display:block; color:var(--red); font-size:var(--t-lg); line-height:1.25; }
-.app .rd { margin-top:var(--s2); }
 .verdict { font-weight:600; }
 .inshort { font-size:var(--t-md); line-height:1.55; max-width:72ch; }
 .two { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:var(--s4);
@@ -823,7 +829,7 @@ def card_html(base: str, c: Card) -> str:
         f'<div class="app {b}{" busy" if c.busy else ""}"><div class="app-top"><div>{name}'
         f'<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}</div></div>'
         f'<div class="badge {b}">{score}<small>{label}</small></div></div>'
-        f"{readings_dials(c.report['readings']) if (c.report or {}).get('readings') else ''}"
+        f"{readings_compact(c.report['readings']) if (c.report or {}).get('readings') else ''}"
         f"{card_state(c)}"
         f'<div class="say">{e(card_sentence(c), 400)}</div>'
         f'<div class="chips">{chips}</div>{actions}</div>'
@@ -938,7 +944,7 @@ def card_row(base: str, c: Card) -> str:
         f"<small>{label}</small></span></td>"
         f'<td>{name}<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}'
         f'</div><div class="small">{e(card_sentence(c), 400)}</div>'
-        f"{readings_dials(c.report['readings']) if (c.report or {}).get('readings') else ''}</td>"
+        f"{readings_compact(c.report['readings']) if (c.report or {}).get('readings') else ''}</td>"
         f'<td><div class="chips">{chips}</div></td>'
         f'<td class="actcell">{act}</td></tr>'
     )
@@ -2900,6 +2906,31 @@ def _rdial(label: str, value: Any, word: str, color: str) -> str:
         f'{arc}<text x="24" y="29" text-anchor="middle" fill="currentColor">{_num(value)}</text>'
         f'</svg><div><span class="k">{e(label)}</span><span class="w">{e(word)}</span></div></div>'
     )
+
+
+def _rmini(label: str, value: Any, word: str, color: str) -> str:
+    c = 87.96  # 2πr, r = 14
+    v = max(0.0, min(10.0, float(value or 0)))
+    shown = f"{v:.0f}" if v == int(v) else f"{v:.1f}"  # one decimal fits the small ring
+    arc = (f'<circle cx="18" cy="18" r="14" fill="none" stroke="currentColor" stroke-width="4" '
+           f'stroke-dasharray="{v / 10 * c:.1f} {c}" stroke-linecap="round" '
+           'transform="rotate(-90 18 18)"/>') if v else ""  # fmt: skip
+    return (
+        f'<div class="rdi rd-{color}"><svg viewBox="0 0 36 36" role="img" '
+        f'aria-label="{e(label)} {_num(value)} of 10">'
+        '<circle cx="18" cy="18" r="14" fill="none" stroke="var(--line)" stroke-width="4"/>'
+        f'{arc}<text x="18" y="22" text-anchor="middle" fill="currentColor">{shown}</text>'
+        f'</svg><span><span class="k">{e(label)}</span> · <span class="w">{e(word)}</span></span></div>'
+    )
+
+
+def readings_compact(r: dict[str, Any]) -> str:
+    """The list's form of the two readings: a card is about 240 px wide."""
+    t, x = str(r.get("threat_level")), str(r.get("exposure_level"))
+    return ('<div class="rdc">'
+            + _rmini("Threat", r.get("threat"), _T_WORD.get(t, t), _T_COLOR.get(t, "yellow"))
+            + _rmini("Exposure", r.get("exposure"), _E_WORD.get(x, x), _E_COLOR.get(x, "yellow"))
+            + "</div>")  # fmt: skip
 
 
 def readings_dials(r: dict[str, Any]) -> str:
