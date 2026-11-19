@@ -384,9 +384,10 @@ details summary { cursor:pointer; color:var(--muted); font-size:var(--t-xs); }
 .zone .zs { font-size:var(--t-xs); color:var(--muted); margin-bottom:var(--s2); }
 .zone ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column;
   gap:var(--s2); }
-.zone li > div { display:flex; gap:var(--s2); justify-content:space-between;
+.zone li > div { display:flex; flex-wrap:wrap; gap:var(--s2); justify-content:space-between;
   align-items:baseline; }
-.zone .p { font-size:var(--t-xs); color:var(--muted); white-space:nowrap; }
+.zone li > div > code { flex:0 0 auto; max-width:100%; overflow-wrap:anywhere; }
+.zone .p { font-size:var(--t-xs); color:var(--muted); min-width:0; }
 .zone .u { font-size:var(--t-xs); color:var(--muted); display:block;
   overflow-wrap:anywhere; }
 .zone.home { background:var(--soft); }
