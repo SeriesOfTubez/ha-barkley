@@ -14,6 +14,7 @@ from sniff_test.analyzers import (
     guarddog,
     libraries,
     osv,
+    py_group,
     py_precision,
     pypi_meta,
     python_deps,
@@ -210,6 +211,8 @@ def scan(
         if target.kind is TargetKind.INTEGRATION:
             findings = _label_test_code(findings, target)
         findings = apply_exposure(_dedupe(findings), exposure)
+        # (#19) one "What it can do" finding per Python function (py_group)
+        findings = py_group.group(findings, target.root)
         findings = _fingerprints(findings, target)
         for r in results:  # (#18) a tool that can't load on this CPU: say why and the fix
             if r.state is AnalyzerState.ERROR and r.detail:
