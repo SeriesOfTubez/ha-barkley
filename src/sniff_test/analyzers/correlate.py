@@ -132,8 +132,16 @@ def correlate(findings: list[Finding], facts: list[Fact], root: Path) -> list[Fi
         and f.id not in explained
     ]
     outbound = [f for f in facts if f.attrs.get("outbound")]
+    # (0.15, issue #26) a host the code names only as an OAuth return address isn't a
+    # place it sends data (endpoints.redirect_only_hosts)
     dest_hosts = sorted(
-        {f.key for f in facts if f.kind in ("host", "ip") and f.attrs.get("class") in UNEXPLAINED}
+        {
+            f.key
+            for f in facts
+            if f.kind in ("host", "ip")
+            and f.attrs.get("class") in UNEXPLAINED
+            and not f.attrs.get("redirect_only")
+        }
     )
     dest_findings = [f for f in findings if f.rule_id in _DESTINATION_RULES]
     if not (sources and outbound and (dest_hosts or dest_findings)):

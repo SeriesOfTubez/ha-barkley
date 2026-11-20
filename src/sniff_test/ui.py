@@ -523,6 +523,7 @@ class Host:
     flagged: bool = False  # a finding is attached to the edge
     edge_id: str = ""
     service: str = ""  # who runs it, from the shipped list of well-known services (0.8.0)
+    redirect: bool = False  # (0.15) only an OAuth return address (endpoints.redirect_only)
 
 
 @dataclass
@@ -567,6 +568,7 @@ def hosts(report: dict[str, Any]) -> list[Host]:
                 bool(edge.get("finding_ids")),
                 str(edge.get("id", "")),
                 str(a.get("service", "")),
+                bool(a.get("redirect_only")),
             )
         )
     return sorted(out, key=lambda h: h.name)
@@ -2373,8 +2375,11 @@ def _host_li(h: Host, deep: str = "", open_: bool = False) -> str:
     where = (f'<span class="u">In the code at {e(", ".join(h.where[:3]), 300)}'
              f"{f' and {len(h.where) - 3} more places' if len(h.where) > 3 else ''}</span>"
              if h.where else "")  # fmt: skip
-    return _fold(h.edge_id, f"<code>{e(h.name, 120)}</code>{flag}", who + how + urls + where
-                 + deep, open_)  # fmt: skip
+    back = ('<span class="u">Barkley found it only in a list of sign-in return addresses '
+            "(OAuth): your browser goes there after you approve access. Barkley found no "
+            "code that sends anything there.</span>") if h.redirect else ""  # fmt: skip
+    return _fold(h.edge_id, f"<code>{e(h.name, 120)}</code>{flag}", who + back + how + urls
+                 + where + deep, open_)  # fmt: skip
 
 
 def _zone_list(items: list[str]) -> str:
@@ -2697,6 +2702,7 @@ ReviewFn = Callable[[dict[str, Any], list[dict[str, Any]]], str]
 
 
 _REPO_LINK = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_.-]{1,100}")
+
 
 def facts_line(report: dict[str, Any]) -> str:
     """(0.15, his ask) The facts under the title at body size: what kind of app, the

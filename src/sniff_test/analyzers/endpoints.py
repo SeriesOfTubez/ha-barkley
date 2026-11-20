@@ -10,7 +10,12 @@ things are findings, because the rest proved to be noise on real repos (one card
   Telegram bot token, Slack hook), i.e. data goes to the developer's channel, not yours;
 - `endpoint-public-ip-literal` (high): a URL whose host is a hardcoded public IP.
 
-Undeclared hosts feed the possible-exfil correlation (`correlate.py`).
+Undeclared hosts feed the possible-exfil correlation (`correlate.py`), except a host the
+code names only as an OAuth return address (0.15, issue #26): every place it appears is a
+string inside a Python constant whose name says REDIRECT or CALLBACK, and the URL's path
+ends in a callback or redirect segment (`redirect_only` on its facts). The browser is
+sent there after a sign-in; the app doesn't connect to it. It is still listed. Found with
+`ast.parse`, which only parses.
 
 Host edges also carry up to five URL samples (scheme, host, port and path; userinfo,
 query and fragment dropped, and the path of a credential URL hidden) and the URL ports.
@@ -374,6 +379,114 @@ def extract(root: Path) -> tuple[list[HostRef], list[tuple[str, int]]]:
     return refs, tokens
 
 
+# --- OAuth return addresses (0.15, issue #26) ---------------------------------------------
+
+# Both must hold, so a send to a path merely named /callback still counts as a destination.
+_REDIRECT_NAME = re.compile(r"(?i)redirect|callback")
+_REDIRECT_PATH = re.compile(r"(?i)(?:callback|redirect)[\w-]{0,40}$")
+
+
+def _target_names(node: ast.AST) -> list[str]:
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]  # type: ignore[attr-defined]
+    out = []
+    for t in targets:
+        if isinstance(t, ast.Name):
+            out.append(t.id)
+        elif isinstance(t, ast.Attribute):
+            out.append(t.attr)
+    return out
+
+
+def redirect_lines(text: str) -> dict[str, set[int]]:
+    """Constant name -> lines of its string constants, for module- or class-level
+    assignments whose name says REDIRECT or CALLBACK (`DEFAULT_OAUTH_REDIRECT_ALLOWLIST =
+    ("https://…/auth_callback", …)`). Parse only; a file that doesn't parse has none."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return {}
+    out: dict[str, set[int]] = {}
+    bodies = [tree.body] + [n.body for n in tree.body if isinstance(n, ast.ClassDef)]
+    for body in bodies:
+        for node in body:
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+                continue
+            for name in _target_names(node):
+                if not _REDIRECT_NAME.search(name):
+                    continue
+                for sub in ast.walk(node.value):
+                    if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                        out.setdefault(name, set()).add(sub.lineno)
+    return out
+
+
+# A call that sends or connects: a redirect constant handed to one is a destination.
+_SEND_CALLS = frozenset(
+    {"post", "get", "put", "patch", "delete", "request", "urlopen", "fetch", "send",
+     "ws_connect", "connect", "create_connection", "stream", "head", "options"}
+)  # fmt: skip
+
+
+def sent_names(text: str) -> set[str]:
+    """Names that appear anywhere inside a send or connect call (its arguments or what
+    it's called on): `session.post(REDIRECTS[0], …)` gives REDIRECTS. Parse only."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return set()
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        name = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""
+        if name.lower() not in _SEND_CALLS:
+            continue
+        for part in [*node.args, *(k.value for k in node.keywords)]:
+            for sub in ast.walk(part):
+                if isinstance(sub, ast.Name):
+                    out.add(sub.id)
+                elif isinstance(sub, ast.Attribute):
+                    out.add(sub.attr)
+    return out
+
+
+def _redirect_ref(ref: HostRef, lines: dict[str, set[int]]) -> bool:
+    if not ref.url or ref.line not in lines.get(ref.file, set()):
+        return False
+    m = _URL.match(ref.url)
+    path = (m["path"] or "") if m else ""
+    path = path.split("?", 1)[0].split("#", 1)[0].rstrip("/")[-200:]
+    return bool(_REDIRECT_PATH.search(path))
+
+
+def redirect_only_hosts(root: Path, refs: list[HostRef]) -> set[str]:
+    """Hosts every reference to which is an OAuth return address (see the module doc). A
+    constant that any Python file of the app hands to a send or connect call doesn't
+    count: its addresses are destinations."""
+    texts: dict[str, str] = {}
+    for p in sorted(root.rglob("*.py")):
+        try:
+            if p.is_symlink() or not p.is_file() or p.stat().st_size > _MAX_FILE:
+                continue
+            texts[p.relative_to(root).as_posix()] = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+    ref_files = {r.file for r in refs}
+    per_file = {rel: redirect_lines(t) for rel, t in texts.items() if rel in ref_files}
+    if not any(per_file.values()):
+        return set()
+    sent: set[str] = set()
+    for t in texts.values():
+        sent |= sent_names(t)
+    lines = {rel: {ln for name, ls in consts.items() if name not in sent for ln in ls}
+             for rel, consts in per_file.items()}  # fmt: skip
+    by_host: dict[str, list[bool]] = {}
+    for r in refs:
+        by_host.setdefault(r.host, []).append(_redirect_ref(r, lines))
+    return {h for h, marks in by_host.items() if marks and all(marks)}
+
+
 # --- classification ------------------------------------------------------------------
 
 
@@ -669,6 +782,7 @@ def run(target: Target) -> AnalyzerResult:
     findings: list[Finding] = []
     facts: list[Fact] = []
     hosts = {r.host for r in refs}
+    redirects = redirect_only_hosts(target.root, refs)
     for ref in refs:
         cls = classify(ref.host, declared)
         if cls == "namespace":
@@ -714,6 +828,8 @@ def run(target: Target) -> AnalyzerResult:
             attrs["schemes"] = [ref.scheme]
         if cred:
             attrs["credential"] = cred
+        if ref.host in redirects and not cred:
+            attrs["redirect_only"] = True
         if sample := url_sample(ref.url, credential=bool(cred)):
             attrs["urls"] = [sample]
             m = _URL.match(ref.url or "")
