@@ -197,3 +197,42 @@ def test_the_exposure_box_reads_plainly():
     assert "<h2>Exposure <span" in out and "what it opens up" not in out
     assert "Nothing found that would let someone who isn" in out
     assert "an administrator can already do everything" not in out
+
+
+def test_stored_reviews_are_left_out_of_the_preview(tmp_path):
+    """His report 2026-11-20: apps reviewed before showed "Reviewed by you" with nothing
+    left to undo. With the preview on the view ignores stored reviews; they stay stored."""
+    from datetime import UTC, datetime
+
+    from sniff_test import review, server
+    from sniff_test.store import Store
+
+    r = report(f("ha-auth-change-users", line=19))
+    r["findings"][0]["fingerprint"] = "a1b2c3d4e5f6a7b8c9d0e1f2"
+    del r["readings"]
+    store = Store(tmp_path / "s.db")
+    sid = store.save(r)
+    x = r["findings"][0]
+    when = datetime.now(UTC).isoformat()
+    store.accept([review.Accept("someone/device-bridge", x["fingerprint"], x["rule_id"], "",
+                                "Pat", when, sid, x["id"], "v2", x["file"])])  # fmt: skip
+    panel = server.Panel(store, lambda r, f: {}, None)
+    assert panel.shown_report(sid)["review"]["reviewed"] is True
+    panel.save_settings({"preview": "1"})
+    shown = panel.shown_report(sid)
+    assert shown["review"]["reviewed"] is False and shown["review"]["accepted"] == 0
+    assert len(store.accepts("someone/device-bridge")) == 1  # still stored
+
+
+def test_in_short_says_it_plainly():
+    out = ui.in_short(report(f("ha-auth-change-users", line=19)), preview=True)
+    assert "It can change who can log in to Home Assistant." in out
+    assert "worth a look" not in out and "We found" not in out and "<b>" not in out
+    assert out.endswith("Barkley found nothing that sends your data off the box.")
+
+
+def test_a_card_title_is_its_own_sentence_not_it_can_it():
+    assert ui._it_can("Its dashboard card reads your saved login") == (
+        "Its dashboard card reads your saved login."
+    )
+    assert ui._it_can("Changes who can log in to Home Assistant").startswith("It can change")

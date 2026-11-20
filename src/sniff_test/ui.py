@@ -273,11 +273,13 @@ a.button:hover { filter:brightness(1.08); }
 .rd { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:var(--s2); }
 .rdial { display:grid; grid-template-columns:auto minmax(0,1fr); gap:var(--s2); align-items:center;
   padding:var(--s2); border-radius:var(--r3); background:var(--soft); min-width:0; }
-.rdial svg { width:48px; height:48px; }
+.rdial svg { width:72px; height:72px; }
+/* the ring's 48-unit box is drawn at 72 px, so 13 here shows at about 20 px */
 .rdial text { font:700 var(--t-sm) var(--font); font-variant-numeric:tabular-nums; }
-.rdial .k { display:block; font-size:var(--t-xs); font-weight:600; letter-spacing:0.06em;
+.rdial .k { display:block; font-size:var(--t-sm); font-weight:600; letter-spacing:0.06em;
   text-transform:uppercase; color:var(--muted); }
-.rdial .w { display:block; font-weight:600; }
+.rdial .w { display:block; font-weight:600; font-size:var(--t-lg); line-height:1.25; }
+@media (max-width:480px) { .rd { grid-template-columns:minmax(0,1fr); } }
 .dhead.rdhead { grid-template-columns:minmax(0,1fr); }
 .rdhead .rd { margin-top:var(--s3); }
 /* the list's compact form: two short lines, a small ring and "Threat · None found" */
@@ -1078,6 +1080,8 @@ def render_grid(base: str, cards: list[Card], v: View | None = None, lead: str =
 def in_short(report: dict[str, Any], preview: bool = False) -> str:
     """A deterministic summary built only from the report (escaped HTML). `preview`: the
     proposed readings are shown, so nothing is said about a score."""
+    if preview:
+        return _in_short_plain(report)
     out: list[str] = []
     hs = hosts(report)
     net = internet(hs)
@@ -1108,9 +1112,7 @@ def in_short(report: dict[str, Any], preview: bool = False) -> str:
         if len(can) == len(big[:2]):
             out.append(
                 f"{lead}. "
-                + " ".join(
-                    f"It can {_can_phrase(explain.explain(g[0]['rule_id']).title)}." for g in can
-                )
+                + " ".join(_it_can(explain.explain(g[0]["rule_id"]).title) for g in can)
                 + (" And more below." if len(big) > 2 else "")
             )
         else:
@@ -2808,6 +2810,65 @@ def verdict_text(report: dict[str, Any]) -> str:
             return "All findings accepted"
         return f"Reviewed · {label}"
     return label
+
+
+def _it_can(title: str) -> str:
+    """ "It can change who can log in …"; a card's "Its dashboard card uses …" is already a
+    sentence (it read "It can it dashboard card uses …" before)."""
+    return f"{title}." if title.startswith("Its ") else f"It can {_can_phrase(title)}."
+
+
+def _in_short_plain(report: dict[str, Any]) -> str:
+    """(preview) In short, in plain words (his note 2026-11-20): where its code points,
+    what it can do, and whether Barkley found your data leaving. Escaped text."""
+    out: list[str] = []
+    net = internet(hosts(report))
+    home = any(h.cls == "local" for h in hosts(report))
+    own = sum(1 for h in net if h.cls == "declared")
+    n = len(net)
+    if not n:
+        out.append("Its code names no websites.")
+    elif own == n:
+        out.append(
+            f"Its code names {n} website{'s' * (n != 1)}, "
+            + ("its own." if n == 1 else "all its own." if n > 2 else "both its own.")
+        )
+    elif own:
+        out.append(f"Its code names {n} websites, {own} of them its own.")
+    else:
+        out.append(f"Its code names {n} website{'s' * (n != 1)}.")
+    if home:
+        out.append("It also names addresses on your home network.")
+    if pts := ports(report):
+        ps = ports_sentence(pts)
+        out.append("It c" + ps[1:] if ps.startswith("Connects") else ps)
+    titles = [
+        explain.explain(g[0]["rule_id"]).title
+        for g in scored_findings(report)
+        if kinds.kind(str(g[0]["rule_id"])) == kinds.CAPABILITY
+        and g[0]["severity"] in ("critical", "high", "medium")
+    ][:3]
+    # "Its dashboard card uses …" is a sentence already; the rest start with a verb
+    whole = [t for t in titles if t.startswith("Its ")]
+    can = [_can_phrase(t) for t in titles if not t.startswith("Its ")]
+    out.extend(f"{t}." for t in whole)
+    if can:
+        out.append("It can " + (can[0] if len(can) == 1 else
+                                ", ".join(can[:-1]) + " and " + can[-1]) + ".")  # fmt: skip
+    fl = flows(report)
+    if any(x["evidence"] == "proven" for x in fl):
+        out.append("Barkley traced your data being sent off the box.")
+    elif fl:
+        out.append("It reads private data and names websites Barkley can't explain. Barkley "
+                   "found no direct path between the two.")  # fmt: skip
+    else:
+        out.append("Barkley found nothing that sends your data off the box.")
+    p = len(privacy.notes(report))
+    if p:
+        out.append(f"There {'is' if p == 1 else 'are'} {p} privacy note{'s' * (p != 1)} below.")
+    if not report.get("complete"):
+        out.append("Part of the check didn't finish.")
+    return e(" ".join(out), 1200)
 
 
 def _can_phrase(title: str) -> str:

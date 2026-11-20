@@ -2873,12 +2873,16 @@ class Panel:
     def view(self, rep: dict[str, Any], show_minor: bool = False) -> dict[str, Any]:
         repo = str((rep.get("target") or {}).get("repo") or "").lower()
         i = self._inputs()
+        # (preview) nothing is scored by a review, so stored reviews and Malware check only
+        # are left out of the view: no "Reviewed by you" anywhere (his report 2026-11-20:
+        # apps reviewed before showed it with nothing left to undo). They stay stored.
+        live = not i.settings.preview
         shown = review.view(
             rep,
             trusted=i.trusted,
             settings=i.settings.review(),
-            accepts=i.accepts.get(repo, []) if repo else [],
-            malware_only=bool(repo) and repo in i.malware_only,
+            accepts=i.accepts.get(repo, []) if repo and live else [],
+            malware_only=live and bool(repo) and repo in i.malware_only,
             show_minor=show_minor,
         )
         if i.settings.preview:  # shown only; from the stored findings, Barkley's own reading
