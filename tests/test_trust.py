@@ -2,14 +2,11 @@
 can reach, what it does to the shown score, and that the stored scan never changes."""
 
 import json
-import re
 
-from test_server import addon, get, panel, post, token  # noqa: F401 (fixtures)
 from test_store import FINDING, report
 
-from sniff_test import scoring, trust, ui, watch
+from sniff_test import scoring, trust
 from sniff_test.models import Category, Finding, Severity
-from sniff_test.store import Store
 
 # A real integration as scanned: two GuardDog highs on one dependency, score 50
 ADDR = {
@@ -135,90 +132,3 @@ def test_a_finding_without_addresses_can_never_be_switched_off():
     assert trust.view(rep, t) is rep
     odd = {**ADDR, "addresses": "api.together.xyz"}  # not a list: ignored, not trusted
     assert "trust" not in trust.view(_report((odd, PIP)), t)
-
-
-def test_rows_show_the_score_only_through_the_panels_overlay(tmp_path):
-    store = Store(tmp_path / "s.db")
-    sid = store.save(_report())
-    other = store.save(_report(repo="other/app"))
-    t = store.trusted()
-    t.add("api.together.xyz", REPO)
-    store.set_trusted(t)
-    assert store.get(sid).score == 50 and store.get(sid).own_score is None  # the CLI's view
-    store.trust_overlay = True
-    row = store.get(sid)
-    assert (row.score, row.verdict, row.own_score) == (75, "kinda_sus", 50)
-    assert store.get(other).score == 50  # trusted for one app only
-    assert [r.score for r in store.history(REPO)] == [75]
-    assert store.report(sid)["score"] == 50  # the stored report is never rewritten
-    t.remove("api.together.xyz", REPO)
-    store.set_trusted(t)
-    assert store.get(sid).score == 50  # undone at once, no rescan
-
-
-def test_trust_button_flow_in_the_panel(panel):  # noqa: F811
-    store, _scan, base, _httpd = panel
-    sid = store.save(_report())
-    _, _, page = get(f"{base}/scan/{sid}")
-    assert "Trust api.together.xyz?" in page and "Trust for this app" in page
-    assert "Barkley knows this as Together AI, AI model API." in page
-    assert page.count("Trust for every app") == 1  # only the address finding offers it
-    tok = token(base)
-    # a finding with no addresses, a stranger's id and a missing token are all refused
-    assert post(f"{base}/trust", {"token": tok, "scan": sid, "finding": PIP["id"],
-                                  "scope": "app"})[0] == 400  # fmt: skip
-    assert post(f"{base}/trust", {"token": tok, "scan": sid, "finding": "c" * 16,
-                                  "scope": "all"})[0] == 400  # fmt: skip
-    assert post(f"{base}/trust", {"token": "x", "scan": sid, "finding": ADDR["id"],
-                                  "scope": "app"})[0] == 403  # fmt: skip
-    assert not store.trusted()
-    status, headers = post(f"{base}/trust", {"token": tok, "scan": sid, "finding": ADDR["id"],
-                                             "scope": "app"})  # fmt: skip
-    assert status == 303 and headers["Location"].endswith(f"/scan/{sid}")
-    assert store.trusted().scope(REPO, "api.together.xyz") == "app"
-    _, _, page = get(f"{base}/scan/{sid}")
-    # (0.14.0) a trusted address counts as reviewed: the ring shows 75, the split pill
-    # Barkley's own 50 and what the review added
-    assert 'aria-label="Score 75 of 100"' in page and ">Reviewed<" in page
-    assert "Barkley's score 50" in page.replace("&#x27;", "'") and "+25 <small>" in page
-    assert "Barkley's own score for this scan is 50." in page.replace("&#x27;", "'")
-    assert "Findings about addresses you trust (1)" in page and "You trust this address" in page
-    assert "What Barkley found (1)" in page and "Stop trusting api.together.xyz" in page
-    # the raw report is untouched
-    _, _, raw = get(f"{base}/scan/{sid}.json")
-    assert json.loads(raw)["score"] == 50 and "trusted_findings" not in raw
-    # the list page shows it, and its undo puts everything back
-    _, _, listed = get(f"{base}/trusted")
-    assert "api.together.xyz" in listed and "Only for" in listed
-    status, headers = post(f"{base}/untrust", {"token": tok, "address": "api.together.xyz",
-                                               "repo": REPO})  # fmt: skip
-    assert status == 303 and headers["Location"].endswith("/trusted")
-    assert not store.trusted()
-    _, _, page = get(f"{base}/scan/{sid}")
-    assert "you trust" not in page.lower().replace("trust api.together.xyz?", "")
-    assert post(f"{base}/untrust", {"token": tok, "address": "https://x", "repo": ""})[0] == 400
-
-
-def test_the_card_and_the_notification_say_the_score_counts_trusted_addresses(panel):  # noqa: F811
-    store, _scan, base, _httpd = panel
-    sid = store.save(_report())
-    t = store.trusted()
-    t.add("api.together.xyz", None)
-    store.set_trusted(t)
-    _, _, index = get(base + "/")
-    assert "<b>75</b>" in index and "<b>50</b>" not in index  # the stored-scans table
-    shown_row = store.get(sid)
-    c = ui.Card(repo=REPO, name="Agent", kind="integration", installed="v0.9.5",
-                available=None, scan=shown_row,
-                report=trust.view(store.report(sid), store.trusted()))  # fmt: skip
-    assert "The score treats 1 address you trust as fine. Barkley's own score is 50." in (
-        ui.card_sentence(c)
-    )
-    assert ">75<" in ui.card_html("", c)
-    shown = trust.view(store.report(sid), store.trusted())
-    entry = {"repo": REPO, "version": "v0.9.5", "kind": "integration", "scan_ids": [sid]}
-    _title, md, plain = watch.notification(entry, shown, None, "/app/x")
-    for text in (md, plain):
-        assert "75/100" in text and "Barkley's own score is 50" in text
-        assert "api.together.xyz" not in text  # never an address from scanned code
-    assert re.search(r"doesn't count 1 address you trust", md)

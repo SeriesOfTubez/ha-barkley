@@ -13,7 +13,6 @@ with `nosniff`, and the CSP allows no scripts at all.
 
 from __future__ import annotations
 
-import difflib
 import html
 import json
 import queue
@@ -35,20 +34,18 @@ from sniff_test import (
     __version__,
     doctor,
     ha_token,
-    kinds,
     login,
     memory,
     readings,
     recheck,
-    review,
     scancache,
     scoring,
     supervisor,
-    trust,
     ui,
     watch,
 )
 from sniff_test import settings as settings_mod
+from sniff_test import shown as shown_mod
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import GitHubError, RateLimit, RateLimitError
@@ -897,8 +894,7 @@ def render_index(
         f'whether each tool can run on this machine. <a href="{e(report_issue_url(ha))}" '
         'target="_blank" rel="noopener noreferrer" title="Opens a new public issue on '
         "Barkley's GitHub, with the versions filled in\">Report an issue</a> · "
-        f'<a href="{base}/settings">Settings</a> · '
-        f'<a href="{base}/trusted">Addresses you trust</a></p>'
+        f'<a href="{base}/settings">Settings</a></p>'
     )
     out.append(account)
     return ui.page("Barkley", "".join(out), refresh=5 if active else 0, base=base)
@@ -969,7 +965,7 @@ def ha_token_block(base: str, store: Store, period: int, token: str) -> str:
 
 
 # "How this works" under each setting on the Settings page: what it changes, in plain
-# words, checked against the code (scoring.Policy, kinds.MINOR, review.py, watch.py).
+# words, checked against the code (scoring.Policy, kinds.MINOR, shown.py, watch.py).
 SETTING_HELP = {
     "Exposure": (
         "Public raises by one level what Barkley finds about what an app accepts from "
@@ -1007,18 +1003,6 @@ SETTING_HELP = {
         "itself (at start-up or on a timer), no setting turns it off, and nothing in its "
         "README or setup screens mentions it. When Barkley can't be sure, it shows a privacy "
         "note that doesn't count. List only keeps it on the page without counting it."
-    ),
-    "When an accepted finding changes": (
-        "When you accept something Barkley found, Barkley remembers the code around it, "
-        "usually the function it's in, not the line number. If a new version has the same "
-        "code, it stays accepted. If the code changed, it opens again and counts in your "
-        "reviewed score again. Notify me adds a line about it to the auto-sniff notification "
-        "for that version. Just reopen it doesn't."
-    ),
-    "Ask again": (
-        "After 6 or 12 months, anything you accepted opens again so you can take a fresh "
-        "look, even if the code didn't change. Your setup, or what you know about the app, "
-        "may have changed. With Never, it stays accepted until its code changes."
     ),
     "Auto-sniff": (
         "When the Marketplace installs or updates an app, or offers an update, Barkley "
@@ -1106,9 +1090,10 @@ def render_settings(
     defaults: settings_mod.Settings = settings_mod.DEFAULTS,
     ha_token_html: str = "",
 ) -> bytes:
-    """Barkley's Settings page (part 3, the agreed wording 2026-11-18): Scoring, Reviews,
-    Checking and notifications. One form; each section can go back to Barkley's defaults.
-    No script: plain selects and buttons."""
+    """Barkley's Settings page (part 3, the agreed wording 2026-11-18): Scoring, the
+    readings, Checking and notifications (0.15: the Reviews section went with reviews).
+    One form; each section can go back to Barkley's defaults. No script: plain selects
+    and buttons."""
 
     def row(label: str, help_: str, control: str, more: str = "") -> str:
         # `more`: the longer "How this works", folded (<details>: no script, works on phones)
@@ -1186,16 +1171,6 @@ def render_settings(
               "the reading by half.",
               sel("network", s.network,
                   [("home", "Home network (default)"), ("shared", "A shared or work network")]))
-    )  # fmt: skip
-    review_rows = (
-        row("When an accepted finding changes", "When a new version changes the code around "
-            "something you accepted, it opens again either way. Choose whether you also get a "
-            "notification.", sel("notify_reopen", "1" if s.notify_reopen else "0",
-                               [("1", "Notify me (default)"), ("0", "Just reopen it")]))
-        + row("Ask again", "Ask you to look at accepted findings again after a while, even if "
-              "nothing changed.", sel("reconfirm_months", s.reconfirm_months,
-                                      [(0, "Never (default)"), (6, "After 6 months"),
-                                       (12, "After 12 months")]))
     )  # fmt: skip
     check_rows = ""
     if watcher is not None:
@@ -1327,7 +1302,6 @@ def render_settings(
         f'<form method=post action="{base}/settings" id="settings" class="setform">{hidden}</form>'
         + section("Scoring", scoring_rows.replace("<select ", '<select form="settings" '),
                   "scoring")
-        + section("Reviews", review_rows.replace("<select ", '<select form="settings" '), "reviews")
         + section("Proposed readings (preview)",
                   preview_rows.replace("<select ", '<select form="settings" '), "preview")
         + section("Checking and notifications",
@@ -1338,64 +1312,6 @@ def render_settings(
         "values.</p>"
     )  # fmt: skip
     return _page("Barkley · Settings", body, base)
-
-
-def _code_lines(report: dict[str, Any], f: dict[str, Any]) -> list[str]:
-    """The code Barkley kept around a finding (its context snippet), else its evidence.
-    Scanned code: only ever escaped and shown, never run or parsed here."""
-    snip = ai_context.snippet_of(report, str(f.get("id"))) if report.get("context") else None
-    if isinstance(snip, dict):
-        lines: list[str] = []
-        for seg in snip.get("segments") or []:
-            if isinstance(seg, dict):
-                lines += [str(x) for x in seg.get("code") or []]
-        if lines:
-            return lines[:400]
-    return [str(f.get("evidence") or "")]
-
-
-def render_changed(
-    base: str, sid: int, new: dict[str, Any], fid: str, old: dict[str, Any] | None
-) -> bytes:
-    """What changed? A reopened finding: the code when it was accepted against the code
-    now, as Barkley kept it from each scan (no download, nothing parsed)."""
-    f = next((x for x in new.get("findings", []) if str(x.get("id")) == fid), None)
-    if f is None:
-        return _page("Barkley · What changed?", '<p class="muted">No such finding.</p>', base)
-    st = f.get("review") or {}
-    title = ui.explain.explain(str(f["rule_id"])).title
-    new_ref = str((new.get("target") or {}).get("ref") or "this version")
-    old_ref = str(st.get("ref") or "the accepted version")
-    before = None
-    if old is not None:
-        before = next((x for x in old.get("findings", [])
-                       if str(x.get("id")) == str(st.get("finding_id"))), None)  # fmt: skip
-    if before is None or old is None:
-        body_diff = ('<p class="muted">The scan where you accepted it is no longer stored, so '
-                     "Barkley can only show the code as it is now.</p>"
-                     '<pre class="diffcode">'
-                     f"{e(chr(10).join(_code_lines(new, f)), 20000)}</pre>")  # fmt: skip
-    else:
-        a, b = _code_lines(old, before), _code_lines(new, f)
-        out = []
-        for line in difflib.unified_diff(a, b, old_ref, new_ref, lineterm="", n=3):
-            add = line.startswith("+") and not line.startswith("+++")
-            cls = "add" if add else "del" if line[:1] == "-" and line[:3] != "---" else ""
-            out.append(f'<span class="{cls}">{e(line, 2000)}</span>' if cls else e(line, 2000))
-        body_diff = (f'<pre class="diffcode">{chr(10).join(out)}</pre>' if out else
-                     '<p class="muted">The code Barkley kept looks the same. The change is '
-                     "in the code around it, in the function it sits in.</p>")  # fmt: skip
-    body = (
-        f'<p class="crumb"><a href="{base}/scan/{sid}">{ui.icon("back")} Back to the app</a></p>'
-        f'<section class="box"><h1>What changed?</h1><p class="mt2"><b>{e(title)}</b> '
-        f'<span class="muted">({e(f.get("file") or "")}'
-        f"{':' + str(f['line']) if f.get('line') else ''})</span></p>"
-        f'<p class="sub mt2">You accepted this in {e(old_ref, 60)}. In {e(new_ref, 60)} the code '
-        "around it is different, so it's open again. Lines marked with a minus were there when "
-        "you accepted "
-        f"it; lines marked with a plus are new.</p>{body_diff}</section>"
-    )
-    return _page("Barkley · What changed?", body, base)
 
 
 def render_account(base: str, name: str, token: str) -> str:
@@ -1785,19 +1701,8 @@ def render_scan(
         update=_update_box(base, row, token),
         again=_again_box(base, report, token, sid)
         + _advisory_line(base, sid, report, store, token, rechecking),
-        trust=trust_block(base, sid, report, token),
-        # (preview) nothing is scored by a review, so there's nothing to accept: each item
-        # keeps only "Report a false positive" (his call 2026-11-20)
-        accept=accept_all_box(base, sid, report, token)
-        if "review" in report and not report.get("readings")
-        else "",
-        review=(
-            report_only_block(report)
-            if report.get("readings")
-            else review_block(base, sid, report, token)
-        )
-        if "review" in report
-        else None,
+        trust=address_block,
+        review=report_block(report) if "shown" in report else None,
         ai=have,
         ai_form=_ai_form(
             base,
@@ -1847,32 +1752,7 @@ def _again_box(base: str, report: dict[str, Any], token: str, sid: int = 0) -> s
         f'<input type=hidden name=ref value="{e(ref or "")}">'
         '<button class="link" title="Runs a fresh scan instead of reusing this one">'
         "Sniff this version again</button></form>"
-        f'<span class="muted">·</span> {_versions_link(base, repo)}'
-        f"{_malware_only_form(base, report, token, sid)}</div>"
-    )
-
-
-def _malware_only_form(base: str, report: dict[str, Any], token: str, sid: int) -> str:
-    """Per app: Malware check only (replaces Off; user decision 2026-11-17). New versions
-    and re-checks still run; only Threats and known malware are shown and notified."""
-    r = report.get("review")
-    repo = str((report.get("target") or {}).get("repo") or "")
-    if r is None or not _REPO.fullmatch(repo):
-        return ""
-    on = bool(r.get("malware_only"))
-    if report.get("readings") and not on:  # (preview) his call 2026-11-20: not per app
-        return ""
-    label = "Show everything again" if on else "Malware check only"
-    tip = ("Shows every finding and the full score again" if on else
-           "Shows and notifies only Threats and known malware for this app; it is still "
-           "checked the same way")  # fmt: skip
-    return (
-        f'<span class="muted">·</span><form method=post action="{base}/malware-only">'
-        f'<input type=hidden name=token value="{token}">'
-        f'<input type=hidden name=repo value="{e(repo)}">'
-        f'<input type=hidden name=on value="{"0" if on else "1"}">'
-        f'<input type=hidden name=scan value="{sid}">'
-        f'<button class="link" title="{tip}">{label}</button></form>'
+        f'<span class="muted">·</span> {_versions_link(base, repo)}</div>'
     )
 
 
@@ -2150,73 +2030,9 @@ def _ago_text(iso: str) -> str:
         return ""
 
 
-def review_block(base: str, sid: int, report: dict[str, Any], token: str) -> ui.ReviewFn:
-    """The review row under each finding: Mark reviewed (with a note), ✓ Accepted with the
-    note, who and when (Undo), or for changed code What changed? and Accept again.
-    Known malware can't be accepted. Every finding gets Report a false positive."""
-
-    def form(path: str, fid: str, label: str, note: bool = False) -> str:
-        n = ('<input type=text name=note maxlength=300 aria-label="Note (optional)" '
-             'placeholder="Note (optional)">') if note else ""  # fmt: skip
-        return (f'<form method=post action="{base}/{path}">'
-                f'<input type=hidden name=token value="{token}">'
-                f'<input type=hidden name=scan value="{sid}">'
-                f'<input type=hidden name=finding value="{e(fid, 16)}">{n}'
-                f"<button>{label}</button></form>")  # fmt: skip
-
-    def block(f: dict[str, Any], fs: list[dict[str, Any]]) -> str:
-        link = (f'<a href="{e(report_fp_url(report, f), 1500)}" target="_blank" '
-                f'rel="noopener noreferrer" title="{e(_REPORT_TITLE)}">Report a false '
-                "positive</a>")  # fmt: skip
-        if report.get("review", {}).get("malware_only"):
-            return f'<div class="rev">{link}</div>'
-        fid = str(f["id"])
-        if not review.can_accept(f):
-            why = ("Known malware can't be accepted." if f.get("rule_id") in kinds.NEVER_ACCEPT
-                   else "This can't be accepted, because Barkley can't tie it to a place in "
-                        "the code.")  # fmt: skip
-            return f'<div class="rev"><span class="muted">{why}</span>{link}</div>'
-        states = [(x.get("review") or {}) for x in fs]
-        st = states[0]
-        # a finding shown once for several places: every form carries all of them, so Undo
-        # and Accept again cover what Mark reviewed accepted (his report 2026-11-19: Undo
-        # left the other places accepted, +8 stayed)
-        ids = [str(x["id"]) for x in fs if review.can_accept(x)]
-        many = "".join(f'<input type=hidden name=also value="{e(i, 16)}">' for i in ids[1:])
-
-        def all_of(html: str) -> str:
-            return html.replace("</form>", many + "</form>")
-
-        state = st.get("state", "")
-        if state == "accepted" and all(x.get("state") == "accepted" for x in states):
-            who = f" by {e(st['who'])}" if st.get("who") else ""
-            when = _ago_text(str(st.get("at") or ""))
-            note = (
-                f' <span class="muted">“{e(st.get("note"), 300)}”</span>' if st.get("note") else ""
-            )
-            return (f'<div class="rev"><span class="done">{ui.icon("check", 14)} Accepted'
-                    f"{who}{' on ' + when if when else ''}</span>{note}"
-                    f"{all_of(form('unaccept', fid, 'Undo'))}{link}</div>")  # fmt: skip
-        if state == "reopened":
-            changed = (f'<a href="{base}/changed?scan={sid}&amp;finding={e(fid, 16)}">'
-                       "What changed?</a>")  # fmt: skip
-            return (f'<div class="rev"><span class="reopen">{ui.icon("refresh", 14)} Changed since '
-                    f"you accepted it in {e(st.get('ref') or 'an earlier version', 60)}</span>"
-                    f"{changed}{all_of(form('accept', fid, 'Accept again', True))}"
-                    f"{link}</div>")  # fmt: skip
-        if state == "reconfirm":
-            when = _ago_text(str(st.get("at") or ""))
-            return (f'<div class="rev"><span class="reopen">Accepted on {e(when)}. Time to look '
-                    f"again.</span>{all_of(form('accept', fid, 'Accept again', True))}"
-                    f"{link}</div>")  # fmt: skip
-        btn = all_of(form("accept", fid, "Mark reviewed", True))
-        return f'<div class="rev">{btn}{link}</div>'
-
-    return block
-
-
-def report_only_block(report: dict[str, Any]) -> ui.ReviewFn:
-    """(preview) The row under each item: Report a false positive, nothing to accept."""
+def report_block(report: dict[str, Any]) -> ui.ReviewFn:
+    """The row under each item: Report a false positive (0.15: the only action; reviews
+    were removed, his decision 2026-11-20)."""
 
     def block(f: dict[str, Any], _fs: list[dict[str, Any]]) -> str:
         return (f'<div class="rev"><a href="{e(report_fp_url(report, f), 1500)}" '
@@ -2226,146 +2042,14 @@ def report_only_block(report: dict[str, Any]) -> ui.ReviewFn:
     return block
 
 
-def accept_all_box(base: str, sid: int, report: dict[str, Any], token: str) -> str:
-    """Accept all, at the top: every finding of this version, with one tick per Threat
-    (user decision 2026-11-17). Known malware can never be accepted, so an app with any
-    never gets a reviewed score; the button then reads "Accept the rest"."""
-    r = report.get("review") or {}
-    if r.get("malware_only") or not report.get("findings"):
+def address_block(f: dict[str, Any]) -> str:
+    """Under an item that is only about where an address points: each address and what
+    it is (0.15: the Trust buttons went with reviews). Every address came from the
+    scanner's own parse; still escaped."""
+    addrs = [a for a in f.get("addresses") or [] if isinstance(a, str)]
+    if not addrs:
         return ""
-    open_ = [
-        f
-        for f in report["findings"]
-        if review.can_accept(f) and (f.get("review") or {}).get("state") != "accepted"
-    ]
-    if not open_:
-        return ""
-    threats = [f for f in open_ if kinds.is_threat(str(f["rule_id"]))]
-    malware = [f for f in report["findings"] if f.get("rule_id") in kinds.NEVER_ACCEPT]
-    ticks = "".join(
-        f'<label><input type=checkbox name=threat value="{e(f["id"], 16)}"> '
-        f"{e(ui.explain.explain(str(f['rule_id'])).title)} "
-        f'<span class="muted">({e(f.get("file") or "")}'
-        f"{':' + str(f['line']) if f.get('line') else ''})</span></label>"
-        for f in threats
-    )
-    threat_part = (f"<p><b>Threats need their own tick</b>, one each. Unticked ones stay "
-                   f"open.</p>{ticks}") if ticks else ""  # fmt: skip
-    mal = (f'<p class="muted">Known malware ({len(malware)}) can never be accepted, so this app '
-           "never gets a reviewed score.</p>") if malware else ""  # fmt: skip
-    label = "Accept the rest" if malware or threats else "Accept all findings"
-    return (
-        '<section class="box accept"><h2>Accept all</h2>'
-        f'<form method=post action="{base}/accept-all">'
-        f'<input type=hidden name=token value="{token}">'
-        f'<input type=hidden name=scan value="{sid}">'
-        "<p>Mark every finding in this version as reviewed."
-        + (
-            ""
-            if report.get("readings")
-            else " Your reviewed score then shows beside Barkley's original score."
-        )  # (preview) no score on the page to show it beside
-        + "</p>"
-        f"{threat_part}{mal}"
-        '<div class="row"><input type=text name=note maxlength=300 aria-label="Note (optional)" '
-        f'placeholder="Note (optional)"><button>{label}</button></div></form></section>'
-    )
-
-
-def trust_block(base: str, sid: int, report: dict[str, Any], token: str) -> ui.TrustFn:
-    """The "Trust this address?" block under a finding that is only about where an
-    address points, or the "you trust this" note with its undo. Server-built (it holds
-    the form token); every address is escaped and came from the scanner's own parse."""
-    repo = str(report.get("target", {}).get("repo") or "")
-    has_repo = bool(_REPO.match(repo))
-    trusted = {f["id"]: f for f in report.get("trusted_findings", [])}
-
-    def hidden(f: dict[str, Any]) -> str:
-        return (f'<input type=hidden name=token value="{token}">'
-                f'<input type=hidden name=scan value="{sid}">'
-                f'<input type=hidden name=finding value="{e(f["id"], 16)}">')  # fmt: skip
-
-    def block(f: dict[str, Any]) -> str:
-        addrs = [a for a in f.get("addresses") or [] if isinstance(a, str)]
-        if not addrs:
-            return ""
-        lines = "".join(ui.address_line(a) for a in addrs[:6])
-        if f["id"] in trusted:
-            scope = trusted[f["id"]].get("trusted")
-            undo = "".join(
-                f'<form method=post action="{base}/untrust"><input type=hidden name=token '
-                f'value="{token}"><input type=hidden name=scan value="{sid}">'
-                f'<input type=hidden name=address value="{e(a, 253)}">'
-                f'<input type=hidden name=repo value="{e(repo) if sc == "app" else ""}">'
-                f"<button>Stop trusting {e(a, 80)}"
-                f"{' (for every app)' if sc == 'all' else ''}</button></form>"
-                for a in addrs[:6]
-                if (sc := store_scope(report, a))
-            )
-            where = {"app": "for this app", "all": "for every app"}.get(scope, "")
-            return (f'<div class="trustbox on"><p class="small"><b>{ui.icon("check")} You trust '
-                    f"{'this address' if len(addrs) == 1 else 'these addresses'} {where}</b>, "
-                    "so this finding costs no points. A new or changed address is flagged "
-                    f'again.</p><ul class="plain small">{lines}</ul><div class="row">{undo}</div>'
-                    "</div>")  # fmt: skip
-        one = len(addrs) == 1
-        name = e(addrs[0], 80) if one else "these addresses"
-        buttons = (
-            (f'<form method=post action="{base}/trust">{hidden(f)}'
-             "<input type=hidden name=scope value=app><button>Trust for this app</button></form>"
-             if has_repo else "")
-            + f'<form method=post action="{base}/trust">{hidden(f)}'
-            "<input type=hidden name=scope value=all><button>Trust for every app</button></form>"
-        )  # fmt: skip
-        return (f'<div class="trustbox"><p class="small"><b>Trust {name}?</b> This finding is '
-                f"only about where {'this address points' if one else 'these addresses point'}"
-                ", not about what is sent. Check that "
-                f"{'it is an address' if one else 'they are addresses'} you expect this app to "
-                "use before you run it. If you mark "
-                f"{'it' if one else 'them'} trusted, this finding costs no points, now and in "
-                f"future sniffs, until the address changes.</p><ul class=\"plain small\">{lines}"
-                f'</ul><div class="row">{buttons}</div></div>')  # fmt: skip
-
-    def store_scope(rep: dict[str, Any], a: str) -> str:
-        return rep.get("trust", {}).get("scopes", {}).get(a, "")
-
-    return block
-
-
-def render_trusted(base: str, trusted: trust.Trusted, names: dict[str, str], token: str) -> bytes:
-    """Every address the user trusts, with an undo each. Addresses and repos were
-    validated when they were stored; still escaped."""
-
-    def row(a: str, repo: str) -> str:
-        return (f'<tr><td><code>{e(a, 253)}</code></td><td class="wrap">{ui.known_text(a)}</td>'
-                f'<td class="act"><form method=post action="{base}/untrust">'
-                f'<input type=hidden name=token value="{token}">'
-                f'<input type=hidden name=address value="{e(a, 253)}">'
-                f'<input type=hidden name=repo value="{e(repo)}">'
-                "<button>Stop trusting</button></form></td></tr>")  # fmt: skip
-
-    out = [f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
-           "<h1>Addresses you trust</h1>",
-           '<p class="muted">Some things Barkley finds are only about where an address '
-           "points: an internet address written into the code as a number, or an address in "
-           "a code library that an automatic check finds suspicious. When you mark such an "
-           "address trusted on an app's page, those stop costing points. Nothing else "
-           "changes. Anything about what an app sends, or about a paste site, tunnel or chat "
-           "webhook, can't be switched off here. Barkley's own score stays on each app's "
-           "page.</p>"]  # fmt: skip
-    if not trusted:
-        out.append('<p class="muted">You haven\'t marked any address trusted.</p>')
-    if trusted.everywhere:
-        rows = "".join(row(a, "") for a in sorted(trusted.everywhere))
-        out.append(f"<h2>For every app</h2><table>{rows}</table>")
-    for repo in sorted(trusted.apps):
-        if trusted.apps[repo]:
-            title = names.get(repo) or repo
-            out.append(f"<h2>Only for {e(title, 80)} <span class=\"muted small\">{e(repo, 200)}"
-                       "</span></h2><table>"
-                       + "".join(row(a, repo) for a in sorted(trusted.apps[repo]))
-                       + "</table>")  # fmt: skip
-    return _page("Barkley · Addresses you trust", "".join(out), base)
+    return f'<ul class="plain small">{"".join(ui.address_line(a) for a in addrs[:6])}</ul>'
 
 
 class Diagnostics:
@@ -2570,9 +2254,6 @@ _INSTALLED_TTL = 300  # seconds; HACS itself refreshes far less often
 class _Inputs:
     generation: int
     settings: settings_mod.Settings
-    trusted: trust.Trusted
-    malware_only: set[str]
-    accepts: dict[str, list[review.Accept]]
 
 
 class Panel:
@@ -2585,8 +2266,8 @@ class Panel:
         memory_fn: Callable[[], memory.Memory] = memory.check,
     ):
         self.store = store
-        # (0.14.0) rows show scores as the panel does: the user's scoring settings,
-        # trusted addresses, accepted findings, Malware check only (review.view)
+        # (0.14.0) rows show scores as the panel does: the user's scoring settings
+        # (shown.view)
         store.overlay = self.overlay_row
         self.worker = worker
         self.start_settings = settings_mod.DEFAULTS  # from the add-on options / BARKLEY_*
@@ -2883,28 +2564,22 @@ class Panel:
         return self._reports[sid]
 
     def shown_report(self, sid: int, show_minor: bool = False) -> dict[str, Any] | None:
-        """The report as the panel shows it (review.view): Barkley's score with the user's
-        scoring settings, the reviewed score beside it, trusted findings set aside. The
-        stored report, the raw JSON link, the AI's input and diffs always use `report()`."""
+        """The report as the panel shows it (shown.view): Barkley's score with the user's
+        scoring settings, minor items left out. The stored report, the raw JSON link, the
+        AI's input and diffs always use `report()`."""
         rep = self.report(sid)
         return self.view(rep, show_minor) if rep is not None else None
 
     def _inputs(self) -> _Inputs:
         """What a shown score depends on, read once and kept until the store records a
         write to any of it (Store.generation): a page with hundreds of rows read the
-        settings, trusted addresses and reviews for each row, 1,500 database opens on
-        one render (3-4 s on a real box, 0.14.0.1)."""
+        settings for each row, 1,500 database opens on one render (3-4 s on a real box,
+        0.14.0.1)."""
         gen = self.store.generation
         cached = self._cache
         if cached is not None and cached.generation == gen:
             return cached
-        fresh = _Inputs(
-            gen,
-            settings_mod.load(self.store, self.start_settings),
-            self.store.trusted(),
-            settings_mod.malware_only(self.store),
-            self.store.all_accepts(),
-        )
+        fresh = _Inputs(gen, settings_mod.load(self.store, self.start_settings))
         self._cache = fresh
         self._rows = {}
         return fresh
@@ -2914,37 +2589,18 @@ class Panel:
         return self._inputs().settings
 
     def view(self, rep: dict[str, Any], show_minor: bool = False) -> dict[str, Any]:
-        repo = str((rep.get("target") or {}).get("repo") or "").lower()
         i = self._inputs()
-        # (preview) nothing is scored by a review, so stored reviews and Malware check only
-        # are left out of the view: no "Reviewed by you" anywhere (his report 2026-11-20:
-        # apps reviewed before showed it with nothing left to undo). They stay stored.
-        live = not i.settings.preview
-        shown = review.view(
-            rep,
-            trusted=i.trusted,
-            settings=i.settings.review(),
-            accepts=i.accepts.get(repo, []) if repo and live else [],
-            malware_only=live and bool(repo) and repo in i.malware_only,
-            show_minor=show_minor,
-        )
+        shown = shown_mod.view(rep, settings=i.settings.scoring(), show_minor=show_minor)
         if i.settings.preview:  # shown only; from the stored findings, Barkley's own reading
             shown["readings"] = readings.compute(rep, i.settings.network).to_dict()
         return shown
 
     def overlay_row(self, row: ScanRow) -> ScanRow:
         """A stored scan's index row with the score the panel shows (Store.overlay). Reads
-        the report only when something could change it; the answer is kept until an
-        input changes."""
+        the report only when a scoring setting could change it; the answer is kept until
+        an input changes."""
         i = self._inputs()
-        default = i.settings.review().policy(row.exposure) == scoring.Policy(exposure=row.exposure)
-        repo = (row.repo or "").lower()
-        if (
-            default
-            and not i.trusted
-            and not (repo and repo in i.accepts)
-            and not (repo and repo in i.malware_only)
-        ):
+        if i.settings.scoring().policy(row.exposure) == scoring.Policy(exposure=row.exposure):
             return row
         hit = self._rows.get(row.id)
         if hit is not None:
@@ -2957,8 +2613,7 @@ class Panel:
         key = str((v.get("verdict") or {}).get("key") or row.verdict)
         out = row
         if score != row.score or key != row.verdict:
-            own = int((v.get("review") or {}).get("own_score", row.score))
-            out = replace(row, score=score, verdict=key, own_score=own)
+            out = replace(row, score=score, verdict=key)
         if len(self._rows) < 5000:
             self._rows[row.id] = out
         return out
@@ -3004,77 +2659,6 @@ class Panel:
             self.store.set_setting("ai_mode", AI_MODE_DEFAULT)
             self.ai_mode = AI_MODE_DEFAULT
 
-    def accept(self, sid: int, finding_ids: list[str], note: str, who: str) -> int:
-        """Mark findings of a stored scan reviewed; known malware is never accepted. A
-        reopened finding accepted again replaces the acceptance its old code had."""
-        rep = self.report(sid)
-        if rep is None:
-            raise StoreError(f"no stored scan @{sid}")
-        repo = str((rep.get("target") or {}).get("repo") or "").lower()
-        if not repo:
-            return 0
-        v = self.view(rep, show_minor=True)
-        by_id = {str(f["id"]): f for f in v["findings"]}
-        now = datetime.now(UTC).isoformat(timespec="seconds")
-        items, replaces = [], []
-        for fid in dict.fromkeys(finding_ids):
-            f = by_id.get(fid)
-            if f is None or not review.can_accept(f):
-                continue
-            items.append(review.Accept(repo, str(f["fingerprint"]), str(f["rule_id"]),
-                                       review.clean_note(note), review.clean_who(who), now, sid,
-                                       fid, str((rep.get("target") or {}).get("ref") or ""),
-                                       str(f.get("file") or "")))  # fmt: skip
-            old = f.get("review") or {}
-            if old.get("state") == "reopened":
-                prev = next((a for a in self.store.accepts(repo)
-                             if a.scan_id == old.get("scan_id")
-                             and a.finding_id == old.get("finding_id")), None)  # fmt: skip
-                if prev is not None:
-                    replaces.append(prev.fingerprint)
-        self.store.accept(items, replaces)
-        if items:
-            print(f"accepted by {review.clean_who(who) or 'the user'}: {len(items)} finding(s) "
-                  f"of {repo} (scan @{sid})", file=sys.stderr, flush=True)  # fmt: skip
-        return len(items)
-
-    def unaccept(self, sid: int, finding_ids: list[str]) -> bool:
-        """Undo: every place of the finding the user clicked (the form carries them all)."""
-        rep = self.report(sid)
-        if rep is None:
-            return False
-        repo = str((rep.get("target") or {}).get("repo") or "")
-        wanted = set(finding_ids)
-        prints = [str(x["fingerprint"]) for x in rep.get("findings", [])
-                  if str(x.get("id")) in wanted and x.get("fingerprint")]  # fmt: skip
-        if not repo or not prints:
-            return False
-        self.store.unaccept(repo, list(dict.fromkeys(prints)))
-        return True
-
-    def trust_finding(self, sid: int, finding_id: str, everywhere: bool) -> bool:
-        """Mark every address of one finding trusted, for its app or for every app.
-        Only addresses the scanner attached to that finding can be added."""
-        report = self.store.report(sid)
-        f = next((x for x in report.get("findings", []) if x.get("id") == finding_id), None)
-        addrs = [a for a in (f or {}).get("addresses") or [] if isinstance(a, str)]
-        repo = report.get("target", {}).get("repo")
-        if not addrs or not (everywhere or (repo and _REPO.match(str(repo)))):
-            return False
-        t = self.store.trusted()
-        if not all(t.add(a, None if everywhere else str(repo)) for a in addrs):
-            return False
-        self.store.set_trusted(t)
-        print(f"trusted by the user ({'every app' if everywhere else repo}): "
-              f"{', '.join(addrs)}", file=sys.stderr, flush=True)  # fmt: skip
-        return True
-
-    def untrust(self, address: str, repo: str | None) -> None:
-        t = self.store.trusted()
-        t.remove(address, repo)
-        self.store.set_trusted(t)
-        print(f"no longer trusted ({repo or 'every app'}): {address}", file=sys.stderr, flush=True)
-
     def rows(self, refresh: bool = False) -> tuple[InstalledState, list[Row]]:
         if self.installed_fn is None:
             return InstalledState(error="not running as a Home Assistant add-on"), []
@@ -3088,12 +2672,6 @@ class Panel:
         }
         for r in rows:
             r.busy = busy.get(r.item.repo.lower(), "")
-            # (0.14.0) an accepted finding whose code changed (or is due again) needs a look
-            if r.installed_scan and self.store.accepts(r.item.repo):
-                v = self.shown_report(r.installed_scan.id)
-                if v is not None and (due := review.due(v)):
-                    r.group = "attention"
-                    r.reasons.append(f"{due} accepted finding{'s' * (due != 1)} changed")
         return st, rows
 
     def row_for(self, repo: str | None) -> Row | None:
@@ -3368,23 +2946,6 @@ class Panel:
                             ha_token_html=ha_token_block(base, panel.store,
                                                          panel.settings.token_days, panel.token)
                             if panel.standalone else ""))  # fmt: skip
-                    if url.path == "/changed":
-                        q = urllib.parse.parse_qs(url.query)
-                        sid, fid = int(q["scan"][0]), q["finding"][0]
-                        if not re.fullmatch(r"[0-9a-f]{16}", fid):
-                            return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
-                        v = panel.shown_report(sid, show_minor=True)
-                        if v is None:
-                            return self._text(
-                                HTTPStatus.NOT_FOUND, f"There's no stored scan @{sid}."
-                            )
-                        f = next((x for x in v["findings"] if x.get("id") == fid), {})
-                        old_sid = (f.get("review") or {}).get("scan_id")
-                        old = panel.report(int(old_sid)) if isinstance(old_sid, int) else None
-                        return self._send(200, render_changed(base, sid, v, fid, old))
-                    if url.path == "/trusted":
-                        return self._send(200, render_trusted(
-                            base, panel.store.trusted(), panel.names(), panel.token))  # fmt: skip
                     if url.path == "/doctor":
                         # Never waits for the tools: the run goes on in its own thread.
                         if "again=1" in url.query:
@@ -3454,41 +3015,6 @@ class Panel:
                     else:
                         w.notify_test()
                     return self._redirect(f"{self._base()}/settings")
-                who = (self._session().user if panel.login is not None and self._session()
-                       else self.headers.get("X-Remote-User-Display-Name")
-                       or self.headers.get("X-Remote-User-Name") or "")  # fmt: skip
-                if path in ("/accept", "/accept-all", "/unaccept"):
-                    if not get("scan").isdigit():
-                        return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
-                    sid = int(get("scan"))
-                    ids = [get("finding"), *form.get("also", [])]
-                    if path == "/accept-all":
-                        v = panel.shown_report(sid, show_minor=True)
-                        if v is None:
-                            return self._text(
-                                HTTPStatus.NOT_FOUND, f"There's no stored scan @{sid}."
-                            )
-                        ticked = set(form.get("threat", []))
-                        ids = [str(f["id"]) for f in v["findings"]
-                               if not kinds.is_threat(str(f["rule_id"]))
-                               or str(f["id"]) in ticked]  # fmt: skip
-                    ids = [i for i in ids if re.fullmatch(r"[0-9a-f]{16}", i)][:2000]
-                    try:
-                        if path == "/unaccept":
-                            if not ids or not panel.unaccept(sid, ids):
-                                return self._text(HTTPStatus.BAD_REQUEST, "nothing to undo")
-                        else:
-                            panel.accept(sid, ids, get("note"), who)
-                    except StoreError as ex:
-                        return self._text(HTTPStatus.NOT_FOUND, str(ex))
-                    return self._redirect(f"{self._base()}/scan/{sid}")
-                if path == "/malware-only":
-                    if not settings_mod.set_malware_only(
-                        panel.store, get("repo"), get("on") == "1"
-                    ):
-                        return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
-                    sid = get("scan")
-                    return self._redirect(f"{self._base()}/scan/{sid}" if sid.isdigit() else home)
                 if path == "/settings":
                     panel.save_settings({k: v[0] for k, v in form.items() if v})
                     return self._redirect(f"{self._base()}/settings?saved=1")
@@ -3566,27 +3092,6 @@ class Panel:
                         return self._text(HTTPStatus.NOT_FOUND, f"There's no stored scan @{sid}.")
                     panel.worker.submit("recheck", row.repo, row.ref, scan=sid)
                     return self._redirect(f"{self._base()}/scan/{sid}")
-                if path == "/trust":
-                    fid, scope = get("finding"), get("scope")
-                    if (not get("scan").isdigit() or not re.fullmatch(r"[0-9a-f]{16}", fid)
-                            or scope not in ("app", "all")):  # fmt: skip
-                        return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
-                    sid = int(get("scan"))
-                    try:
-                        if not panel.trust_finding(sid, fid, scope == "all"):
-                            return self._text(HTTPStatus.BAD_REQUEST,
-                                              "that finding has no address to trust")  # fmt: skip
-                    except StoreError as ex:
-                        return self._text(HTTPStatus.NOT_FOUND, str(ex))
-                    return self._redirect(f"{self._base()}/scan/{sid}")
-                if path == "/untrust":
-                    address, repo = get("address"), get("repo")
-                    if not trust.valid_address(address) or (repo and not _REPO.match(repo)):
-                        return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
-                    panel.untrust(address, repo or None)
-                    sid = get("scan")
-                    return self._redirect(f"{self._base()}/scan/{sid}" if sid.isdigit()
-                                          else f"{self._base()}/trusted")  # fmt: skip
                 if path == "/ai-entity":
                     value = get("entity")
                     choices, _err = panel.ai_choices(refresh=True)
@@ -3746,7 +3251,6 @@ def serve(
         watcher.worker = worker
         watcher.on_list = panel.set_installed
         watcher.view_fn = panel.view
-        watcher.notify_reopen_fn = lambda: panel.settings.notify_reopen
         worker.on_done.append(watcher.on_job_done)
     httpd = PanelServer((host, port), panel.handler())
     httpd.panel = panel

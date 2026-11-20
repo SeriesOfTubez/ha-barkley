@@ -48,7 +48,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sniff_test import supervisor, trust
+from sniff_test import supervisor
 from sniff_test.diff import HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
 from sniff_test.report import explain
@@ -155,7 +155,7 @@ def top_titles(report: dict[str, Any], limit: int = 3) -> list[str]:
     seen: list[tuple[int, str]] = []
     for f in report.get("findings", []):
         sev = str(f.get("severity"))
-        if sev not in order or (f.get("review") or {}).get("state") == "accepted":
+        if sev not in order:
             continue
         title = explain.explain(str(f.get("rule_id"))).title
         if (order[sev], title) not in seen:
@@ -210,7 +210,6 @@ def notification(
     report: dict[str, Any],
     d: dict[str, Any] | None,
     panel: str,
-    notify_reopen: bool = True,
 ) -> tuple[str, str, str]:
     """(title, markdown message, plain message) for one auto-sniffed install or update.
     Every piece is validated or fixed text; nothing comes from the scanned repo."""
@@ -246,22 +245,6 @@ def notification(
         )  # fmt: skip
     if not report.get("complete", True):
         lines.append("Part of the check didn't finish, so the score is capped at 89.")
-    r = report.get("review") or {}
-    if r.get("reviewed"):  # (0.14.0) the reviewed score is the big one; Barkley's beside it
-        own = int(r.get("own_score") or 0)
-        lines.append(f"The score includes your reviews. Barkley's own score is {own}.")
-    due = len(r.get("reopened") or [])
-    if due and notify_reopen:
-        lines.append(f"The code around {due} item{'s' * (due != 1)} you accepted changed in "
-                     f"this version, so {'it is' if due == 1 else 'they are'} open "
-                     "again.")  # fmt: skip
-    t = report.get("trust")
-    if t and not r.get("reviewed"):  # counts and Barkley's number; never the addresses
-        n = len(t.get("addresses") or [])
-        lines.append(
-            f"The score doesn't count {n} address{'es' * (n != 1)} you trust. "
-            f"Barkley's own score is {int(t.get('own_score') or 0)}."
-        )
     ids = entry.get("scan_ids") or []
     where = f"scan @{ids[-1]}" if ids else "the app's page"
     if len(ids) == 2:
@@ -373,13 +356,6 @@ def advisory_notification(
     if entry.get("changes"):
         lines.append(f"What changed: {entry['changes']}.")
     lines.append("Barkley didn't scan the app's code again. It only looked up its packages again.")
-    t = report.get("trust")
-    if t:
-        n = len(t.get("addresses") or [])
-        lines.append(
-            f"The score doesn't count {n} address{'es' * (n != 1)} you trust. "
-            f"Barkley's own score is {int(t.get('own_score') or 0)}."
-        )
     ids = entry.get("scan_ids") or []
     where = (
         f"scan @{ids[-1]} and what changed (@{ids[0]} → @{ids[-1]})" if len(ids) == 2 else "the app"
@@ -415,12 +391,9 @@ class Watcher:
         age_out_days: float = AGE_OUT_DAYS,
     ):
         self.store = store
-        # (0.14.0) the report as the panel shows it (settings, reviews, Malware check only)
-        # and the "notify when an accepted finding changes" setting; set by server.serve
-        self.view_fn: Callable[[dict[str, Any]], dict[str, Any]] = lambda r: trust.view(
-            r, self.store.trusted()
-        )
-        self.notify_reopen_fn: Callable[[], bool] = lambda: True
+        # (0.14.0) the report as the panel shows it (the scoring settings, the readings);
+        # set by server.serve
+        self.view_fn: Callable[[dict[str, Any]], dict[str, Any]] = lambda r: r
         self.worker = worker
         self.installed_fn = installed_fn
         self.subscribe_fn = subscribe_fn
@@ -768,10 +741,6 @@ class Watcher:
             "malicious": counts["malicious"],
         }
         self._log(entry)
-        if (shown.get("review") or {}).get("malware_only") and not counts["malicious"]:
-            print(f"auto-sniff: advisories of {repo} {ver} changed; not notified (Malware "
-                  "check only: no known malware)", file=sys.stderr, flush=True)  # fmt: skip
-            return
         title, md, plain = advisory_notification(entry, shown, self.panel_path())
         err = self._notify(title, md, plain, f"barkley_{repo.lower()}")
         sent = (
@@ -911,7 +880,7 @@ class Watcher:
                     was = self.view_fn(old).get("readings")  # (preview) for "was 1.25"
                     if was:
                         entry["was_readings"] = was
-                # the score as the panel shows it: the user's settings and review
+                # the score as the panel shows it: the user's settings
                 # (the diff above compares the stored reports)
                 report = self.view_fn(report)
             except StoreError as ex:
@@ -923,14 +892,8 @@ class Watcher:
             entry["complete"] = bool(report.get("complete", True))
             entry["changes"] = change_summary(d) if d is not None else ""
         self._log(entry)
-        quiet = False
         if report is not None:
-            title, md, plain = notification(
-                entry, report, d, self.panel_path(), self.notify_reopen_fn()
-            )
-            # Malware check only: notified only when a Threat or known malware is found
-            r = report.get("review") or {}
-            quiet = bool(r.get("malware_only")) and not report.get("findings")
+            title, md, plain = notification(entry, report, d, self.panel_path())
         else:
             if c.action == "available":
                 did = f"the offered update {c.version}"
@@ -941,7 +904,7 @@ class Watcher:
                 f"Barkley couldn't sniff {did} of {c.repo} ({job.state}: "
                 f"{str(job.message)[:200]}). Open Barkley from the sidebar to try again."
             )
-        err = "" if quiet else self._notify(title, md, plain, f"barkley_{c.repo.lower()}")
+        err = self._notify(title, md, plain, f"barkley_{c.repo.lower()}")
         # One line per outcome in the app's log (a finished job printed nothing before, so
         # the log on the user's box couldn't say whether a sniff ended before a rebuild).
         ver = f"{c.previous} → {c.version}" if c.previous else c.version
@@ -958,8 +921,7 @@ class Watcher:
         else:
             what = f"{entry['state']}: {entry['message'][:200]}"
         sent = (
-            "not notified (Malware check only: no Threat found)" if quiet
-            else f"notification failed: {err}" if err
+            f"notification failed: {err}" if err
             else "notified bell" + (f" + notify.{self.notify_target}" if self.notify_target else "")
         )  # fmt: skip
         print(f"auto-sniff: {c.repo} {ver} {what}; {ids}; {sent}", file=sys.stderr, flush=True)

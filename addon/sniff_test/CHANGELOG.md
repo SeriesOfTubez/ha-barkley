@@ -3,6 +3,18 @@
 Barkley is AI-assisted. The full release notes are on GitHub:
 https://github.com/SeriesOfTubez/ha-barkley/releases
 
+## 0.15.0 (not released yet)
+
+**Reviews are gone**
+
+- Accept, Mark reviewed, Accept all, the Reviewed filter, the reviewed score, Malware
+  check only and Addresses you trust are removed. With the Threat and Exposure readings
+  they no longer changed anything. If you think Barkley got something wrong, use Report
+  a false positive under it.
+- On its first start, 0.15 deletes what 0.14 stored for them: the findings you
+  accepted, the addresses you trusted and the apps set to Malware check only. Your
+  stored scans and settings stay.
+
 ## 0.14.1
 
 **Faster scans of big integrations**

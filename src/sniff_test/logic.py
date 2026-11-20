@@ -34,7 +34,7 @@ PANEL_ONLY = frozenset(
         "ha_token.py",
         "memory.py",
         "doctor.py",
-        "review.py",
+        "shown.py",  # (0.15) the report as the panel shows it (review.py before)
         "readings.py",  # (preview) the proposed readings, worked out when a page is shown
         "devnote.py",  # (preview) the developer's note, read from stored snippets
         "diff.py",

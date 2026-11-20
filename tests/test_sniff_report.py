@@ -172,9 +172,10 @@ def test_a_threat_item_keeps_its_severity_but_shows_no_points():
     assert 'class="lvl critical"' in out and "points" not in out
 
 
-def test_nothing_to_accept_and_no_malware_only_link_with_the_preview(tmp_path):
+def test_nothing_to_accept_and_no_malware_only_link_either_way(tmp_path):
     """His call 2026-11-20: nothing is scored by a review, so no Accept all, no Mark
-    reviewed and no per-app "Malware check only"; Report a false positive stays."""
+    reviewed and no per-app "Malware check only"; Report a false positive stays. (0.15:
+    removed for good, with the preview on or off.)"""
     from sniff_test import server
     from sniff_test.store import Store
 
@@ -185,7 +186,8 @@ def test_nothing_to_accept_and_no_malware_only_link_with_the_preview(tmp_path):
     sid = store.save(r)
     panel = server.Panel(store, lambda r, f: {}, None)
     off = server.render_scan("", sid, panel.shown_report(sid), store, token="t").decode()
-    assert "Accept all" in off and "Mark reviewed" in off and "Malware check only" in off
+    assert "Accept all" not in off and "Mark reviewed" not in off
+    assert "Malware check only" not in off and "Report a false positive" in off
     panel.save_settings({"preview": "1"})
     on = server.render_scan("", sid, panel.shown_report(sid), store, token="t").decode()
     assert "Accept all" not in on and "Mark reviewed" not in on
@@ -197,31 +199,6 @@ def test_the_exposure_box_reads_plainly():
     assert "<h2>Exposure <span" in out and "what it opens up" not in out
     assert "Barkley found nothing that would let someone who isn" in out
     assert "an administrator can already do everything" not in out
-
-
-def test_stored_reviews_are_left_out_of_the_preview(tmp_path):
-    """His report 2026-11-20: apps reviewed before showed "Reviewed by you" with nothing
-    left to undo. With the preview on the view ignores stored reviews; they stay stored."""
-    from datetime import UTC, datetime
-
-    from sniff_test import review, server
-    from sniff_test.store import Store
-
-    r = report(f("ha-auth-change-users", line=19))
-    r["findings"][0]["fingerprint"] = "a1b2c3d4e5f6a7b8c9d0e1f2"
-    del r["readings"]
-    store = Store(tmp_path / "s.db")
-    sid = store.save(r)
-    x = r["findings"][0]
-    when = datetime.now(UTC).isoformat()
-    store.accept([review.Accept("someone/device-bridge", x["fingerprint"], x["rule_id"], "",
-                                "Pat", when, sid, x["id"], "v2", x["file"])])  # fmt: skip
-    panel = server.Panel(store, lambda r, f: {}, None)
-    assert panel.shown_report(sid)["review"]["reviewed"] is True
-    panel.save_settings({"preview": "1"})
-    shown = panel.shown_report(sid)
-    assert shown["review"]["reviewed"] is False and shown["review"]["accepted"] == 0
-    assert len(store.accepts("someone/device-bridge")) == 1  # still stored
 
 
 def test_in_short_says_it_plainly():

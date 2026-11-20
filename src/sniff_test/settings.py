@@ -22,14 +22,11 @@ from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
-from sniff_test import review
+from sniff_test import shown
 
 KEY = "settings"
-MALWARE_ONLY_KEY = "malware_only"
 TOKEN_FILE = "github-token"  # noqa: S105 - a file name, not a secret
 _TOKEN = re.compile(r"[A-Za-z0-9_]{20,255}")
-_REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_.-]{1,100}")
-_MAX_APPS = 500
 
 
 @dataclass(frozen=True)
@@ -40,9 +37,6 @@ class Settings:
     floor: bool = True
     unauth_views: bool = False
     shadow_telemetry: bool = True
-    # Reviews
-    notify_reopen: bool = True
-    reconfirm_months: int = 0  # 0 (never), 6, 12
     # Checking (parallel and jobs: the add-on's defaults)
     parallel: int = 2
     jobs: int = 1
@@ -60,13 +54,12 @@ class Settings:
     preview: bool = False
     network: str = "home"  # home | shared
 
-    def review(self) -> review.Settings:
-        return review.Settings(
+    def scoring(self) -> shown.Settings:
+        return shown.Settings(
             paranoid=self.paranoid,
             floor=self.floor,
             unauth_views=self.unauth_views,
             shadow_telemetry=self.shadow_telemetry,
-            reconfirm_months=self.reconfirm_months,
         )
 
 
@@ -74,7 +67,6 @@ DEFAULTS = Settings()
 # "Reset to defaults" per section of the page
 PARTS = {
     "scoring": ("exposure", "paranoid", "floor", "unauth_views", "shadow_telemetry"),
-    "reviews": ("notify_reopen", "reconfirm_months"),
     "checking": ("parallel", "jobs", "memory_gb", "libraries", "cache_mb", "token_days"),
     "preview": ("preview", "network"),
 }
@@ -89,7 +81,6 @@ def describe(s: Settings) -> str:
 CHOICES: dict[str, tuple[Any, ...]] = {
     "exposure": ("local", "public"),
     "network": ("home", "shared"),
-    "reconfirm_months": (0, 6, 12),
     "parallel": (1, 2, 3, 4),
     "jobs": (1, 2, 3, 4),
     "memory_gb": (0, 2, 3, 4, 6, 8, 12, 16),
@@ -140,35 +131,6 @@ def save(store: Any, s: Settings) -> None:
 
 def saved(store: Any) -> bool:
     return bool(store.setting(KEY))
-
-
-# --- Malware check only, per app --------------------------------------------------------
-
-
-def malware_only(store: Any) -> set[str]:
-    try:
-        raw = json.loads(store.setting(MALWARE_ONLY_KEY) or "[]")
-    except ValueError:
-        return set()
-    return (
-        {x.lower() for x in raw if isinstance(x, str) and _REPO.fullmatch(x)}
-        if isinstance(raw, list)
-        else set()
-    )
-
-
-def set_malware_only(store: Any, repo: str, on: bool) -> bool:
-    if not _REPO.fullmatch(repo or ""):
-        return False
-    apps = malware_only(store)
-    if on:
-        if len(apps) >= _MAX_APPS:
-            return False
-        apps.add(repo.lower())
-    else:
-        apps.discard(repo.lower())
-    store.set_setting(MALWARE_ONLY_KEY, json.dumps(sorted(apps)))
-    return True
 
 
 # --- the GitHub token (never in the database) ---------------------------------------------
