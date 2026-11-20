@@ -43,10 +43,11 @@ def test_pages_without_a_login_count_by_the_check_barkley_can_see():
     r = readings.compute(rep(*signed, f("ha-auth-token-check", "low", "whep.py")))
     assert r.exposure == 0.44  # 0.25 + 3 x 0.0625
     assert r.exposure_reasons[0] == (
-        "4 pages skip Home Assistant's login and check a signed link or token instead."
+        "4 pages open without logging in to Home Assistant. They check a signed link or token "
+        "instead."
     )
     one = readings.compute(rep(signed[0], f("ha-auth-token-check", "low", "whep.py")))
-    assert "login and checks a signed link" in one.exposure_reasons[0]
+    assert "Assistant. It checks a signed link" in one.exposure_reasons[0]
 
 
 def test_many_pages_of_one_app_stay_below_high_at_home():
@@ -148,8 +149,8 @@ def test_the_preview_switches_the_page_from_the_score_to_the_readings(tmp_path):
     assert 'aria-label="Score 50 of 100"' in off and "Exposure 1.25 of 10" not in off
     panel.save_settings({"preview": "1"})
     on = ui.render_app("", sid, panel.shown_report(sid), []).decode()
-    assert 'aria-label="Exposure 1.25 of 10"' in on and "Exposure: what it opens up" in on
-    assert "Threat: none found" in on and "What we found" not in on
+    assert 'aria-label="Exposure 1.25 of 10"' in on and "<h2>Exposure <span" in on
+    assert "Nothing found that sends your data off the box" in on and "What we found" not in on
     assert 'aria-label="Score 50 of 100"' not in on and "Very Sus" not in on
     assert "Good Boy · no signs of malicious behavior" in on
     assert "banner threat" not in on

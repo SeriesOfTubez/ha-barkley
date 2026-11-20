@@ -56,7 +56,7 @@ def page(r: dict) -> str:
 
 def test_the_report_puts_threat_and_exposure_first_and_the_rest_as_context():
     out = page(report(f("ha-auth-change-users", line=19), f("ha-auth-internals")))
-    t, x = out.index("Threat: none found"), out.index("Exposure: what it opens up")
+    t, x = out.index("<h2>Threat <span"), out.index("<h2>Exposure <span")
     c = out.index("What it can do")
     assert t < x < c
     assert "What we found" not in out and "Should you worry?" not in out
@@ -71,12 +71,12 @@ def test_the_developer_s_note_is_quoted_with_its_lines_and_escaped():
     assert f"note · docstring, cmds.py:14{dash}17" in out
     assert "Give a device a user of its own, not an administrator." in out
     assert "<script>alert(1)</script>" not in out and "&lt;script&gt;" in out
-    assert "It doesn&#x27;t change the reading." in out or "It doesn't change the reading." in out
+    assert "change the readings." in out
 
 
 def test_no_developer_s_words_on_a_page_with_a_found_threat():
     out = page(report(f("ha-auth-change-users", line=19), f("ha-exfil-taint", "critical")))
-    assert "Threat: found" in out and "banner threat" in out
+    assert "banner threat" in out and "Nothing found that sends" not in out
     assert "Give a device a user" not in out and 'class="src dev"' not in out
 
 
@@ -86,7 +86,7 @@ def test_a_possible_threat_drops_the_note_on_the_credential_reads_it_pairs():
     r = report(f("possible-exfil", "high", line=30), f("ha-auth-internals", line=20, n=1))
     assert r["readings"]["threat_level"] == "possible"
     out = page(r)
-    assert "Threat: possible" in out and "Give a device a user" not in out
+    assert "possible sign of malicious behavior" in out and "Give a device a user" not in out
     r = report(f("possible-exfil", "high", line=30), f("ha-auth-change-users", line=19, n=2))
     assert "Give a device a user" in page(r)  # not a credential read: its note stays
 
@@ -170,3 +170,30 @@ def test_a_threat_item_keeps_its_severity_but_shows_no_points():
                              "severity": "critical", "points": 60.0}]  # fmt: skip
     out = page(r)
     assert 'class="lvl critical"' in out and "points" not in out
+
+
+def test_nothing_to_accept_and_no_malware_only_link_with_the_preview(tmp_path):
+    """His call 2026-11-20: nothing is scored by a review, so no Accept all, no Mark
+    reviewed and no per-app "Malware check only"; Report a false positive stays."""
+    from sniff_test import server
+    from sniff_test.store import Store
+
+    r = report(f("ha-auth-change-users", line=19))
+    r["findings"][0]["fingerprint"] = "a1b2c3d4e5f6a7b8c9d0e1f2"  # acceptable when off
+    del r["readings"]
+    store = Store(tmp_path / "s.db")
+    sid = store.save(r)
+    panel = server.Panel(store, lambda r, f: {}, None)
+    off = server.render_scan("", sid, panel.shown_report(sid), store, token="t").decode()
+    assert "Accept all" in off and "Mark reviewed" in off and "Malware check only" in off
+    panel.save_settings({"preview": "1"})
+    on = server.render_scan("", sid, panel.shown_report(sid), store, token="t").decode()
+    assert "Accept all" not in on and "Mark reviewed" not in on
+    assert "Malware check only" not in on and "Report a false positive" in on
+
+
+def test_the_exposure_box_reads_plainly():
+    out = page(report())
+    assert "<h2>Exposure <span" in out and "what it opens up" not in out
+    assert "Nothing found that would let someone who isn" in out
+    assert "an administrator can already do everything" not in out

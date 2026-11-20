@@ -1752,8 +1752,18 @@ def render_scan(
         again=_again_box(base, report, token, sid)
         + _advisory_line(base, sid, report, store, token, rechecking),
         trust=trust_block(base, sid, report, token),
-        accept=accept_all_box(base, sid, report, token) if "review" in report else "",
-        review=review_block(base, sid, report, token) if "review" in report else None,
+        # (preview) nothing is scored by a review, so there's nothing to accept: each item
+        # keeps only "Report a false positive" (his call 2026-11-20)
+        accept=accept_all_box(base, sid, report, token)
+        if "review" in report and not report.get("readings")
+        else "",
+        review=(
+            report_only_block(report)
+            if report.get("readings")
+            else review_block(base, sid, report, token)
+        )
+        if "review" in report
+        else None,
         ai=have,
         ai_form=_ai_form(
             base,
@@ -1816,6 +1826,8 @@ def _malware_only_form(base: str, report: dict[str, Any], token: str, sid: int) 
     if r is None or not _REPO.fullmatch(repo):
         return ""
     on = bool(r.get("malware_only"))
+    if report.get("readings") and not on:  # (preview) his call 2026-11-20: not per app
+        return ""
     label = "Show everything again" if on else "Malware check only"
     tip = ("Shows every finding and the full score again" if on else
            "Shows and notifies only Threats and known malware for this app; it is still "
@@ -2157,6 +2169,17 @@ def review_block(base: str, sid: int, report: dict[str, Any], token: str) -> ui.
                     f"{link}</div>")  # fmt: skip
         btn = all_of(form("accept", fid, "Mark reviewed", True))
         return f'<div class="rev">{btn}{link}</div>'
+
+    return block
+
+
+def report_only_block(report: dict[str, Any]) -> ui.ReviewFn:
+    """(preview) The row under each item: Report a false positive, nothing to accept."""
+
+    def block(f: dict[str, Any], _fs: list[dict[str, Any]]) -> str:
+        return (f'<div class="rev"><a href="{e(report_fp_url(report, f), 1500)}" '
+                f'target="_blank" rel="noopener noreferrer" title="{e(_REPORT_TITLE)}">Report a '
+                "false positive</a></div>")  # fmt: skip
 
     return block
 

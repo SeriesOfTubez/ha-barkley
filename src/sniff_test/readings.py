@@ -167,28 +167,28 @@ def compute(report: dict[str, Any], network: str = "home") -> Readings:
         pts += page_pts[0] + REPEAT * sum(page_pts[1:])
     if recognised:
         n = len(recognised)
-        reasons.append(_plural(n, "page skips", "pages skip") + " Home Assistant's login and "
-                       + ("checks" if n == 1 else "check") + " a signed link or token "
-                       "instead.")  # fmt: skip
+        reasons.append(_plural(n, "page opens", "pages open") + " without logging in to Home "
+                       "Assistant. " + ("It checks" if n == 1 else "They check")
+                       + " a signed link or token instead.")  # fmt: skip
     if own:
-        reasons.append(_plural(len(own), "page skips", "pages skip") + " Home Assistant's "
-                       "login. Barkley can't confirm what checks the caller.")  # fmt: skip
+        reasons.append(_plural(len(own), "page opens", "pages open") + " without logging "
+                       "in to Home Assistant. Barkley can't see what checks who's "
+                       "asking.")  # fmt: skip
     if any(f.get("rule_id") == AUTH_INTERNALS for f in findings):
         pts += TOKEN_NON_ADMIN * lifetime_factor(None)
-        reasons.append("It handles Home Assistant login tokens. A token handed to another "
-                       "machine is only as safe as that machine. Barkley can't yet tell "
-                       "whether one leaves Home Assistant, whose it is or how long it "
-                       "lasts, so it counts one non-administrator token lasting over a "
-                       "year.")  # fmt: skip
+        reasons.append("It works with Home Assistant login tokens. A token handed to another "
+                       "machine is only as safe as that machine. Barkley can't tell yet who "
+                       "gets one or how long it lasts, so it counts one non-admin token that "
+                       "lasts over a year.")  # fmt: skip
     bugs = [f for f in findings if f.get("rule_id") == DEP_VULN]
     bug_pts = sum(LIB_BUG.get(str(f.get("severity")), 0.0) for f in bugs)
     if bug_pts:
         pts += bug_pts
-        reasons.append(_plural(len(bugs), "library has", "libraries have")
+        reasons.append(_plural(len(bugs), "library it uses has", "libraries it uses have")
                        + " published security bugs.")  # fmt: skip
     factor = PUBLIC if public else NETWORK.get(where, 1.0)
     if pts and factor != 1.0:
-        reasons.append("Raised because your Home Assistant is "
+        reasons.append("Counted higher because Home Assistant is "
                        + ("reachable from the internet." if public
                           else "on a shared or work network."))  # fmt: skip
     exposure = round(min(EXPOSURE_MAX, pts * factor), 2)

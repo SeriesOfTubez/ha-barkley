@@ -2862,14 +2862,22 @@ def kinds_html(
     return "".join(out)
 
 
-def minor_line(base: str, sid: int, report: dict[str, Any]) -> str:
-    """Paranoid mode off: the minor findings left out of the page and the score."""
+def minor_line(base: str, sid: int, report: dict[str, Any], preview: bool = False) -> str:
+    """Paranoid mode off: the minor findings left out of the page and the score.
+    (preview) Nothing is scored, so it only says what isn't shown."""
     r = report.get("review") or {}
     minor = r.get("minor") or []
     if not minor or r.get("malware_only"):
         return ""
     n = len(minor)
     chips = sorted({explain.explain(x).chip for x in minor})
+    if preview:
+        what = f"{n} minor thing{'s' * (n != 1)} ({e(', '.join(chips))})"
+        if r.get("show_minor"):
+            return (f'<p class="muted small mt3">{what} shown above. '
+                    f'<a href="{base}/scan/{sid}">Hide them</a></p>')  # fmt: skip
+        return (f'<p class="muted small mt3">{what} not shown. '
+                f'<a href="{base}/scan/{sid}?minor=1">Show them</a></p>')  # fmt: skip
     if r.get("show_minor"):
         return (f'<p class="muted small mt3">{n} minor finding{"s" * (n != 1)} shown above, not '
                 f'counted ({e(", ".join(chips))}). <a href="{base}/scan/{sid}">Hide them</a> · '
@@ -3052,7 +3060,7 @@ def devnote_html(n: devnote.Note | None, title: str = "The developer's note") ->
     return (
         f'<div class="devq">{src_tag("dev", f"docstring, {n.file}:{lines}", title)}'
         f"<q>{e(n.text, 900)}</q>"
-        '<span class="cite">Shown as context. It doesn\'t change the reading.</span></div>'
+        '<span class="cite">It doesn\'t change the readings.</span></div>'
     )
 
 
@@ -3071,16 +3079,13 @@ def notes_allowed(report: dict[str, Any], f: dict[str, Any]) -> bool:
 def threat_box(r: dict[str, Any], items: str) -> str:
     """The Threat box: the signs found, or what Barkley looked for and didn't find."""
     t = str(r.get("threat_level"))
-    head = {"none": "Threat: none found", "possible": "Threat: possible",
-            "found": "Threat: found"}.get(t, "Threat")  # fmt: skip
     if t == "none":
         sofar = "" if r.get("complete", True) else " in the part Barkley could check"
-        body = (f'<p class="small">{icon("check", 14, "ok")} No signs of malicious behavior'
-                f"{sofar}: no path from your data to a site outside Home Assistant, no hidden "
-                "or disguised code, no known-malicious or look-alike package.</p>")  # fmt: skip
+        body = (f"<p>{icon('check', 14, 'ok')} Nothing found{sofar} that sends your data off "
+                "the box, no hidden code, and no known-bad packages.</p>")  # fmt: skip
     else:
         body = items
-    return f'<section class="box"><h2>{head} {src_tag("scan")}</h2>{body}</section>'
+    return f'<section class="box"><h2>Threat {src_tag("scan")}</h2>{body}</section>'
 
 
 def exposure_box(r: dict[str, Any], pages: str = "") -> str:
@@ -3091,14 +3096,12 @@ def exposure_box(r: dict[str, Any], pages: str = "") -> str:
     where = {"home": "a home network", "shared": "a shared or work network",
              "internet": "reachable from the internet"}.get(str(r.get("network")), "")  # fmt: skip
     return (
-        f'<section class="box"><h2>Exposure: what it opens up {src_tag("scan")}</h2>'
-        + ('<ul class="rdwhy small">' + "".join(f"<li>{e(w, 400)}</li>" for w in why) + "</ul>"
-           if why else '<p class="small muted">Nothing it opens up to someone who isn\'t an '
-           "administrator.</p>")
+        f'<section class="box"><h2>Exposure {src_tag("scan")}</h2>'
+        + ('<ul class="rdwhy">' + "".join(f"<li>{e(w, 400)}</li>" for w in why) + "</ul>"
+           if why else "<p>Nothing found that would let someone who isn't an admin in.</p>")
         + pages
-        + f'<p class="small muted">Worked out for {e(where)} (Settings → Where Home Assistant '
-        "runs). Something only an administrator can do adds nothing: an administrator can "
-        "already do everything.</p></section>"
+        + f'<p class="small muted">Based on Home Assistant running on {e(where)} '
+        "(Settings).</p></section>"
     )  # fmt: skip
 
 
@@ -3154,8 +3157,6 @@ def render_app(
     if rd:  # (preview) the readings take the score's place: no ring, verdict or score pill
         b = readings_band(rd)
         vline = _T_VERDICT.get(str(rd.get("threat_level")), "")
-        if rv.get("reviewed"):
-            vline += " · reviewed by you"
         left, pw = "", ""
     head = (
         f'<p class="crumb"><a href="{base}/">{icon("back")} All apps</a></p>'
@@ -3276,12 +3277,12 @@ def render_app(
         boxes = threat_box(rd, "".join(one(*g) for g in threats)) + exposure_box(rd, page_notes)
         parts[parts.index("\0readings\0")] = boxes
         parts.append(
-            '<section class="box"><h2>What it can do <span class="muted small">(context, not '
-            f'scored)</span> {src_tag("scan")}</h2>'
+            '<section class="box"><h2>What it can do <span class="muted small">(not scored)'
+            f'</span> {src_tag("scan")}</h2>'
             + (kinds_html(report, rest, one, skip=frozenset({kinds.THREAT}),
                           untitled=frozenset({kinds.CAPABILITY})) if rest else
                f'<p class="ok">{icon("check", 16, "ok")} Nothing notable.</p>')
-            + minor_line(base, sid, report)
+            + minor_line(base, sid, report, preview=True)
             + "</section>"
         )  # fmt: skip
     elif groups:
