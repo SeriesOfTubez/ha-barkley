@@ -62,11 +62,26 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 #   1117, CodeMirror). `new (as)(a, -1)` constructs the same class and parses.
 # Like the first two, inside a string, regex or comment they only add a space or a pair
 # of brackets to our copy.
+#
+# (0.15.0, 2026-11-20) Class static blocks (ES2022, `class C { static { ... } }`): neither
+# Semgrep 1.185 nor 1.186 parses them, not even an empty one (no upstream issue found).
+# A real card's 1.77 MB map chunk lost about 2% of its code to parser recovery around 11
+# of them, and a rule matched nothing inside one. `static {` becomes `static
+# __sniff_static_block() {`: a static method that is never called, in the same class,
+# with the same body and the same `this`, so every rule reads the body. In code,
+# `static` followed by `{` on the same line is only ever a static block (anything else is
+# a syntax error, and `static` is reserved in modules); a property (`a.static{`), a
+# private name (`#static`) or a longer word (`isstatic{`) is left alone by the
+# lookbehind. Only spaces or tabs may sit between: across a newline a classic script can
+# read `static` as a variable, so that form is left as it is (still reported as code
+# Barkley couldn't read, never hidden). Inside a string, regex or comment it only adds a
+# name and brackets to our copy. Linear: a fixed lookbehind and one run of blanks.
 _JS_PARSE_FIXES = (
     (re.compile(r"<!--"), "< !--"),
     (re.compile(r"-->"), "-- >"),
     (re.compile(r"\?\.(?=[0-9])"), "? ."),
     (re.compile(r"\bnew(\s+)(as|satisfies)(\s*)\("), r"new\1(\2)\3("),
+    (re.compile(r"(?<![\w$.#])static([ \t]*)\{"), r"static __sniff_static_block()\1{"),
 )
 
 
