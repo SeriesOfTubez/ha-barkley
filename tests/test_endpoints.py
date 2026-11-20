@@ -290,3 +290,28 @@ def test_port_direction_from_the_calls_around_it(tmp_path):
     r = endpoints.run(_target(tmp_path))
     dirs = {int(f.key): f.attrs.get("directions") for f in r.facts if f.kind == "port"}
     assert dirs == {80: ["out"], 8099: ["in"], 1234: None, 502: ["out"]}
+
+
+# --- (0.15, his decision 2026-11-20) shared hosting is the app's own only under its owner ---
+
+
+def _shared(tmp_path, *urls):
+    lines = "".join(f'U{i} = "{u}"\n' for i, u in enumerate(urls))
+    root = _write(tmp_path / "pkg", "const.py", lines)
+    target = _target(root, repo="acme/acme-weather")
+    return _hosts(endpoints.run(target))
+
+
+def test_github_under_the_owner_is_the_app_s_own(tmp_path):
+    got = _shared(tmp_path, "https://github.com/acme/acme-weather/issues",
+                  "https://raw.githubusercontent.com/acme/acme-weather/main/x.json")  # fmt: skip
+    assert got == {"github.com": "declared", "raw.githubusercontent.com": "declared"}
+
+
+def test_anyone_else_s_path_on_shared_hosting_is_not(tmp_path):
+    got = _shared(tmp_path, "https://github.com/acme/acme-weather",
+                  "https://github.com/someone-else/tool/releases",
+                  "https://raw.githubusercontent.com/someone-else/x/main/y.py",
+                  "https://gitlab.com/acme2/x")  # fmt: skip
+    assert got == {"github.com": "infrastructure", "raw.githubusercontent.com": "infrastructure",
+                   "gitlab.com": "infrastructure"}  # fmt: skip

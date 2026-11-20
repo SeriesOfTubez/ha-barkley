@@ -37,7 +37,7 @@ import json
 import re
 import tokenize
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cache
 from importlib import resources
 from pathlib import Path
@@ -162,6 +162,9 @@ class Declared:
 
     hosts: set[str]  # registrable domains from manifest / package.json URLs
     names: set[str]  # normalized integration domain / repo name
+    # (0.15) lowercase owners (the repo's, the manifest's GitHub links'): on shared hosting
+    # only their own paths are the app's own (see SHARED_HOSTING)
+    owners: set[str] = field(default_factory=set)
 
     def matches(self, host: str) -> bool:
         reg = registrable(host)
@@ -175,6 +178,25 @@ class Declared:
         # name; no prefix matching.
         whole = _norm(reg)
         return bool(whole) and whole in self.names
+
+
+# (0.15, his decision 2026-11-20) Shared hosting: anyone can put anything there, so a site
+# here is the app's own only when every address the code names is under the repo owner's
+# path (github.com/<owner>/…, raw.githubusercontent.com/<owner>/…). The owner's Pages site
+# (<owner>.github.io) is its own host and already handled.
+SHARED_HOSTING = frozenset(
+    {"github.com", "githubusercontent.com", "gitlab.com", "bitbucket.org", "codeberg.org",
+     "sourceforge.net"}
+)  # fmt: skip
+
+
+def owner_path(url: str | None, owners: set[str]) -> bool:
+    """Whether a URL's path starts with one of `owners` (`/acme/…`)."""
+    m = _URL.match(url or "")
+    if not m or not owners:
+        return False
+    first = (m["path"] or "/").lstrip("/").split("/", 1)[0].lower()
+    return bool(first) and first in owners
 
 
 def _url_host(url: Any) -> str | None:
@@ -193,7 +215,7 @@ def declared_for(target: Target) -> Declared:
     owners: set[str] = set()
     for key in ("documentation", "issue_tracker"):
         url = manifest.get(key)
-        if h := _url_host(url):
+        if (h := _url_host(url)) and registrable(h) not in SHARED_HOSTING:
             hosts.add(registrable(h))
             if h == "github.com" and (m := re.match(r"(?i)https?://github\.com/([\w.-]+)", url)):
                 owners.add(m[1].lower())
@@ -204,7 +226,7 @@ def declared_for(target: Target) -> Declared:
         pkg = _read_json(target.source_root / "package.json")
         repo = pkg.get("repository")
         for url in (pkg.get("homepage"), repo.get("url") if isinstance(repo, dict) else repo):
-            if h := _url_host(url):
+            if (h := _url_host(url)) and registrable(h) not in SHARED_HOSTING:
                 hosts.add(registrable(h))
     if target.domain:
         names.add(_norm(target.domain))
@@ -217,7 +239,7 @@ def declared_for(target: Target) -> Declared:
             lowered = lowered.removeprefix(prefix)
         names.add(_norm(lowered))
     names.discard("")
-    return Declared(hosts, names)
+    return Declared(hosts, names, owners)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -838,8 +860,17 @@ def run(target: Target) -> AnalyzerResult:
     hosts = {r.host for r in refs}
     redirects = redirect_only_hosts(target.root, refs)
     readme, funding = doc_mentions(target.source_root)
+    # (0.15) shared hosting is the app's own only when every address is under the owner
+    shared: dict[str, bool] = {}
+    for r in refs:
+        if registrable(r.host) in SHARED_HOSTING:
+            shared[r.host] = shared.get(r.host, True) and owner_path(r.url, declared.owners)
     for ref in refs:
         cls = classify(ref.host, declared)
+        if ref.host in shared and cls not in ("namespace", "exfil_service", "messaging"):
+            # code hosting: the owner's own paths are the app's, the rest are where code
+            # lives (as github.com always was), never "undeclared"
+            cls = "declared" if shared[ref.host] else "infrastructure"
         if cls == "namespace":
             continue
         cred = _cred_kind(ref.url)
