@@ -428,7 +428,6 @@ def test_changed_advisories_notify_with_counts_and_scores_never_package_names(da
     w.notify_target = "mobile_app_phone"
     a = osv_finding()
     sid = store.save(card_report([a, CODE]), at - timedelta(hours=25), inputs=INPUTS)
-    was = store.get(sid).score
     state["new"] = [
         osv_finding(ids="GHSA-aaaa, GHSA-bbbb", severity="high"),
         osv_finding(pkg=HOSTILE_PKG, version="1", ids="MAL-2026-1", severity="critical",
@@ -439,11 +438,10 @@ def test_changed_advisories_notify_with_counts_and_scores_never_package_names(da
     worker.wait()
     job = worker.jobs[0]
     new_id = job.scan_ids[1]
-    now = store.get(new_id).score
     ((title, message, nid),) = fakes.bell
     assert title == "Barkley: acme/card v1 (advisories changed)" and nid == "barkley_acme_card"
     assert message.startswith("A package this app uses is now listed as malicious.")
-    assert f"Score: {now}/100 (was {was}/100)" in message and "BORK" in message
+    assert "🔴 Threat: found · 🔴 Exposure: high (10, was 1)" in message  # (0.15) no score
     want = ("What changed: 1 package now listed as malicious, 1 package now with known "
             "vulnerabilities, 1 package with different advisories than before.")  # fmt: skip
     assert want in message
@@ -454,20 +452,21 @@ def test_changed_advisories_notify_with_counts_and_scores_never_package_names(da
     ((target, ptitle, plain, _url),) = fakes.pushed
     assert target == "mobile_app_phone" and ptitle == title and HOSTILE_PKG not in plain
     entry = w.log()[0]
-    assert (entry["action"], entry["score"], entry["was"]) == ("advisories", now, was)
+    assert entry["action"] == "advisories" and entry["readings"]["threat_level"] == "found"
+    assert entry["was_readings"]["threat_level"] == "none"
     assert entry["scan_ids"] == [sid, new_id] and w.recheck_changes == 1
 
 
 def test_a_withdrawn_advisory_is_reported_too(daily):
     store, worker, fakes, w, _state, at = daily
     rep = card_report([osv_finding(), CODE])
-    sid = store.save(rep, at - timedelta(hours=25), inputs=INPUTS)
+    store.save(rep, at - timedelta(hours=25), inputs=INPUTS)
     worker.recheck_fn = lambda r, i, of, when: recheck.apply(r, [], result(0), of, when)
     assert w.recheck_due() == 1
     worker.wait()
     ((_title, message, _nid),) = fakes.bell
     assert "What changed: 1 package with no advisories any more." in message
-    assert "malicious" not in message and f"(was {store.get(sid).score}/100)" in message
+    assert "malicious" not in message and "/100" not in message
 
 
 # --- the panel -----------------------------------------------------------------------------

@@ -5,6 +5,22 @@ https://github.com/SeriesOfTubez/ha-barkley/releases
 
 ## 0.15.0 (not released yet)
 
+**The sniff report: Threat and Exposure**
+
+- Each app now gets two readings in place of the 0–100 score. Threat counts only signs
+  of malicious behavior: none found, possible, or found. Exposure, from 0 to 10, counts
+  what lets someone who isn't an administrator in: pages that skip Home Assistant's
+  login, login tokens the app may hand out, and published bugs in its libraries.
+  Everything else Barkley finds is listed as context and changes neither reading.
+- The 0–100 number stays in the technical report (raw JSON) and the command line, as the
+  capability score: what the code openly uses, not a judgment.
+- Settings: "Where Home Assistant runs" (home, a shared or work network, or reachable
+  from the internet) replaces Exposure, and "Minor items" (Hide or Show) replaces
+  Paranoid mode. Powerful no threat, Pages without a login and Hidden usage reporting
+  are gone: they only changed the score.
+- Command line: `--fail-on possible` or `--fail-on found` replaces `--fail-under`.
+- Notifications show the two readings with a coloured light each.
+
 **Reviews are gone**
 
 - Accept, Mark reviewed, Accept all, the Reviewed filter, the reviewed score, Malware

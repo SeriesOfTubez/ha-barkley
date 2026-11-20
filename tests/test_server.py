@@ -146,7 +146,7 @@ def test_update_job_reuses_the_stored_installed_scan_and_links_a_diff(panel):
     status, _, page = get(f"{base}/diff?old={installed}&new={job.scan_ids[1]}")
     assert status == 200
     assert "x.invalid" in page
-    assert "100 → 75" in page
+    assert "Before: " in page and "After: " in page and "→ 75" not in page  # readings
 
 
 def test_ingress_path_header_is_used_only_when_well_formed(panel):
@@ -362,7 +362,7 @@ def test_detail_page_of_an_installed_app_shows_its_update(addon):
     assert "<h1>Moved</h1>" in page and "All apps</a>" in page
     assert "Update available: v1 → v2" in page
     assert "Everything the update" in page
-    assert "What Barkley found" in page and "Where it connects" in page
+    assert "What it can do" in page and "Where it connects" in page
 
 
 def test_check_runs_the_update_diff_reusing_stored_scans(addon):

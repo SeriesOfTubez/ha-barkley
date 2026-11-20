@@ -22,8 +22,6 @@ from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
-from sniff_test import shown
-
 KEY = "settings"
 TOKEN_FILE = "github-token"  # noqa: S105 - a file name, not a secret
 _TOKEN = re.compile(r"[A-Za-z0-9_]{20,255}")
@@ -33,10 +31,9 @@ _TOKEN = re.compile(r"[A-Za-z0-9_]{20,255}")
 class Settings:
     # Scoring
     exposure: str = "local"  # local | public
-    paranoid: bool = False
-    floor: bool = True
-    unauth_views: bool = False
-    shadow_telemetry: bool = True
+    # (0.15) minor items (kinds.MINOR) on an app's page: hidden with a "Show them" link
+    # unless this is on (Paranoid mode before; with no score it only decides what's shown)
+    show_minor: bool = False
     # Checking (parallel and jobs: the add-on's defaults)
     parallel: int = 2
     jobs: int = 1
@@ -48,27 +45,31 @@ class Settings:
     cache_mb: int = 1024
     # Standalone: how often Barkley replaces its own Home Assistant token (ha_token.py)
     token_days: int = 60
-    # (preview, 2026-11-19) the proposed Threat and Exposure readings (readings.py), shown
-    # beside Barkley's score; never stored or scored. `network`: where Home Assistant runs,
-    # for Exposure only (the internet is the Exposure setting above: Public)
-    preview: bool = False
+    # (preview 2026-11-19, the default in 0.15) where Home Assistant runs, for the Exposure
+    # reading. The page shows it with `exposure` as one choice: home, shared or work
+    # network, or reachable from the internet (exposure "public")
     network: str = "home"  # home | shared
 
-    def scoring(self) -> shown.Settings:
-        return shown.Settings(
-            paranoid=self.paranoid,
-            floor=self.floor,
-            unauth_views=self.unauth_views,
-            shadow_telemetry=self.shadow_telemetry,
-        )
+    @property
+    def where(self) -> str:
+        return "internet" if self.exposure == "public" else self.network
+
+
+WHERE = ("home", "shared", "internet")
+
+
+def where_values(where: str) -> dict[str, str]:
+    """The one "Where Home Assistant runs" choice as the two stored values."""
+    if where == "internet":
+        return {"exposure": "public"}
+    return {"exposure": "local", "network": where} if where in WHERE else {}
 
 
 DEFAULTS = Settings()
 # "Reset to defaults" per section of the page
 PARTS = {
-    "scoring": ("exposure", "paranoid", "floor", "unauth_views", "shadow_telemetry"),
+    "readings": ("exposure", "network", "show_minor"),
     "checking": ("parallel", "jobs", "memory_gb", "libraries", "cache_mb", "token_days"),
-    "preview": ("preview", "network"),
 }
 
 
@@ -106,6 +107,8 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
 
 def from_dict(raw: dict[str, Any], base: Settings = DEFAULTS) -> Settings:
     """Known keys only, each checked; anything else keeps `base`'s value."""
+    if "where" in raw:  # the page's one choice for where Home Assistant runs
+        raw = {**raw, **where_values(str(raw["where"]))}
     vals = {}
     for f in fields(Settings):
         if f.name in raw:

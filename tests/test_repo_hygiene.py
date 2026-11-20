@@ -110,7 +110,7 @@ def test_cross_check_and_page_section(tmp_path):
     assert 'href="https://github.com/a/b/issues/9"' in html
     assert "<script>" not in html and "&lt;script&gt;" in html
     assert "but this release ships some with known vulnerabilities (listed above)" in html
-    assert "never changes the score" in html
+    assert "never changes the readings" in html
     assert ui.hygiene_html({}) == ""  # reports from before 0.6.0
 
 

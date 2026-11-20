@@ -107,12 +107,19 @@ def test_lifetime_buckets_are_multipliers():
     assert got == [0.0, 0.5, 0.75, 1.0, 1.25, 1.25]
 
 
-def test_settings_default_off_and_check_their_values():
-    assert settings.DEFAULTS.preview is False and settings.DEFAULTS.network == "home"
-    s = settings.from_dict({"preview": "1", "network": "shared"})
-    assert s.preview and s.network == "shared"
+def test_where_home_assistant_runs_is_one_choice_stored_as_two_values():
+    """(0.15) Home, shared or work network, or reachable from the internet (exposure
+    "public", which new scans also use)."""
+    d = settings.DEFAULTS
+    assert (d.where, d.exposure, d.network, d.show_minor) == ("home", "local", "home", False)
+    s = settings.from_dict({"where": "shared"})
+    assert (s.where, s.exposure, s.network) == ("shared", "local", "shared")
+    s = settings.from_dict({"where": "internet"}, s)
+    assert (s.where, s.exposure) == ("internet", "public")
+    assert settings.from_dict({"where": "the moon"}, s) == s
     assert settings.from_dict({"network": "internet"}).network == "home"  # not a choice
-    assert settings.PARTS["preview"] == ("preview", "network")
+    assert settings.PARTS["readings"] == ("exposure", "network", "show_minor")
+    assert not hasattr(d, "preview") and not hasattr(d, "paranoid")
 
 
 def _panel(tmp_path, report: dict) -> tuple[server.Panel, int]:
@@ -131,10 +138,8 @@ def _report() -> dict:
     }  # fmt: skip
 
 
-def test_the_panel_adds_readings_only_when_the_preview_is_on(tmp_path):
+def test_the_panel_always_adds_the_readings_and_never_stores_them(tmp_path):
     panel, sid = _panel(tmp_path, _report())
-    assert "readings" not in panel.shown_report(sid)
-    panel.save_settings({"preview": "1"})
     shown = panel.shown_report(sid)
     assert shown["readings"]["exposure"] == 1.25
     assert shown["score"] == 50  # Barkley's own score is unchanged
@@ -142,25 +147,22 @@ def test_the_panel_adds_readings_only_when_the_preview_is_on(tmp_path):
     assert "readings" not in json.dumps(panel.store.report(sid))
 
 
-def test_the_preview_switches_the_page_from_the_score_to_the_readings(tmp_path):
-    """His report 2026-11-19: the switch should swap the views, not mix them."""
+def test_the_page_shows_the_readings_and_no_score(tmp_path):
+    """(0.15) the sniff report is the only view; the 0-100 score leaves the panel."""
     panel, sid = _panel(tmp_path, _report())
-    off = ui.render_app("", sid, panel.shown_report(sid), []).decode()
-    assert 'aria-label="Score 50 of 100"' in off and "Exposure 1.25 of 10" not in off
-    panel.save_settings({"preview": "1"})
     on = ui.render_app("", sid, panel.shown_report(sid), []).decode()
     assert 'aria-label="Exposure 1.25 of 10"' in on and "<h2>Exposure <span" in on
     assert "Barkley found nothing that sends your data off your Home Assistant machine" in on
     assert "What Barkley found" not in on
-    assert 'aria-label="Score 50 of 100"' not in on and "Very Sus" not in on
+    assert "of 100" not in on and "Very Sus" not in on and "Powerful" not in on
     assert "Good Boy · no signs of malicious behavior" in on
     assert "banner threat" not in on
 
 
 def test_the_list_shows_the_readings_in_the_score_s_place(tmp_path):
     panel, sid = _panel(tmp_path, _report())
-    panel.save_settings({"preview": "1"})
     row, shown = panel.store.get(sid), panel.shown_report(sid)
+    assert row.readings == shown["readings"]  # the index row's, from the findings index
     c = ui.Card(repo="someone/an-app", name="An app", kind="integration", installed="v1",
                 available=None, scan=row, report=shown)  # fmt: skip
     for html in (ui.card_html("", c), ui.card_row("", c)):
@@ -180,6 +182,15 @@ def test_a_found_threat_gets_the_banner():
     assert ui.threat_banner(None, 0) == ""
 
 
-def test_the_settings_page_has_the_preview_section():
+def test_the_settings_page_has_the_readings_section():
     page = server.render_settings("", settings.DEFAULTS, "t").decode()
-    assert "Proposed readings (preview)" in page and "name=network" in page
+    assert "<h2>Readings</h2>" in page and "name=where" in page and "name=show_minor" in page
+    for gone in (
+        "Proposed readings",
+        "Paranoid mode",
+        "Powerful, no threat",
+        "Pages without a login",
+        "Hidden usage reporting",
+        "Scoring",
+    ):
+        assert gone not in page, gone

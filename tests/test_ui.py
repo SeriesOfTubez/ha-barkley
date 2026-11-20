@@ -80,13 +80,6 @@ def test_ports_alone_never_claim_a_home_network():
     assert "port 502 (Modbus)" in text
 
 
-def test_bands():
-    assert [ui.band(s) for s in (100, 90, 89, 70, 69, 40, 39, 0)] == [
-        "green", "green", "yellow", "yellow", "orange", "orange", "red", "red"
-    ]  # fmt: skip
-    assert ui.band(95, complete=False) == "grey" and ui.band(None) == "grey"
-
-
 def test_diff_changes_read_as_plain_english():
     """The diff page used to print raw edges and rule ids; each change kind now reads as a
     sentence, rule ids become their titles, and the raw text stays under the details."""

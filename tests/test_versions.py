@@ -54,7 +54,7 @@ def test_versions_page_lists_and_sniffs_a_chosen_version(tmp_path):
     assert "v2.9.0-draft" not in page
     assert "<script>" not in page and "can't sniff this tag name" in page  # tags are untrusted
     row = page[page.index("v2.2.0") :]
-    assert ">82<" in row[: row.index("</tr>")]  # already sniffed: its score
+    assert "Threat: none found" in row[: row.index("</tr>")]  # already sniffed: its readings
     form = {"repo": "acme/printer-hub", "ref": "v3.0.0b1", "back_to": "versions"}
     status, headers = post(base + "/scan", {**form, "token": token(base)})
     assert status == 303 and headers["Location"] == "/versions?repo=acme%2Fprinter-hub"

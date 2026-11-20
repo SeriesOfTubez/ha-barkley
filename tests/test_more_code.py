@@ -376,7 +376,8 @@ def test_one_click_runs_the_second_round_with_what_the_ai_picked(tmp_path):
     assert "plus 2 it asked for" in page and "Added because the AI asked to see" in page
     assert "asked for 1 thing that wasn't on Barkley's list" in page
     assert "<script" not in page
-    assert store.report(sid)["score"] == 75 and 'aria-label="Score 75 of 100"' in page
+    assert store.report(sid)["score"] == 75  # the stored capability score is untouched
+    assert 'aria-label="Threat 0 of 10"' in page and "of 100" not in page  # readings, not the AI's
     assert "more" not in store.report(sid)["context"]["snippets"]["s1"]  # the scan isn't edited
     httpd.shutdown()
 

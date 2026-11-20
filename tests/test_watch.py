@@ -84,12 +84,14 @@ def test_an_install_is_sniffed_at_its_version_and_notified(ctx):
     ((title, message, nid),) = fakes.bell
     assert title == "Barkley: acme/b v2" and nid == "barkley_acme_b"
     assert "Card acme/b v2 was installed. Barkley sniffed it." in message
-    assert "75/100" in message and "Things to check: Reads your secrets file" in message
+    assert "🟢 Threat: none · 🟢 Exposure: low (0)" in message  # (0.15) no score
+    assert "/100" not in message
     assert "[Open Barkley](/app/local_sniff_test) to see scan @1." in message
     assert HOSTILE not in message and "x.invalid" not in message
     assert fakes.pushed == []  # no target chosen
     entry = w.log()[0]
-    assert entry["action"] == "install" and entry["score"] == 75 and entry["scan_ids"] == [1]
+    assert entry["action"] == "install" and entry["scan_ids"] == [1]
+    assert entry["readings"]["threat_level"] == "none" and "score" not in entry
 
 
 def test_an_update_reuses_the_old_scan_and_says_what_changed(ctx):
@@ -122,7 +124,7 @@ def test_every_auto_job_leaves_one_outcome_line_in_the_log(ctx, capsys):
     worker.wait()
     err = capsys.readouterr().err
     assert "auto-sniff: acme/b installed v2" in err
-    assert ("auto-sniff: acme/b v2 sniffed: 🐕\u200d🦺 Very Sus 75/100; @1; "
+    assert ("auto-sniff: acme/b v2 sniffed: 🟢 Threat: none · 🟢 Exposure: low (0); @1; "
             "notified bell + notify.mobile_app_phone") in err  # fmt: skip
     assert HOSTILE not in err
 
@@ -182,7 +184,7 @@ def test_a_scan_sniffed_from_search_is_reused_on_install(ctx):
     w.check()
     worker.wait()
     assert calls == [] and worker.jobs[0].scan_ids == [sid]
-    assert "No security concerns were found" in fakes.bell[0][1]
+    assert "🟢 Threat: none" in fakes.bell[0][1]
 
 
 def test_off_means_noticed_but_not_sniffed(ctx):
@@ -326,15 +328,14 @@ def test_notification_text_is_built_from_fixed_words_only():
         {"rank": 5, "group": "coverage", "sign": "+", "text": HOSTILE},
     ]}  # fmt: skip
     title, md, plain = watch.notification(entry, rep, d, "/app/x")
-    assert title == "Barkley: acme/x v2"
+    assert title == "Barkley: 🔴 malicious behavior found in acme/x v2"
     assert md.startswith(
-        "Integration acme/x was updated from v1 to v2. Barkley sniffed it. Score: 10/100, "
-        "🐕\u200d🦺 Very Sus"
+        "Integration acme/x was updated from v1 to v2. Barkley sniffed it. 🔴 Threat: found · "
+        "🔴 Exposure: high (10)"
     )
-    assert "10/100" in md
-    assert "Things to check: Sends private Home Assistant data out of your home; " in md
+    assert "/100" not in md and "It sends your Home Assistant data out of your home." in md
     assert "Changes in this update: 1 publisher or repository change, 2 new sites." in md
-    assert "score is capped at 89" in md
+    assert "Part of the check didn't finish." in md
     assert HOSTILE not in md and HOSTILE not in plain
     assert "what the update changes (@3 → @4)" in md
 

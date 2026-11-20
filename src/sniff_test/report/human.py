@@ -135,7 +135,12 @@ def hooks_line(graph: dict | None) -> str:
     return "What it touches: " + "; ".join(parts) if parts else ""
 
 
-def render(scan: ScanResult, console: Console, verbose: bool = False) -> None:
+def render(
+    scan: ScanResult,
+    console: Console,
+    verbose: bool = False,
+    readings_of: dict | None = None,
+) -> None:
     from sniff_test.ui import _SOURCE  # the panel's plain words for where the code came from
 
     t, s = scan.target, scan.score
@@ -183,19 +188,29 @@ def render(scan: ScanResult, console: Console, verbose: bool = False) -> None:
             for problem in a.problems[:5]:  # (0.14.0) files it couldn't fetch, in plain words
                 console.print(Text("  " + retry.plain(problem), style="yellow"))
 
-    style = _VERDICT_STYLE[s.verdict.key]
-    body = Text.assemble(
-        (f"{s.verdict.emoji}  {s.verdict.label}", f"bold {style}"),
-        (f"  ({s.verdict.blurb})", style),
-        "\n",
-        (f"Score: {s.score}/100", "bold"),
+    # (0.15) the two readings first; the capability score after them, without dog words
+    # (his decision 2026-11-20: what the code openly uses, not a judgment)
+    from sniff_test.ui import _T_VERDICT
+
+    rd = readings_of or {}
+    level = str(rd.get("threat_level") or "none")
+    style = {"none": "green", "possible": "yellow", "found": "red"}.get(level, "yellow")
+    body = Text.assemble((_T_VERDICT.get(level, ""), f"bold {style}"))
+    if rd:
+        body.append(
+            f"\nThreat: {level} ({rd.get('threat', 0):g} of 10) · Exposure: "
+            f"{rd.get('exposure_level')} ({rd.get('exposure', 0):g} of 10)",
+            "bold",
+        )
+        if rd.get("threat_reason") and level != "none":
+            body.append(f"\nIt {rd['threat_reason']}.", style)
+    body.append(
+        f"\nCapability score: {s.score}/100 (what the code openly uses, not a judgment)",
+        "dim",
     )
-    if s.caps:
-        body.append("\n" + "; ".join(s.caps), style="dim")
     if not s.complete:
         body.append("\nThe scan didn't finish. Some checks did not run.", style="yellow")
     console.print(Panel(body, expand=False, border_style=style))
-    console.print(_VERDICT_QUIP[s.verdict.key])
 
 
 # --- history -------------------------------------------------------------------------

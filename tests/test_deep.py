@@ -91,7 +91,7 @@ def test_deep_flow_sends_the_snippet_and_shows_only_checked_claims(tmp_path):
     assert "reading of the code (1 statement, 1 question)" in page
     assert "<script>" not in page
     assert store.report(sid)["score"] == 75  # untouched
-    assert 'aria-label="Score 75 of 100"' in page
+    assert 'aria-label="Threat 0 of 10"' in page and "of 100" not in page  # readings, not the AI's
     httpd.shutdown()
 
 

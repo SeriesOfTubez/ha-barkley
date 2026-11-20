@@ -1,10 +1,10 @@
 """The panel's pages: the card grid and each app's detail page (M8).
 
 Pure functions from stored reports to HTML. No scripts anywhere (the CSP forbids them):
-the score ring and the data-flow diagram are inline SVG drawn here, and filters are
+the reading dials and the data-flow diagram are inline SVG drawn here, and filters are
 links. Every string that came from a scanned repo (names, hosts, URLs, files, evidence)
 goes through `e()`. Plain-English text comes from `report.explain` and
-`report.privacy`; nothing here computes or changes a score.
+`report.privacy`; nothing here changes a reading.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, replace
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
-from sniff_test import __version__, devnote, kinds, known, scancache
+from sniff_test import __version__, devnote, kinds, known, readings, scancache
 from sniff_test.analyzers.correlate import CREDENTIAL_SOURCES, SENSITIVE_NODES
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
 from sniff_test.fetch import retry
@@ -121,8 +121,8 @@ CSS = """
 @font-face { font-family:"Geist Mono"; src:url("__BASE__/fonts/GeistMono-Variable.woff2")
   format("woff2"); font-weight:100 900; font-display:swap; }
 :root {
-  /* type: four sizes (meta · body · titles · page title), plus one for the score ring */
-  --t-xs:12px; --t-sm:13px; --t-md:15px; --t-lg:20px; --t-xl:24px;
+  /* type: four sizes (meta · body · titles · page title) */
+  --t-xs:12px; --t-sm:13px; --t-md:15px; --t-lg:20px;
   /* spacing: the 4/8 scale; related things sit closer than unrelated ones */
   --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s6:24px;
   /* radius: chip · control · box · card; nested elements go one step smaller */
@@ -226,12 +226,6 @@ a.app-name::after { content:""; position:absolute; inset:0; border-radius:var(--
 .badge small { display:block; font-size:var(--t-xs); font-weight:600; letter-spacing:0.03em;
   text-transform:uppercase; color:var(--muted); }
 .badge.grey { color:var(--muted); }
-.badge.green { background:var(--green-bg); color:var(--green); }
-.badge.green small { color:inherit; }
-.badge.yellow { background:var(--yellow-bg); color:var(--yellow); }
-.badge.orange { background:var(--orange-bg); color:var(--orange); }
-.badge.red { background:var(--red-bg); color:var(--red); }
-.badge.yellow small, .badge.orange small, .badge.red small { color:inherit; }
 .say { line-height:1.45; }
 .chips { display:flex; flex-wrap:wrap; gap:var(--s1); margin-top:auto; }
 .chip { font-size:var(--t-xs); line-height:16px; padding:var(--s1) var(--s2);
@@ -261,8 +255,6 @@ a.button:hover { filter:brightness(1.08); }
 .crumb { font-size:var(--t-xs); }
 .dhead { display:grid; grid-template-columns:auto 1fr; gap:var(--s2) var(--s4);
   align-items:center; }
-.ring { width:84px; height:84px; }
-.ring text { font:700 var(--t-xl) var(--font); font-variant-numeric:tabular-nums; }
 /* (preview) the proposed Threat and Exposure readings beside Barkley's score */
 .rd { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:var(--s2); }
 .rdial { display:grid; grid-template-columns:auto minmax(0,1fr); gap:var(--s2); align-items:center;
@@ -318,9 +310,7 @@ a.button:hover { filter:brightness(1.08); }
 .finding dt { color:var(--muted); } .finding dd { margin:0; min-width:0; }
 .finding.quiet { color:var(--muted); padding:var(--s2) 0 0; }
 .finding.quiet details { margin-top:0; }
-.dscore { align-self:start; }
 .facts { color:var(--muted); font-size:var(--t-xs); margin-top:var(--s1); }
-.pill.pow { color:var(--brand); border-color:var(--brand); vertical-align:1px; }
 .kindh { margin:var(--s4) 0 0; }
 .kindh:first-of-type { margin-top:var(--s2); }
 .kindh + .sub { margin-bottom:0; }
@@ -495,38 +485,6 @@ def page(title: str, body: str, refresh: int = 0, base: str = "", refresh_url: s
     ).encode()
 
 
-# --- scores in plain words ------------------------------------------------------------------
-
-BANDS = {
-    "green": ("Fine", "no concerns found"),
-    "yellow": ("Check", "a few things to check"),
-    "orange": ("Sus", "several concerns"),
-    "red": ("Bork", "don't install"),
-    "grey": ("?", "not checked or unfinished"),
-}
-
-
-def band(score: int | None, complete: bool = True) -> str:
-    if score is None or not complete:
-        return "grey"
-    return (
-        "green" if score >= 90 else "yellow" if score >= 70 else "orange" if score >= 40 else "red"
-    )
-
-
-def ring(score: int, b: str) -> str:
-    c = 226.2
-    dash = f"{score / 100 * c:.1f} {c}"
-    color = f"var(--{b})" if b != "grey" else "var(--grey)"
-    return (
-        f'<svg class="ring" viewBox="0 0 84 84" role="img" aria-label="Score {score} of 100">'
-        '<circle cx="42" cy="42" r="36" fill="none" stroke="var(--soft)" stroke-width="8"/>'
-        f'<circle cx="42" cy="42" r="36" fill="none" stroke="{color}" stroke-width="8" '
-        f'stroke-dasharray="{dash}" stroke-linecap="round" transform="rotate(-90 42 42)"/>'
-        f'<text x="42" y="50" text-anchor="middle" fill="{color}">{score}</text></svg>'
-    )
-
-
 KIND = {"integration": "Integration", "plugin": "Dashboard card", "card": "Dashboard card"}
 _SOURCE = {
     "release_asset": "the exact release zip the Marketplace installs",
@@ -672,11 +630,16 @@ class Card:
     action: str = ""  # rendered form/button HTML (built by the server)
 
     @property
-    def band(self) -> str:
+    def readings(self) -> dict[str, Any] | None:
+        """(0.15) Threat and Exposure: from the shown report, else the index row's."""
         rd = (self.report or {}).get("readings")
-        if rd:  # (preview) the outline follows the readings, not the score
-            return readings_band(rd)
-        return band(self.scan.score, self.scan.complete) if self.scan else "grey"
+        return rd or (self.scan.readings if self.scan else None)
+
+    @property
+    def band(self) -> str:
+        """The outline follows the readings; grey for an app Barkley hasn't checked."""
+        rd = self.readings
+        return readings_band(rd) if rd and self.scan else "grey"
 
     def notes(self) -> list[privacy.Note]:
         return privacy.notes(self.report) if self.report else []
@@ -696,6 +659,8 @@ def card_sentence(c: Card) -> str:
         )
     rep = c.report or {}
     big = [t for t in scored_findings(rep) if t[0]["severity"] in ("critical", "high", "medium")]
+    # (0.15) a sign of malicious behavior leads; only Threat is scored now
+    big.sort(key=lambda t: not kinds.is_threat(str(t[0]["rule_id"])))
     if big:
         first = explain.explain(big[0][0]["rule_id"]).title + "."
         if len(big) > 1 and rep.get("readings"):  # (preview) plain words
@@ -761,20 +726,15 @@ def card_chips(c: Card) -> list[tuple[str, str]]:
     """Each chip is there because it can change a decision; the sentence above already
     says where the app connects, so no chip repeats that."""
     chips: list[tuple[str, str]] = []
-    # (preview) colour means severity, and only Threat is scored: a threat stays red, the
-    # rest are neutral (his note 2026-11-20). Privacy notes keep their own colour (a kind).
-    preview = bool((c.report or {}).get("readings"))
-    if c.available:
-        if c.group == "attention" and c.reasons and not preview:
-            chips.append(("warn", f"Update {c.available}: check it first"))
-        else:
-            chips.append(("", f"Update {c.available}"))
+    # colour means a threat: a threat is red, the rest are neutral (his note 2026-11-20).
+    # Privacy notes keep their own colour (a kind).
+    if c.available:  # an update whose diff has headline changes: say so, in neutral grey
+        attention = c.group == "attention" and c.reasons
+        chips.append(("", f"Update {c.available}" + (": check it first" if attention else "")))
     if c.report and c.scan and c.scan.complete:
         for f, _fs, _p in scored_findings(c.report):
             if f["severity"] in ("critical", "high", "medium") and len(chips) < 4:
-                cls = "bad" if f["severity"] in ("critical", "high") else "warn"
-                if preview:
-                    cls = "bad" if kinds.is_threat(str(f["rule_id"])) else ""
+                cls = "bad" if kinds.is_threat(str(f["rule_id"])) else ""
                 chip = explain.explain(f["rule_id"]).chip
                 if (cls, chip) not in chips:
                     chips.append((cls, chip))
@@ -785,10 +745,6 @@ def card_chips(c: Card) -> list[tuple[str, str]]:
 
 def card_html(base: str, c: Card) -> str:
     b = c.band
-    label = BANDS[b][0]
-    score = str(c.scan.score) if c.scan else "–"
-    if c.scan and not c.scan.complete:
-        label = "Unfinished"
     href = f"{base}/scan/{c.scan.id}" if c.scan else ""
     name = (
         f'<a class="app-name" href="{href}">{e(c.name, 80)}</a>'
@@ -801,12 +757,7 @@ def card_html(base: str, c: Card) -> str:
     if c.diff_link:
         links = f'<a href="{base}/diff?{c.diff_link}">what the update changes</a>'
     actions = f'<div class="act">{act}{links}</div>' if (act or links) else ""
-    rd = (c.report or {}).get("readings")
-    top = (  # (preview) the readings take the score's place
-        f"</div>{readings_compact(rd)}"
-        if rd
-        else f'<div class="badge {b}">{score}<small>{label}</small></div></div>'
-    )
+    top = f"</div>{_readings_cell(c)}"
     return (
         f'<div class="app {b}{" busy" if c.busy else ""}"><div class="app-top"><div>{name}'
         f'<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}</div></div>'
@@ -875,7 +826,21 @@ def _keep(c: Card, f: str) -> bool:
 
 
 def _sort_key(c: Card) -> tuple[Any, ...]:
-    return (c.band != "grey", not c.worth_a_look, c.scan.score if c.scan else -1, c.name.lower())
+    """Not checked first, then what needs a look; within those the highest Threat, then
+    the highest Exposure (0.15: the readings in place of the score)."""
+    rd = c.readings or {}
+    return (c.band != "grey", not c.worth_a_look, -float(rd.get("threat") or 0),
+            -float(rd.get("exposure") or 0), c.name.lower())  # fmt: skip
+
+
+def _readings_cell(c: Card) -> str:
+    """The two readings in a card or table row; a grey "Not checked" before the first
+    sniff, and "Unfinished" under them when the check didn't finish."""
+    rd = c.readings
+    if c.scan is None or not rd:
+        return '<div class="badge grey">–<small>Not checked</small></div>'
+    done = "" if c.scan.complete else '<span class="muted small">Unfinished</span>'
+    return readings_compact(rd) + done
 
 
 def _busy_text(c: Card) -> str:
@@ -885,9 +850,6 @@ def _busy_text(c: Card) -> str:
 
 def card_row(base: str, c: Card) -> str:
     """One app as a table row: the same facts as its card, in less space."""
-    b = c.band
-    label = "Unfinished" if c.scan and not c.scan.complete else BANDS[b][0]
-    score = str(c.scan.score) if c.scan else "–"
     name = (
         f'<a href="{base}/scan/{c.scan.id}"><b>{e(c.name, 80)}</b></a>'
         if c.scan
@@ -898,11 +860,8 @@ def card_row(base: str, c: Card) -> str:
     if c.diff_link:
         act += f' <a href="{base}/diff?{c.diff_link}">what the update changes</a>'
     act = f'<div class="act">{act}</div>' if act else ""
-    rd = (c.report or {}).get("readings")
-    first = (readings_compact(rd) if rd
-             else f'<span class="badge {b}">{score}<small>{label}</small></span>')  # fmt: skip
     return (
-        f"<tr{' class=busy' if c.busy else ''}><td>{first}</td>"
+        f"<tr{' class=busy' if c.busy else ''}><td>{_readings_cell(c)}</td>"
         f'<td>{name}<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}'
         f'</div><div class="small">{e(card_sentence(c), 400)}</div></td>'
         f'<td><div class="chips">{chips}</div></td>'
@@ -972,7 +931,7 @@ def render_grid(base: str, cards: list[Card], v: View | None = None, lead: str =
         body = '<p class="muted">Nothing here.</p>'
     elif v.view == "table":
         body = (
-            '<div class="box tablebox"><table class="apps"><tr><th>Score</th><th>App</th>'
+            '<div class="box tablebox"><table class="apps"><tr><th>Readings</th><th>App</th>'
             "<th>Notes</th><th></th></tr>"
             + "".join(card_row(base, c) for c in window)
             + "</table></div>"
@@ -980,21 +939,20 @@ def render_grid(base: str, cards: list[Card], v: View | None = None, lead: str =
     else:
         body = '<div class="grid">' + "".join(card_html(base, c) for c in window) + "</div>"
     legend = (
-        '<details class="legend-d"><summary>What the colours and scores mean</summary>'
+        '<details class="legend-d"><summary>What the readings and colours mean</summary>'
+        '<p class="small">Threat counts only signs of malicious behavior: none found, '
+        "possible, or found. Exposure, from 0 to 10, counts what lets someone who isn't an "
+        "administrator in: pages that skip Home Assistant's login, login tokens it may hand "
+        "out, and published bugs in its libraries.</p>"
         '<div class="legend">'
-        + "".join(
-            f'<span><span class="sw" style="border-color:var(--{b})"></span>{lo}–{hi} {BANDS[b][1]}</span>'
-            for b, lo, hi in (
-                ("green", 90, 100),
-                ("yellow", 70, 89),
-                ("orange", 40, 69),
-                ("red", 0, 39),
-            )
-        )
-        + '<span><span class="sw" style="border-color:var(--grey);border-style:dashed"></span>'
-        "not checked or unfinished</span>"
-        '<span><span class="chip priv">purple</span> privacy note (never scored)</span>'
-        "</div></details>"
+        '<span><span class="sw" style="border-color:var(--red)"></span>a threat found</span>'
+        '<span><span class="sw" style="border-color:var(--yellow)"></span>a possible threat'
+        "</span>"
+        '<span><span class="sw" style="border-color:var(--orange)"></span>high exposure</span>'
+        '<span><span class="sw" style="border-color:var(--grey);border-style:dashed"></span>'
+        "not checked</span>"
+        '<span><span class="chip priv">purple</span> privacy note (never changes a reading)'
+        "</span></div></details>"
     )
     left = f'<span class="lead">{lead}{showing}</span>' if (lead or showing) else ""
     return (
@@ -1007,86 +965,9 @@ def render_grid(base: str, cards: list[Card], v: View | None = None, lead: str =
 # --- the detail page ---------------------------------------------------------------------------
 
 
-def in_short(report: dict[str, Any], preview: bool = False) -> str:
-    """A deterministic summary built only from the report (escaped HTML). `preview`: the
-    proposed readings are shown, so nothing is said about a score."""
-    if preview:
-        return _in_short_plain(report)
-    out: list[str] = []
-    hs = hosts(report)
-    net = internet(hs)
-    home = [h for h in hs if h.cls == "local"]
-    own = [h for h in net if h.cls == "declared"]
-    if net:
-        s = f"Its code mentions {len(net)} site{'s' * (len(net) != 1)} on the internet"
-        if own:
-            s += f", and {len(own)} of them {'is' if len(own) == 1 else 'are'} the app's own"
-        s += ". It also mentions addresses on your own network." if home else "."
-        out.append(s)
-    elif home:
-        out.append("Its code mentions no internet sites, only addresses on your own network.")
-    else:
-        out.append("Its code mentions no internet sites.")
-    if pts := ports(report):
-        out.append(ports_sentence(pts))
-    groups = scored_findings(report)
-    big = [g for g in groups if g[0]["severity"] in ("critical", "high", "medium")]
-    if big:
-        # (0.14.0, his wording) what it can do is said as "It can …"; anything else (a
-        # Threat, a vulnerability, how it's made) keeps "Barkley found …: <title>"
-        lead = f"Barkley found {len(big)} thing{'s' * (len(big) != 1)} to check"
-        can = [g for g in big[:2] if kinds.kind(str(g[0]["rule_id"])) == kinds.CAPABILITY]
-        if len(can) == len(big[:2]):
-            out.append(
-                f"{lead}. "
-                + " ".join(_it_can(explain.explain(g[0]["rule_id"]).title) for g in can)
-                + (" More are listed below." if len(big) > 2 else "")
-            )
-        else:
-            titles = [_lower1(explain.explain(g[0]["rule_id"]).title) for g in big[:2]]
-            out.append(
-                f"{lead}: {titles[0]}"
-                + (f", and {titles[1]}" if len(titles) > 1 else "")
-                + (". More are listed below." if len(big) > 2 else ".")
-            )
-    elif groups:
-        out.append("Barkley found only minor things. They're listed below.")
-    else:
-        out.append("Barkley found no security concerns.")
-    fl = flows(report)
-    rd = [r for r in reads(report) if r[2]]
-    if any(x["evidence"] == "proven" for x in fl):
-        out.append("<b>Barkley traced private data being sent out of your home.</b>")
-    elif fl:
-        out.append(
-            "<b>It reads private data and can talk to sites Barkley can't explain.</b> "
-            "Barkley found no direct path between the two."
-        )
-    elif rd:
-        what = explain.data_label(rd[0][1]).lower().replace("ha ", "HA ")
-        out.append(
-            f"It can read {e(what)}, but <b>Barkley found no path that sends your data to the "
-            "internet.</b>"
-        )
-    else:
-        out.append("<b>Barkley found no path that sends your data to the internet.</b>")
-    n = len(privacy.notes(report))
-    if n:
-        out.append(
-            f"There {'is' if n == 1 else 'are'} {n} privacy note{'s' * (n != 1)} "
-            + (
-                "below. They don't change the readings."
-                if preview
-                else "below. They don't change the score."
-            )
-        )
-    if not report.get("complete"):
-        out.append(
-            "Part of the check didn't finish."
-            if preview
-            else "Part of the check didn't finish, so the score is capped at 89."
-        )
-    return " ".join(x if x.startswith("<b>") or "<b>" in x else e(x, 600) for x in out)
+def in_short(report: dict[str, Any]) -> str:
+    """A deterministic summary built only from the report (escaped HTML), in plain words."""
+    return _in_short_plain(report)
 
 
 def _missing_html(a: dict[str, Any]) -> str:
@@ -1680,7 +1561,7 @@ def deep_html(
                 "<p class=\"tech\">This is the AI's opinion. It isn't one of Barkley's checks. "
                 "The app's author wrote both the README and the code. Code that matches the "
                 "README does what the author says, but that doesn't make it safe. What Barkley "
-                "flagged and the score stay the same.</p>"
+                "flagged and the readings stay the same.</p>"
             )
         refused = int(answer.get("refused") or 0)
         if refused:
@@ -1711,7 +1592,7 @@ def deep_html(
             f'<p class="tech">Written by <code>{e(answer.get("entity_id"), 120)}</code> on '
             f"{e(str(answer.get('created', ''))[:16].replace('T', ' '))} UTC. Each statement "
             "points to lines Barkley sent, and those lines contain the code it names (comments "
-            "don't count). The AI can still be wrong, and it can't change the score or clear "
+            "don't count). The AI can still be wrong, and it can't change the readings or clear "
             "anything Barkley flagged.</p>"
         )
         body = "".join(out) + sent + form.replace("{label}", f"{icon('sparkle', 16)} Ask again")
@@ -1735,7 +1616,7 @@ TrustFn = Callable[[dict[str, Any]], str]
 
 def known_text(address: str) -> str:
     """Who runs an address, from the shipped list of well-known services, or that we
-    don't know. A hint for the user's own decision; it never changes a score."""
+    don't know. A hint for the user's own decision; it never changes a reading."""
     svc = known.lookup(address)
     if svc:
         return f"Barkley knows this as {e(svc.label, 160)}."
@@ -1789,7 +1670,7 @@ def privacy_html(notes: list[privacy.Note], inline: DeepFn | None = None) -> str
         return ""
     parts = [
         f'<section class="privbox"><h2>{icon("lock", 16)} Privacy notes ({len(notes)})</h2>'
-        '<p class="sub">These notes are about your privacy. They never change the score.</p>'
+        '<p class="sub">These notes are about your privacy. They never change the readings.</p>'
     ]
     for n in notes:
         hosts_html = ""
@@ -2662,7 +2543,7 @@ def hygiene_html(report: dict[str, Any]) -> str:
         + star
         + '<p class="sub">This is what the '
         "app's own repository shows about how it's kept safe. It never changes "
-        "the score. GitHub keeps scan alerts private, so Barkley reads public signs instead.</p>"
+        "the readings. GitHub keeps scan alerts private, so Barkley reads public signs instead.</p>"
         '<ul class="plain marks">' + "".join(f"<li>{x}</li>" for x in li) + "</ul></section>"
     )
 
@@ -2802,17 +2683,6 @@ def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow
 ReviewFn = Callable[[dict[str, Any], list[dict[str, Any]]], str]
 
 
-def powerful(report: dict[str, Any]) -> bool:
-    """It can do a lot, and nothing points to malicious behavior: no Threat finding, and
-    at least one serious capability."""
-    fs = report.get("findings", [])
-    return not any(kinds.is_threat(str(f["rule_id"])) for f in fs) and any(
-        kinds.kind(str(f["rule_id"])) == kinds.CAPABILITY
-        and f.get("severity") in ("critical", "high")
-        for f in fs
-    )
-
-
 def facts_line(report: dict[str, Any]) -> str:
     """Stars and downloads: facts, never scored (popularity isn't safety, and stars can be
     bought). Downloads count only a release file; an app installed from its source has
@@ -2831,11 +2701,6 @@ def facts_line(report: dict[str, Any]) -> str:
         parts.append("Downloads aren't counted, because it's installed from source and has no "
                      "release file.")  # fmt: skip
     return f'<p class="facts">{" · ".join(parts)}</p>'
-
-
-def verdict_text(report: dict[str, Any]) -> str:
-    """The verdict line speaks for the number in the circle."""
-    return str((report.get("verdict") or {}).get("label", ""))
 
 
 def _it_can(title: str) -> str:
@@ -2971,30 +2836,24 @@ def kinds_html(
     return "".join(out)
 
 
-def minor_line(base: str, sid: int, report: dict[str, Any], preview: bool = False) -> str:
-    """Paranoid mode off: the minor findings left out of the page and the score.
-    (preview) Nothing is scored, so it only says what isn't shown."""
+def minor_line(base: str, sid: int, report: dict[str, Any]) -> str:
+    """The minor items left out of the page (Settings: Minor items), or shown. They never
+    change the readings."""
     r = report.get("shown") or {}
     minor = r.get("minor") or []
     if not minor:
         return ""
     n = len(minor)
     chips = sorted({explain.explain(x).chip for x in minor})
-    if preview:
-        what = f"{n} minor thing{'s' * (n != 1)} ({e(', '.join(chips))})"
-        if r.get("show_minor"):
-            return (f'<p class="muted small mt3">{what} {"is" if n == 1 else "are"} shown above. '
-                    f'<a href="{base}/scan/{sid}">Hide them</a></p>')  # fmt: skip
-        return (f'<p class="muted small mt3">{what} {"isn" if n == 1 else "aren"}\'t shown. '
-                f'<a href="{base}/scan/{sid}?minor=1">Show them</a></p>')  # fmt: skip
-    things = f"{n} minor thing{'s' * (n != 1)}"
+    what = f"{n} minor thing{'s' * (n != 1)} ({e(', '.join(chips))})"
+    if r.get("always"):
+        return (f'<p class="muted small mt3">{what} {"is" if n == 1 else "are"} shown above '
+                f'(<a href="{base}/settings">Settings</a>: Minor items).</p>')  # fmt: skip
     if r.get("show_minor"):
-        return (f'<p class="muted small mt3">{things} {"is" if n == 1 else "are"} shown above but '
-                f'not counted ({e(", ".join(chips))}). <a href="{base}/scan/{sid}">Hide them</a> · '
-                f'<a href="{base}/settings">Paranoid mode</a> always counts them.</p>')  # fmt: skip
-    return (f'<p class="muted small mt3">{things} {"isn" if n == 1 else "aren"}\'t shown or '
-            f'counted ({e(", ".join(chips))}). <a href="{base}/scan/{sid}?minor=1">Show them</a> · '
-            f'<a href="{base}/settings">Paranoid mode</a> always shows and counts them.</p>')  # fmt: skip
+        return (f'<p class="muted small mt3">{what} {"is" if n == 1 else "are"} shown above. '
+                f'<a href="{base}/scan/{sid}">Hide them</a></p>')  # fmt: skip
+    return (f'<p class="muted small mt3">{what} {"isn" if n == 1 else "aren"}\'t shown. '
+            f'<a href="{base}/scan/{sid}?minor=1">Show them</a></p>')  # fmt: skip
 
 
 def all_green(h: Any) -> bool:
@@ -3098,6 +2957,23 @@ def readings_compact(r: dict[str, Any]) -> str:
             + _rmini("Threat", r.get("threat"), _T_WORD.get(t, t), _T_COLOR.get(t, "yellow"))
             + _rmini("Exposure", r.get("exposure"), _E_WORD.get(x, x), _E_COLOR.get(x, "yellow"))
             + "</div>")  # fmt: skip
+
+
+def readings_text(r: dict[str, Any] | None, complete: bool = True) -> str:
+    """(0.15) The two readings as a short line for tables and lists: "Threat: none found ·
+    Exposure 1.3 Low", each in its colour. Nothing when there are none."""
+    if not r:
+        return '<span class="muted">–</span>'
+    t, x = str(r.get("threat_level")), str(r.get("exposure_level"))
+    tword = _T_WORD.get(t, t).lower()
+    if t == "none" and not complete:
+        tword = "none found so far"
+    v = float(r.get("exposure") or 0)
+    shown = f"{int(v * 10 + 0.5) / 10:g}"
+    return (f'<span class="rdt"><span class="rd-{_T_COLOR.get(t, "yellow")}">Threat: '
+            f'{e(tword)}</span> · <span class="rd-{_E_COLOR.get(x, "yellow")}">Exposure '
+            f"{shown} {e(_E_WORD.get(x, x))}</span></span>"
+            + ("" if complete else ' <span class="muted">(unfinished)</span>'))  # fmt: skip
 
 
 def readings_dials(r: dict[str, Any]) -> str:
@@ -3252,9 +3128,8 @@ def render_app(
     version again" / "other versions" text actions in the head) are server-built HTML."""
     t = report.get("target", {})
     title = name or (t.get("repo") or t.get("input") or "?").rsplit("/", 1)[-1]
-    complete = bool(report.get("complete"))
-    b = band(report.get("score"), complete)
-    plain = BANDS[b][1] if complete else "the check didn't finish"
+    rd = report.get("readings") or readings.compute(report).to_dict()
+    b = readings_band(rd)
     kind = KIND.get(str(t.get("kind")), str(t.get("kind")))
     ha = (
         f", with dependencies worked out for Home Assistant {e(report['ha_version'])}"
@@ -3263,19 +3138,11 @@ def render_app(
     )
     commit = (t.get("commit_sha") or "")[:12]
     ai = ai or {}
-    pw = (' <span class="pill pow" title="It can do a lot, and nothing points to malicious '
-          'behavior">Powerful</span>') if powerful(report) else ""  # fmt: skip
-    vline = f"{verdict_text(report)} · {plain}"
-    rd = report.get("readings")
-    left = f"<div>{ring(int(report.get('score', 0)), b)}</div>"
-    if rd:  # (preview) the readings take the score's place: no ring, verdict or score pill
-        b = readings_band(rd)
-        vline = _T_VERDICT.get(str(rd.get("threat_level")), "")
-        left, pw = "", ""
+    vline = _T_VERDICT.get(str(rd.get("threat_level")), "")
     head = (
         f'<p class="crumb"><a href="{base}/">{icon("back")} All apps</a></p>'
-        f'<section class="box dhead{" rdhead" if rd else ""}">{left}'
-        f'<div style="min-width:0"><h1>{e(title, 80)}{pw}</h1>'
+        f'<section class="box dhead rdhead">'
+        f'<div style="min-width:0"><h1>{e(title, 80)}</h1>'
         f'<div><span class="verdict" style="color:var(--{b})">'
         f"{e(vline)}</span> "
         f'<span class="muted">· {e(kind)}{" · " + e(t["ref"], 60) if t.get("ref") else ""} · {e(t.get("repo") or t.get("input"), 120)}</span></div>'
@@ -3283,36 +3150,31 @@ def render_app(
         f"{e(_SOURCE.get(str(t.get('install_source')), t.get('install_source')))}"
         f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}.</div>"
         f"{facts_line(report)}{cache_text(report)}{again}"
-        f"{readings_dials(rd) if rd else ''}</div></section>"
+        f"{readings_dials(rd)}</div></section>"
     )
     parts = [f'<div class="stack">{head}{update}</div>' if update else head]
-    if rd:  # (preview) a found threat's one sentence goes right under "All apps"; the
-        # reasons for the readings follow the head (Barkley's score: the technical report)
-        parts[0] = parts[0].replace("</p>", "</p>" + threat_banner(rd), 1)
-        parts.append("\0readings\0")  # Threat and Exposure go here, once items can be drawn
+    # a found threat's one sentence goes right under "All apps"; the reasons for the
+    # readings follow the head (the capability score: the technical report)
+    parts[0] = parts[0].replace("</p>", "</p>" + threat_banner(rd), 1)
+    parts.append("\0readings\0")  # Threat and Exposure go here, once items can be drawn
     missing = [
         a for a in report.get("analyzers", []) if a.get("state") not in ("ok", "not_applicable")
     ]
     if missing:
         parts.append(
             '<div class="banner warn"><b>Part of the check didn\'t finish</b>, so '
-            + (
-                "Barkley can't speak for every part of the app. What didn't finish:"
-                if rd
-                else "the score is capped at 89 and Barkley can't speak for every part of the "
-                "app. What didn't finish:"
-            )
+            + "Barkley can't speak for every part of the app. What didn't finish:"
             + "<ul class=plain>"
             + "".join(_missing_html(a) for a in missing)
             + "</ul></div>"
         )
     summary = ai.get("summary", "")
     parts.append(
-        f'<section class="box"><h2>In short{" " + src_tag("scan") if rd else ""}</h2>'
-        f'<p class="inshort">{in_short(report, preview=bool(rd))}</p>'
+        f'<section class="box"><h2>In short{" " + src_tag("scan")}</h2>'
+        f'<p class="inshort">{in_short(report)}</p>'
         + (
             f'<div class="aibox"><div class="small">{AI_BADGE}<b>AI explanation</b>'
-            f"{' ' + src_tag('ai') if rd else ''}</div>"
+            f"{' ' + src_tag('ai')}</div>"
             f"<p>{e(summary, 1500)}</p></div>"
             if summary
             else ""
@@ -3356,12 +3218,12 @@ def render_app(
         return ""
 
     def one(f: dict[str, Any], fs: list[dict[str, Any]], p: int) -> str:
-        ctx = bool(rd) and not kinds.is_threat(str(f["rule_id"]))
+        ctx = not kinds.is_threat(str(f["rule_id"]))
         note = note_for(fs) if ctx and notes_allowed(report, f) else ""
         return finding_html(
             f,
             fs,
-            0 if rd else p,  # (preview) no points: only the two readings are scored
+            0,  # no points: only the two readings are scored
             next((expl[x["id"]] for x in fs if x["id"] in expl), ""),
             next((dfn(x["id"]) for x in fs if x["id"] in items), "") + "".join(tfn(x) for x in fs),
             next(
@@ -3381,50 +3243,37 @@ def render_app(
             note=note,
         )
 
-    if rd:  # (preview) Threat and Exposure first; everything else is context, unscored
-        threats = [g for g in groups if kinds.is_threat(str(g[0]["rule_id"]))]
-        rest = [g for g in groups if not kinds.is_threat(str(g[0]["rule_id"]))]
-        page_notes = "".join(
-            note_for([x], "The developer's note on this page")
-            for g in rest if g[0]["rule_id"] == "ha-unauth-view" and notes_allowed(report, g[0])
-            for x in g[1]
-        )  # fmt: skip
-        boxes = threat_box(rd, "".join(one(*g) for g in threats)) + exposure_box(
-            rd, page_notes, login_free_pages(report) if rd.get("threat_level") != "found" else ""
-        )
-        parts[parts.index("\0readings\0")] = boxes
-        parts.append(
-            '<section class="box"><h2>What it can do <span class="muted small">(not scored)'
-            f'</span> {src_tag("scan")}</h2>'
-            + (kinds_html(report, rest, one, skip=frozenset({kinds.THREAT}),
-                          untitled=frozenset({kinds.CAPABILITY})) if rest else
-               f'<p class="ok">{icon("check", 16, "ok")} Barkley found nothing notable.</p>')
-            + minor_line(base, sid, report, preview=True)
-            + "</section>"
-        )  # fmt: skip
-    elif groups:
-        parts.append(
-            f'<section class="box"><h2>What Barkley found ({len(groups)})</h2>'
-            + (kinds_html(report, groups, one) if review else "".join(one(*g) for g in groups))
-            + minor_line(base, sid, report)
-            + "</section>"
-        )
-    else:
-        parts.append(
-            f'<section class="box"><h2>What Barkley found</h2><p class="ok">{icon("check", 16, "ok")} '
-            f"Barkley found nothing wrong.</p>"
-            f"{minor_line(base, sid, report) if review else ''}</section>"
-        )
+    # Threat and Exposure first; everything else is context, unscored
+    threats = [g for g in groups if kinds.is_threat(str(g[0]["rule_id"]))]
+    rest = [g for g in groups if not kinds.is_threat(str(g[0]["rule_id"]))]
+    page_notes = "".join(
+        note_for([x], "The developer's note on this page")
+        for g in rest if g[0]["rule_id"] == "ha-unauth-view" and notes_allowed(report, g[0])
+        for x in g[1]
+    )  # fmt: skip
+    boxes = threat_box(rd, "".join(one(*g) for g in threats)) + exposure_box(
+        rd, page_notes, login_free_pages(report) if rd.get("threat_level") != "found" else ""
+    )
+    parts[parts.index("\0readings\0")] = boxes
     parts.append(
-        f'<section class="box"><h2>{"What it touches " + src_tag("scan") if rd else "Where your data can go"}</h2>'
+        '<section class="box"><h2>What it can do <span class="muted small">(not scored)'
+        f'</span> {src_tag("scan")}</h2>'
+        + (kinds_html(report, rest, one, skip=frozenset({kinds.THREAT}),
+                      untitled=frozenset({kinds.CAPABILITY})) if rest else
+           f'<p class="ok">{icon("check", 16, "ok")} Barkley found nothing notable.</p>')
+        + minor_line(base, sid, report)
+        + "</section>"
+    )  # fmt: skip
+    parts.append(
+        f'<section class="box"><h2>{"What it touches " + src_tag("scan")}</h2>'
         '<p class="sub">On the left is what it can read. On the right is where it can connect. '
         "A red line means Barkley found a path in the code from your data to that place. No "
         "line means Barkley found no path.</p>"
         f"{flow_svg(report, title)}</section>"
     )
-    tag = with_tag if rd else (lambda x, _k="scan": x)
+    tag = with_tag
     parts.append(
-        f'<section class="box"><h2>Where it connects{" " + src_tag("scan") if rd else ""}</h2>'
+        f'<section class="box"><h2>Where it connects{" " + src_tag("scan")}</h2>'
         '<p class="sub">This lists every site, IP address '
         "and port in the shipped code, grouped by where it is. A site is listed because the code "
         "mentions it. That doesn't mean Barkley saw it connect. Web addresses are cut off at the "
@@ -3432,15 +3281,11 @@ def render_app(
         f"{zones_html(report, zdeep if deep else None, open_item)}</section>"
     )
     parts.append(tag(libraries_html(report)))
-    habits = hygiene_html(report)
-    if rd:
-        habits = habits.replace("never changes the score", "never changes the readings")
-    parts.append(tag(habits))
+    parts.append(tag(hygiene_html(report)))
     can = explain.can_do(report)
-    inside = ("Everything it uses inside Home Assistant " + src_tag("scan") if rd
-              else "What it can do inside Home Assistant")  # fmt: skip
+    inside = "Everything it uses inside Home Assistant " + src_tag("scan")
     tech = (" It includes the capability score, which counts what the code openly uses. "
-            "That score isn't a judgment." if rd else "")  # fmt: skip
+            "That score isn't a judgment.")  # fmt: skip
     parts.append(
         f'<div class="two"><section class="box"><h2>{inside}</h2>'
         + (
@@ -3448,7 +3293,7 @@ def render_app(
             if can
             else '<p class="muted small">Barkley found nothing notable.</p>'
         )
-        + f'</section><section class="box"><h2>History{" " + src_tag("scan") if rd else ""}</h2>'
+        + f'</section><section class="box"><h2>History{" " + src_tag("scan")}</h2>'
         f"{history_html(base, sid, report, rows)}"
         f'<p class="tech"><a href="{base}/scan/{sid}.json">Technical report (raw JSON)</a>'
         f"{tech}</p></section></div>"

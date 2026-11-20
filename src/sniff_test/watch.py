@@ -48,11 +48,9 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sniff_test import supervisor
+from sniff_test import readings, shown, supervisor
 from sniff_test.diff import HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
-from sniff_test.report import explain
-from sniff_test.scoring import VERDICTS
 from sniff_test.store import Store, StoreError
 from sniff_test.supervisor import Installed, SupervisorError
 
@@ -70,7 +68,6 @@ _LOG_KEPT = 20
 _PENDING_KEPT = 20
 _RECONNECT = 10  # seconds; doubles up to POLL while the subscription keeps failing
 
-_VERDICT = {v.key: (v.label, v.emoji) for _, v in VERDICTS}
 _KIND = {"integration": "Integration", "card": "Card", "plugin": "Card"}
 _GROUP = {  # diff.py's summary buckets, in fixed plain words (singular, plural)
     "findings": ("finding", "findings"),
@@ -149,21 +146,6 @@ def matters(signal: str, data: dict[str, Any]) -> bool:
     return False
 
 
-def top_titles(report: dict[str, Any], limit: int = 3) -> list[str]:
-    """Fixed rule titles of the most serious finding groups (never evidence text)."""
-    order = {"critical": 0, "high": 1, "medium": 2}
-    seen: list[tuple[int, str]] = []
-    for f in report.get("findings", []):
-        sev = str(f.get("severity"))
-        if sev not in order:
-            continue
-        title = explain.explain(str(f.get("rule_id"))).title
-        if (order[sev], title) not in seen:
-            seen.append((order[sev], title))
-    seen.sort(key=lambda s: s[0])
-    return [t for _, t in seen[:limit]]
-
-
 def change_summary(d: dict[str, Any]) -> str:
     """Headline changes of an update diff as counts per group, in fixed words."""
     counts: dict[tuple[str, str], int] = {}
@@ -213,10 +195,8 @@ def notification(
 ) -> tuple[str, str, str]:
     """(title, markdown message, plain message) for one auto-sniffed install or update.
     Every piece is validated or fixed text; nothing comes from the scanned repo."""
-    repo, ver, prev = entry["repo"], entry["version"], entry.get("previous")
+    ver, prev = entry["version"], entry.get("previous")
     kind = _KIND.get(str(entry.get("kind")), "App")
-    label, emoji = _VERDICT.get(str(report.get("verdict", {}).get("key")), ("?", ""))
-    score = int(report.get("score", 0))
     offered = entry.get("action") == "available"
     if offered:
         did = f"has an update waiting, {prev} to {ver}. Barkley sniffed it before you install it"
@@ -226,33 +206,8 @@ def notification(
             if prev
             else f"{ver} was installed. Barkley sniffed it"
         )
-    rd = report.get("readings")
-    if rd:  # (preview) the readings take the score's place, as on the panel
-        return _readings_notification(entry, report, d, panel, rd, kind, did, offered)
-    lines = [f"{kind} {repo} {did}. Score: {score}/100, {emoji} {label}."]
-    titles = top_titles(report)
-    if titles:
-        lines.append("Things to check: " + "; ".join(titles) + ".")
-    elif report.get("findings"):
-        lines.append("Everything still open is minor.")
-    else:
-        lines.append("No security concerns were found.")
-    if d is not None:
-        summary = change_summary(d)
-        lines.append(
-            f"Changes in this update: {summary}." if summary
-            else f"Nothing important changed since {prev}."
-        )  # fmt: skip
-    if not report.get("complete", True):
-        lines.append("Part of the check didn't finish, so the score is capped at 89.")
-    ids = entry.get("scan_ids") or []
-    where = f"scan @{ids[-1]}" if ids else "the app's page"
-    if len(ids) == 2:
-        where += f" and what the update changes (@{ids[0]} → @{ids[1]})"
-    link = f"[Open Barkley]({panel})" if panel else "Open Barkley from the sidebar"
-    title = f"Barkley: {repo} {ver}" + (" (update waiting)" if offered else "")
-    plain = " ".join(lines) + f" Open Barkley from the sidebar to see {where}."
-    return title, "\n\n".join(lines) + f"\n\n{link} to see {where}.", plain
+    rd = report.get("readings") or readings.compute(report).to_dict()
+    return _readings_notification(entry, report, d, panel, rd, kind, did, offered)
 
 
 def _readings_notification(
@@ -265,8 +220,8 @@ def _readings_notification(
     did: str,
     offered: bool,
 ) -> tuple[str, str, str]:
-    """(preview) Counts, readings, fixed phrases and validated names only: never the
-    developer's words or AI text."""
+    """Counts, readings, fixed phrases and validated names only: never the developer's
+    words or AI text."""
     repo, ver, prev = entry["repo"], entry["version"], entry.get("previous")
     was = entry.get("was_readings") if isinstance(entry.get("was_readings"), dict) else None
     lines = [f"{kind} {repo} {did}. {readings_line(rd, was)}"]
@@ -339,19 +294,18 @@ def advisory_notification(
     entry: dict[str, Any], report: dict[str, Any], panel: str
 ) -> tuple[str, str, str]:
     """(title, markdown, plain) for a stored scan whose package advisories changed.
-    Counts, scores and validated names only: package names come from the scanned repo's
+    Counts, readings and validated names only: package names come from the scanned repo's
     lockfile and advisory text from OSV, so neither is ever put in a notification."""
     repo, ver = entry["repo"], entry["version"]
     kind = _KIND.get(str(entry.get("kind")), "App")
-    label, emoji = _VERDICT.get(str(report.get("verdict", {}).get("key")), ("?", ""))
-    score, was = int(report.get("score", 0)), entry.get("was")
-    moved = f" (was {int(was)}/100)" if isinstance(was, int) and was != score else ""
+    rd = report.get("readings") or readings.compute(report).to_dict()
+    was = entry.get("was_readings") if isinstance(entry.get("was_readings"), dict) else None
     lines = []
     if entry.get("malicious"):
         lines.append("A package this app uses is now listed as malicious.")
     lines.append(
         f"The known security advisories for the packages {kind.lower()} {repo} {ver} uses "
-        f"have changed since Barkley sniffed it. Score: {score}/100{moved}, {emoji} {label}."
+        f"have changed since Barkley sniffed it. {readings_line(rd, was)}"
     )
     if entry.get("changes"):
         lines.append(f"What changed: {entry['changes']}.")
@@ -393,7 +347,7 @@ class Watcher:
         self.store = store
         # (0.14.0) the report as the panel shows it (the scoring settings, the readings);
         # set by server.serve
-        self.view_fn: Callable[[dict[str, Any]], dict[str, Any]] = lambda r: r
+        self.view_fn: Callable[[dict[str, Any]], dict[str, Any]] = shown.view
         self.worker = worker
         self.installed_fn = installed_fn
         self.subscribe_fn = subscribe_fn
@@ -733,9 +687,8 @@ class Watcher:
             "state": job.state,
             "message": str(job.message)[:300],
             "scan_ids": list(job.scan_ids),
-            "score": int(shown.get("score", 0)),
-            "was": int(self.view_fn(old).get("score", 0)),
-            "verdict": str(shown.get("verdict", {}).get("key", "")),
+            "readings": shown.get("readings"),
+            "was_readings": self.view_fn(old).get("readings"),
             "complete": bool(shown.get("complete", True)),
             "changes": advisory_summary(counts),
             "malicious": counts["malicious"],
@@ -747,9 +700,9 @@ class Watcher:
             f"notification failed: {err}" if err
             else "notified bell" + (f" + notify.{self.notify_target}" if self.notify_target else "")
         )  # fmt: skip
-        print(f"auto-sniff: advisories of {repo} {ver} changed: {entry['was']} → "
-              f"{entry['score']}/100, {entry['changes']}; {ids}; {sent}",
-              file=sys.stderr, flush=True)  # fmt: skip
+        now = readings_line(entry.get("readings") or {}, entry.get("was_readings"))
+        print(f"auto-sniff: advisories of {repo} {ver} changed: {now}, {entry['changes']}; "
+              f"{ids}; {sent}", file=sys.stderr, flush=True)  # fmt: skip
 
     def _active(self, repo: str, ref: str) -> bool:
         return any(
@@ -877,18 +830,17 @@ class Watcher:
                 if len(job.scan_ids) == 2:
                     old = self.store.report(job.scan_ids[0])
                     d = diff_reports(old, report)
-                    was = self.view_fn(old).get("readings")  # (preview) for "was 1.25"
+                    was = self.view_fn(old).get("readings")  # for "was 1.25"
                     if was:
                         entry["was_readings"] = was
-                # the score as the panel shows it: the user's settings
+                # the report as the panel shows it, with its readings
                 # (the diff above compares the stored reports)
                 report = self.view_fn(report)
             except StoreError as ex:
                 entry["state"], entry["message"] = "failed", str(ex)
                 report = None
         if report is not None:
-            entry["score"] = int(report.get("score", 0))
-            entry["verdict"] = str(report.get("verdict", {}).get("key", ""))
+            entry["readings"] = report.get("readings")
             entry["complete"] = bool(report.get("complete", True))
             entry["changes"] = change_summary(d) if d is not None else ""
         self._log(entry)
@@ -912,8 +864,8 @@ class Watcher:
             ver += " (update waiting)"
         ids = " → ".join(f"@{i}" for i in job.scan_ids) or "no scan"
         if report is not None:
-            label, emoji = _VERDICT.get(entry.get("verdict", ""), ("?", ""))
-            what = f"sniffed: {emoji} {label} {entry['score']}/100"
+            rd = entry.get("readings") or {}
+            what = f"sniffed: {readings_line(rd)}" if rd else "sniffed"
             if entry.get("changes"):
                 what += f", {entry['changes']}"
             if not entry.get("complete", True):

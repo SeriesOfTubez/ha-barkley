@@ -118,9 +118,9 @@ def test_paranoid_off_hides_minor_findings_and_show_them_keeps_them_unscored():
     assert [f["rule_id"] for f in v["findings"]] == ["py-shell-exec"]
     assert v["shown"]["minor"] == ["ha-auth-list-users"] and v["score"] == r["score"]
     every = shown.view(r, show_minor=True)
-    assert len(every["findings"]) == 2 and every["score"] == r["score"]
-    p = shown.view(r, settings=shown.Settings(paranoid=True))
-    assert len(p["findings"]) == 2 and p["score"] < r["score"] and not p["shown"]["minor"]
+    assert len(every["findings"]) == 2 and every["readings"] == v["readings"]
+    always = shown.view(r, always=True)  # Settings: Minor items, Show
+    assert len(always["findings"]) == 2 and always["shown"]["always"]
     assert r["score"] == rep([minor, cap])["score"] and "shown" not in r  # never edited
 
 
@@ -135,10 +135,10 @@ def test_settings_are_checked_and_fall_back(tmp_path):
     start = settings_mod.from_dict({"exposure": "public", "parallel": "1", "jobs": 9})
     assert (start.exposure, start.parallel, start.jobs) == ("public", 1, 1)
     assert settings_mod.load(store, start) == start
-    settings_mod.save(store, settings_mod.from_dict({"paranoid": "1", "reconfirm_months": "6",
+    settings_mod.save(store, settings_mod.from_dict({"show_minor": "1", "paranoid": "1",
                                                      "exposure": "evil"}, start))  # fmt: skip
     s = settings_mod.load(store, start)
-    assert s.paranoid and s.exposure == "public"
+    assert s.show_minor and s.exposure == "public" and not hasattr(s, "paranoid")
     assert not hasattr(s, "reconfirm_months") and not hasattr(s, "notify_reopen")  # 0.15
 
 
@@ -226,26 +226,29 @@ def test_an_item_about_an_address_lists_it_without_a_trust_button(panel):  # noq
     assert "api.example" in page and "Trust " not in page
 
 
-def test_settings_page_saves_and_changes_scores(panel):  # noqa: F811
+def test_settings_page_saves_the_readings_settings(panel):  # noqa: F811
     store, _scan, base, httpd = panel
     minor = fnd(1, "ha-auth-list-users", "medium")
     sid = _saved(store, [minor])
     _, _, page = get(f"{base}/settings")
-    for text in ("Paranoid mode", "Powerful, no threat", "Pages without a login",
-                 "Hidden usage reporting", "GitHub token", "it needs no permissions",
-                 "Reset to defaults"):  # fmt: skip
-        assert text in ui.e(text) and ui.e(text) in page, text
+    for text in ("Where Home Assistant runs", "Minor items", "GitHub token",
+                 "it needs no permissions", "Reset to defaults"):  # fmt: skip
+        assert ui.e(text) in page, text
     assert "write-only" not in page.lower()
     assert "Ask again" not in page and "accepted finding" not in page  # 0.15
     _, _, app = get(f"{base}/scan/{sid}")
-    assert "1 minor thing isn't shown or counted" in app
+    assert "1 minor thing (" in app and "isn't shown" in app and "Show them" in app
     tok = token(base)
-    assert post(f"{base}/settings", {"token": tok, "paranoid": "1", "parallel": "3"})[0] == 303
-    assert httpd.panel.settings.paranoid and httpd.panel.worker.parallel == 3
+    form = {"token": tok, "show_minor": "1", "where": "internet", "parallel": "3"}
+    assert post(f"{base}/settings", form)[0] == 303
+    s = httpd.panel.settings
+    assert s.show_minor and s.exposure == "public" and httpd.panel.worker.parallel == 3
+    assert httpd.panel.worker.exposure == "public"  # new scans use it
     _, _, app = get(f"{base}/scan/{sid}")
-    assert "minor finding not shown" not in app and "Score 100 of 100" not in app
-    post(f"{base}/settings-reset", {"token": tok, "part": "scoring"})
-    assert not httpd.panel.settings.paranoid and httpd.panel.worker.parallel == 3
+    assert "is shown above" in app and "of 100" not in app
+    post(f"{base}/settings-reset", {"token": tok, "part": "readings"})
+    s = httpd.panel.settings
+    assert not s.show_minor and s.where == "home" and httpd.panel.worker.parallel == 3
 
 
 def test_the_token_form_never_shows_the_token(panel, monkeypatch, tmp_path):  # noqa: F811
@@ -291,7 +294,7 @@ def test_report_links_carry_versions_not_secrets():
 def test_in_short_says_what_it_can_do():
     r = rep([fnd(1, "ha-auth-change-users"), fnd(2, "ha-foreign-entry-data")])
     text = ui.in_short(r)
-    assert "It can change who can log in" in text and "It can read" in text
+    assert "It can change who can log in" in text and "read other apps" in text
 
 
 def test_a_plus_star_with_seven_days_grace():

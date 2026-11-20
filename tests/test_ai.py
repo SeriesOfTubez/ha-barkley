@@ -110,7 +110,7 @@ def test_explain_flow_shows_text_and_never_changes_the_score(tmp_path):
     _, _, page = get(f"{base}/scan/{sid}")
     assert "AI explanation" in page and "Reads secrets." in page
     assert "<script>" not in page  # the AI's text is escaped like scanned text
-    assert 'aria-label="Score 75 of 100"' in page  # the score is the scanner's
+    assert 'aria-label="Threat 0 of 10"' in page and "of 100" not in page  # readings, not the AI's
     assert store.report(sid)["score"] == 75
     assert "Ask again" in page
     httpd.shutdown()

@@ -486,7 +486,8 @@ def test_the_page_shows_the_comparison_and_the_sheet_the_labelled_opinion(tmp_pa
     assert "This is the AI's opinion. It isn't one of Barkley's checks." in page
     assert "but that doesn't make it safe" in page
     assert "<script" not in page
-    assert store.report(sid)["score"] == 75 and 'aria-label="Score 75 of 100"' in page
+    assert store.report(sid)["score"] == 75  # the stored capability score is untouched
+    assert 'aria-label="Threat 0 of 10"' in page and "of 100" not in page  # readings, not the AI's
     assert store.report(sid)["findings"] == rep["findings"]  # nothing cleared or changed
     httpd.shutdown()
 

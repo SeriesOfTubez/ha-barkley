@@ -39,7 +39,6 @@ from sniff_test import (
     readings,
     recheck,
     scancache,
-    scoring,
     supervisor,
     ui,
     watch,
@@ -53,7 +52,6 @@ from sniff_test.releases import ReleasesError
 from sniff_test.report import ai as report_ai
 from sniff_test.report import ai_context, context
 from sniff_test.report.json_report import sanitize_untrusted
-from sniff_test.scoring import VERDICTS
 from sniff_test.store import ScanRow, Store, StoreError
 
 SUPERVISOR_IP = "172.30.32.2"
@@ -74,7 +72,6 @@ def local_path(to: str) -> str:
 _REPO = re.compile(r"^(?:https://github\.com/)?([A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100})/?$")
 _REF = re.compile(r"^[A-Za-z0-9_.+/-]{1,100}$")
 BAD_REQUEST = "Barkley couldn't use that link or form."
-_LABEL = {v.key: v.label for _, v in VERDICTS}
 _SEV_CLASS = {"critical": "sev-critical", "high": "sev-high", "medium": "sev-medium"}
 _JOBS_KEPT = 20
 # GitHub API requests a job may need, measured 2026-11-09: 6-7 per scan (repo, release,
@@ -490,13 +487,6 @@ def _page(title: str, body: str, base: str = "") -> bytes:
     return ui.page(title, body, base=base)
 
 
-def _verdict(score: int, key: str) -> str:
-    cls = {"good_boy": "ok", "kinda_sus": "sev-medium", "very_sus": "sev-high", "bork": "bad"}.get(
-        key, ""
-    )
-    return f'<span class="{cls}"><b>{score}</b> {e(_LABEL.get(key, ""))}</span>'
-
-
 # --- installed HACS items --------------------------------------------------------------
 
 
@@ -525,7 +515,6 @@ GROUPS = {
     "unchecked": "Updates not checked yet",
     "checked": "Updates checked: nothing important changed",
 }
-_GOOD = 90
 
 
 def _latest(rows: list[ScanRow], ref: str) -> ScanRow | None:
@@ -534,10 +523,16 @@ def _latest(rows: list[ScanRow], ref: str) -> ScanRow | None:
 
 
 def _score_reason(r: ScanRow) -> str | None:
+    """(0.15) Why a scan needs a look, from its readings (the panel's rows carry them)."""
     if not r.complete:
-        return f"@{r.id} {r.ref}: incomplete scan (scored {r.score})"
-    if r.score < _GOOD:
-        return f"@{r.id} {r.ref}: scored {r.score}"
+        return f"@{r.id} {r.ref}: the check didn't finish"
+    rd = r.readings or {}
+    if rd.get("threat_level") == "found":
+        return f"@{r.id} {r.ref}: malicious behavior found"
+    if rd.get("threat_level") == "possible":
+        return f"@{r.id} {r.ref}: a possible sign of malicious behavior"
+    if rd.get("exposure_level") == "high":
+        return f"@{r.id} {r.ref}: high exposure"
     return None
 
 
@@ -550,8 +545,8 @@ def classify(
     """Signal first: what needs attention, then unchecked updates, checked ones, the rest.
 
     Attention means a checked update whose diff has headline changes (a new publisher,
-    new findings, new flows), or a scan of the version you'd run that isn't Good Boy or
-    didn't finish. The diff and the scores are read, never recomputed or changed.
+    new findings, new flows), or a scan of the version you'd run with a possible or found
+    threat, high exposure, or a check that didn't finish. Nothing stored is changed.
     """
     out: list[Row] = []
     for it in items:
@@ -866,16 +861,14 @@ def render_index(
     if not rows:
         out.append('<p class="muted">No scans yet.</p>')
     else:
-        out.append('<div class="tablebox"><table><tr><th>#</th><th>score</th><th>repo</th>'
+        out.append('<div class="tablebox"><table><tr><th>#</th><th>readings</th><th>repo</th>'
                    "<th>when</th></tr>")  # fmt: skip
         for r in rows:
             extra = r.kind + (f" · HA {r.ha_version}" if r.ha_version else "")
             extra += f" · rules {ui.rules_label(r.tool_version)}"
-            if not r.complete:
-                extra += " · incomplete"
             out.append(
                 f'<tr><td><a href="{base}/scan/{r.id}">@{r.id}</a></td>'
-                f"<td>{_verdict(r.score, r.verdict)}</td>"
+                f"<td>{ui.readings_text(r.readings, r.complete)}</td>"
                 f'<td class="wrap">{e(r.repo or r.source, 100)}'
                 f"{'@' + e(r.ref, 60) if r.ref else ''}"
                 f'<br><span class="muted">{e(extra)}</span></td>'
@@ -967,42 +960,25 @@ def ha_token_block(base: str, store: Store, period: int, token: str) -> str:
 # "How this works" under each setting on the Settings page: what it changes, in plain
 # words, checked against the code (scoring.Policy, kinds.MINOR, shown.py, watch.py).
 SETTING_HELP = {
-    "Exposure": (
-        "Public raises by one level what Barkley finds about what an app accepts from "
-        "outside: pages that work without a login, pages other websites may call, and "
-        "webhooks. Anything about data leaving your home is at the top level either way. A "
-        "change applies to new scans. A stored scan keeps the setting it was made with."
+    "Where Home Assistant runs": (
+        "This changes the Exposure reading only: on a shared or work network it goes up by "
+        "a quarter, and when Home Assistant can be reached from the internet, by half. "
+        "Reachable from the internet also changes what new sniffs find: pages that work "
+        "without a login, pages other websites may call and webhooks count one level "
+        "higher, and a known bug in a library counts as critical if attackers are already "
+        "using it (with a home or work network, as medium at most). A stored scan keeps "
+        "the choice it was made with. Data leaving your home and other signs of malicious "
+        "behavior count the same either way."
     ),
-    "Paranoid mode": (
-        "When off, Barkley hides these and doesn't count them: listing user accounts (names "
-        "only), reading other "
-        "apps' settings (their options, not their stored data), writing its own files in "
-        "Home Assistant's .storage folder, a bug in a build tool that never ships in a card, "
-        "installing its own declared libraries, and usage reporting that is disclosed or "
-        "optional. An app's page says how many it left out and has a link to show them. "
-        "Barkley never treats these as minor: changing who can log in, reading other apps' "
-        "stored data or passwords, and code it couldn't read."
-    ),
-    "Powerful, no threat": (
-        "A Threat is a sign of malicious behavior, such as sending your data or logins away, "
-        "disguised code or known malware. Without one, an app that can do a lot stops at 40 "
-        "instead of going lower. This only applies to a finished scan with nothing critical "
-        "found. An unfinished scan may have missed a Threat, and a critical known bug in a "
-        "library still counts in full. When off, anything Barkley finds can take the score "
-        "down to 0, whatever its kind."
-    ),
-    "Pages without a login": (
-        "Some apps add a page that opens without logging in, for sign-in callbacks or image "
-        "links. If Home Assistant can't be reached from the internet, only devices on your "
-        "network can open it, so by default it's listed under what the app can do and not "
-        "counted. Count as low takes 2 points. With Exposure set to Public it always counts, "
-        "one level higher."
-    ),
-    "Hidden usage reporting": (
-        "Barkley counts it (8 points) only when it's sure of all three: the app sends it by "
-        "itself (at start-up or on a timer), no setting turns it off, and nothing in its "
-        "README or setup screens mentions it. When Barkley can't be sure, it shows a privacy "
-        "note that doesn't count. List only keeps it on the page without counting it."
+    "Minor items": (
+        "These touch no password or login, change nothing, and usually have a plain "
+        "reason: listing user accounts (names only), reading other apps' settings (their "
+        "options, not their stored data), writing its own files in Home Assistant's "
+        ".storage folder, a bug in a build tool that never ships in a card, installing its "
+        "own declared libraries, and usage reporting that is disclosed or optional. When "
+        "hidden, an app's page says how many it left out and has a link to show them. "
+        "Changing who can log in, reading other apps' stored data or passwords, and code "
+        "Barkley couldn't read are never minor. Minor items never change the readings."
     ),
     "Auto-sniff": (
         "When the Marketplace installs or updates an app, or offers an update, Barkley "
@@ -1090,8 +1066,8 @@ def render_settings(
     defaults: settings_mod.Settings = settings_mod.DEFAULTS,
     ha_token_html: str = "",
 ) -> bytes:
-    """Barkley's Settings page (part 3, the agreed wording 2026-11-18): Scoring, the
-    readings, Checking and notifications (0.15: the Reviews section went with reviews).
+    """Barkley's Settings page (part 3, the agreed wording 2026-11-18): the readings,
+    Checking and notifications (0.15: Scoring and Reviews went with the score).
     One form; each section can go back to Barkley's defaults. No script: plain selects
     and buttons."""
 
@@ -1121,56 +1097,27 @@ def render_settings(
 
     hint = ""
     if external is False:
-        hint = ('<p class="muted small">Your Home Assistant has no external URL set, so Local '
-                "only fits.</p>")  # fmt: skip
+        hint = ('<p class="muted small">Your Home Assistant has no external URL set, so one of '
+                "the first two fits.</p>")  # fmt: skip
     elif external:
-        hint = ('<p class="muted small">Your Home Assistant has an external URL set. If it can '
-                "be reached from the internet, choose Public.</p>")  # fmt: skip
-    scoring_rows = (
-        row("Exposure", "Choose Public if your Home Assistant can be reached from the "
-            "internet. Public raises what Barkley finds about open pages and webhooks. With "
-            "Local only, a known bug in a library counts as medium at most. With Public, it "
-            "counts as critical if attackers are already using it. Threats are never "
-            "lowered. The change applies from the next sniff.",
-            sel("exposure", s.exposure,
-                [(x, label + (" (default)" if defaults.exposure == x else ""))
-                 for x, label in (("local", "Local only"), ("public", "Public"))])
+        hint = ('<p class="muted small">Your Home Assistant has an external URL set. If it '
+                "can be reached from the internet, choose Reachable from the internet."
+                "</p>")  # fmt: skip
+    readings_rows = (
+        row("Where Home Assistant runs", "Choose where your Home Assistant can be reached "
+            "from. This changes the Exposure reading. If it can be reached from the "
+            "internet, new sniffs also count open pages and webhooks higher.",
+            sel("where", s.where,
+                [(x, label + (" (default)" if defaults.where == x else ""))
+                 for x, label in (("home", "Only my home network"),
+                                  ("shared", "A shared or work network"),
+                                  ("internet", "Reachable from the internet"))])
             + hint)
-        + row("Paranoid mode", "When off, Barkley hides things that touch no password or "
-              "login, change nothing, and usually have an innocent reason, such as listing "
-              "users or reading other apps' settings. They don't count either. When on, "
-              "Barkley shows and counts everything.",
-              onoff("paranoid", s.paranoid, "On", "Off", False))
-        + row("Powerful, no threat", "If an app has no Threat finding, what it can do won't "
-              "put its score below Very Sus (40).", onoff("floor", s.floor, "On", "Off", True))
-        + row("Pages without a login", "When Exposure is Local only, Barkley lists these pages "
-              "under what the app can do. Choose whether they also count against the score.",
-              sel("unauth_views", "1" if s.unauth_views else "0",
-                  [("0", "List only (default)"), ("1", "Count as low")]))
-        + row("Hidden usage reporting", "Some apps send usage data on their own, with no "
-              "setting to turn it off, and don't tell you. Choose whether that counts against "
-              "the score or is only listed.",
-              sel("shadow_telemetry", "1" if s.shadow_telemetry else "0",
-                  [("1", "Count it (default)"), ("0", "List only")]))
-    )  # fmt: skip
-    preview_rows = (
-        row("Proposed readings", "Try a new way to show results. It shows two readings "
-            "instead of Barkley's score. Threat is how likely an app is to be trying to hurt "
-            "you: none, possible or found. Exposure is what it opens up to someone who isn't "
-            "an administrator, from 0 to 10. Notifications show them too. Nothing stored "
-            "changes, and you can switch back at any time.",
-            onoff("preview", s.preview, "Show", "Hide", False),
-            "Threat counts only signs of malicious behavior. Exposure counts pages that skip "
-            "Home Assistant's login, login tokens the app may hand out, and published bugs in "
-            "its libraries. Something only an administrator can do adds nothing. Barkley "
-            "works both out from the stored scan each time it shows a page, so you don't "
-            "need to sniff again.")
-        + row("Where Home Assistant runs", "This only changes the Exposure reading. On a "
-              "shared or work network, the reading goes up by a quarter. If Home Assistant can "
-              "be reached from the internet, set Exposure to Public under Scoring. That raises "
-              "the reading by half.",
-              sel("network", s.network,
-                  [("home", "Home network (default)"), ("shared", "A shared or work network")]))
+        + row("Minor items", "Things that touch no password or login and change nothing, "
+              "such as listing user names. Hidden items are counted on each app's page, with "
+              "a link to show them.",
+              sel("show_minor", "1" if s.show_minor else "0",
+                  [("0", "Hide (default)"), ("1", "Show")]))
     )  # fmt: skip
     check_rows = ""
     if watcher is not None:
@@ -1300,10 +1247,8 @@ def render_settings(
         "<h1>Settings</h1>"
         f"{note}"
         f'<form method=post action="{base}/settings" id="settings" class="setform">{hidden}</form>'
-        + section("Scoring", scoring_rows.replace("<select ", '<select form="settings" '),
-                  "scoring")
-        + section("Proposed readings (preview)",
-                  preview_rows.replace("<select ", '<select form="settings" '), "preview")
+        + section("Readings", readings_rows.replace("<select ", '<select form="settings" '),
+                  "readings")
         + section("Checking and notifications",
                   check_rows.replace("<select ", '<select form="settings" ') + token_row,
                   "checking")
@@ -1463,12 +1408,10 @@ def render_auto_activity(base: str, w: watch.Watcher) -> str:
             did = f"updated {e(x.get('previous'))} → {e(x.get('version'))}"
         else:
             did = f"installed {e(x.get('version'))}"
-        if "score" in x:
-            result = _verdict(int(x["score"]), str(x.get("verdict", "")))
+        if "readings" in x or "score" in x:  # (0.15) older entries kept a score: not shown
+            result = ui.readings_text(x.get("readings"), bool(x.get("complete", True)))
             if x.get("changes"):
                 result += f' <span class="muted">{e(x["changes"], 200)}</span>'
-            if not x.get("complete", True):
-                result += ' <span class="muted">(incomplete)</span>'
         else:
             result = f"{e(x.get('state'))}: {e(x.get('message'), 200)}"
         rows.append(
@@ -1873,10 +1816,8 @@ def render_search(
             act = ('<span class="muted"><span class="dot"></span>'
                    + {"running": "sniffing…"}.get(b, "queued…") + "</span>")  # fmt: skip
         elif scan:
-            bd = ui.band(scan.score, scan.complete)
-            act = (f'<a class="badge {bd}" style="text-decoration:none" '
-                   f'href="{base}/scan/{scan.id}">'
-                   f"{scan.score}<small>{e(ui.BANDS[bd][0])}</small></a>")  # fmt: skip
+            act = (f'<a style="text-decoration:none" href="{base}/scan/{scan.id}">'
+                   f"{ui.readings_text(scan.readings, scan.complete)}</a>")  # fmt: skip
         else:
             act = (f'<form method=post action="{base}/scan">'
                    f'<input type=hidden name=token value="{token}">'
@@ -1945,10 +1886,8 @@ def render_versions(
             return ('<span class="muted"><span class="dot"></span>'
                     + {"running": "sniffing…"}.get(b, "queued…") + "</span>")  # fmt: skip
         if scan := scans.get(key):
-            bd = ui.band(scan.score, scan.complete)
-            return (f'<a class="badge {bd}" style="text-decoration:none" '
-                    f'href="{base}/scan/{scan.id}">'
-                    f"{scan.score}<small>{e(ui.BANDS[bd][0])}</small></a>")  # fmt: skip
+            return (f'<a style="text-decoration:none" href="{base}/scan/{scan.id}">'
+                    f"{ui.readings_text(scan.readings, scan.complete)}</a>")  # fmt: skip
         return button(ref, "Sniff it")
 
     for r in releases:
@@ -2175,6 +2114,7 @@ def render_diff(
     d: dict[str, Any],
     name: str | None = None,
     recheck_of: bool = False,
+    readings_of: tuple[dict[str, Any] | None, dict[str, Any] | None] = (None, None),
 ) -> bytes:
     """What an update changes, in plain words: the headline changes as a list with the
     same level labels as findings, the rest folded behind a disclosure; the diff's own
@@ -2194,16 +2134,21 @@ def render_diff(
     head = [c for c in changes if c["rank"] >= HEADLINE_RANK][:HEADLINE_MAX]
     rest = [c for c in changes if c not in head]
     title = name or str(frm.get("repo") or "?").rsplit("/", 1)[-1]
-    s_from, s_to = d["score"].get("from"), d["score"].get("to")
+    r_from, r_to = readings_of
     out = [
         f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
-        '<section class="box dhead"><div class="dscore">'
-        f"{ui.ring(int(s_to or 0), ui.band(s_to))}</div>"
+        '<section class="box dhead">'
         f"<div><h1>{what}: {e(title, 100)}</h1>"
         f"<div>From {_side_words(base, frm, old)} to {_side_words(base, to, new)} · "
         f"{e(frm.get('repo'), 120)}</div>"
-        f'<div class="muted small">Score {e(s_from)} → {e(s_to)}. Each number is that '
-        f"version's own score. The comparison itself adds no score. {how}</div></div></section>",
+        + (
+            f'<div class="small mt2">Before: {ui.readings_text(r_from)}<br>After: '
+            f"{ui.readings_text(r_to)}</div>"
+            if r_from or r_to
+            else ""
+        )
+        + f'<div class="muted small">Each version has its own readings. The comparison itself '
+        f"doesn't change them. {how}</div></div></section>",
     ]
     for w in d.get("warnings", []):
         out.append(f'<div class="banner warn">{ui.icon("alert")} {e(w, 400)}</div>')
@@ -2267,14 +2212,13 @@ class Panel:
         memory_fn: Callable[[], memory.Memory] = memory.check,
     ):
         self.store = store
-        # (0.14.0) rows show scores as the panel does: the user's scoring settings
-        # (shown.view)
-        store.overlay = self.overlay_row
+        # (0.15) rows carry their Threat and Exposure readings (overlay_rows)
+        store.overlay = self.overlay_rows
         self.worker = worker
         self.start_settings = settings_mod.DEFAULTS  # from the add-on options / BARKLEY_*
         self.option_token = ""  # the add-on option's GitHub token (Remove falls back to it)
         self._cache: _Inputs | None = None  # see _inputs()
-        self._rows: dict[int, ScanRow] = {}  # overlay_row answers for that same input
+        self._rows: dict[int, dict[str, Any]] = {}  # readings per scan for that same input
         self.standalone = False  # (0.14.0 part 4) set by `serve`: Barkley's own HA token
         self.allow = allow  # None: any address (standalone, behind the login)
         self.login: login.Login | None = None  # standalone: "log in with Home Assistant"
@@ -2532,7 +2476,7 @@ class Panel:
             )
         if not cards:
             return ""
-        cards.sort(key=lambda c: (c.scan.score if c.scan else -1, c.name.lower()))
+        cards.sort(key=ui._sort_key)
         return not_installed_cards_html(base, cards)
 
     def ai_choices(self, refresh: bool = False) -> tuple[list[tuple[str, str]] | None, str]:
@@ -2565,14 +2509,14 @@ class Panel:
         return self._reports[sid]
 
     def shown_report(self, sid: int, show_minor: bool = False) -> dict[str, Any] | None:
-        """The report as the panel shows it (shown.view): Barkley's score with the user's
-        scoring settings, minor items left out. The stored report, the raw JSON link, the
-        AI's input and diffs always use `report()`."""
+        """The report as the panel shows it (shown.view): the readings added, minor items
+        left out unless asked for. The stored report, the raw JSON link, the AI's input
+        and diffs always use `report()`."""
         rep = self.report(sid)
         return self.view(rep, show_minor) if rep is not None else None
 
     def _inputs(self) -> _Inputs:
-        """What a shown score depends on, read once and kept until the store records a
+        """What a shown page depends on, read once and kept until the store records a
         write to any of it (Store.generation): a page with hundreds of rows read the
         settings for each row, 1,500 database opens on one render (3-4 s on a real box,
         0.14.0.1)."""
@@ -2590,34 +2534,25 @@ class Panel:
         return self._inputs().settings
 
     def view(self, rep: dict[str, Any], show_minor: bool = False) -> dict[str, Any]:
-        i = self._inputs()
-        shown = shown_mod.view(rep, settings=i.settings.scoring(), show_minor=show_minor)
-        if i.settings.preview:  # shown only; from the stored findings, Barkley's own reading
-            shown["readings"] = readings.compute(rep, i.settings.network).to_dict()
-        return shown
+        s = self._inputs().settings
+        return shown_mod.view(rep, network=s.network, show_minor=show_minor, always=s.show_minor)
 
-    def overlay_row(self, row: ScanRow) -> ScanRow:
-        """A stored scan's index row with the score the panel shows (Store.overlay). Reads
-        the report only when a scoring setting could change it; the answer is kept until
-        an input changes."""
-        i = self._inputs()
-        if i.settings.scoring().policy(row.exposure) == scoring.Policy(exposure=row.exposure):
-            return row
-        hit = self._rows.get(row.id)
-        if hit is not None:
-            return hit
-        rep = self.report(row.id)
-        if rep is None:
-            return row
-        v = self.view(rep)
-        score = int(v.get("score", row.score))
-        key = str((v.get("verdict") or {}).get("key") or row.verdict)
-        out = row
-        if score != row.score or key != row.verdict:
-            out = replace(row, score=score, verdict=key)
-        if len(self._rows) < 5000:
-            self._rows[row.id] = out
-        return out
+    def overlay_rows(self, rows: list[ScanRow]) -> list[ScanRow]:
+        """Index rows with their readings (Store.overlay), from the store's findings index:
+        no report is parsed. Kept until an input changes."""
+        network = self._inputs().settings.network
+        got = {r.id: self._rows[r.id] for r in rows if r.id in self._rows}
+        missing = [r.id for r in rows if r.id not in got]
+        if missing:
+            found = self.store.findings_index(missing)
+            for r in rows:
+                if r.id in found and r.id not in got:
+                    idx = {"findings": found[r.id], "complete": r.complete,
+                           "exposure": r.exposure}  # fmt: skip
+                    got[r.id] = readings.compute(idx, network).to_dict()
+            if len(self._rows) < 20000:
+                self._rows.update(got)
+        return [replace(r, readings=got.get(r.id)) for r in rows]
 
     def save_settings(self, raw: dict[str, str]) -> None:
         """The Settings page's one form. Every value is checked; one that isn't valid
@@ -2968,7 +2903,13 @@ class Panel:
                         name = panel.names().get(repo.lower()) if repo else None
                         rc = panel.store.report(new).get("recheck")
                         again = isinstance(rc, dict) and rc.get("of") == old
-                        return self._send(200, render_diff(base, old, new, d, name, again))
+                        rds = tuple(
+                            (panel.shown_report(i) or {}).get("readings") for i in (old, new)
+                        )
+                        return self._send(
+                            200,
+                            render_diff(base, old, new, d, name, again, rds),  # type: ignore[arg-type]
+                        )
                 except StoreError as ex:
                     return self._text(HTTPStatus.NOT_FOUND, str(ex))
                 except (KeyError, ValueError):

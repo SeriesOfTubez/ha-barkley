@@ -22,7 +22,7 @@ import sys
 import zlib
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -178,8 +178,10 @@ class ScanRow:
     ha_version: str | None
     tool_version: str
     complete: bool
-    score: int
+    score: int  # the capability score: technical report and CLI only since 0.15
     verdict: str
+    # (0.15) the Threat and Exposure readings, set only by the panel's overlay
+    readings: dict[str, Any] | None = field(default=None, compare=False)
 
     def label(self) -> str:
         return f"#{self.id} {self.repo or self.source}@{self.ref or '?'}"
@@ -212,9 +214,9 @@ def _row(r: sqlite3.Row) -> ScanRow:
 
 class Store:
     def __init__(self, path: str | Path):
-        # (0.14.0) The panel sets this: each row as the panel shows it (Barkley's score
-        # with the user's scoring settings). None for the CLI: its scores are the scanner's.
-        self.overlay: Callable[[ScanRow], ScanRow] | None = None
+        # The panel sets this: rows as the panel shows them (0.15: with their readings).
+        # None for the CLI: its rows are as stored.
+        self.overlay: Callable[[list[ScanRow]], list[ScanRow]] | None = None
         # Bumped by every write a shown score can depend on (the settings), so the panel
         # can keep what it read until one of them changes.
         self.generation = 0
@@ -467,9 +469,28 @@ class Store:
 
     def _shown(self, rows: list[ScanRow]) -> list[ScanRow]:
         """Each row as the panel shows it (`overlay`), or as stored."""
-        if self.overlay is not None:
-            return [self.overlay(r) for r in rows]
+        if self.overlay is not None and rows:
+            return self.overlay(rows)
         return rows
+
+    def findings_index(self, scan_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+        """(0.15) Each scan's findings as the index keeps them (rule, severity, file):
+        what readings.compute reads, without parsing any report. One literal query; the
+        ids go in as one JSON parameter."""
+        out: dict[int, list[dict[str, Any]]] = {int(i): [] for i in scan_ids}
+        if not out:
+            return out
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT scan_id, rule_id, severity, file FROM findings "
+                "WHERE scan_id IN (SELECT value FROM json_each(?))",
+                (json.dumps(list(out)),),
+            )
+            for r in rows:
+                out[r["scan_id"]].append(
+                    {"rule_id": r["rule_id"], "severity": r["severity"], "file": r["file"]}
+                )
+        return out
 
     def save_explanation(self, scan_id: int, entity_id: str, data: dict[str, Any]) -> None:
         with self._connect() as db:

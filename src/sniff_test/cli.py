@@ -16,7 +16,7 @@ from typing import Any
 from rich.console import Console
 from rich.markup import escape
 
-from sniff_test import __version__, logic, recheck, releases, sources
+from sniff_test import __version__, logic, readings, recheck, releases, sources
 from sniff_test.deps import ha_env
 from sniff_test.deps.ha_env import valid_version
 from sniff_test.diff import diff as diff_reports
@@ -69,7 +69,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true", help="print the JSON report to stdout")
     s.add_argument("-o", "--output", help="also write the JSON report to this file")
     s.add_argument("-v", "--verbose", action="store_true", help="show low/info findings too")
-    s.add_argument("--fail-under", type=int, metavar="SCORE", help="exit 3 if score < SCORE")
+    s.add_argument(
+        "--fail-on",
+        choices=("possible", "found"),
+        help="exit 3 if Threat is at least this level (possible: any sign of malicious "
+        "behavior; found: malicious behavior found)",
+    )
     s.add_argument("--jobs", type=int, help="parallel jobs for semgrep (lower = less RAM)")
     s.add_argument("--keep-workspace", action="store_true", help="don't delete the temp dir")
     s.add_argument(
@@ -678,9 +683,11 @@ def main(argv: list[str] | None = None) -> int:
             json.dump(report, fh, indent=2)
     if args.json:
         sys.stdout.write(json.dumps(report, indent=2) + "\n")
-    else:
-        human.render(result, out, verbose=args.verbose)
-    if args.fail_under is not None and result.score.score < args.fail_under:
+    rd = readings.compute(report).to_dict()  # --exposure public counts as on the internet
+    if not args.json:
+        human.render(result, out, verbose=args.verbose, readings_of=rd)
+    level = {"none": 0, "possible": 1, "found": 2}.get(str(rd["threat_level"]), 0)
+    if args.fail_on and level >= {"possible": 1, "found": 2}[args.fail_on]:
         return EXIT_BELOW_THRESHOLD
     return EXIT_OK
 

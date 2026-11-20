@@ -91,14 +91,6 @@ def test_a_possible_threat_drops_the_note_on_the_credential_reads_it_pairs():
     assert "Give a device a user" in page(r)  # not a credential read: its note stays
 
 
-def test_the_old_page_is_unchanged_without_the_preview():
-    r = report(f("ha-auth-change-users", line=19))
-    del r["readings"]
-    out = page(r)
-    assert "What Barkley found" in out and "Should you worry?" in out
-    assert 'class="src' not in out and "Give a device a user" not in out
-
-
 def test_devnote_finds_the_docstring_of_the_enclosing_function():
     n = devnote.note(report(f("x", line=20)), "x-0")
     assert n is not None and (n.file, n.start, n.end) == ("cmds.py", 14, 17)
@@ -155,15 +147,6 @@ def test_a_found_threat_is_red_in_the_title_and_the_line():
     assert "It may send your login token to another site." in plain
 
 
-def test_without_the_preview_the_notification_keeps_the_score():
-    from sniff_test import watch
-
-    r = report(f("ha-auth-change-users", line=19))
-    del r["readings"]
-    _t, _md, plain = watch.notification(_entry(), r, None, "")
-    assert "50/100" in plain and "Threat:" not in plain
-
-
 def test_a_threat_item_keeps_its_severity_but_shows_no_points():
     r = report(f("card-token-exfil", "critical", "c.js"))
     r["score_breakdown"] = [{"finding_id": "card-token-exfil-0", "rule_id": "card-token-exfil",
@@ -202,7 +185,7 @@ def test_the_exposure_box_reads_plainly():
 
 
 def test_in_short_says_it_plainly():
-    out = ui.in_short(report(f("ha-auth-change-users", line=19)), preview=True)
+    out = ui.in_short(report(f("ha-auth-change-users", line=19)))
     assert "It can change who can log in to Home Assistant." in out
     assert "to check" not in out and "<b>" not in out
     assert out.endswith(
@@ -233,11 +216,24 @@ def test_card_chips_are_neutral_except_a_threat():
     r = report(f("card-token-exfil", "critical", "c.js"), f("ha-auth-change-users", line=19))
     cls = dict((t, c) for c, t in ui.card_chips(_card(r)))
     assert "bad" in cls.values() and "" in cls.values()
-    del r["readings"]
-    assert all(c in ("bad", "warn") for c, _t in ui.card_chips(_card(r)))  # off: as before
 
 
 def test_the_card_sentence_says_plus_n_more():
     r = report(f("ha-auth-change-users", line=19), f("ha-auth-internals", n=1))
     s = ui.card_sentence(_card(r))
     assert "There is 1 more." in s and "to check" not in s
+
+
+def test_the_card_sentence_leads_with_a_threat():
+    """(0.15) items were ordered by their old score points, so a possible threat could sit
+    behind "Handles Home Assistant login tokens"."""
+    r = report(f("ha-auth-internals", n=1), f("possible-exfil", "high", line=30))
+    r["score_breakdown"] = [
+        {"finding_id": "ha-auth-internals-1", "rule_id": "ha-auth-internals",
+         "severity": "high", "points": 40.0},
+        {"finding_id": "possible-exfil-0", "rule_id": "possible-exfil",
+         "severity": "high", "points": 10.0},
+    ]  # fmt: skip
+    assert ui.card_sentence(_card(r)).startswith(
+        "Reads private data and talks to a site that isn't the app's own."
+    )
