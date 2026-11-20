@@ -2038,7 +2038,7 @@ def _flow_data(report: dict[str, Any]) -> _Flow | None:
         if n.get("kind") == "network":
             right.append((t, "Off your HA machine", "the code doesn't show where", "bad"))
         else:
-            right.append((t, _clip(n.get("label", t)), "site Barkley can't explain", "bad"))
+            right.append((t, str(n.get("label", t)), "site Barkley can't explain", "bad"))
     extra = len(flow_targets) - 3
     home = [h for h in hs if h.cls == "local"]
     if home:
@@ -2082,7 +2082,7 @@ def _flow_data(report: dict[str, Any]) -> _Flow | None:
             title = f"{len(dev)} analytics services"
         else:
             title = f"{len(dev)} developer or analytics servers"
-        right.append(("dev", title, _clip(dev[0].name, 30), "priv"))
+        right.append(("dev", title, dev[0].name, "priv"))
     rest = [h for h in net if h not in dev]
     if rest:
         own = sum(1 for h in rest if h.cls == "declared")
@@ -2116,38 +2116,84 @@ def _flow_defs(suffix: str) -> str:
     )
 
 
-def _read_box(d: _Flow, item: tuple[str, str, bool], x: int, y: float, w: int) -> str:
-    nid, label, sens = item
+_CHAR_PX = 6.6  # 12 px Geist, about this wide per character on average
+_MAX_LINES = 3  # per part of a label; longer text (untrusted, up to 253) ends in "…"
+
+
+def _wrap(text: str, chars: int, most: int = _MAX_LINES) -> list[str]:
+    """(0.15, his report: labels cut to fit a fixed box were lost, with no hover on a phone)
+    A label in as many lines as it needs, breaking long names anywhere."""
+    text = sanitize_untrusted(text, 300)
+    lines = textwrap.wrap(text, max(chars, 8), break_long_words=True,
+                          break_on_hyphens=False) or [""]  # fmt: skip
+    if len(lines) > most:
+        lines = [*lines[: most - 1], _clip(lines[most - 1] + "…", chars)]
+    return lines
+
+
+def _label_lines(title: str, sub: str, w: int) -> list[tuple[str, bool]]:
+    """(text, small) lines for a box `w` wide. A second line that only repeats the first
+    ("Home Assistant's environment variables" / "environment variables") is left out."""
+    chars = int((w - 24) / _CHAR_PX)
+    out = [(x, False) for x in _wrap(title, chars)]
+    if sub and sub.strip().lower() not in title.lower():
+        out += [(x, True) for x in _wrap(sub, chars)]
+    return out
+
+
+def _read_lines(item: tuple[str, str, bool], w: int) -> list[tuple[str, bool]]:
+    _nid, label, _sens = item
+    return _label_lines(explain.data_label(label), label, w)
+
+
+def _dest_lines(item: tuple[str, str, str, str], w: int) -> list[tuple[str, bool]]:
+    return _label_lines(item[1], item[2], w)
+
+
+def _box_h(d: _Flow, rw: int, dw: int) -> int:
+    """One height for every box in a diagram: the tallest label's (at least two lines)."""
+    n = max([2] + [len(_read_lines(x, rw)) for x in d.rd]
+            + [len(_dest_lines(x, dw)) for x in d.right])  # fmt: skip
+    return 12 + 16 * n
+
+
+def _box(lines: list[tuple[str, bool]], x: int, y: float, w: int, h: int, fill: str,
+         stroke: str) -> str:  # fmt: skip
+    text = "".join(
+        f'<text{' class="sm"' if small else ""} x="{x + 12}" y="{y + 19 + 16 * i:.0f}">'
+        f"{e(t, 300)}</text>"
+        for i, (t, small) in enumerate(lines)
+    )
+    return (f'<rect x="{x}" y="{y:.0f}" width="{w}" height="{h}" rx="6" fill="{fill}" '
+            f'stroke="{stroke}"/>{text}')  # fmt: skip
+
+
+def _read_box(d: _Flow, item: tuple[str, str, bool], x: int, y: float, w: int, h: int) -> str:
+    nid, _label, sens = item
     fill, stroke = (
         ("var(--red-bg)", "var(--red)")
         if nid in d.flow_src
         else (("var(--yellow-bg)", "var(--yellow)") if sens else ("var(--soft)", "var(--line)"))
     )
-    return (
-        f'<rect x="{x}" y="{y:.0f}" width="{w}" height="44" rx="6" fill="{fill}" stroke="{stroke}"/>'
-        f'<text x="{x + 12}" y="{y + 19:.0f}">{e(_clip(explain.data_label(label), 22))}</text>'
-        f'<text class="sm" x="{x + 12}" y="{y + 35:.0f}">{e(_clip(label, 24))}</text>'
-    )
+    return _box(_read_lines(item, w), x, y, w, h, fill, stroke)
 
 
-def _dest_box(item: tuple[str, str, str, str], x: int, y: float, w: int) -> str:
-    _key, title, sub, style = item
-    fill, stroke = _BOX_STYLE.get(style, ("var(--soft)", "var(--line)"))
-    return (
-        f'<rect x="{x}" y="{y:.0f}" width="{w}" height="44" rx="6" fill="{fill}" stroke="{stroke}"/>'
-        f'<text x="{x + 12}" y="{y + 19:.0f}">{e(_clip(title, 26), 60)}</text>'
-        f'<text class="sm" x="{x + 12}" y="{y + 35:.0f}">{e(_clip(sub, 27))}</text>'
-    )
+def _dest_box(item: tuple[str, str, str, str], x: int, y: float, w: int, h: int) -> str:
+    fill, stroke = _BOX_STYLE.get(item[3], ("var(--soft)", "var(--line)"))
+    return _box(_dest_lines(item, w), x, y, w, h, fill, stroke)
 
 
 def _app_box(d: _Flow, name: str, x: int, cy: float) -> str:
     # 12 px semibold Geist is about 7 px per character; the box has 154 px for text
+    names = _wrap(name, 21, 2)
+    top = cy - 3 - 7 * (len(names) - 1)
+    text = "".join(f'<text class="nm" x="{x + 85}" y="{top + 14 * i:.0f}" '
+                   f'text-anchor="middle">{e(t, 300)}</text>' for i, t in enumerate(names))  # fmt: skip
     return (
         f'<rect x="{x}" y="{cy - 28:.0f}" width="170" height="56" rx="8" fill="var(--card)" '
-        'stroke="var(--fg)" stroke-width="1.5"/>'
-        f'<text class="nm" x="{x + 85}" y="{cy - 3:.0f}" text-anchor="middle">'
-        f"{e(_clip(name, 21))}</text>"
-        f'<text class="sm" x="{x + 85}" y="{cy + 13:.0f}" text-anchor="middle">{e(d.kind)}</text>'
+        f'stroke="var(--fg)" stroke-width="1.5"/>{text}'
+        f'<text class="sm" x="{x + 85}" y="{top + 14 * len(names) + 2:.0f}" '
+        f'text-anchor="middle">{e(d.kind)}</text>'
     )
 
 
@@ -2174,7 +2220,9 @@ def _flow_caption(d: _Flow) -> list[str]:
 
 def _flow_wide(d: _Flow, name: str) -> str:
     """Left: reads. Middle: the app. Right: destinations. Red lines left to right."""
-    row_h, top, w = 56, 16, 700
+    top, w = 16, 700
+    bh = _box_h(d, 176, 194)
+    mid_y, row_h = bh / 2, bh + 12
     rows = max(len(d.rd), len(d.right), 2)
     caption = [ln for part in _flow_caption(d) for ln in textwrap.wrap(part, 110)]
     height = top * 2 + rows * row_h + 22 + 14 * (len(caption) - 1)
@@ -2191,12 +2239,12 @@ def _flow_wide(d: _Flow, name: str) -> str:
 
     lpos: dict[str, float] = {}
     for item, y in zip(d.rd, ys(len(d.rd)), strict=False):
-        parts.append(_read_box(d, item, 6, y, 176))
+        parts.append(_read_box(d, item, 6, y, 176, bh))
         parts.append(
-            f'<line x1="182" y1="{y + 22:.0f}" x2="258" y2="{cy:.0f}" '
+            f'<line x1="182" y1="{y + mid_y:.0f}" x2="258" y2="{cy:.0f}" '
             'stroke="var(--muted)" stroke-dasharray="3 3" marker-end="url(#arrg)"/>'
         )
-        lpos[item[0]] = y + 22
+        lpos[item[0]] = y + mid_y
     if not d.rd:
         parts.append(
             f'<text class="sm" x="6" y="{cy + 4:.0f}">Reads none of your private data</text>'
@@ -2205,21 +2253,21 @@ def _flow_wide(d: _Flow, name: str) -> str:
     parts.append(_app_box(d, name, 260, cy))
     rpos: dict[str, float] = {}
     for item, y in zip(d.right, ys(len(d.right)), strict=False):
-        parts.append(_dest_box(item, w - 200, y, 194))
+        parts.append(_dest_box(item, w - 200, y, 194, bh))
         way = _flow_way(d, item[0])
         if way == "in":
             parts.append(
-                f'<line x1="{w - 200}" y1="{y + 22:.0f}" x2="432" y2="{cy:.0f}" '
+                f'<line x1="{w - 200}" y1="{y + mid_y:.0f}" x2="432" y2="{cy:.0f}" '
                 'stroke="var(--muted)" marker-end="url(#arrg)"/>'
             )
         else:
             mark = ' marker-end="url(#arrg)"' if way == "out" else ""
             x2 = w - 202 if way == "out" else w - 200
             parts.append(
-                f'<line x1="430" y1="{cy:.0f}" x2="{x2}" y2="{y + 22:.0f}" '
+                f'<line x1="430" y1="{cy:.0f}" x2="{x2}" y2="{y + mid_y:.0f}" '
                 f'stroke="var(--muted)"{mark}/>'
             )
-        rpos[item[0]] = y + 22
+        rpos[item[0]] = y + mid_y
     lines: list[str] = []
     for x in d.fl:
         y1, y2 = lpos.get(x["source"]), rpos.get(x["target"])
@@ -2243,7 +2291,9 @@ def _flow_narrow(d: _Flow, name: str) -> str:
     """The same picture stacked for a phone: reads on top, the app, then destinations.
     Grey connectors run as one spine down the right margin (so no line crosses a box);
     red data paths run down the left margin."""
-    row_h, top, w, bx, bw = 52, 12, 360, 40, 280
+    top, w, bx, bw = 12, 360, 40, 280
+    bh = _box_h(d, bw, bw)
+    m, row_h = bh // 2, bh + 8
     spine, red_x = w - 20, 12
     n_r, n_d = len(d.rd), len(d.right)
     y_reads = top
@@ -2261,14 +2311,14 @@ def _flow_narrow(d: _Flow, name: str) -> str:
     lpos: dict[str, float] = {}
     for i, item in enumerate(d.rd):
         y = y_reads + i * row_h
-        parts.append(_read_box(d, item, bx, y, bw))
+        parts.append(_read_box(d, item, bx, y, bw, bh))
         parts.append(
-            f'<line x1="{bx + bw}" y1="{y + 22}" x2="{spine}" y2="{y + 22}" '
+            f'<line x1="{bx + bw}" y1="{y + m}" x2="{spine}" y2="{y + m}" '
             'stroke="var(--muted)" stroke-dasharray="3 3"/>'
         )
-        lpos[item[0]] = y + 22
+        lpos[item[0]] = y + m
     if d.rd:
-        y0, y1 = y_reads + 22, cy - 44
+        y0, y1 = y_reads + m, cy - 44
         parts.append(
             f'<path d="M{spine} {y0} V{y1} H{mid:.0f} V{cy - 30:.0f}" fill="none" '
             'stroke="var(--muted)" stroke-dasharray="3 3" marker-end="url(#arrgv)"/>'
@@ -2281,28 +2331,28 @@ def _flow_narrow(d: _Flow, name: str) -> str:
     parts.append(_app_box(d, name, int(mid - 85), cy))
     rpos: dict[str, float] = {}
     if d.right:
-        last = y_dest + (n_d - 1) * row_h + 22
+        last = y_dest + (n_d - 1) * row_h + m
         parts.append(
             f'<path d="M{mid:.0f} {cy + 28:.0f} V{cy + 44:.0f} H{spine} V{last}" fill="none" '
             'stroke="var(--muted)"/>'
         )
     for i, item in enumerate(d.right):
         y = y_dest + i * row_h
-        parts.append(_dest_box(item, bx, y, bw))
+        parts.append(_dest_box(item, bx, y, bw, bh))
         way = _flow_way(d, item[0])
         if way == "in":  # others connect in: the arrow points from the box to the spine
             parts.append(
-                f'<line x1="{bx + bw}" y1="{y + 22}" x2="{spine - 1}" y2="{y + 22}" '
+                f'<line x1="{bx + bw}" y1="{y + m}" x2="{spine - 1}" y2="{y + m}" '
                 'stroke="var(--muted)" marker-end="url(#arrgv)"/>'
             )
         else:
             mark = ' marker-end="url(#arrgv)"' if way == "out" else ""
             x2 = bx + bw + 2 if way == "out" else bx + bw
             parts.append(
-                f'<line x1="{spine}" y1="{y + 22}" x2="{x2}" y2="{y + 22}" '
+                f'<line x1="{spine}" y1="{y + m}" x2="{x2}" y2="{y + m}" '
                 f'stroke="var(--muted)"{mark}/>'
             )
-        rpos[item[0]] = y + 22
+        rpos[item[0]] = y + m
     lines: list[str] = []
     for x in d.fl:
         y1, y2 = lpos.get(x["source"]), rpos.get(x["target"])
@@ -3130,7 +3180,33 @@ def threat_box(r: dict[str, Any], items: str) -> str:
     return f'<section class="box"><h2>Threat {src_tag("scan")}</h2>{body}</section>'
 
 
-def exposure_box(r: dict[str, Any], pages: str = "") -> str:
+_VIEW_CLASS = re.compile(r"\s*class\s+([A-Za-z_][A-Za-z0-9_]{0,99})")
+
+
+def login_free_pages(report: dict[str, Any]) -> str:
+    """(0.15, his question) The pages behind "N pages open without logging in": each one's
+    view class and where it is, 5 then "N more". The scan keeps the class line, not the
+    address the page answers on. Names come from the scanned code: escaped."""
+    fs = [f for f in report.get("findings") or [] if f.get("rule_id") == "ha-unauth-view"]
+    if not fs:
+        return ""
+    checked = {str(f.get("file")) for f in report.get("findings") or []
+               if f.get("rule_id") == "ha-auth-token-check"}  # fmt: skip
+    items = []
+    for f in fs:
+        m = _VIEW_CLASS.match(str(f.get("evidence") or "")[:300])
+        name = f"<code>{e(m[1])}</code>" if m else "A page"
+        where = f"{f.get('file')}:{f['line']}" if f.get("line") else str(f.get("file") or "")
+        check = (" · the same file checks a signed link or token" if str(f.get("file"))
+                 in checked else "")  # fmt: skip
+        items.append(f'<li>{name} <span class="u">{e(where, 200)}{check}</span></li>')
+    n = len(fs)
+    return (f'<p class="small mt2">The {"page" if n == 1 else f"{n} pages"}, by the name the '
+            f'code gives {"it" if n == 1 else "them"}:</p><div class="libs">'
+            f"{_zone_list(items)}</div>")  # fmt: skip
+
+
+def exposure_box(r: dict[str, Any], pages: str = "", listed: str = "") -> str:
     """The Exposure box: the reasons (Barkley's scan), then the developer's notes on its
     pages, then where Home Assistant runs. `pages`: escaped HTML of those notes."""
     why = [w for w in r.get("exposure_reasons") or []
@@ -3145,6 +3221,7 @@ def exposure_box(r: dict[str, Any], pages: str = "") -> str:
         + ('<ul class="rdwhy">' + "".join(f"<li>{e(w, 400)}</li>" for w in why) + "</ul>"
            if why else "<p>Barkley found nothing that would let someone who isn't an admin "
                        "get in.</p>")
+        + listed
         + pages
         + (f'<p class="small muted">{e(based)}</p>' if based else "")
         + "</section>"
@@ -3312,7 +3389,9 @@ def render_app(
             for g in rest if g[0]["rule_id"] == "ha-unauth-view" and notes_allowed(report, g[0])
             for x in g[1]
         )  # fmt: skip
-        boxes = threat_box(rd, "".join(one(*g) for g in threats)) + exposure_box(rd, page_notes)
+        boxes = threat_box(rd, "".join(one(*g) for g in threats)) + exposure_box(
+            rd, page_notes, login_free_pages(report) if rd.get("threat_level") != "found" else ""
+        )
         parts[parts.index("\0readings\0")] = boxes
         parts.append(
             '<section class="box"><h2>What it can do <span class="muted small">(not scored)'
