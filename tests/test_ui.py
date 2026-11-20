@@ -121,7 +121,7 @@ def test_diff_changes_read_as_plain_english():
           "text": "mallory published v2, and published none of the 12 release(s) up to v1 "
                   "(alice 12)",
           "detail": {}},
-         "Worth a look", "A new publisher"),
+         "Check this", "A new publisher"),
         ({"kind": "install_source", "sign": "~", "rank": 30,
           "text": "installed from release_asset → tag_source", "detail": {}},
          "Changed", "now installs the tagged source"),

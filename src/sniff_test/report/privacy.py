@@ -131,7 +131,7 @@ def _fold(note: Note, usage: dict[str, dict[str, Any]]) -> Note:
         told = _trace_text(found[0][1])
     else:
         told = " ".join(f"{h}: {_trace_text(f)}" for h, f in found)
-    rest = "" if len(found) == len(note.hosts) else " For the other addresses: " + note.unknown
+    rest = "" if len(found) == len(note.hosts) else " For the other addresses, " + note.unknown
     note.unknown = (told + " Barkley can't tell what it sends." + rest).strip()
     locs = [_loc(f) for _, f in found]
     note.where = [*dict.fromkeys([*locs, *note.where])][:4]
@@ -171,7 +171,7 @@ def notes(report: dict[str, Any]) -> list[Note]:
             [str(edges[h].get("id") or "") if h in edges else "" for h in loose],
             [str(edges[h]["attrs"].get("class") or "") if h in edges else "" for h in loose],
         )
-        note.unknown = "Whether it's switched on."
+        note.unknown = "Barkley can't tell whether it's switched on."
         kept.insert(0, _fold(note, usage))
     return kept
 
@@ -203,11 +203,11 @@ def _notes(report: dict[str, Any]) -> list[Note]:
                 "telemetry",
                 "Telemetry",
                 "Can send usage statistics to the developer",
-                "The app can contact a server the developer runs (not the device maker), "
-                "and its address says it collects statistics. Any server it contacts sees "
-                "your home's internet address.",
-                "Whether it's switched on, or exactly what it sends. Check the app's "
-                "options in Settings > Devices & services.",
+                "The app can contact a server that the developer runs, not the device "
+                "maker. The server's address says it collects statistics. Any server it "
+                "contacts sees your home's internet address.",
+                "Barkley can't tell whether it's switched on, or exactly what it sends. "
+                "Check the app's options in Settings > Devices & services.",
                 [n["label"] for _, n in dev_tel],
                 _where([e for e, _ in dev_tel]),
                 *_ids([e for e, _ in dev_tel]),
@@ -219,10 +219,11 @@ def _notes(report: dict[str, Any]) -> list[Note]:
                 "developer",
                 "Developer server",
                 "Talks to a server the developer runs",
-                "The app can contact a server hosted on a free app-hosting service, which "
-                "usually means the developer runs it rather than the device maker. Any "
-                "server it contacts sees your home's internet address.",
-                "What it sends there, or when. It may be a harmless helper, such as a login relay.",
+                "The app can contact a server on a free app-hosting service. That usually "
+                "means the developer runs it, not the device maker. Any server it contacts "
+                "sees your home's internet address.",
+                "Barkley can't tell what it sends there, or when. It may be a harmless "
+                "helper, such as a server that passes on a sign-in.",
                 [n["label"] for _, n in dev_other],
                 _where([e for e, _ in dev_other]),
                 *_ids([e for e, _ in dev_other]),
@@ -236,7 +237,7 @@ def _notes(report: dict[str, Any]) -> list[Note]:
                 "Uses an analytics or crash-report service",
                 "The code mentions a service that collects usage statistics or error "
                 "reports. Error reports can include details about your setup.",
-                "Whether it's switched on, or what it sends.",
+                "Barkley can't tell whether it's switched on, or what it sends.",
                 [n["label"] for _, n in analytics],
                 _where([e for e, _ in analytics]),
                 *_ids([e for e, _ in analytics]),
@@ -250,9 +251,9 @@ def _notes(report: dict[str, Any]) -> list[Note]:
                 "Uses unencrypted web addresses on the internet",
                 "The code only ever reaches these sites with http:// or ws://, never the "
                 "encrypted https:// or wss://. Anything sent that way can be read or "
-                "changed on the way.",
-                "Whether the app sends anything private over them, or whether the site "
-                "redirects to an encrypted address.",
+                "changed along the route.",
+                "Barkley can't tell whether the app sends anything private over these "
+                "addresses, or whether the sites switch to an encrypted address.",
                 [n["label"] for _, n in plain],
                 _where([e for e, _ in plain]),
                 *_ids([e for e, _ in plain]),
@@ -267,8 +268,9 @@ def _notes(report: dict[str, Any]) -> list[Note]:
                 "May use unencrypted MQTT",
                 "The code uses port 1883, the usual port for MQTT without encryption. "
                 "Device status and commands sent that way can be read on the way.",
-                "Which server it connects to (it may be on your home network, where this "
-                "matters less) and whether encryption is switched on elsewhere.",
+                "Barkley can't tell which server it connects to, or whether encryption is "
+                "switched on somewhere else. If the server is on your home network, this "
+                "matters less.",
                 [],
                 _where(mqtt),
                 *_ids(mqtt),

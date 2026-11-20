@@ -85,7 +85,7 @@ def test_a_critical_sign_is_found_and_exposure_is_the_maximum():
     r = readings.compute(rep(f("card-token-exfil", "critical", "c.js")))
     assert r.threat == 7.0 and r.threat_level == "found"  # 6, raised to the floor of 7
     assert r.exposure == 10 and r.exposure_level == "high"
-    assert r.threat_reason == "sends your login token off the box"
+    assert r.threat_reason == "may send your login token to another site"
 
 
 def test_threat_points_repeat_at_a_quarter_and_cap_at_ten():
@@ -99,7 +99,7 @@ def test_threat_points_repeat_at_a_quarter_and_cap_at_ten():
 def test_a_possible_sign_says_so_first_and_keeps_its_exposure():
     r = readings.compute(rep(f("dep-typosquat"), f("ha-unauth-view", "low", "v.py")))
     assert r.threat_level == "possible" and r.exposure == 0.75
-    assert r.exposure_reasons[0].startswith("A possible sign of malicious behavior")
+    assert r.exposure_reasons[0].startswith("This may be a sign of malicious behavior")
 
 
 def test_lifetime_buckets_are_multipliers():
@@ -172,8 +172,8 @@ def test_a_found_threat_gets_the_banner():
     r = readings.compute(rep(f("card-token-exfil", "critical", "c.js"))).to_dict()
     out = ui.threat_banner(r)
     assert (
-        "This app sends your login token off the box. Don&#x27;t install it." in out
-        or "This app sends your login token off the box. Don't install it." in out
+        "This app may send your login token to another site. Don&#x27;t install it." in out
+        or "This app may send your login token to another site. Don't install it." in out
     )
     assert ui.threat_banner(None, 2).count("2 apps show malicious behavior") == 1
     assert ui.threat_banner(None, 0) == ""

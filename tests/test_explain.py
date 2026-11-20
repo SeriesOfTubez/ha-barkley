@@ -56,7 +56,7 @@ def test_text_is_plain_and_complete():
 
 
 def test_unknown_rule_falls_back():
-    assert explain.explain("brand-new-rule").title == "Something worth knowing"
+    assert explain.explain("brand-new-rule").title == "Barkley found something"
 
 
 def test_can_do_counts_from_the_graph():

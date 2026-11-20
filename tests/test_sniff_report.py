@@ -86,7 +86,7 @@ def test_a_possible_threat_drops_the_note_on_the_credential_reads_it_pairs():
     r = report(f("possible-exfil", "high", line=30), f("ha-auth-internals", line=20, n=1))
     assert r["readings"]["threat_level"] == "possible"
     out = page(r)
-    assert "possible sign of malicious behavior" in out and "Give a device a user" not in out
+    assert "may be a sign of malicious behavior" in out and "Give a device a user" not in out
     r = report(f("possible-exfil", "high", line=30), f("ha-auth-change-users", line=19, n=2))
     assert "Give a device a user" in page(r)  # not a credential read: its note stays
 
@@ -152,7 +152,7 @@ def test_a_found_threat_is_red_in_the_title_and_the_line():
     title, _md, plain = watch.notification(_entry(), r, None, "")
     assert title.startswith("Barkley: 🔴 malicious behavior found")
     assert "🔴 Threat: found · 🔴 Exposure: high (10)" in plain
-    assert "It sends your login token off the box." in plain
+    assert "It may send your login token to another site." in plain
 
 
 def test_without_the_preview_the_notification_keeps_the_score():

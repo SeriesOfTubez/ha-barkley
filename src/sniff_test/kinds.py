@@ -34,13 +34,13 @@ TITLES = {
     COVERAGE: "What Barkley couldn't read",
 }
 BLURBS = {
-    THREAT: "Signs of malicious behavior: sending your data or logins off the box, hidden or "
-    "disguised code, known malware.",
-    CAPABILITY: "Powerful things the app is able to do. Normal for some apps; it's what an "
-    "attacker would get if this app were ever compromised.",
-    VULNERABILITY: "Published security bugs in code libraries it uses.",
-    PRACTICE: "The developer's habits and how the release was built.",
-    COVERAGE: "Parts of the code the scan couldn't check.",
+    THREAT: "Signs of malicious behavior. For example, sending your data or logins out of your "
+    "home, hidden or disguised code, or known malware.",
+    CAPABILITY: "Powerful things the app can do. Some apps need them. They are also what an "
+    "attacker would get if this app were ever taken over.",
+    VULNERABILITY: "Security bugs that have been published in the code libraries it uses.",
+    PRACTICE: "How the developer works and how the release was built.",
+    COVERAGE: "Barkley couldn't check these parts of the code.",
 }
 
 THREAT_RULES = frozenset(

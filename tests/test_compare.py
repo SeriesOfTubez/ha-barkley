@@ -290,7 +290,8 @@ def test_what_it_means_names_what_is_replaced_only_for_home_assistants_source():
          "origin": "Home Assistant's built-in camera integration"}
     )  # fmt: skip
     assert (
-        "swaps _files of VodSource" in built_in and "the camera integration can reach" in built_in
+        "replaces _files of VodSource" in built_in
+        and "everything the camera integration can:" in built_in
     )
     core = explain.patch_means({"object": "homeassistant.core.HomeAssistant", "attr": "x",
                                 "origin": "Home Assistant's own code"})  # fmt: skip
@@ -347,7 +348,7 @@ def test_the_request_carries_the_comparison_and_the_readme_in_their_own_fences(t
     assert f"<<<README {nonce} " in text and "README.md:3| Shows a thumbnail" in text
     assert "comparison_by_barkley" in text and '"lines_only_in_the_original": 2' in text
     assert "What does the replacement do differently from the original" in text
-    assert "swaps _files of VodSource" in text  # the specific meaning, not the general one
+    assert "replaces _files of VodSource" in text  # the specific meaning, not the general one
     assert "grab passwords" not in text
     assert ai_context.ALIGN_FIELD in structure
     # the second round carries them too
@@ -469,7 +470,7 @@ def test_the_page_shows_the_comparison_and_the_sheet_the_labelled_opinion(tmp_pa
     assert '<span class="del">   18       - ' in page and '<span class="add">         30 + ' in page
     assert "Compared by Barkley, not by AI." in page
     assert "The rest of the replacement" in page
-    assert "While it runs, the app swaps _files of VodSource" in page
+    assert "While it runs, the app replaces _files of VodSource" in page
     assert "grab passwords" not in page  # the general text gave way to the specific one
     assert "Also sent: Barkley's comparison with the original in Home Assistant 2026.11.1" in page
     assert "the first 9 lines of the app's <code>README.md</code>" in page

@@ -66,21 +66,25 @@ DEP_VULN = "dep-vuln"
 
 # Fixed phrases for the banner and the reason line, by rule (no text from the scanned app)
 _THREAT_PHRASE = {
-    "ha-exfil-taint": "sends your Home Assistant data off the box",
-    "card-token-exfil": "sends your login token off the box",
-    "possible-exfil": "may send other apps' passwords or your secrets to sites it doesn't declare",
-    "endpoint-exfil-host": "sends data to a channel its developer controls",
+    "ha-exfil-taint": "sends your Home Assistant data out of your home",
+    "card-token-exfil": "may send your login token to another site",
+    "possible-exfil": (
+        "may send other apps' passwords or your secrets to sites its docs don't mention"
+    ),
+    "endpoint-exfil-host": "sends data to a site used for collecting data",
     "dep-malicious": "includes a package known to be malware",
     "py-b64-exec": "decodes hidden code and runs it",
     "card-b64-eval": "decodes hidden code and runs it",
     "card-eval-remote": "runs code it downloads or receives",
     "py-obfuscation": "hides what its code does",
     "card-hidden-name": "hides the names its code uses",
-    "py-bytecode-runs-instead-of-source": "runs compiled code instead of the source you can read",
-    "py-native-module-shadows-source": "runs a compiled module in place of its source",
-    "py-native-module-without-source": "ships a compiled module without its source",
-    "card-html-comment-token": "hides a login token in its page",
-    "dep-typosquat": "depends on a package named like a popular one",
+    "py-bytecode-runs-instead-of-source": (
+        "runs compiled code instead of the readable code it ships with"
+    ),
+    "py-native-module-shadows-source": "runs a compiled file in place of its readable code",
+    "py-native-module-without-source": "ships a compiled file with no readable version",
+    "card-html-comment-token": "hides code from scanners with an HTML comment marker (<!--)",
+    "dep-typosquat": "uses a library whose name is one typo away from a popular one",
 }
 # Most serious first, for the one sentence a banner says
 _THREAT_ORDER = tuple(_THREAT_PHRASE)
@@ -105,7 +109,7 @@ class Readings:
     threat_level: str  # none | possible | found
     exposure: float
     exposure_level: str  # low | medium | high
-    threat_reason: str = ""  # a fixed phrase ("sends your login token off the box")
+    threat_reason: str = ""  # a fixed phrase ("may send your login token to another site")
     exposure_reasons: list[str] = field(default_factory=list)
     complete: bool = True
     network: str = "home"  # home | shared | internet
@@ -172,14 +176,14 @@ def compute(report: dict[str, Any], network: str = "home") -> Readings:
                        + " a signed link or token instead.")  # fmt: skip
     if own:
         reasons.append(_plural(len(own), "page opens", "pages open") + " without logging "
-                       "in to Home Assistant. Barkley can't see what checks who's "
-                       "asking.")  # fmt: skip
+                       "in to Home Assistant. Barkley can't see whether anything checks "
+                       "who's asking.")  # fmt: skip
     if any(f.get("rule_id") == AUTH_INTERNALS for f in findings):
         pts += TOKEN_NON_ADMIN * lifetime_factor(None)
         reasons.append("It works with Home Assistant login tokens. A token handed to another "
                        "machine is only as safe as that machine. Barkley can't tell yet who "
-                       "gets one or how long it lasts, so it counts one non-admin token that "
-                       "lasts over a year.")  # fmt: skip
+                       "gets a token or how long it lasts. So it counts one token for a user "
+                       "who isn't an administrator, lasting over a year.")  # fmt: skip
     bugs = [f for f in findings if f.get("rule_id") == DEP_VULN]
     bug_pts = sum(LIB_BUG.get(str(f.get("severity")), 0.0) for f in bugs)
     if bug_pts:
@@ -188,11 +192,11 @@ def compute(report: dict[str, Any], network: str = "home") -> Readings:
                        + " published security bugs.")  # fmt: skip
     factor = PUBLIC if public else NETWORK.get(where, 1.0)
     if pts and factor != 1.0:
-        reasons.append("Counted higher because Home Assistant is "
+        reasons.append("Barkley counts this higher because Home Assistant is "
                        + ("reachable from the internet." if public
                           else "on a shared or work network."))  # fmt: skip
     exposure = round(min(EXPOSURE_MAX, pts * factor), 2)
     if t_level == "possible" and phrase:
-        reasons.insert(0, f"A possible sign of malicious behavior: it {phrase}.")
+        reasons.insert(0, f"This may be a sign of malicious behavior. It {phrase}.")
     return Readings(threat, t_level, exposure, level(exposure), phrase, reasons, complete,
                     where)  # fmt: skip
