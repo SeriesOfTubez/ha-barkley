@@ -24,7 +24,6 @@ FROM ghcr.io/home-assistant/base-debian:trixie AS build
 # TARGETARCH comes from BuildKit (amd64/arm64); the Supervisor passes BUILD_ARCH
 # (amd64/aarch64). Either is enough.
 ARG TARGETARCH
-ARG BUILD_VERSION=0.3.0
 ARG BUILD_ARCH
 
 ARG SEMGREP_VERSION=1.185.0
@@ -122,7 +121,6 @@ RUN uv venv --python /opt/python/barkley-python /opt/sniff-test \
 
 # --- the shipped image: base + Python + the trimmed tools ---------------------------
 FROM ghcr.io/home-assistant/base-debian:trixie
-ARG BUILD_VERSION=0.3.0
 ARG BUILD_ARCH
 # `upgrade`: the base image is rebuilt less often than Debian ships security fixes
 # (2026-11-13: zlib1g had two high CVEs fixed in trixie-security that the base lacked).
@@ -151,6 +149,9 @@ RUN python3 -m compileall -q -j 0 /opt/tools \
 
 COPY rootfs /
 
+# Declared here, where only the label uses it: every RUN after an ARG takes it as an input,
+# so a new version number made Docker rebuild every tool layer on each Update.
+ARG BUILD_VERSION=0.3.0
 LABEL \
     io.hass.version="${BUILD_VERSION}" \
     io.hass.arch="${BUILD_ARCH}" \
