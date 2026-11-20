@@ -313,14 +313,11 @@ def test_stars_and_downloads_are_facts_never_scores():
     assert "star" not in ui.facts_line(r)  # scans from before 0.14.0
     r["popularity"] = {"stars": 1234, "downloads": None}
     line = ui.facts_line(r)
-    assert "1,234 stars" in line and "downloads not counted" in line and "scored" not in line
-    # (0.15, his report) an app with releases but no attached file: not "no releases"
-    assert "installs this release from its Source code zip" in line
-    assert "instead" not in line  # nothing is wrong with installing from the tag
-    r["target"]["install_source"] = "default_branch"
-    assert "It has no releases" in ui.facts_line(r)
+    assert "1,234 stars" in line and "scored" not in line
+    # (0.15, his call) no count (installed from the Source code zip): nothing is said
+    assert "download" not in line
     r["popularity"] = {"stars": 1, "downloads": 0}
-    assert "0 downloads" in ui.facts_line(r) and "doesn&#x27;t count" not in ui.facts_line(r)
+    assert "0 downloads" in ui.facts_line(r)
 
 
 def test_the_repository_is_a_link_to_github():

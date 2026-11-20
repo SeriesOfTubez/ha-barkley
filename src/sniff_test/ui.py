@@ -2698,26 +2698,13 @@ ReviewFn = Callable[[dict[str, Any], list[dict[str, Any]]], str]
 
 _REPO_LINK = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_.-]{1,100}")
 
-# (0.15, his report: an app with releases read as having none) why GitHub has no download
-# count, by how the Marketplace installs it (fetch/hacs.py: only an attached file is counted;
-# HACS's repositories/base.py downloads GitHub's archive of `tags/<version>` otherwise, and
-# the default branch only when there are no releases)
-_NO_COUNT = {
-    "tag_source": "GitHub doesn't count downloads for this app. The Marketplace installs "
-    "this release from its Source code zip, which GitHub adds to every release. GitHub only "
-    "counts files the developer uploads to a release.",
-    "default_branch": "GitHub doesn't count downloads for this app. It has no releases, so "
-    "the Marketplace installs its default branch.",
-}
-
-
 def facts_line(report: dict[str, Any]) -> str:
     """(0.15, his ask) The facts under the title at body size: what kind of app, the
     version, the repository (a link to GitHub, with its mark), stars and downloads. Stars
     and downloads are facts, never scored (popularity isn't safety, and stars can be
-    bought). Downloads count only a file attached to a release, so without one they're
-    "not counted", never 0, with a line saying why. Scans from before 0.14.0 have no stars
-    or downloads."""
+    bought). GitHub counts downloads only of files the developer uploads to a release, so
+    an app installed from its Source code zip (most integrations) has no count: then
+    nothing is said (his call 2026-11-20). Scans from before 0.14.0 have neither."""
     t = report.get("target") or {}
     parts = []
     kind = KIND.get(str(t.get("kind")), str(t.get("kind") or ""))
@@ -2731,7 +2718,6 @@ def facts_line(report: dict[str, Any]) -> str:
                      f'rel="noopener noreferrer">{icon("github")} {e(repo)}</a>')  # fmt: skip
     elif t.get("input"):
         parts.append(f"<span>{e(t['input'], 120)}</span>")
-    why = ""
     pop = report.get("popularity")
     if isinstance(pop, dict):
         stars = pop.get("stars")
@@ -2740,13 +2726,7 @@ def facts_line(report: dict[str, Any]) -> str:
         dl = pop.get("downloads")
         if isinstance(dl, int):
             parts.append(f"<span>{icon('download')} {dl:,} download{'s' * (dl != 1)}</span>")
-        else:
-            parts.append(f"<span>{icon('download')} downloads not counted</span>")
-            why = _NO_COUNT.get(str(t.get("install_source")), "")
-    if not parts:
-        return ""
-    return (f'<div class="facts">{"".join(parts)}</div>'
-            + (f'<p class="muted small">{e(why)}</p>' if why else ""))  # fmt: skip
+    return f'<div class="facts">{"".join(parts)}</div>' if parts else ""
 
 
 def _it_can(title: str) -> str:
