@@ -2699,10 +2699,13 @@ ReviewFn = Callable[[dict[str, Any], list[dict[str, Any]]], str]
 _REPO_LINK = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_.-]{1,100}")
 
 # (0.15, his report: an app with releases read as having none) why GitHub has no download
-# count, by how the Marketplace installs it (fetch/hacs.py: only an attached file is counted)
+# count, by how the Marketplace installs it (fetch/hacs.py: only an attached file is counted;
+# HACS's repositories/base.py downloads GitHub's archive of `tags/<version>` otherwise, and
+# the default branch only when there are no releases)
 _NO_COUNT = {
-    "tag_source": "GitHub doesn't count downloads for this app. GitHub only counts files "
-    "attached to a release, and the Marketplace installs this release's source code instead.",
+    "tag_source": "GitHub doesn't count downloads for this app. The Marketplace installs "
+    "this release by downloading the code at its tag, and GitHub only counts files attached "
+    "to a release. Both are the same release.",
     "default_branch": "GitHub doesn't count downloads for this app. It has no releases, so "
     "the Marketplace installs its default branch.",
 }
