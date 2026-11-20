@@ -1884,6 +1884,8 @@ def change_line(c: dict[str, Any]) -> tuple[str, str, str]:
         out = "A new publisher: " + e(head, 300)
     elif kind == "publisher_changed":
         out = "A different publisher: " + e(head, 300)
+    elif kind in ("signature_stopped", "signature_changed", "signature_started"):
+        out = e(head, 300)  # fixed words from diff.signature_changes
     elif kind == "coverage_lost":
         out = "Part of the new check didn't finish, so changes may be missing: " + e(head, 300)
     elif kind == "install_source":
@@ -2461,6 +2463,16 @@ def _ago(days: int | None) -> str:
     return f"{days // 30} months old"
 
 
+_SIGNATURE_LINE = {
+    "github": "This version's commit was made on github.com, and GitHub signed it.",
+    "developer": "This version's commit is signed with the developer's own key, and GitHub "
+    "verified the signature.",
+    "unsigned": "This version's commit isn't signed. That's common, and says nothing bad on "
+    "its own.",
+    "unverified": "This version's commit has a signature that GitHub couldn't verify.",
+}
+
+
 def hygiene_html(report: dict[str, Any]) -> str:
     """The repo's own security habits: context, never scored, inferred from public signs."""
     h = report.get("hygiene")
@@ -2490,6 +2502,9 @@ def hygiene_html(report: dict[str, Any]) -> str:
         li.append(f"{no} Its GitHub workflows and pre-commit hooks run no security scanner, "
                   "such as CodeQL, Semgrep, Bandit, Trivy, OSV-Scanner, pip-audit or "
                   "Gitleaks.")  # fmt: skip
+    sig = ((report.get("target") or {}).get("signature") or {}).get("state")
+    if sig in _SIGNATURE_LINE:  # (0.15) GitHub's verdict on this version's commit
+        li.append((yes if sig in ("github", "developer") else no) + " " + _SIGNATURE_LINE[sig])
     dep = h.get("dependabot")
     if dep is not None:
         what = ", ".join(_ECO.get(x, x) for x in dep) or "its dependencies"

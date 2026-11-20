@@ -197,7 +197,7 @@ def fetch_remote(
         else:
             ref = repo["default_branch"]
             install_source = "default_branch"
-    sha = gh.commit_sha(owner, name, ref)
+    sha, signature = gh.commit(owner, name, ref)
     if install_source == "default_branch":
         notes.append(_no_release_note(ref, sha))
 
@@ -273,6 +273,7 @@ def fetch_remote(
         repo_meta=repo,
         stars=_count(repo, "stargazers_count"),
         downloads=downloads,
+        signature=signature,
     )
 
 

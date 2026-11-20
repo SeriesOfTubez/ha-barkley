@@ -603,6 +603,35 @@ def same_item(old: dict[str, Any], new: dict[str, Any]) -> bool:
     return bool(ga.get("subject")) and ga.get("subject") == gb.get("subject")
 
 
+_SIGNED = {"github": "made on github.com and signed by GitHub",
+           "developer": "signed with the developer's own key"}  # fmt: skip
+
+
+def signature_changes(old: dict, new: dict) -> list[Change]:
+    """(0.15, his yes) The release commit's signature changed between the two versions:
+    a sudden stop, or a different kind of signing, is a supply-chain signal. Never
+    scored. Scans from before 0.15 have no signature: nothing is said."""
+    so = (old.get("target") or {}).get("signature") or {}
+    sn = (new.get("target") or {}).get("signature") or {}
+    a, b = str(so.get("state") or ""), str(sn.get("state") or "")
+    if not a or not b or a == b:
+        return []
+    if a in _SIGNED and b not in _SIGNED:
+        how = "isn't signed" if b == "unsigned" else "has a signature GitHub couldn't verify"
+        return [Change("signature_stopped", 60, "repo",
+                       f"This version's commit {how}. The earlier one was {_SIGNED[a]}.",
+                       sign="~")]  # fmt: skip
+    if a in _SIGNED and b in _SIGNED:
+        return [Change("signature_changed", 45, "repo",
+                       f"This version's commit was {_SIGNED[b]}. The earlier one was "
+                       f"{_SIGNED[a]}.", sign="~")]  # fmt: skip
+    if b in _SIGNED:
+        return [Change("signature_started", 10, "repo",
+                       f"This version's commit was {_SIGNED[b]}. The earlier one wasn't.",
+                       sign="~")]  # fmt: skip
+    return []
+
+
 def diff(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     warnings = []
     if old.get("schema_version") != new.get("schema_version"):
@@ -642,7 +671,7 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
         repo[0].severity = top.severity
         repo[0].finding_ids += [i for c in folded for i in c.finding_ids]
         fchanges = [c for c in fchanges if c not in folded]
-    changes = fchanges + echanges + repo + coverage_changes(old, new)
+    changes = fchanges + echanges + repo + signature_changes(old, new) + coverage_changes(old, new)
     changes.sort(key=lambda c: (-c.rank, _GROUP_ORDER.get(c.group, 9), c.text))
     summary: dict[str, dict[str, int]] = {}
     for c in changes:

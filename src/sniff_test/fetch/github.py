@@ -275,8 +275,15 @@ class GitHub:
         return str(data["commit"]["committer"]["date"])
 
     def commit_sha(self, owner: str, name: str, ref: str) -> str:
+        return self.commit(owner, name, ref)[0]
+
+    def commit(self, owner: str, name: str, ref: str) -> tuple[str, dict[str, str]]:
+        """The commit `ref` points to, and its signature as GitHub verified it (0.15; the
+        same request as before, so no extra one): `state` github (made on github.com and
+        signed by GitHub's own key), developer (signed with a key GitHub verified),
+        unsigned, or unverified (with GitHub's `reason`)."""
         data = self.get_json(f"/repos/{owner}/{name}/commits/{urllib.parse.quote(ref, safe='')}")
-        return data["sha"]
+        return data["sha"], signature_state(data)
 
     def file_at(self, owner: str, name: str, path: str, ref: str) -> str | None:
         try:
@@ -289,3 +296,21 @@ class GitHub:
 
     def tarball(self, owner: str, name: str, sha: str, dest: Path) -> str:
         return self.download(f"{API}/repos/{owner}/{name}/tarball/{sha}", dest, accept="*/*")
+
+
+_REASON = re.compile(r"[a-z_]{1,40}")
+
+
+def signature_state(data: dict[str, Any]) -> dict[str, str]:
+    """GitHub's verdict on a commit's signature, in four states (see GitHub.commit)."""
+    c = data.get("commit") if isinstance(data.get("commit"), dict) else {}
+    v = c.get("verification") if isinstance(c.get("verification"), dict) else {}
+    committer = c.get("committer") if isinstance(c.get("committer"), dict) else {}
+    reason = str(v.get("reason") or "")
+    reason = reason if _REASON.fullmatch(reason) else "unknown"
+    if v.get("verified") is True:
+        web = str(committer.get("email") or "").lower() == "noreply@github.com"
+        return {"state": "github" if web else "developer"}
+    if not v.get("signature") or reason == "unsigned":
+        return {"state": "unsigned"}
+    return {"state": "unverified", "reason": reason}

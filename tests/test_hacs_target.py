@@ -49,6 +49,9 @@ class FakeGitHub:
     def commit_sha(self, owner, name, ref):
         return f"sha-of-{ref}".ljust(40, "0")
 
+    def commit(self, owner, name, ref):
+        return self.commit_sha(owner, name, ref), {"state": "unsigned"}
+
     def tarball(self, owner, name, sha, dest: Path):
         self.tarball_sha = sha
         dest.write_bytes(_tarball(self.tree))

@@ -294,3 +294,6 @@ class Target:
     # count of the release file HACS installs (None: installed from the source)
     stars: int | None = None
     downloads: int | None = None
+    # (0.15) GitHub's verdict on the scanned commit's signature (fetch/github.signature_state):
+    # {"state": github | developer | unsigned | unverified, "reason"?}; None for local scans
+    signature: dict[str, str] | None = None

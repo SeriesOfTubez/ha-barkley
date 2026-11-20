@@ -159,6 +159,7 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
             "ref": t.ref,
             "commit_sha": t.commit_sha,
             "install_source": t.install_source,
+            **({"signature": dict(t.signature)} if t.signature else {}),
             "artifact_sha256": t.artifact_sha256,
             "domain": t.domain,
         },
