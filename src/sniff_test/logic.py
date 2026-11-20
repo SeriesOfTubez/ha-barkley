@@ -36,6 +36,7 @@ PANEL_ONLY = frozenset(
         "doctor.py",
         "review.py",
         "readings.py",  # (preview) the proposed readings, worked out when a page is shown
+        "devnote.py",  # (preview) the developer's note, read from stored snippets
         "diff.py",
         "releases.py",
         "report/ai.py",

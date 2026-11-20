@@ -180,6 +180,31 @@ def change_summary(d: dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
+# (preview) a stoplight per reading (his decision 2026-11-20): none/Low green, possible/
+# Medium yellow, found/High red
+_LIGHT = {"none": "🟢", "low": "🟢", "possible": "🟡", "medium": "🟡", "found": "🔴",
+          "high": "🔴"}  # fmt: skip
+_T_WORDS = {"none": "none", "possible": "possible", "found": "found"}
+
+
+def readings_line(rd: dict[str, Any], was: dict[str, Any] | None = None) -> str:
+    """'🟢 Threat: none · 🟡 Exposure: medium (4.5, was 1.25)': fixed words and numbers."""
+    t, x = str(rd.get("threat_level")), str(rd.get("exposure_level"))
+    num = _num(rd.get("exposure"))
+    if was is not None and _num(was.get("exposure")) != num:
+        num += f", was {_num(was.get('exposure'))}"
+    return (f"{_LIGHT.get(t, '🟡')} Threat: {_T_WORDS.get(t, '?')} · "
+            f"{_LIGHT.get(x, '🟡')} Exposure: {x if x in _LIGHT else '?'} ({num})")  # fmt: skip
+
+
+def _num(v: Any) -> str:
+    try:
+        n = float(v or 0)
+    except (TypeError, ValueError):
+        return "?"
+    return f"{n:.0f}" if n == int(n) else f"{n:.2f}".rstrip("0")
+
+
 def notification(
     entry: dict[str, Any],
     report: dict[str, Any],
@@ -202,6 +227,9 @@ def notification(
             if prev
             else f"{ver} was installed and sniffed"
         )
+    rd = report.get("readings")
+    if rd:  # (preview) the readings take the score's place, as on the panel
+        return _readings_notification(entry, report, d, panel, rd, kind, did, offered)
     lines = [f"{kind} {repo} {did}: {emoji} {label}, {score}/100."]
     titles = top_titles(report)
     if titles:
@@ -238,6 +266,46 @@ def notification(
         where += f", what the update changes @{ids[0]} → @{ids[1]}"
     link = f"[Open Barkley]({panel})" if panel else "Open Barkley from the sidebar"
     title = f"Barkley: {repo} {ver}" + (" (update waiting)" if offered else "")
+    plain = " ".join(lines) + f" Open Barkley from the sidebar: {where}."
+    return title, "\n\n".join(lines) + f"\n\n{link}: {where}.", plain
+
+
+def _readings_notification(
+    entry: dict[str, Any],
+    report: dict[str, Any],
+    d: dict[str, Any] | None,
+    panel: str,
+    rd: dict[str, Any],
+    kind: str,
+    did: str,
+    offered: bool,
+) -> tuple[str, str, str]:
+    """(preview) Counts, readings, fixed phrases and validated names only: never the
+    developer's words or AI text."""
+    repo, ver, prev = entry["repo"], entry["version"], entry.get("previous")
+    was = entry.get("was_readings") if isinstance(entry.get("was_readings"), dict) else None
+    lines = [f"{kind} {repo} {did}. {readings_line(rd, was)}."]
+    if rd.get("threat_level") in ("found", "possible") and rd.get("threat_reason"):
+        lines.append(f"It {rd['threat_reason']}.")  # a fixed phrase (readings._THREAT_PHRASE)
+    if rd.get("threat_level") == "found":
+        lines.append("Remove it, then log out of Home Assistant everywhere.")
+    if d is not None:
+        summary = change_summary(d)
+        lines.append(
+            f"What the update changes: {summary}." if summary
+            else f"Nothing important changed since {prev}."
+        )  # fmt: skip
+    if not report.get("complete", True):
+        lines.append("Part of the check didn't finish.")
+    ids = entry.get("scan_ids") or []
+    where = f"scan @{ids[-1]}" if ids else "the app's page"
+    if len(ids) == 2:
+        where += f", what the update changes @{ids[0]} → @{ids[1]}"
+    link = f"[Open Barkley]({panel})" if panel else "Open Barkley from the sidebar"
+    if rd.get("threat_level") == "found":
+        title = f"Barkley: 🔴 malicious behavior found in {repo} {ver}"
+    else:
+        title = f"Barkley: {repo} {ver}" + (" (update waiting)" if offered else "")
     plain = " ".join(lines) + f" Open Barkley from the sidebar: {where}."
     return title, "\n\n".join(lines) + f"\n\n{link}: {where}.", plain
 
@@ -819,7 +887,11 @@ class Watcher:
             try:
                 report = self.store.report(job.scan_ids[-1])
                 if len(job.scan_ids) == 2:
-                    d = diff_reports(self.store.report(job.scan_ids[0]), report)
+                    old = self.store.report(job.scan_ids[0])
+                    d = diff_reports(old, report)
+                    was = self.view_fn(old).get("readings")  # (preview) for "was 1.25"
+                    if was:
+                        entry["was_readings"] = was
                 # the score as the panel shows it: the user's settings and review
                 # (the diff above compares the stored reports)
                 report = self.view_fn(report)

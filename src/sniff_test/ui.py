@@ -19,8 +19,8 @@ from dataclasses import dataclass, field, replace
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
-from sniff_test import __version__, kinds, known, scancache
-from sniff_test.analyzers.correlate import SENSITIVE_NODES
+from sniff_test import __version__, devnote, kinds, known, scancache
+from sniff_test.analyzers.correlate import CREDENTIAL_SOURCES, SENSITIVE_NODES
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
 from sniff_test.fetch import retry
 from sniff_test.models import STALE_YEARS, fix_phrase, version_key, years_since
@@ -291,6 +291,18 @@ a.button:hover { filter:brightness(1.08); }
 .rd-orange { color:var(--orange); } .rd-red { color:var(--red); }
 .rdwhy { margin:0 0 var(--s2); padding-left:var(--s4); display:flex;
   flex-direction:column; gap:var(--s1); }
+.finding.ctx { grid-template-columns:minmax(0,1fr); }
+/* (preview) where a sentence comes from: Barkley's scan, the developer's words, the AI */
+.src { display:inline-block; font-size:var(--t-xs); font-weight:600; line-height:1.5;
+  padding:0 var(--s2); border-radius:var(--r1); white-space:nowrap; vertical-align:middle;
+  letter-spacing:0; text-transform:none; }
+.src.scan { background:var(--brand-bg); color:var(--brand); }
+.src.dev { background:var(--soft); color:var(--fg); border:1px solid var(--line);
+  white-space:normal; overflow-wrap:anywhere; }
+.src.ai { background:var(--ai-bg); color:var(--ai); }
+.devq { border-left:1px solid var(--line); padding:var(--s1) 0 var(--s1) var(--s3);
+  margin:var(--s2) 0 0; display:flex; flex-direction:column; gap:var(--s1); max-width:72ch; }
+.devq .cite { font-size:var(--t-xs); color:var(--muted); }
 .banner.threat { background:var(--red-bg); border:1px solid var(--red-edge); padding:var(--s3) var(--s4); }
 .banner.threat b { display:block; color:var(--red); font-size:var(--t-lg); line-height:1.25; }
 .verdict { font-weight:600; }
@@ -1063,8 +1075,9 @@ def render_grid(base: str, cards: list[Card], v: View | None = None, lead: str =
 # --- the detail page ---------------------------------------------------------------------------
 
 
-def in_short(report: dict[str, Any]) -> str:
-    """A deterministic summary built only from the report (escaped HTML)."""
+def in_short(report: dict[str, Any], preview: bool = False) -> str:
+    """A deterministic summary built only from the report (escaped HTML). `preview`: the
+    proposed readings are shown, so nothing is said about a score."""
     out: list[str] = []
     hs = hosts(report)
     net = internet(hs)
@@ -1132,10 +1145,18 @@ def in_short(report: dict[str, Any]) -> str:
     if n:
         out.append(
             f"There {'is' if n == 1 else 'are'} {n} privacy note{'s' * (n != 1)} "
-            "below; they don't change the score."
+            + (
+                "below; they don't change the readings."
+                if preview
+                else "below; they don't change the score."
+            )
         )
     if not report.get("complete"):
-        out.append("Part of the check didn't finish, so the score is capped at 89.")
+        out.append(
+            "Part of the check didn't finish."
+            if preview
+            else "Part of the check didn't finish, so the score is capped at 89."
+        )
     return " ".join(x if x.startswith("<b>") or "<b>" in x else e(x, 600) for x in out)
 
 
@@ -1314,14 +1335,18 @@ def finding_html(
     fact: str = "",
     means: str | None = None,
     controls: str = "",
+    context: bool = False,
+    note: str = "",
 ) -> str:
     """`means`: text for "What it means" in place of the rule's general one (a
     monkeypatch whose target the scan resolved: explain.patch_means). `controls`: the
-    review row under it (Mark reviewed, ✓ Accepted, What changed?, Report…)."""
+    review row under it (Mark reviewed, ✓ Accepted, What changed?, Report…).
+    (preview) `context`: shown as context, not scored: no severity, points or "Should you
+    worry?". `note`: the developer's note (devnote_html), already escaped."""
     ex = explain.explain(f["rule_id"])
     where = _where(fs)
-    tech = [e(f["rule_id"]), e(f["severity"])]
-    if points:
+    tech = [e(f["rule_id"])] if context else [e(f["rule_id"]), e(f["severity"])]
+    if points and not context:
         tech.append(f"−{points} points" + (" (repeats count less)" if len(fs) > 1 else ""))
     tech.append(e(f["title"], 200))
     evid = [x for x in fs if x.get("evidence")][:3]
@@ -1347,17 +1372,21 @@ def finding_html(
         if deps
         else ""
     )
+    lvl = ("" if context else
+           f'<div class="lvl {e(f["severity"])}">{e(explain.level(f["severity"]))}</div>')  # fmt: skip
+    worry = "" if context else f"<dt>Should you worry?</dt><dd>{e(ex.worry, 600)}</dd>"
     return (
-        f'<div class="finding"><div class="lvl {e(f["severity"])}">{e(explain.level(f["severity"]))}</div>'
+        f'<div class="finding{" ctx" if context else ""}">{lvl}'
         f"<div><h3>{e(ex.title)}</h3><dl{' class=ai' if ai else ''}>"
         f"<dt>What it means</dt><dd>{e(means or ex.means, 800)}</dd>"
-        f"<dt>Should you worry?</dt><dd>{e(ex.worry, 600)}</dd>"
+        f"{worry}"
         + (f"<dt>Where we saw it</dt><dd>{where}</dd>" if where else "")
         + fact
         + _links_html(ex.links)
         + dep_html
         + ai_html
-        + f'</dl>{deep}<div class="tech">{" · ".join(tech)}</div>{code}{controls}</div></div>'
+        + f"</dl>{note}{deep}"
+        + f'<div class="tech">{" · ".join(tech)}</div>{code}{controls}</div></div>'
     )
 
 
@@ -2803,14 +2832,19 @@ def kinds_html(
     report: dict[str, Any],
     groups: list[tuple[dict[str, Any], list[dict[str, Any]], int]],
     render: Callable[[dict[str, Any], list[dict[str, Any]], int], str],
+    skip: frozenset[str] = frozenset(),
+    untitled: frozenset[str] = frozenset(),
 ) -> str:
     """What we found, by kind (Threats first; "No signs of malicious behavior" when there
-    are none). `render` draws one finding group."""
+    are none). `render` draws one finding group. `skip`: kinds shown elsewhere on the
+    page (the preview's Threat box)."""
     by: dict[str, list[tuple[dict[str, Any], list[dict[str, Any]], int]]] = defaultdict(list)
     for g in groups:
         by[kinds.kind(str(g[0]["rule_id"]))].append(g)
     out = []
     for k in kinds.ORDER:
+        if k in skip:
+            continue
         items = by.get(k, [])
         if k == kinds.THREAT and not items:
             out.append(f'<h3 class="kindh">{e(kinds.TITLES[k])} (0)</h3>'
@@ -2818,6 +2852,9 @@ def kinds_html(
                        "behavior.</p>")  # fmt: skip
             continue
         if not items:
+            continue
+        if k in untitled:  # the section's own title already says it
+            out.extend(render(*g) for g in items)
             continue
         out.append(f'<h3 class="kindh">{e(kinds.TITLES[k])} ({len(items)})</h3>'
                    f'<p class="sub small">{e(kinds.BLURBS[k])}</p>')  # fmt: skip
@@ -2990,20 +3027,78 @@ def threat_banner(r: dict[str, Any] | None, many: int = 0) -> str:
             "of Home Assistant everywhere and change the passwords it could reach.</span></div>")  # fmt: skip
 
 
-def readings_box(r: dict[str, Any]) -> str:
-    why = r.get("exposure_reasons") or []
+_SRC = {"scan": "Barkley's scan", "dev": "The developer's words", "ai": "AI"}
+
+
+def src_tag(kind: str, where: str = "", name: str = "") -> str:
+    """(preview) Where a block's sentences come from (his decision 2026-11-20). `where`:
+    for the developer's words, the file and lines quoted; `name`: a more specific name for
+    the source ("The developer's note"). Escaped here."""
+    label = (name or _SRC[kind]) + (f" · {where}" if where else "")
+    return f'<span class="src {kind}">{e(label, 200)}</span>'
+
+
+def with_tag(section: str, kind: str = "scan") -> str:
+    """A `<section>…<h2>Title</h2>…` with the source tag after its title."""
+    return section.replace("</h2>", f" {src_tag(kind)}</h2>", 1) if section else ""
+
+
+def devnote_html(n: devnote.Note | None, title: str = "The developer's note") -> str:
+    """A docstring quoted as the developer's own words, with its file and lines. Shown as
+    context only: it never changes a reading."""
+    if n is None:
+        return ""
+    lines = f"{n.start}" if n.start == n.end else f"{n.start}–{n.end}"
+    return (
+        f'<div class="devq">{src_tag("dev", f"docstring, {n.file}:{lines}", title)}'
+        f"<q>{e(n.text, 900)}</q>"
+        '<span class="cite">Shown as context. It doesn\'t change the reading.</span></div>'
+    )
+
+
+def notes_allowed(report: dict[str, Any], f: dict[str, Any]) -> bool:
+    """(his rule, 2026-11-20) The developer's words never sit next to a found or possible
+    threat: none on a page with a found threat, none on a threat item, and with a possible
+    threat none on what it reads that could be stolen (the credential reads a possible
+    exfil pairs with outside hosts)."""
+    rd = report.get("readings") or {}
+    if rd.get("threat_level") == "found" or kinds.is_threat(str(f.get("rule_id"))):
+        return False
+    return not (rd.get("threat_level") == "possible"
+                and str(f.get("rule_id")) in CREDENTIAL_SOURCES)  # fmt: skip
+
+
+def threat_box(r: dict[str, Any], items: str) -> str:
+    """The Threat box: the signs found, or what Barkley looked for and didn't find."""
+    t = str(r.get("threat_level"))
+    head = {"none": "Threat: none found", "possible": "Threat: possible",
+            "found": "Threat: found"}.get(t, "Threat")  # fmt: skip
+    if t == "none":
+        sofar = "" if r.get("complete", True) else " in the part Barkley could check"
+        body = (f'<p class="small">{icon("check", 14, "ok")} No signs of malicious behavior'
+                f"{sofar}: no path from your data to a site outside Home Assistant, no hidden "
+                "or disguised code, no known-malicious or look-alike package.</p>")  # fmt: skip
+    else:
+        body = items
+    return f'<section class="box"><h2>{head} {src_tag("scan")}</h2>{body}</section>'
+
+
+def exposure_box(r: dict[str, Any], pages: str = "") -> str:
+    """The Exposure box: the reasons (Barkley's scan), then the developer's notes on its
+    pages, then where Home Assistant runs. `pages`: escaped HTML of those notes."""
+    why = [w for w in r.get("exposure_reasons") or []
+           if not str(w).startswith("A possible sign of malicious")]  # fmt: skip
     where = {"home": "a home network", "shared": "a shared or work network",
              "internet": "reachable from the internet"}.get(str(r.get("network")), "")  # fmt: skip
     return (
-        '<section class="box"><h2>Why these readings <span class="muted small">(preview)</span>'
-        "</h2>"
+        f'<section class="box"><h2>Exposure: what it opens up {src_tag("scan")}</h2>'
         + ('<ul class="rdwhy small">' + "".join(f"<li>{e(w, 400)}</li>" for w in why) + "</ul>"
            if why else '<p class="small muted">Nothing it opens up to someone who isn\'t an '
            "administrator.</p>")
-        + '<p class="small muted">A test of a new way to show results. Barkley\'s own score '
-        "doesn't change: it's in the technical report, and on this page when the preview is "
-        f"off. Exposure is worked out for {e(where)} (Settings). Turn it off under Settings → "
-        "Proposed readings.</p></section>"
+        + pages
+        + f'<p class="small muted">Worked out for {e(where)} (Settings → Where Home Assistant '
+        "runs). Something only an administrator can do adds nothing: an administrator can "
+        "already do everything.</p></section>"
     )  # fmt: skip
 
 
@@ -3080,7 +3175,7 @@ def render_app(
     if rd:  # (preview) a found threat's one sentence goes right under "All apps"; the
         # reasons for the readings follow the head (Barkley's score: the technical report)
         parts[0] = parts[0].replace("</p>", "</p>" + threat_banner(rd), 1)
-        parts.append(readings_box(rd))
+        parts.append("\0readings\0")  # Threat and Exposure go here, once items can be drawn
     if accept:  # Accept all sits right under the head (user decision 2026-11-18)
         parts.append(accept)
     missing = [
@@ -3088,16 +3183,23 @@ def render_app(
     ]
     if missing:
         parts.append(
-            '<div class="banner warn"><b>Part of the check didn\'t finish</b>, so the score '
-            "is capped at 89 and we can't vouch for everything:<ul class=plain>"
+            '<div class="banner warn"><b>Part of the check didn\'t finish</b>, so '
+            + (
+                "Barkley can't vouch for everything:"
+                if rd
+                else "the score is capped at 89 and we can't vouch for everything:"
+            )
+            + "<ul class=plain>"
             + "".join(_missing_html(a) for a in missing)
             + "</ul></div>"
         )
     summary = ai.get("summary", "")
     parts.append(
-        f'<section class="box"><h2>In short</h2><p class="inshort">{in_short(report)}</p>'
+        f'<section class="box"><h2>In short{" " + src_tag("scan") if rd else ""}</h2>'
+        f'<p class="inshort">{in_short(report, preview=bool(rd))}</p>'
         + (
-            f'<div class="aibox"><div class="small">{AI_BADGE}<b>AI explanation</b></div>'
+            f'<div class="aibox"><div class="small">{AI_BADGE}<b>AI explanation</b>'
+            f"{' ' + src_tag('ai') if rd else ''}</div>"
             f"<p>{e(summary, 1500)}</p></div>"
             if summary
             else ""
@@ -3123,11 +3225,25 @@ def render_app(
     tfn = trust or (lambda _f: "")
     rfn = review or (lambda _f, _fs: "")
 
+    quoted: set[tuple[str, int]] = set()  # (preview) each docstring once per page
+
+    def note_for(fs: list[dict[str, Any]], title: str = "The developer's note") -> str:
+        for x in fs:
+            n = devnote.note(report, x["id"]) if x["id"] in items else None
+            if n is not None:
+                if (n.file, n.start) in quoted:
+                    return ""
+                quoted.add((n.file, n.start))
+                return devnote_html(n, title)
+        return ""
+
     def one(f: dict[str, Any], fs: list[dict[str, Any]], p: int) -> str:
+        ctx = bool(rd) and not kinds.is_threat(str(f["rule_id"]))
+        note = note_for(fs) if ctx and notes_allowed(report, f) else ""
         block = finding_html(
             f,
             fs,
-            p,
+            0 if rd else p,  # (preview) no points: only the two readings are scored
             next((expl[x["id"]] for x in fs if x["id"] in expl), ""),
             next((dfn(x["id"]) for x in fs if x["id"] in items), "") + "".join(tfn(x) for x in fs),
             next(
@@ -3143,11 +3259,32 @@ def render_app(
                 None,
             ),
             rfn(f, fs),
+            context=ctx,
+            note=note,
         )
         done = all((x.get("review") or {}).get("state") == "accepted" for x in fs)
         return f'<div class="accepted">{block}</div>' if done else block
 
-    if groups:
+    if rd:  # (preview) Threat and Exposure first; everything else is context, unscored
+        threats = [g for g in groups if kinds.is_threat(str(g[0]["rule_id"]))]
+        rest = [g for g in groups if not kinds.is_threat(str(g[0]["rule_id"]))]
+        page_notes = "".join(
+            note_for([x], "The developer's note on this page")
+            for g in rest if g[0]["rule_id"] == "ha-unauth-view" and notes_allowed(report, g[0])
+            for x in g[1]
+        )  # fmt: skip
+        boxes = threat_box(rd, "".join(one(*g) for g in threats)) + exposure_box(rd, page_notes)
+        parts[parts.index("\0readings\0")] = boxes
+        parts.append(
+            '<section class="box"><h2>What it can do <span class="muted small">(context, not '
+            f'scored)</span> {src_tag("scan")}</h2>'
+            + (kinds_html(report, rest, one, skip=frozenset({kinds.THREAT}),
+                          untitled=frozenset({kinds.CAPABILITY})) if rest else
+               f'<p class="ok">{icon("check", 16, "ok")} Nothing notable.</p>')
+            + minor_line(base, sid, report)
+            + "</section>"
+        )  # fmt: skip
+    elif groups:
         parts.append(
             f'<section class="box"><h2>What we found ({len(groups)})</h2>'
             + (kinds_html(report, groups, one) if review else "".join(one(*g) for g in groups))
@@ -3188,29 +3325,40 @@ def render_app(
             + "</section>"
         )
     parts.append(
-        '<section class="box"><h2>Where your data can go</h2><p class="sub">Left: what it can '
-        "read. Right: where it can connect. A red line means we found a path from your data "
-        "to that place in the code. No line means we found no path.</p>"
+        f'<section class="box"><h2>{"What it touches " + src_tag("scan") if rd else "Where your data can go"}</h2>'
+        '<p class="sub">Left: what it can read. Right: where it can connect. A red line means '
+        "we found a path from your data to that place in the code. No line means we found no "
+        "path.</p>"
         f"{flow_svg(report, title)}</section>"
     )
+    tag = with_tag if rd else (lambda x, _k="scan": x)
     parts.append(
-        '<section class="box"><h2>Where it connects</h2><p class="sub">Every site, IP address '
+        f'<section class="box"><h2>Where it connects{" " + src_tag("scan") if rd else ""}</h2>'
+        '<p class="sub">Every site, IP address '
         "and port in the shipped code, grouped by where it is. A site being here means the code "
         "mentions it, not that it was seen connecting. Web addresses drop anything after "
         f"<code>?</code>, which can hold keys.</p>{zones_html(report, dfn if deep else None)}</section>"
     )
-    parts.append(libraries_html(report))
-    parts.append(hygiene_html(report))
+    parts.append(tag(libraries_html(report)))
+    habits = hygiene_html(report)
+    if rd:
+        habits = habits.replace("never changes the score", "never changes the readings")
+    parts.append(tag(habits))
     can = explain.can_do(report)
+    inside = ("Everything it uses inside Home Assistant " + src_tag("scan") if rd
+              else "What it can do inside Home Assistant")  # fmt: skip
+    tech = ("Technical report (raw JSON, with the capability score: what the code openly "
+            "uses, not a judgment)" if rd else "Technical report (raw JSON)")  # fmt: skip
     parts.append(
-        '<div class="two"><section class="box"><h2>What it can do inside Home Assistant</h2>'
+        f'<div class="two"><section class="box"><h2>{inside}</h2>'
         + (
             '<ul class="plain">' + "".join(f"<li>{e(x)}</li>" for x in can) + "</ul>"
             if can
             else '<p class="muted small">Nothing notable.</p>'
         )
-        + f'</section><section class="box"><h2>History</h2>{history_html(base, sid, report, rows)}'
-        f'<p class="tech"><a href="{base}/scan/{sid}.json">Technical report (raw JSON)</a></p></section></div>'
+        + f'</section><section class="box"><h2>History{" " + src_tag("scan") if rd else ""}</h2>'
+        f"{history_html(base, sid, report, rows)}"
+        f'<p class="tech"><a href="{base}/scan/{sid}.json">{tech}</a></p></section></div>'
     )
     if deep:  # a note's address beyond the 12 shown per zone: its sheet goes at the end
         parts.extend(

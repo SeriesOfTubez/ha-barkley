@@ -148,7 +148,8 @@ def test_the_preview_switches_the_page_from_the_score_to_the_readings(tmp_path):
     assert 'aria-label="Score 50 of 100"' in off and "Exposure 1.25 of 10" not in off
     panel.save_settings({"preview": "1"})
     on = ui.render_app("", sid, panel.shown_report(sid), []).decode()
-    assert 'aria-label="Exposure 1.25 of 10"' in on and "Why these readings" in on
+    assert 'aria-label="Exposure 1.25 of 10"' in on and "Exposure: what it opens up" in on
+    assert "Threat: none found" in on and "What we found" not in on
     assert 'aria-label="Score 50 of 100"' not in on and "Very Sus" not in on
     assert "Good Boy · no signs of malicious behavior" in on
     assert "banner threat" not in on
