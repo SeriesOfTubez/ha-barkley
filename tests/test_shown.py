@@ -315,7 +315,7 @@ def test_stars_and_downloads_are_facts_never_scores():
     line = ui.facts_line(r)
     assert "1,234 stars" in line and "downloads not counted" in line and "scored" not in line
     # (0.15, his report) an app with releases but no attached file: not "no releases"
-    assert "installs this release by downloading the code at its tag" in line
+    assert "installs this release from its Source code zip" in line
     assert "instead" not in line  # nothing is wrong with installing from the tag
     r["target"]["install_source"] = "default_branch"
     assert "It has no releases" in ui.facts_line(r)

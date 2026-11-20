@@ -2704,8 +2704,8 @@ _REPO_LINK = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_.-]{1,100}"
 # the default branch only when there are no releases)
 _NO_COUNT = {
     "tag_source": "GitHub doesn't count downloads for this app. The Marketplace installs "
-    "this release by downloading the code at its tag, and GitHub only counts files attached "
-    "to a release. Both are the same release.",
+    "this release from its Source code zip, which GitHub adds to every release. GitHub only "
+    "counts files the developer uploads to a release.",
     "default_branch": "GitHub doesn't count downloads for this app. It has no releases, so "
     "the Marketplace installs its default branch.",
 }
