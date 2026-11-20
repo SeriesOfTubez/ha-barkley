@@ -354,9 +354,10 @@ RULES: dict[str, Explanation] = {
     # --- doors into your Home Assistant -----------------------------------------------
     "ha-unauth-view": _E(
         "Adds a web page that works without logging in",
-        "The app adds an address to your Home Assistant that opens without a login. Anyone "
-        "who can reach your Home Assistant can open it. That's normal for things like the "
-        "page a sign-in returns to, and image links.",
+        "The app adds an address to your Home Assistant that opens without logging in. "
+        "Anyone who can reach your Home Assistant can open it. Some apps need this: for "
+        "example, the page another service sends you back to after you sign in there, or a "
+        "link to a camera picture.",
         "Usually not. It matters more if your Home Assistant is reachable from the internet.",
         "Page without login",
     ),
@@ -670,7 +671,7 @@ DATA_LABELS = {
     "user's access token": "Your HA login",
     "calling user lookup": "Who is using it",
     "browser localStorage": "Browser storage",
-    "environment variables": "Environment variables (system values)",
+    "environment variables": "Home Assistant's environment variables",
     "recorder history": "Your history",
     "sensitive data (source not attributed)": "Private data",
 }

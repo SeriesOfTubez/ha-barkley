@@ -784,7 +784,9 @@ def ports_sentence(pts: list[Port]) -> str:
         return ""
     dirs = {p.direction for p in pts}
     if dirs == {"out"}:
-        return f"It connects to {port_phrase(pts)} on a device or server it's set up with."
+        return (f"It connects out to {port_phrase(pts)} on another machine. That machine's "
+                "address isn't in the code: it comes from the app's settings or from another "
+                "server.")  # fmt: skip
     if dirs == {"in"}:
         return f"It listens on {port_phrase(pts)}."
     return f"Its code mentions {port_phrase(pts)}."
@@ -1108,10 +1110,7 @@ def in_short(report: dict[str, Any], preview: bool = False) -> str:
     else:
         out.append("Its code mentions no internet sites.")
     if pts := ports(report):
-        out.append(
-            ports_sentence(pts).removesuffix(".")
-            + ". The address comes from setup or a cloud service."
-        )
+        out.append(ports_sentence(pts))
     groups = scored_findings(report)
     big = [g for g in groups if g[0]["severity"] in ("critical", "high", "medium")]
     if big:
