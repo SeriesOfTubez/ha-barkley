@@ -3103,14 +3103,21 @@ def login_free_pages(report: dict[str, Any]) -> str:
     items = []
     for f in fs:
         m = _VIEW_CLASS.match(str(f.get("evidence") or "")[:300])
-        name = f"<code>{e(m[1])}</code>" if m else "A page"
         where = f"{f.get('file')}:{f['line']}" if f.get("line") else str(f.get("file") or "")
         check = (" · the same file checks a signed link or token" if str(f.get("file"))
                  in checked else "")  # fmt: skip
-        items.append(f'<li>{name} <span class="u">{e(where, 200)}{check}</span></li>')
+        page = f.get("page")  # (0.15) the address, from the scan; absent before 0.15
+        if page:
+            name = f"<code>{e(page, 200)}</code>"
+            where = (f"{m[1]} in " if m else "") + where
+        else:
+            name = f"<code>{e(m[1])}</code>" if m else "A page"
+            if page == "":
+                check += " · its address is built while the app runs"
+        items.append(f'<li>{name} <span class="u">{e(where, 300)}{e(check)}</span></li>')
     n = len(fs)
-    return (f'<p class="small mt2">The {"page" if n == 1 else f"{n} pages"}, by the name the '
-            f'code gives {"it" if n == 1 else "them"}:</p><div class="libs">'
+    return (f'<p class="small mt2">The {"page" if n == 1 else f"{n} pages"}:</p>'
+            '<div class="libs">'
             f"{_zone_list(items)}</div>")  # fmt: skip
 
 

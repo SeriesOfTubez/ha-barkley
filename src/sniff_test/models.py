@@ -187,6 +187,9 @@ class Finding:
     addresses: tuple[str, ...] = ()
     # (0.14.0) report/fingerprint.py: stays the same while the flagged code does
     fingerprint: str | None = None
+    # (0.15) ha-unauth-view: the address the page answers on, as the code writes it ("" when
+    # it's built while the app runs; None when not looked up). Untrusted text (py_pages.py)
+    page: str | None = None
 
     @property
     def id(self) -> str:

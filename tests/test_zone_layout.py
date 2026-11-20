@@ -150,7 +150,7 @@ def test_the_exposure_box_lists_the_login_free_pages():
     rep = {"findings": [view(i, "a.py" if i < 3 else "b.py") for i in range(7)]
            + [{"rule_id": "ha-auth-token-check", "file": "a.py", "line": 1}]}  # fmt: skip
     html = ui.login_free_pages(rep)
-    assert "The 7 pages, by the name the code gives them:" in html
+    assert "The 7 pages:" in html
     assert "<code>Page0View</code>" in html and "<summary>2 more</summary>" in html
     assert html.count("the same file checks a signed link or token") == 3
     assert (
@@ -158,3 +158,16 @@ def test_the_exposure_box_lists_the_login_free_pages():
         == 0
     )
     assert ui.login_free_pages({"findings": []}) == ""
+
+
+def test_a_page_shows_its_address_when_the_scan_recorded_one():
+    from sniff_test import ui
+
+    base = {"rule_id": "ha-unauth-view", "file": "views.py", "line": 4,
+            "evidence": "class TokenView(HomeAssistantView):"}  # fmt: skip
+    html = ui.login_free_pages({"findings": [{**base, "page": "/api/acme/token"}]})
+    assert "<code>/api/acme/token</code>" in html and "TokenView in views.py:4" in html
+    html = ui.login_free_pages({"findings": [{**base, "page": ""}]})
+    assert "<code>TokenView</code>" in html and "its address is built while the app runs" in html
+    html = ui.login_free_pages({"findings": [{**base, "page": "<b>x</b>"}]})
+    assert "<b>x</b>" not in html and "&lt;b&gt;x&lt;/b&gt;" in html

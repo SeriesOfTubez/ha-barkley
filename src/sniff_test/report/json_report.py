@@ -97,6 +97,7 @@ def finding_json(f: Finding) -> dict[str, Any]:
         # hosts/IPs the user may mark trusted in the panel (lowercase, validated shape)
         **({"addresses": list(f.addresses)} if f.addresses else {}),
         **({"fingerprint": f.fingerprint} if f.fingerprint else {}),
+        **({"page": sanitize_untrusted(f.page, 200)} if f.page is not None else {}),
     }
 
 
