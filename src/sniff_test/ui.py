@@ -524,6 +524,8 @@ class Host:
     edge_id: str = ""
     service: str = ""  # who runs it, from the shipped list of well-known services (0.8.0)
     redirect: bool = False  # (0.15) only an OAuth return address (endpoints.redirect_only)
+    readme_line: int | None = None  # (0.15) the README names it (the developer's words)
+    funding: bool = False  # (0.15) .github/FUNDING.yml lists it
 
 
 @dataclass
@@ -569,6 +571,8 @@ def hosts(report: dict[str, Any]) -> list[Host]:
                 str(edge.get("id", "")),
                 str(a.get("service", "")),
                 bool(a.get("redirect_only")),
+                a.get("readme_line") if isinstance(a.get("readme_line"), int) else None,
+                bool(a.get("funding")),
             )
         )
     return sorted(out, key=lambda h: h.name)
@@ -2342,6 +2346,18 @@ def _lock(scheme_or_port: str | int) -> str:
 _DEFAULT_PORT = {"https": 443, "wss": 443, "http": 80, "ws": 80}
 
 
+def threat_destinations(report: dict[str, Any]) -> frozenset:
+    """The sites a possible threat names (`possible-exfil`'s "destinations: a, b"): the
+    developer's words about them are left out (his rule 2026-11-20)."""
+    out: set[str] = set()
+    for f in report.get("findings") or []:
+        if f.get("rule_id") == "possible-exfil":
+            ev = str(f.get("evidence") or "")
+            if "destinations: " in ev:
+                out |= {x.strip() for x in ev.split("destinations: ", 1)[1].split(",")}
+    return frozenset(out)
+
+
 ZONE_SHOWN = 5  # sites per zone before "N more" (his decision 2026-11-20: dense panels)
 
 
@@ -2353,7 +2369,13 @@ def _fold(item_id: str, summary: str, body: str, open_: bool) -> str:
             f"</summary><div class=\"in\">{body}</div></details></li>")  # fmt: skip
 
 
-def _host_li(h: Host, deep: str = "", open_: bool = False) -> str:
+def _host_li(
+    h: Host,
+    deep: str = "",
+    open_: bool = False,
+    dev_words: bool = True,
+    near: frozenset = frozenset(),
+) -> str:
     """One line per site: the name and whether Barkley flagged it. Inside: scheme, port (the
     URL's own, else the scheme's default) and encryption, who runs it, the addresses, where
     the code names it, and Explain in context. The port is said per site, so a port listed
@@ -2380,8 +2402,17 @@ def _host_li(h: Host, deep: str = "", open_: bool = False) -> str:
     back = ('<span class="u">Barkley found it only in a list of sign-in return addresses '
             "(OAuth): your browser goes there after you approve access. Barkley found no "
             "code that sends anything there.</span>") if h.redirect else ""  # fmt: skip
-    return _fold(h.edge_id, f"<code>{e(h.name, 120)}</code>{flag}", who + back + how + urls
-                 + where + deep, open_)  # fmt: skip
+    said = []  # (0.15) what the developer's own docs say: shown as theirs, never scored
+    if h.readme_line:
+        said.append(f"Its README mentions this site (line {int(h.readme_line)}).")
+    if h.funding:
+        said.append("The repository lists it as a way to support the developer.")
+    # (his rule 2026-11-20) never beside a threat: not on a flagged site, nor on a page
+    # with a found threat (dev_words False)
+    dev = (f'<span class="u">{src_tag("dev")} {e(" ".join(said))}</span>'
+           if said and dev_words and not h.flagged and h.name not in near else "")  # fmt: skip
+    return _fold(h.edge_id, f"<code>{e(h.name, 120)}</code>{flag}", who + back + dev + how
+                 + urls + where + deep, open_)  # fmt: skip
 
 
 def _zone_list(items: list[str]) -> str:
@@ -2394,7 +2425,10 @@ def _zone_list(items: list[str]) -> str:
             f'<ul>{"".join(rest)}</ul></details></li></ul>')  # fmt: skip
 
 
-def zones_html(report: dict[str, Any], deep: DeepFn | None = None, open_id: str = "") -> str:
+def zones_html(
+    report: dict[str, Any], deep: DeepFn | None = None, open_id: str = "", dev_words: bool = True
+) -> str:
+    near = threat_destinations(report)
     """`deep(edge_id, part=)` adds "Explain in context" to an address or port: the button
     inside the site's fold, the sheet after the zones (a sheet inside a closed fold
     wouldn't show). `open_id`: the item whose sheet is open (?open=), so its fold is too."""
@@ -2411,8 +2445,8 @@ def zones_html(report: dict[str, Any], deep: DeepFn | None = None, open_id: str 
         zh = [h for h in hs if h.cls in classes]
         if not zh:
             continue
-        lis = [_host_li(h, inline(h.edge_id), bool(open_id) and h.edge_id == open_id)
-               for h in zh]  # fmt: skip
+        lis = [_host_li(h, inline(h.edge_id), bool(open_id) and h.edge_id == open_id,
+                        dev_words, near) for h in zh]  # fmt: skip
         out.append(f'<div class="zone {key}"><h3>{icon(ic)} {title}</h3><div class="zs">{sub}'
                    f"</div>{_zone_list(lis)}</div>")  # fmt: skip
     if pts:
@@ -3333,7 +3367,8 @@ def render_app(
         "and port in the shipped code, grouped by where it is. A site is listed because the code "
         "mentions it. That doesn't mean Barkley saw it connect. Web addresses are cut off at the "
         f"<code>?</code>, because what comes after it can hold keys.</p>"
-        f"{zones_html(report, zdeep if deep else None, open_item)}</section>"
+        f"{zones_html(report, zdeep if deep else None, open_item, rd.get('threat_level') != 'found')}"
+        "</section>"
     )
     parts.append(tag(libraries_html(report)))
     parts.append(tag(hygiene_html(report)))

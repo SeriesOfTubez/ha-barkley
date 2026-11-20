@@ -487,6 +487,60 @@ def redirect_only_hosts(root: Path, refs: list[HostRef]) -> set[str]:
     return {h for h, marks in by_host.items() if marks and all(marks)}
 
 
+# --- what the developer's own docs say (0.15, his question) ------------------------------
+
+# A host the README or .github/FUNDING.yml names gets `readme_line` / `funding` on its facts:
+# the developer's words, shown as such, never changing its class or what's scored (a
+# README could name a collection site to make it look expected).
+_DOC_MAX = 1024 * 1024
+_FUNDING_HOSTS = {
+    "github": "github.com", "patreon": "patreon.com", "ko_fi": "ko-fi.com",
+    "buy_me_a_coffee": "buymeacoffee.com", "liberapay": "liberapay.com",
+    "open_collective": "opencollective.com", "polar": "polar.sh", "thanks_dev": "thanks.dev",
+    "tidelift": "tidelift.com", "community_bridge": "funding.communitybridge.org",
+    "issuehunt": "issuehunt.io", "lfx_crowdfunding": "crowdfunding.lfx.linuxfoundation.org",
+}  # fmt: skip
+_FUNDING_KEY = re.compile(r"^[ \t]*+([a-z_]{2,30})[ \t]*+:", re.M)
+
+
+def _plain(host: str) -> str:
+    return host.lower().removeprefix("www.")
+
+
+def doc_mentions(source_root: Path | None) -> tuple[dict[str, int], set[str]]:
+    """(host -> first README line naming it, hosts FUNDING.yml lists). Text only."""
+    readme: dict[str, int] = {}
+    funding: set[str] = set()
+    if source_root is None:
+        return readme, funding
+
+    def text_of(rel: str) -> str | None:
+        p = source_root / rel
+        try:
+            if p.is_symlink() or not p.is_file() or p.stat().st_size > _DOC_MAX:
+                return None
+            return p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+
+    for name in ("README.md", "README.rst", "README.txt", "README", "readme.md"):
+        if (text := text_of(name)) is not None:
+            for n, line in enumerate(text.splitlines(), 1):
+                for m in _URL.finditer(line[:5000]):
+                    readme.setdefault(_plain(m["host"]), n)
+            break
+    gh = source_root / ".github"
+    names = []  # GitHub reads FUNDING.yml in any case, .yml or .yaml
+    if gh.is_dir() and not gh.is_symlink():
+        wanted = ("funding.yml", "funding.yaml")
+        names = sorted(p.name for p in gh.iterdir() if p.name.lower() in wanted)
+    if names and (text := text_of(f".github/{names[0]}")) is not None:
+        lines = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+        funding |= {_plain(m["host"]) for m in _URL.finditer(lines[:20000])}
+        funding |= {_FUNDING_HOSTS[k] for k in _FUNDING_KEY.findall(lines) if k in _FUNDING_HOSTS}
+    return readme, funding
+
+
 # --- classification ------------------------------------------------------------------
 
 
@@ -783,6 +837,7 @@ def run(target: Target) -> AnalyzerResult:
     facts: list[Fact] = []
     hosts = {r.host for r in refs}
     redirects = redirect_only_hosts(target.root, refs)
+    readme, funding = doc_mentions(target.source_root)
     for ref in refs:
         cls = classify(ref.host, declared)
         if cls == "namespace":
@@ -830,6 +885,10 @@ def run(target: Target) -> AnalyzerResult:
             attrs["credential"] = cred
         if ref.host in redirects and not cred:
             attrs["redirect_only"] = True
+        if (line := readme.get(_plain(ref.host))) is not None:
+            attrs["readme_line"] = line
+        if _plain(ref.host) in funding:
+            attrs["funding"] = True
         if sample := url_sample(ref.url, credential=bool(cred)):
             attrs["urls"] = [sample]
             m = _URL.match(ref.url or "")
