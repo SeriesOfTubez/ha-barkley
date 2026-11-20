@@ -2956,6 +2956,20 @@ def _can_phrase(title: str) -> str:
     return f"{base} {rest}".strip()
 
 
+# The panel's words under each kind's heading (plain-words pass, 2026-11-20). They live
+# here, not in kinds.py, so a wording change doesn't change the scan-logic key (kinds.py
+# isn't panel-only); kinds.BLURBS is the old copy, unused, removed in 0.15.
+KIND_BLURBS = {
+    kinds.THREAT: "Signs of malicious behavior. For example, sending your data or logins out "
+    "of your home, hidden or disguised code, or known malware.",
+    kinds.CAPABILITY: "Powerful things the app can do. Some apps need them. They are also what "
+    "an attacker would get if this app were ever taken over.",
+    kinds.VULNERABILITY: "Security bugs that have been published in the code libraries it uses.",
+    kinds.PRACTICE: "How the developer works and how the release was built.",
+    kinds.COVERAGE: "Barkley couldn't check these parts of the code.",
+}
+
+
 def kinds_html(
     report: dict[str, Any],
     groups: list[tuple[dict[str, Any], list[dict[str, Any]], int]],
@@ -2985,7 +2999,7 @@ def kinds_html(
             out.extend(render(*g) for g in items)
             continue
         out.append(f'<h3 class="kindh">{e(kinds.TITLES[k])} ({len(items)})</h3>'
-                   f'<p class="sub small">{e(kinds.BLURBS[k])}</p>')  # fmt: skip
+                   f'<p class="sub small">{e(KIND_BLURBS[k])}</p>')  # fmt: skip
         out.extend(render(*g) for g in items)
     return "".join(out)
 

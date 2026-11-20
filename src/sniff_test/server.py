@@ -88,7 +88,10 @@ _JOBS_KEPT = 20
 # Without a token GitHub allows 60/hour and counts even 304 answers.
 # (0.12.0) + 2 per scan: Home Assistant's original of a function the app replaces
 # (report.compare.MAX_FETCH; cached per HA release, so usually none are made).
-_GITHUB_NEED = {"scan": 12, "installed": 12, "update": 23, "auto": 23}
+# Measured again 2026-11-20 with an empty cache: a card 8, integrations 13 and 17 (habit
+# lookups, a related fork's repo, release assets). 12 was too few for integrations; a job
+# that runs short waits out the limit, so this only decides when a job may start.
+_GITHUB_NEED = {"scan": 20, "installed": 20, "update": 40, "auto": 40}
 # (0.14.0) Explain and read code by default: still nothing is sent before a click, and
 # what a click sends is the app's own public code, never anything from Home Assistant.
 AI_MODE_DEFAULT = "deep"
@@ -1078,7 +1081,7 @@ SETTING_HELP = {
     ),
     "GitHub token": (
         "GitHub allows 60 requests an hour without a token and 5,000 with one. A scan makes "
-        "about 6 or 7. Barkley keeps the token in its own file next to its database, never "
+        "about 10 to 20. Barkley keeps the token in its own file next to its database, never "
         "in the database, and never shows it again. A token saved here is used instead of "
         "the one in the app's options."
     ),
@@ -1439,7 +1442,7 @@ def render_setup(
         elif saved:
             state += f'<div class="banner">{ui.icon("check", 14, "ok")} Saved.</div>'
         body = (
-            "<p>Without a token, GitHub allows 60 requests an hour, enough for about 5 scans. "
+            "<p>Without a token, GitHub allows 60 requests an hour, enough for about 3 to 5 scans. "
             "With one, it allows 5,000. Barkley only reads public repositories, so the token "
             f"needs no permissions.</p>{state}"
             + (

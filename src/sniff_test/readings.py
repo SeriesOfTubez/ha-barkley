@@ -1,13 +1,14 @@
-"""(preview, 2026-11-19) The proposed Threat and Exposure readings, shown beside Barkley's
-score when the user turns on Settings → "Proposed readings (preview)". Nothing here is
-stored, scored or notified: the readings are worked out from a stored scan's findings each
-time a page is shown, so the user can compare them with today's score on real apps without
-a re-sniff. Barkley's own score is untouched.
+"""(preview, 2026-11-19) The proposed Threat and Exposure readings, shown in place of
+Barkley's score when the user turns on Settings → "Proposed readings (preview)", and in
+update notifications while it's on (2026-11-20). Nothing here is stored: the readings are
+worked out from a stored scan's findings each time a page or notification needs them, so
+no re-sniff is needed. Barkley's own score is untouched and stays in the technical report.
 
 Decided with the user 2026-11-19 (vault: Roadmap "Scoring rethink", rounds 1-3 of the
 mock-ups and his yes to items 1-4 of round 4):
 
-- **Threat, 0-10**: signs of malicious behavior only (kinds.THREAT_RULES and a lookalike
+- **Threat, 0-10** (shown as none / possible / found): signs of malicious behavior only
+  (kinds.THREAT_RULES and a lookalike
   package name). Critical 6, high 2.5, medium 0.8, low 0.2; each repeat of a rule a
   quarter; capped at 10; any critical sign is at least 7. 0 none found, under 7 possible,
   7 and up found.
