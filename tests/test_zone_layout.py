@@ -5,14 +5,65 @@ from __future__ import annotations
 
 def test_a_host_name_is_never_squeezed_beside_a_long_port_list():
     """(0.14.1) "localhost" rendered one letter per line next to "http · port 1234, 8000,
-    11434 unencrypted": the row now wraps, the name keeps its width, the ports wrap."""
+    11434 unencrypted". (0.15) The name is alone on its line now; the ports are inside."""
     from sniff_test import ui
 
-    assert ".zone li > div { display:flex; flex-wrap:wrap;" in ui.CSS
-    assert (
-        ".zone li > div > code { flex:0 0 auto; max-width:100%; overflow-wrap:anywhere; }" in ui.CSS
-    )
-    assert "white-space:nowrap" not in ui.CSS.split(".zone .p {", 1)[1].split("}", 1)[0]
+    rep = _graph_report([("localhost", "undeclared", ["http"], [1234, 8000, 11434], [])])
+    html = ui.zones_html(rep)
+    line = html.split("<summary>", 1)[1].split("</summary>", 1)[0]
+    assert line == "<code>localhost</code>" and "port 1234, 8000, 11434" in html
+
+
+def _graph_report(hosts, ports=()):
+    """hosts: (name, class, schemes, ports, urls); ports: (port, direction)."""
+    nodes, edges = [], []
+    for i, (name, cls, schemes, nums, urls) in enumerate(hosts):
+        nodes.append({"id": f"host:{name}", "kind": "host", "label": name})
+        edges.append({"id": f"h{i:015x}", "source": "s", "relation": "connects_to",
+                      "target": f"host:{name}", "samples": [{"file": "a.py", "line": i + 1}],
+                      "attrs": {"class": cls, "schemes": schemes, "ports": nums,
+                                "urls": urls}})  # fmt: skip
+    for i, (port, direction) in enumerate(ports):
+        edges.append({"id": f"p{i:015x}", "source": "s", "relation": "uses_port",
+                      "target": f"port:{port}", "samples": [{"file": "b.py", "line": 1}],
+                      "attrs": {"names": ["PORT"], "directions": [direction]}})  # fmt: skip
+    return {"graph": {"subject": "s", "nodes": nodes, "edges": edges}}
+
+
+def test_each_site_is_one_line_that_folds_open_with_its_details_inside():
+    """(0.15, his decision 2026-11-20) one line per site; addresses, where and Explain fold
+    open (script-free <details>); 5 per zone, then "N more"."""
+    from sniff_test import ui
+
+    hosts = [(f"s{i}.example.invalid", "undeclared", ["https"], [],
+              [f"https://s{i}.example.invalid/api"]) for i in range(8)]  # fmt: skip
+    html = ui.zones_html(_graph_report(hosts))
+    assert html.count('<details class="site"') == 8 and "<script" not in html
+    assert '<details class="more"><summary>3 more</summary>' in html
+    first, rest = html.split('<details class="more">', 1)
+    assert first.count('<details class="site"') == 5 and rest.count('<details class="site"') == 3
+    assert "https://s0.example.invalid/api" in html and "In the code at a.py:1" in html
+    assert 'id="item-h000000000000000"' in html  # where the AI sheet's Close goes back to
+
+
+def test_explain_sits_inside_the_fold_and_its_sheet_outside():
+    from sniff_test import ui
+
+    calls = []
+
+    def deep(item_id, part="both"):
+        calls.append((item_id, part))
+        return f"<{part}:{item_id}>"
+
+    rep = _graph_report([("a.example.invalid", "undeclared", ["https"], [], [])],
+                        [(1883, "out")])  # fmt: skip
+    html = ui.zones_html(rep, deep, open_id="p000000000000000")
+    for eid in ("h000000000000000", "p000000000000000"):
+        inside = html.split(f'id="item-{eid}"', 1)[1].split("</details>", 1)[0]
+        assert f"<inline:{eid}>" in inside
+        assert f"<sheet:{eid}>" not in inside and html.count(f"<sheet:{eid}>") == 1
+    assert 'id="item-p000000000000000" open>' in html  # the open reading's fold is open
+    assert 'id="item-h000000000000000">' in html
 
 
 def _row(i, ref, tv="logic-aaaaaaa1111"):

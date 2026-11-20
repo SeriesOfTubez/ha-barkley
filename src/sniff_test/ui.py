@@ -397,14 +397,17 @@ details summary { cursor:pointer; color:var(--muted); font-size:var(--t-xs); }
 .zone { border-radius:var(--r3); padding:var(--s3); border:1px solid var(--line); min-width:0; }
 .zone h3 { margin:0; }
 .zone .zs { font-size:var(--t-xs); color:var(--muted); margin-bottom:var(--s2); }
-.zone ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column;
-  gap:var(--s2); }
-.zone li > div { display:flex; flex-wrap:wrap; gap:var(--s2); justify-content:space-between;
-  align-items:baseline; }
-.zone li > div > code { flex:0 0 auto; max-width:100%; overflow-wrap:anywhere; }
-.zone .p { font-size:var(--t-xs); color:var(--muted); min-width:0; }
-.zone .u { font-size:var(--t-xs); color:var(--muted); display:block;
+:is(.zone, .libs) ul { list-style:none; margin:0; padding:0; display:flex;
+  flex-direction:column; gap:var(--s2); }
+:is(.zone, .libs) .u { font-size:var(--t-xs); color:var(--muted); display:block;
   overflow-wrap:anywhere; }
+:is(.zone, .libs) details.site > summary { color:var(--fg); font-size:var(--t-sm);
+  overflow-wrap:anywhere; }
+:is(.zone, .libs) details.site > summary code { word-break:break-all; }
+:is(.zone, .libs) details.site .in { padding:var(--s1) 0 0 var(--s4); display:flex;
+  flex-direction:column; gap:var(--s1); min-width:0; }
+:is(.zone, .libs) details.more > summary { margin-top:var(--s1); }
+:is(.zone, .libs) details.more > ul { margin-top:var(--s2); }
 .zone.home { background:var(--soft); }
 .zone.dev, .zone.ana { border-color:var(--priv); }
 .lock { font-size:var(--t-xs); white-space:nowrap; } .lock.ok { color:var(--green); }
@@ -2391,9 +2394,22 @@ def _lock(scheme_or_port: str | int) -> str:
 _DEFAULT_PORT = {"https": 443, "wss": 443, "http": 80, "ws": 80}
 
 
-def _host_li(h: Host, deep: str = "") -> str:
-    """Scheme, port (the URL's own, else the scheme's default) and encryption per site,
-    so a port listed under "address not in the code" is never mistaken for this one."""
+ZONE_SHOWN = 5  # sites per zone before "N more" (his decision 2026-11-20: dense panels)
+
+
+def _fold(item_id: str, summary: str, body: str, open_: bool) -> str:
+    """One site or port as one line that folds open (script-free <details>). The id is the
+    anchor the AI sheet's Close goes back to."""
+    anchor = f' id="item-{e(item_id, 40)}"' if item_id else ""
+    return (f'<li><details class="site"{anchor}{" open" if open_ else ""}><summary>{summary}'
+            f"</summary><div class=\"in\">{body}</div></details></li>")  # fmt: skip
+
+
+def _host_li(h: Host, deep: str = "", open_: bool = False) -> str:
+    """One line per site: the name and whether Barkley flagged it. Inside: scheme, port (the
+    URL's own, else the scheme's default) and encryption, who runs it, the addresses, where
+    the code names it, and Explain in context. The port is said per site, so a port listed
+    under "address not in the code" is never mistaken for this one."""
     bits = []
     explicit = sorted(set(h.ports))
     for s in sorted(set(h.schemes)):
@@ -2403,59 +2419,77 @@ def _host_li(h: Host, deep: str = "") -> str:
         bits.append(e(s) + port + lock)
     if not h.schemes and explicit:
         bits.append("port " + ", ".join(map(str, explicit)))
-    urls = "".join(f'<span class="u">{e(u, 200)}</span>' for u in h.urls[:3])
     flag = ' <span class="chip bad">see findings</span>' if h.flagged else ""
-    # whose address it is: a name from our own list, never a verdict; on its own line, since
-    # beside the address it squeezed the host name into a three-letter column
+    # whose address it is: a name from our own list, never a verdict
     who = f'<span class="u">{e(h.service, 120)}</span>' if h.service else ""
-    return (
-        f'<li><div><code>{e(h.name, 120)}</code>{flag}<span class="p">{" · ".join(bits)}</span>'
-        f"</div>{who}{urls}{deep}</li>"
-    )
+    how = f'<span class="u">{" · ".join(bits)}</span>' if bits else ""
+    urls = "".join(f'<span class="u"><code>{e(u, 200)}</code></span>' for u in h.urls[:3])
+    if len(h.urls) > 3:
+        urls += f'<span class="u">and {len(h.urls) - 3} more addresses</span>'
+    where = (f'<span class="u">In the code at {e(", ".join(h.where[:3]), 300)}'
+             f"{f' and {len(h.where) - 3} more places' if len(h.where) > 3 else ''}</span>"
+             if h.where else "")  # fmt: skip
+    return _fold(h.edge_id, f"<code>{e(h.name, 120)}</code>{flag}", who + how + urls + where
+                 + deep, open_)  # fmt: skip
 
 
-def zones_html(report: dict[str, Any], deep: DeepFn | None = None) -> str:
-    """`deep(edge_id)` adds the "Explain in context" block to an address or port."""
-    deep = deep or (lambda _id: "")
+def _zone_list(items: list[str]) -> str:
+    """The first ZONE_SHOWN lines, then the rest behind "N more" (a fold, no script)."""
+    head = "".join(items[:ZONE_SHOWN])
+    rest = items[ZONE_SHOWN:]
+    if not rest:
+        return f"<ul>{head}</ul>"
+    return (f'<ul>{head}<li><details class="more"><summary>{len(rest)} more</summary>'
+            f'<ul>{"".join(rest)}</ul></details></li></ul>')  # fmt: skip
+
+
+def zones_html(report: dict[str, Any], deep: DeepFn | None = None, open_id: str = "") -> str:
+    """`deep(edge_id, part=)` adds "Explain in context" to an address or port: the button
+    inside the site's fold, the sheet after the zones (a sheet inside a closed fold
+    wouldn't show). `open_id`: the item whose sheet is open (?open=), so its fold is too."""
     hs = hosts(report)
     pts = ports(report)
     if not hs and not pts:
         return '<p class="muted">Its code names no sites, IP addresses or ports.</p>'
+
+    def inline(item_id: str) -> str:
+        return deep(item_id, part="inline") if deep and item_id else ""
+
     out = ['<div class="zones">']
     for key, ic, title, sub, classes in ZONES:
         zh = [h for h in hs if h.cls in classes]
         if not zh:
             continue
-        shown = zh[:12]
-        more = f'<li class="muted">and {len(zh) - 12} more</li>' if len(zh) > 12 else ""
-        out.append(
-            f'<div class="zone {key}"><h3>{icon(ic)} {title}</h3><div class="zs">{sub}</div><ul>'
-            + "".join(_host_li(h, deep(h.edge_id)) for h in shown)
-            + more
-            + "</ul></div>"
-        )
+        lis = [_host_li(h, inline(h.edge_id), bool(open_id) and h.edge_id == open_id)
+               for h in zh]  # fmt: skip
+        out.append(f'<div class="zone {key}"><h3>{icon(ic)} {title}</h3><div class="zs">{sub}'
+                   f"</div>{_zone_list(lis)}</div>")  # fmt: skip
     if pts:
         items = []
         for p in pts:
             known = WELL_KNOWN_PORTS.get(p.port)
             label = f"{known[0]}, port {p.port}" if known else f"Port {p.port}"
             names = ", ".join(f"<code>{e(n, 60)}</code>" for n in p.names[:2])
-            where = e(p.where[0], 160) if p.where else ""
+            where = (f'<span class="u">In the code at {e(", ".join(p.where[:3]), 300)}</span>'
+                     if p.where else "")  # fmt: skip
             how = {
-                "out": "connects out to it",
-                "in": "listens on it (others connect in)",
-            }.get(p.direction or "", "direction not clear from the code")
-            items.append(
-                f'<li><div><span>{e(label)}</span><span class="p">{_lock(p.port).strip()}</span></div>'
-                f'<span class="u">{e(how)} · {names} · {where}</span>{deep(p.edge_id)}</li>'
-            )
+                "out": "It connects out to it.",
+                "in": "It listens on it, so others connect in.",
+            }.get(p.direction or "", "The code doesn't make the direction clear.")
+            body = (f'<span class="u">{_lock(p.port).strip()}</span><span class="u">{e(how)}'
+                    f"</span>{f'<span class=\"u\">Named {names}</span>' if names else ''}"
+                    f"{where}{inline(p.edge_id)}")  # fmt: skip
+            items.append(_fold(p.edge_id, e(label), body, bool(open_id) and p.edge_id == open_id))
         out.append(
             f'<div class="zone"><h3>{icon("plug")} Connections whose address isn\'t in the code</h3>'
             '<div class="zs">The code sets these ports, but the server\'s address comes from '
             "setup or from another server while the app runs. So Barkley can't tie them to any "
-            "site listed here.</div><ul>" + "".join(items) + "</ul></div>"
+            f"site listed here.</div>{_zone_list(items)}</div>"
         )
     out.append("</div>")
+    if deep:  # every sheet outside the folds, once
+        out.extend(deep(i, part="sheet") for i in dict.fromkeys(
+            [h.edge_id for h in hs if h.edge_id] + [p.edge_id for p in pts if p.edge_id]))  # fmt: skip
     return "".join(out)
 
 
@@ -2592,21 +2626,25 @@ def libraries_html(report: dict[str, Any]) -> str:
         return ""
     items = []
     for lib in libs:
+        # (0.15) one line per package; the dates, downloads and files fold open, and a long
+        # list shows 5 then "N more" (his decision 2026-11-20: long lists aren't dumped)
         files = [f for f in lib.get("files") or [] if isinstance(f, str)]
         facts = []
         if lib.get("published"):
-            facts.append(f"published {e(lib['published'], 20)}")
+            facts.append(f"Published {e(lib['published'], 20)}.")
         weekly = lib.get("weekly_downloads")
         if isinstance(weekly, int):
-            facts.append(f"{weekly:,} downloads last week")
+            facts.append(f"{weekly:,} downloads last week.")
         n = len(files)
+        shown = "".join(f'<span class="u"><code>{e(f, 300)}</code></span>' for f in files[:50])
+        if n > 50:
+            shown += f'<span class="u">and {n - 50} more files</span>'
         items.append(
-            f"<li><b>{e(lib.get('name'), 120)} {e(lib.get('version'), 80)}</b>"
-            f' <span class="muted">{n} file{"s" * (n != 1)}'
-            + (f", {', '.join(facts)}" if facts else "")
-            + '</span><ul class="plain">'
-            + "".join(f"<li><code>{e(f, 300)}</code></li>" for f in files[:20])
-            + "</ul></li>"
+            f'<li><details class="site"><summary><b>{e(lib.get("name"), 120)} '
+            f'{e(lib.get("version"), 80)}</b> <span class="muted">· {n} file{"s" * (n != 1)}'
+            f'</span></summary><div class="in">'
+            + (f'<span class="u">{" ".join(facts)}</span>' if facts else "")
+            + f"{shown}</div></details></li>"
         )
     return (
         '<section class="box"><h2>Published libraries it ships</h2><p class="sub">These '
@@ -2615,7 +2653,7 @@ def libraries_html(report: dict[str, Any]) -> str:
         "dependency. Only a well-known package counts. It must be at least a month old, have "
         "at least 10,000 downloads a week and have no malware warning. If a file differs by "
         "even one byte, Barkley reads all of it.</p>"
-        '<ul class="plain">' + "".join(items) + "</ul></section>"
+        f'<div class="libs">{_zone_list(items)}</div></section>'
     )
 
 
@@ -3129,6 +3167,7 @@ def render_app(
     refresh_url: str = "",
     trust: TrustFn | None = None,
     review: ReviewFn | None = None,
+    open_item: str = "",
 ) -> bytes:
     """One app's detail page. `report` is the shown report (shown.view). `trust(finding)`
     lists the addresses an item is about; `review(finding, places)` is the row under each
@@ -3215,6 +3254,12 @@ def render_app(
     def dfn(item_id: str) -> str:
         out = deep(item_id) if deep else ""
         if out:
+            shown.add(item_id)
+        return out
+
+    def zdeep(item_id: str, part: str = "both") -> str:
+        out = deep(item_id, part=part) if deep else ""
+        if out and part != "inline":
             shown.add(item_id)
         return out
 
@@ -3305,7 +3350,7 @@ def render_app(
         "and port in the shipped code, grouped by where it is. A site is listed because the code "
         "mentions it. That doesn't mean Barkley saw it connect. Web addresses are cut off at the "
         f"<code>?</code>, because what comes after it can hold keys.</p>"
-        f"{zones_html(report, dfn if deep else None)}</section>"
+        f"{zones_html(report, zdeep if deep else None, open_item)}</section>"
     )
     parts.append(tag(libraries_html(report)))
     habits = hygiene_html(report)
@@ -3329,7 +3374,7 @@ def render_app(
         f'<p class="tech"><a href="{base}/scan/{sid}.json">Technical report (raw JSON)</a>'
         f"{tech}</p></section></div>"
     )
-    if deep:  # a note's address beyond the 12 shown per zone: its sheet goes at the end
+    if deep:  # a note's item with no sheet on the page yet (one zones_html didn't list)
         parts.extend(
             deep(i, part="sheet")
             for i in dict.fromkeys(x for n in notes for x in n.edges)

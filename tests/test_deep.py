@@ -190,7 +190,8 @@ def test_sheet_lists_keep_bullets_inside_zones():
 
     css = Path(ui.__file__).read_text()
     assert ".modal .sheet ul { list-style:disc" in css
-    assert css.index(".modal .sheet ul") < css.index(".zone ul")  # wins by specificity, not order
+    # wins by specificity, not order (0.15: the sheets also sit outside the zones now)
+    assert css.index(".modal .sheet ul") < css.index(":is(.zone, .libs) ul")
 
 
 def test_a_running_reading_refreshes_to_a_fresh_url_that_keeps_its_sheet_open(tmp_path):

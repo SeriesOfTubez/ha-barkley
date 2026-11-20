@@ -330,6 +330,16 @@ def test_the_report_box_escapes_and_counts():
                              "published": "2025-01-02", "weekly_downloads": 60000000}]}  # fmt: skip
     html = ui.libraries_html(report)
     assert "<b>docview-dist 4.10.38</b>" in html
-    assert "2 files, published 2025-01-02, 60,000,000 downloads last week" in html
+    assert '<span class="muted">· 2 files</span></summary>' in html  # (0.15) one line each
+    assert "Published 2025-01-02. 60,000,000 downloads last week." in html
     assert "www/v/&lt;b&gt;.js" in html and "<b>.js" not in html
     assert ui.libraries_html({}) == "" and ui.libraries_html({"libraries": []}) == ""
+
+
+def test_a_long_library_list_shows_five_then_folds_the_rest():
+    from sniff_test import ui
+
+    libs = [{"name": f"pkg{i}", "version": "1.0.0", "files": [f"www/{i}.js"]} for i in range(9)]
+    html = ui.libraries_html({"libraries": libs})
+    assert html.count('<details class="site">') == 9 and "<summary>4 more</summary>" in html
+    assert html.split('<details class="more">')[0].count('<details class="site">') == 5

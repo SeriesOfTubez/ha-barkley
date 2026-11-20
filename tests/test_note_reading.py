@@ -142,12 +142,12 @@ def test_summary_mode_and_old_reports_show_nothing_on_notes(tmp_path):
     httpd.shutdown()
 
 
-def test_an_address_past_the_twelve_shown_still_has_its_sheet(tmp_path):
+def test_an_address_past_the_five_shown_still_has_its_sheet(tmp_path):
     hosts = [(f"{i:02x}" * 8, f"telemetry-{i:02d}.acme.invalid") for i in range(16, 30)]
     store, base, httpd = _serve(tmp_path, lambda *a: {})
     sid = store.save(_report(tmp_path, hosts=hosts, declared=False))
     _, _, page = get(f"{base}/scan/{sid}")
-    assert "and 3 more" in page  # 15 developer hosts, 12 shown in their zone
+    assert "<summary>10 more</summary>" in page  # 15 developer hosts, 5 on show (0.15)
     tele = _note(page, "Can send usage statistics to the developer")
     linked = re.findall(r'name=item value="([0-9a-f]{16})"', tele)
     assert len(linked) == 4  # the note links the first four, as it lists four addresses

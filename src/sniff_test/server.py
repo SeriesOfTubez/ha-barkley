@@ -1724,6 +1724,7 @@ def render_scan(
         refresh=5 if running or rechecking else 0,
         deep=deep,
         refresh_url=_scan_url(base, sid, open_item, fresh=True) if open_item else "",
+        open_item=open_item,
     )
 
 
