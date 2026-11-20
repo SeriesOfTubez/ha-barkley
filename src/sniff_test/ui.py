@@ -740,7 +740,9 @@ def card_sentence(c: Card) -> str:
         first = "Every finding accepted."
     elif big:
         first = explain.explain(big[0][0]["rule_id"]).title + "."
-        if len(big) > 1:
+        if len(big) > 1 and rep.get("readings"):  # (preview) plain words
+            first += f" Plus {len(big) - 1} more."
+        elif len(big) > 1:
             first += f" And {len(big) - 1} more thing{'s' * (len(big) > 2)} worth a look."
     else:
         first = "No security concerns found."
@@ -806,8 +808,11 @@ def card_chips(c: Card) -> list[tuple[str, str]]:
     """Each chip is there because it can change a decision; the sentence above already
     says where the app connects, so no chip repeats that."""
     chips: list[tuple[str, str]] = []
+    # (preview) colour means severity, and only Threat is scored: a threat stays red, the
+    # rest are neutral (his note 2026-11-20). Privacy notes keep their own colour (a kind).
+    preview = bool((c.report or {}).get("readings"))
     if c.available:
-        if c.group == "attention" and c.reasons:
+        if c.group == "attention" and c.reasons and not preview:
             chips.append(("warn", f"Update {c.available} needs a look"))
         else:
             chips.append(("", f"Update {c.available}"))
@@ -815,6 +820,8 @@ def card_chips(c: Card) -> list[tuple[str, str]]:
         for f, fs, _p in scored_findings(c.report):
             if f["severity"] in ("critical", "high", "medium") and len(chips) < 4:
                 cls = "bad" if f["severity"] in ("critical", "high") else "warn"
+                if preview:
+                    cls = "bad" if kinds.is_threat(str(f["rule_id"])) else ""
                 chip = explain.explain(f["rule_id"]).chip
                 if all((x.get("review") or {}).get("state") == "accepted" for x in fs):
                     cls, chip = "okd", f"✓ {chip}"  # accepted: kept, muted, marked

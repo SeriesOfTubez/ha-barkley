@@ -236,3 +236,29 @@ def test_a_card_title_is_its_own_sentence_not_it_can_it():
         "Its dashboard card reads your saved login."
     )
     assert ui._it_can("Changes who can log in to Home Assistant").startswith("It can change")
+
+
+def _card(r: dict) -> ui.Card:
+    class Scan:  # the card reads only these of a stored scan's row
+        id, score, complete = 1, 50, True
+
+    return ui.Card(repo="someone/device-bridge", name="Device bridge", kind="integration",
+                   installed="v2", available=None, scan=Scan(), report=r)  # fmt: skip
+
+
+def test_card_chips_are_neutral_except_a_threat():
+    """His note 2026-11-20: colour means severity, and only Threat is scored."""
+    r = report(f("ha-auth-change-users", line=19), f("ha-auth-internals", n=1))
+    chips = ui.card_chips(_card(r))
+    assert chips and all(cls == "" for cls, _t in chips)
+    r = report(f("card-token-exfil", "critical", "c.js"), f("ha-auth-change-users", line=19))
+    cls = dict((t, c) for c, t in ui.card_chips(_card(r)))
+    assert "bad" in cls.values() and "" in cls.values()
+    del r["readings"]
+    assert all(c in ("bad", "warn") for c, _t in ui.card_chips(_card(r)))  # off: as before
+
+
+def test_the_card_sentence_says_plus_n_more():
+    r = report(f("ha-auth-change-users", line=19), f("ha-auth-internals", n=1))
+    s = ui.card_sentence(_card(r))
+    assert "Plus 1 more." in s and "worth a look" not in s
