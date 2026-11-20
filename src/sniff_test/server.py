@@ -76,6 +76,7 @@ def local_path(to: str) -> str:
 
 _REPO = re.compile(r"^(?:https://github\.com/)?([A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100})/?$")
 _REF = re.compile(r"^[A-Za-z0-9_.+/-]{1,100}$")
+BAD_REQUEST = "Barkley couldn't use that link or form."
 _LABEL = {v.key: v.label for _, v in VERDICTS}
 _SEV_CLASS = {"critical": "sev-critical", "high": "sev-high", "medium": "sev-medium"}
 _JOBS_KEPT = 20
@@ -236,7 +237,7 @@ class Worker:
         never below REFUSE_BELOW of real free memory after the running scans' growth."""
         mem = self.memory_fn()
         if mem.available is None:
-            return "waiting: available memory is unknown, so one scan at a time"
+            return "waiting: Barkley can't tell how much memory is free, so scans run one at a time"
         n = len(self._running)
         gb = self.memory_gb_fn()
         if gb:
@@ -246,15 +247,16 @@ class Worker:
             need = memory.REFUSE_BELOW + PER_SCAN * n
             if PER_SCAN * (n + 1) > budget:
                 fits = max(1, int(budget // PER_SCAN))
-                return (f"waiting for a running scan to finish: {gb} GB (Memory for scans "
-                        f"in Settings) fits {fits} at a time")  # fmt: skip
+                return (f"waiting for a running scan to finish. {gb} GB (Memory for scans "
+                        f"in Settings) fits {fits} scan{'s' * (fits != 1)} at a time.")  # fmt: skip
         else:
             reserve = memory.CONTAINER_RESERVE if mem.limited else memory.WARN_BELOW
             need = reserve + PER_SCAN * n
         if mem.available < need:
-            return (f"waiting for memory: {mem.available / memory.GIB:.1f} GB free, "
-                    f"{need / memory.GIB:.1f} GB needed beside the {n} running (Memory for "
-                    "scans in Settings)")  # fmt: skip
+            runs = "other scan runs" if n == 1 else "other scans run"
+            return (f"waiting for memory. {mem.available / memory.GIB:.1f} GB is free and "
+                    f"{need / memory.GIB:.1f} GB is needed while {n} {runs} (see Memory for "
+                    "scans in Settings).")  # fmt: skip
         return ""
 
     def _admit(self, job: Job) -> None:
@@ -334,10 +336,13 @@ class Worker:
         job.scan_ids = [sid]
         if row.tool_version != self.tool_version or not row.complete:
             # its findings come from other rules, or it never finished: a fresh sniff's job
-            job.message = "not re-checked: only complete scans by this Barkley version are"
+            job.message = (
+                "not checked again: Barkley only re-checks finished scans made by this version "
+                "of Barkley"
+            )
             return
         if newest is None or newest.id != sid:
-            job.message = "not re-checked: a newer scan of this version exists"
+            job.message = "not checked again: there's a newer scan of this version"
             return
         inputs = self.store.inputs(sid)
         if inputs is None:
@@ -389,7 +394,7 @@ class Worker:
         when = time.strftime("%H:%M UTC", time.gmtime(reset_at))
         job.state = "waiting"
         job.message = f"waiting for GitHub's rate limit; resumes at {when}"
-        self.github_wait = f"{why} Queued scans resume automatically at {when}."
+        self.github_wait = f"{why} Queued scans start again by themselves at {when}."
         print(f"job {job.id} {job.repo} waiting until {when}: {why}", file=sys.stderr, flush=True)
         try:
             self.sleep_fn(min(max(reset_at - time.time(), 0) + 5, 3700))
@@ -402,10 +407,10 @@ class Worker:
             others = sum(_need(j) for j in self.running() if j is not job)
             if b is None or b.remaining >= _need(job) + others:
                 return True
-        tip = " A GitHub token in the app's options raises it to 5,000."
+        tip = " A GitHub token raises the limit to 5,000."
         token = "" if b.authenticated else tip
         left = f"{b.remaining} of {b.limit} requests left this hour"
-        why = f"GitHub's API budget is low ({left}).{token}"
+        why = f"GitHub's request limit is almost used up ({left}).{token}"
         self._park(job, b.reset_at, why)
         return False
 
@@ -629,9 +634,9 @@ def render_installed(
     refresh = f'<a href="{base}/?refresh=1">refresh</a>'
     if state.error:
         return (
-            '<div class="banner warn">Can\'t list installed items: '
-            f"{e(state.error, 300)} ({refresh}). Checking a repository by name still works "
-            "(below).</div>"
+            '<div class="banner warn">Barkley can\'t list your installed apps: '
+            f"{e(state.error, 300)} ({refresh}). You can still check a repository by name "
+            "below.</div>"
         )
     cards = [
         ui.Card(
@@ -658,12 +663,12 @@ def render_installed(
     lead = ""
     if never or again:  # the list's one primary action; nothing when everything is sniffed
         if never and again:
-            label = (f"Sniff the {never} not yet sniffed with Barkley's current rules "
-                     f"and the {again} unfinished")  # fmt: skip
+            label = (f"Sniff {never} apps not yet sniffed with the current rules, "
+                     f"and {again} unfinished again")  # fmt: skip
         elif never:
-            label = f"Sniff the {never} not yet sniffed with Barkley's current rules"
+            label = f"Sniff {never} apps not yet sniffed with the current rules"
         else:
-            label = f"Sniff the {again} unfinished again"
+            label = f"Sniff {again} unfinished again"
         lead = (
             f'<form method=post action="{base}/installed-all">'
             f'<input type=hidden name=token value="{token}">'
@@ -689,8 +694,9 @@ def render_installed(
     skipped = ", ".join(f"{n} {e(c)}" for c, n in sorted(state.other.items()))
     age = int(time.time() - state.fetched) // 60 if state.fetched else 0
     out.append(
-        f'<p class="muted small">Installed list from the Marketplace {age} min ago ({refresh})'
-        + (f". Not scanned (not an integration or card): {skipped}" if skipped else "")
+        f'<p class="muted small">Barkley read the installed list from the Marketplace {age} '
+        f"min ago ({refresh})"
+        + (f". Not scanned because they aren't integrations or cards: {skipped}" if skipped else "")
         + ".</p>"
     )
     return "".join(out)
@@ -771,8 +777,8 @@ def status_html(
             if j.kind == "recheck":
                 old, new = j.scan_ids
                 lines.append(
-                    f"{ui.icon('alert', 14, 'muted')} The known advisories of {name(j)} changed: "
-                    f'<a href="{base}/diff?old={old}&amp;new={new}">what changed</a>'
+                    f"{ui.icon('alert', 14, 'muted')} The known advisories for {name(j)} changed. "
+                    f'See <a href="{base}/diff?old={old}&amp;new={new}">what changed</a>.'
                 )
                 continue
             lines.append(f"{ui.icon('check', 14, 'ok')} {name(j)} is done: {link}")
@@ -809,7 +815,7 @@ def render_index(
     token_banner: str = "",
 ) -> bytes:
     rows = store.history(limit=100)
-    against = f" against HA {e(ha)}" if ha else ""
+    against = f", checking against Home Assistant {e(ha)}" if ha else ""
     out = [
         f'<div class="head"><h1>{ui.logo_img()}Barkley</h1>'
         f'<a class="small" href="{base}/?{here}">{ui.icon("refresh")} Refresh</a>'
@@ -884,12 +890,12 @@ def render_index(
             if parallel <= 1
             else f"Up to {parallel} scans run at once, as memory allows. "
         )
-        + f'Scores never come from an AI. <a href="{base}/doctor">Diagnostics</a>: can each '
-        f'tool run on this box? <a href="{e(report_issue_url(ha))}" target="_blank" '
-        'rel="noopener noreferrer" title="Opens a new public issue on Barkley\'s GitHub, with '
-        'the versions filled in">Report an issue</a>. '
-        f'<a href="{base}/settings">Settings</a>. '
-        f'<a href="{base}/trusted">Addresses you trust</a>.</p>'
+        + f'Scores never come from an AI. <a href="{base}/doctor">Diagnostics</a> shows '
+        f'whether each tool can run on this machine. <a href="{e(report_issue_url(ha))}" '
+        'target="_blank" rel="noopener noreferrer" title="Opens a new public issue on '
+        "Barkley's GitHub, with the versions filled in\">Report an issue</a> · "
+        f'<a href="{base}/settings">Settings</a> · '
+        f'<a href="{base}/trusted">Addresses you trust</a></p>'
     )
     out.append(account)
     return ui.page("Barkley", "".join(out), refresh=5 if active else 0, base=base)
@@ -950,10 +956,11 @@ def ha_token_block(base: str, store: Store, period: int, token: str) -> str:
     return (
         '<div class="setrow" id="ha-token"><div><b>Home Assistant token</b>'
         '<p class="muted small">'
-        "Barkley's own, for reading your apps and sending notifications. An administrator's "
-        "(Home Assistant lists apps to administrators only). Create token logs you in to "
-        "Home Assistant once more and makes it; your login's own tokens are revoked right "
-        f"after. Kept in its own file, never in Barkley's database.</p>{err}</div>"
+        "Barkley uses its own token to read your apps and send notifications. It must be an "
+        "administrator's token, because Home Assistant only lists apps to administrators. "
+        "Create token has you log in to Home Assistant once more and makes the token. The "
+        "tokens from that login are revoked right after. Barkley keeps its token in its own "
+        f"file, never in its database.</p>{err}</div>"
         f'<div class="ctl"><span class="muted small">{e(line)}</span>{ctl}</div></div>'
     )
 
@@ -962,26 +969,28 @@ def ha_token_block(base: str, store: Store, period: int, token: str) -> str:
 # words, checked against the code (scoring.Policy, kinds.MINOR, review.py, watch.py).
 SETTING_HELP = {
     "Exposure": (
-        "Public raises findings about what an app accepts from outside (pages that work "
-        "without a login, pages other websites may call, webhooks) by one level. Findings "
-        "about data leaving your home are at the top level either way. A change applies to "
-        "the next scans; a stored scan keeps the exposure it was made with."
+        "Public raises by one level what Barkley finds about what an app accepts from "
+        "outside: pages that work without a login, pages other websites may call, and "
+        "webhooks. Anything about data leaving your home is at the top level either way. A "
+        "change applies to new scans. A stored scan keeps the setting it was made with."
     ),
     "Paranoid mode": (
-        "Off hides and doesn't count these: listing user accounts (names only), reading other "
+        "When off, Barkley hides these and doesn't count them: listing user accounts (names "
+        "only), reading other "
         "apps' settings (their options, not their stored data), writing its own files in "
         "Home Assistant's .storage folder, a bug in a build tool that never ships in a card, "
         "installing its own declared libraries, and usage reporting that is disclosed or "
-        "optional. An app's page says how many it left out, with a link to show them. "
-        "Changing who can log in, reading other apps' stored data or passwords, and code "
-        "Barkley couldn't read are never treated as minor."
+        "optional. An app's page says how many it left out and has a link to show them. "
+        "Barkley never treats these as minor: changing who can log in, reading other apps' "
+        "stored data or passwords, and code it couldn't read."
     ),
     "Powerful, no threat": (
         "A Threat is a sign of malicious behavior, such as sending your data or logins away, "
         "disguised code or known malware. Without one, an app that can do a lot stops at 40 "
-        "instead of going lower. Only for a finished scan with no critical finding: an "
-        "unfinished scan may have missed a Threat, and a critical known bug in a library "
-        "still counts in full. Off: findings count down to 0 whatever their kind."
+        "instead of going lower. This only applies to a finished scan with nothing critical "
+        "found. An unfinished scan may have missed a Threat, and a critical known bug in a "
+        "library still counts in full. When off, anything Barkley finds can take the score "
+        "down to 0, whatever its kind."
     ),
     "Pages without a login": (
         "Some apps add a page that opens without logging in, for sign-in callbacks or image "
@@ -991,31 +1000,32 @@ SETTING_HELP = {
         "one level higher."
     ),
     "Hidden usage reporting": (
-        "Counted (8 points) only when Barkley is sure of all three: the app sends it by "
+        "Barkley counts it (8 points) only when it's sure of all three: the app sends it by "
         "itself (at start-up or on a timer), no setting turns it off, and nothing in its "
-        "README or setup screens mentions it. When Barkley can't be sure, it's an uncounted "
-        "privacy note instead. List only keeps it on the page without counting it."
+        "README or setup screens mentions it. When Barkley can't be sure, it shows a privacy "
+        "note that doesn't count. List only keeps it on the page without counting it."
     ),
     "When an accepted finding changes": (
-        "An acceptance is tied to the code around the finding, usually the function it's "
-        "in, not the line number. The same code in a new version stays accepted. Changed "
-        "code opens it again and your reviewed score counts it again. Notify me adds a line "
-        "about it to the auto-sniff notification for that version; Just reopen it doesn't."
+        "When you accept something Barkley found, Barkley remembers the code around it, "
+        "usually the function it's in, not the line number. If a new version has the same "
+        "code, it stays accepted. If the code changed, it opens again and counts in your "
+        "reviewed score again. Notify me adds a line about it to the auto-sniff notification "
+        "for that version. Just reopen it doesn't."
     ),
     "Ask again": (
-        "After 6 or 12 months an acceptance opens again for a fresh look, even if the code "
-        "didn't change: your setup or what you know about the app may have. Never: an "
-        "acceptance lasts until its code changes."
+        "After 6 or 12 months, anything you accepted opens again so you can take a fresh "
+        "look, even if the code didn't change. Your setup, or what you know about the app, "
+        "may have changed. With Never, it stays accepted until its code changes."
     ),
     "Auto-sniff": (
         "When the Marketplace installs or updates an app, or offers an update, Barkley "
-        "sniffs that version and notifies you. Once a day it also asks again whether the "
-        "libraries of what you have, and of updates waiting, have new known bugs or were "
-        "found to be malware. That doesn't download or scan the app's code again. A new "
-        "integration runs as soon as it's installed: Home Assistant opens its setup right "
-        "away, which loads its code before the auto-sniff can finish. So sniff a new app from "
-        "search before you install it. An update is sniffed as soon as the Marketplace offers "
-        "it, so you hear what it changes before you update."
+        "sniffs that version and notifies you. Once a day it also checks whether the "
+        "libraries in your installed apps and waiting updates have new known bugs or have "
+        "been found to be malware. That check doesn't download or scan the app's code again. "
+        "A new integration runs as soon as it's installed. Home Assistant opens its setup "
+        "right away, and that loads its code before the auto-sniff can finish. So sniff a new "
+        "app from search before you install it. Barkley sniffs an update as soon as the "
+        "Marketplace offers it, so you hear what it changes before you update."
     ),
     "Notify": (
         "Every result goes to Home Assistant's bell. Pick a notify service, such as your "
@@ -1029,46 +1039,48 @@ SETTING_HELP = {
         "as the model behind the entity."
     ),
     "AI mode": (
-        "Explain only sends the findings. Explain and read code also lets you ask about one "
-        "finding, address or port, and sends the app's own code around it (public on "
-        "GitHub, kept from the scan). Nothing from your Home Assistant is ever sent."
+        "Explain only sends what Barkley found. Explain and read code also lets you ask about "
+        "one item, address or port, and sends the app's own code around it. That code is "
+        "public on GitHub, and Barkley kept it from the scan. Nothing from your Home "
+        "Assistant is ever sent."
     ),
     "Parallel scans": (
-        "Each scan is a separate app. Another scan starts only while there's memory for it "
-        "(see Memory for scans); otherwise it waits its turn. Two checks of the same app "
-        "never run together. Scans share the processor too: keep Parallel scans times "
-        "Semgrep jobs at or below the number of processor cores (4 on many Home Assistant "
-        "boxes). Past that, a big app's checks can run out of time and its scan comes out "
-        "Incomplete."
+        "Each parallel scan checks a different app. Another scan starts only when there's "
+        "memory for it (see Memory for scans); otherwise it waits its turn. Two checks of the "
+        "same app never run together. Scans also share the processor. Keep Parallel scans "
+        "times Semgrep jobs at or below the number of processor cores (4 on many Home "
+        "Assistant boxes). Above that, a big app's checks can run out of time, and its scan "
+        "shows as Incomplete."
     ),
     "Semgrep jobs": (
-        "Inside one scan, Semgrep (the code checker) reads this many files at once, and "
-        "GuardDog uses the same number for an integration's libraries. It helps apps that "
-        "ship many files, such as cards split into chunks; one big file is still read by "
-        "one worker, and Barkley's passes over the code run one after another. Downloading "
-        "the app takes the same time either way. Each extra job needs its own memory. With "
-        "1 parallel scan, set this to the number of cores; with more, keep Parallel scans "
-        "times this at or below the cores."
+        "Inside one scan, Semgrep (the code checker) reads this many files at once. GuardDog "
+        "uses the same number for an integration's libraries. A higher number helps apps "
+        "with many files, such as cards split into chunks. It doesn't help with one big file, "
+        "and Barkley's own checks of the code still run one after another. Downloading the "
+        "app takes the same time either way. Each extra job needs its own memory. With 1 "
+        "parallel scan, set this to the number of cores. With more, keep Parallel scans "
+        "times this at or below the number of cores."
     ),
     "Memory for scans": (
-        "Barkley counts 1.5 GB for each scan, the most a big one has needed. Auto starts "
-        "another scan only while free memory covers that for every running scan plus a "
-        "reserve: 2 GB on a machine Home Assistant shares, 0.5 GB inside a container with "
-        "its own memory limit. A fixed amount runs as many scans as fit in it (4 GB: two), "
-        "never past a container's limit, and never with under 1 GB really free. A scan that "
-        "runs out of memory is stopped by the system and shows as Incomplete."
+        "Barkley allows 1.5 GB for each scan, the most a big scan has needed. On Auto, "
+        "another scan starts only when free memory covers 1.5 GB for every running scan, "
+        "plus a reserve. The reserve is 2 GB on a machine Home Assistant shares, and 0.5 GB "
+        "inside a container with its own memory limit. With a fixed amount, Barkley runs as "
+        "many scans as fit in it (two in 4 GB). It never goes past a container's limit, and "
+        "never runs with under 1 GB really free. If a scan runs out of memory, the system "
+        "stops it and it shows as Incomplete."
     ),
     "Token rotation": (
         "Barkley uses its current token to make a new one, checks that it works, saves it, "
         "and then deletes the old one. Each token lasts twice this period plus a week, so "
-        "one missed rotation breaks nothing. A failed rotation keeps the current token, "
-        "shows why here and notifies you; it's tried again a day later."
+        "one missed rotation breaks nothing. If a rotation fails, Barkley keeps the current "
+        "token, shows why here and notifies you. It tries again a day later."
     ),
     "GitHub token": (
-        "GitHub allows 60 requests an hour without a token and 5,000 with one; a scan makes "
-        "about 6 or 7. Barkley keeps it in its own file next to its database, never in the "
-        "database, and never shows it again. A token saved here wins over the one in the "
-        "app's options."
+        "GitHub allows 60 requests an hour without a token and 5,000 with one. A scan makes "
+        "about 6 or 7. Barkley keeps the token in its own file next to its database, never "
+        "in the database, and never shows it again. A token saved here is used instead of "
+        "the one in the app's options."
     ),
 }
 
@@ -1127,49 +1139,55 @@ def render_settings(
         hint = ('<p class="muted small">Your Home Assistant has an external URL set. If it can '
                 "be reached from the internet, choose Public.</p>")  # fmt: skip
     scoring_rows = (
-        row("Exposure", "Can your Home Assistant be reached from the internet? Public raises "
-            "findings about open pages and webhooks. A known bug in a library is at most "
-            "medium while Local only, and critical when Public if it's exploited in the "
-            "wild. Threats are never lowered. Applies to the next sniff.",
+        row("Exposure", "Choose Public if your Home Assistant can be reached from the "
+            "internet. Public raises what Barkley finds about open pages and webhooks. With "
+            "Local only, a known bug in a library counts as medium at most. With Public, it "
+            "counts as critical if attackers are already using it. Threats are never "
+            "lowered. The change applies from the next sniff.",
             sel("exposure", s.exposure,
                 [(x, label + (" (default)" if defaults.exposure == x else ""))
                  for x, label in (("local", "Local only"), ("public", "Public"))])
             + hint)
-        + row("Paranoid mode", "Off: findings that touch no password or login, change nothing, "
-              "and usually have a plain reason (listing users, reading other apps' settings) "
-              "aren't shown or counted. On: show and count everything.",
+        + row("Paranoid mode", "When off, Barkley hides things that touch no password or "
+              "login, change nothing, and usually have an innocent reason, such as listing "
+              "users or reading other apps' settings. They don't count either. When on, "
+              "Barkley shows and counts everything.",
               onoff("paranoid", s.paranoid, "On", "Off", False))
         + row("Powerful, no threat", "If an app has no Threat finding, what it can do won't "
               "put its score below Very Sus (40).", onoff("floor", s.floor, "On", "Off", True))
-        + row("Pages without a login", "When Exposure is Local only: list them under what the "
-              "app can do, without counting them.",
+        + row("Pages without a login", "When Exposure is Local only, Barkley lists these pages "
+              "under what the app can do. Choose whether they also count against the score.",
               sel("unauth_views", "1" if s.unauth_views else "0",
                   [("0", "List only (default)"), ("1", "Count as low")]))
-        + row("Hidden usage reporting", "An app sends usage data by itself, with no setting to "
-              "turn it off, and doesn't tell you.",
+        + row("Hidden usage reporting", "Some apps send usage data on their own, with no "
+              "setting to turn it off, and don't tell you. Choose whether that counts against "
+              "the score or is only listed.",
               sel("shadow_telemetry", "1" if s.shadow_telemetry else "0",
                   [("1", "Count it (default)"), ("0", "List only")]))
     )  # fmt: skip
     preview_rows = (
-        row("Proposed readings", "A test of a new way to show results: how likely an app is "
-            "to be trying to hurt you (Threat), and what it opens up to someone who isn't an "
-            "administrator (Exposure), both 0 to 10, shown beside Barkley's score. Nothing "
-            "is stored or notified, and Barkley's score doesn't change.",
+        row("Proposed readings", "Try a new way to show results. It shows two readings "
+            "instead of Barkley's score. Threat is how likely an app is to be trying to hurt "
+            "you: none, possible or found. Exposure is what it opens up to someone who isn't "
+            "an administrator, from 0 to 10. Notifications show them too. Nothing stored "
+            "changes, and you can switch back at any time.",
             onoff("preview", s.preview, "Show", "Hide", False),
             "Threat counts only signs of malicious behavior. Exposure counts pages that skip "
             "Home Assistant's login, login tokens the app may hand out, and published bugs in "
-            "its libraries; something only an administrator can do adds nothing. Both are "
-            "worked out from the stored scan each time a page is shown, so no re-sniff is "
-            "needed.")
-        + row("Where Home Assistant runs", "For Exposure only. A shared or work network raises "
-              "it a quarter. Reachable from the internet is the Exposure setting above "
-              "(Public), which raises it a half.",
+            "its libraries. Something only an administrator can do adds nothing. Barkley "
+            "works both out from the stored scan each time it shows a page, so you don't "
+            "need to sniff again.")
+        + row("Where Home Assistant runs", "This only changes the Exposure reading. On a "
+              "shared or work network, the reading goes up by a quarter. If Home Assistant can "
+              "be reached from the internet, set Exposure to Public under Scoring. That raises "
+              "the reading by half.",
               sel("network", s.network,
                   [("home", "Home network (default)"), ("shared", "A shared or work network")]))
     )  # fmt: skip
     review_rows = (
-        row("When an accepted finding changes", "A new version changed its code. It reopens "
-            "either way.", sel("notify_reopen", "1" if s.notify_reopen else "0",
+        row("When an accepted finding changes", "When a new version changes the code around "
+            "something you accepted, it opens again either way. Choose whether you also get a "
+            "notification.", sel("notify_reopen", "1" if s.notify_reopen else "0",
                                [("1", "Notify me (default)"), ("0", "Just reopen it")]))
         + row("Ask again", "Ask you to look at accepted findings again after a while, even if "
               "nothing changed.", sel("reconfirm_months", s.reconfirm_months,
@@ -1189,7 +1207,8 @@ def render_settings(
         test = (f'<form method=post action="{base}/notify-test" class="setform">'
                 f'<input type=hidden name=token value="{token}">'
                 "<button>Send a test notification</button></form>")  # fmt: skip
-        check_rows += row("Notify", "Where results go. Counts, scores and app names only.",
+        check_rows += row("Notify", "Choose where results go. Notifications carry only app "
+                          "names, versions, counts, scores and Barkley's own fixed words.",
                           sel("notify_target", chosen, opts) + test)  # fmt: skip
         check_rows += (
             f'<div class="setrow"><div><b>Auto-sniff activity</b>'
@@ -1199,9 +1218,11 @@ def render_settings(
         opts = [("", "Off")] + [(i, f"{n} ({i})") for i, n in ai_choices]
         if ai_entity and ai_entity not in {i for i, _ in ai_choices}:
             opts.append((ai_entity, f"{ai_entity} (not offered now)"))
-        check_rows += row("AI", "Home Assistant's AI Task entity. Only as good as the model "
-                          "you pick.", sel("ai_entity", ai_entity, opts))  # fmt: skip
-    check_rows += row("AI mode", "Explain only, or also read the code around a finding.",
+        check_rows += row("AI", "The Home Assistant AI Task entity that writes the "
+                          "explanations. They're only as good as the model you pick.",
+                          sel("ai_entity", ai_entity, opts))  # fmt: skip
+    check_rows += row("AI mode", "Choose whether the AI only explains what Barkley found, "
+                      "or can also read the code around one item when you ask.",
                       sel("ai_mode", ai_mode, [
                           ("summary", "Explain only"),
                           ("deep", "Explain and read code (default)")]))  # fmt: skip
@@ -1213,18 +1234,21 @@ def render_settings(
                       sel("jobs", s.jobs,
                           [(n, f"{n}{' (default)' if n == defaults.jobs else ''}")
                            for n in settings_mod.CHOICES["jobs"]]))  # fmt: skip
-    check_rows += row("Published libraries", "A large JavaScript file of an integration that "
-                      "is exactly a well-known published npm file (a month old, 10,000 "
-                      "downloads a week, no malware advisory) isn't read as code: it's listed "
-                      "and checked for advisories instead. Barkley sends the file's SHA-256 to "
-                      "jsDelivr to ask. Off: every file is read.",
+    check_rows += row("Published libraries", "Some integrations include a large "
+                      "JavaScript file that is an exact copy of a well-known npm library file "
+                      "(at least a month old, at least 10,000 downloads a week, no malware "
+                      "advisory). Barkley lists that file and checks it for advisories instead "
+                      "of reading it as code. To find out, it sends the file's fingerprint "
+                      "(SHA-256) to jsDelivr, a public library service. When off, Barkley "
+                      "reads every file.",
                       sel("libraries", "1" if s.libraries else "0",
                           [("1", "Recognise them (default)"), ("0", "Off")]))  # fmt: skip
     used = scancache.size_mb()
-    check_rows += row("Cache of code already read", "Barkley keeps what it found in each "
-                      "file, by its content, so a file it has read before isn't read again "
-                      "(a new release of an app, Sniff again). New rules or scanner tools "
-                      f"start a fresh cache. Now {used:,.0f} MB.",
+    check_rows += row("Cache of code already read", "Barkley remembers what it found in "
+                      "each file, matched by the file's content, so it doesn't read the same "
+                      "file twice. That speeds up a new release of an app and Sniff again. New "
+                      "rules or new scanner tools start a fresh cache. It uses "
+                      f"{used:,.0f} MB now.",
                       sel("cache_mb", s.cache_mb,
                           [(n, "Off" if n == 0 else
                             (f"{n // 1024} GB" if n >= 1024 else f"{n} MB")
@@ -1232,9 +1256,10 @@ def render_settings(
                            for n in settings_mod.CHOICES["cache_mb"]]))  # fmt: skip
     now_free = ""
     if mem is not None and mem.available is not None and mem.total:
-        of = "this container's limit of " if mem.limited else ""
-        now_free = (f'<span class="muted small">Now {mem.available / memory.GIB:.1f} GB free '
-                    f"of {of}{mem.total / memory.GIB:.1f} GB.</span>")  # fmt: skip
+        total = f"{mem.total / memory.GIB:.1f} GB"
+        of = f"this container's {total} limit" if mem.limited else total
+        now_free = (f'<span class="muted small">{mem.available / memory.GIB:.1f} GB is free '
+                    f"now, out of {of}.</span>")  # fmt: skip
         if mem.limited and s.memory_gb * memory.GIB > mem.total:
             now_free += ('<span class="muted small">The container\'s limit (mem_limit) is '
                          "lower, so Barkley stays within it.</span>")  # fmt: skip
@@ -1258,8 +1283,8 @@ def render_settings(
     )  # fmt: skip
     token_row = row(
         "GitHub token",
-        "Optional. Raises GitHub's limit from 60 to 5,000 requests an hour. It needs no "
-        f"permissions. {GITHUB_STEPS} "
+        "A token is optional. It raises GitHub's limit from 60 to 5,000 requests an hour, "
+        f"and it needs no permissions. {GITHUB_STEPS} "
         f'<a href="{WIKI_GITHUB_HELP}" target="_blank" rel="noopener noreferrer">'
         "More about it</a>",
         github_create_link() + token_ctl,
@@ -1278,7 +1303,8 @@ def render_settings(
         "hatoken": "Home Assistant didn't accept that token as an administrator's, so nothing "
         "was saved. The app's log says why.",
         "rotate": "The token couldn't be replaced; the current one keeps working. See below.",
-        "nologin": "Create token needs the login (BARKLEY_URL). Paste a token instead.",
+        "nologin": "Create token only works when Barkley's login is set up (BARKLEY_URL). "
+        "Paste a token instead.",
         "create": bad_detail or "Barkley couldn't create its token. The app's log says why.",
     }  # fmt: skip
     if bad in bad_text:
@@ -1304,8 +1330,9 @@ def render_settings(
         + section("Checking and notifications",
                   check_rows.replace("<select ", '<select form="settings" ') + token_row,
                   "checking")
-        + '<p class="muted small">Barkley keeps these itself, the same as an app or on its own. '
-        "The app's Configuration tab only gives the starting values.</p>"
+        + '<p class="muted small">Barkley stores these settings itself, whether it runs as a '
+        "Home Assistant app or on its own. The app's Configuration tab only sets the starting "
+        "values.</p>"
     )  # fmt: skip
     return _page("Barkley · Settings", body, base)
 
@@ -1342,7 +1369,7 @@ def render_changed(
                        if str(x.get("id")) == str(st.get("finding_id"))), None)  # fmt: skip
     if before is None or old is None:
         body_diff = ('<p class="muted">The scan where you accepted it is no longer stored, so '
-                     "Barkley can only show the code now.</p>"
+                     "Barkley can only show the code as it is now.</p>"
                      '<pre class="diffcode">'
                      f"{e(chr(10).join(_code_lines(new, f)), 20000)}</pre>")  # fmt: skip
     else:
@@ -1353,8 +1380,8 @@ def render_changed(
             cls = "add" if add else "del" if line[:1] == "-" and line[:3] != "---" else ""
             out.append(f'<span class="{cls}">{e(line, 2000)}</span>' if cls else e(line, 2000))
         body_diff = (f'<pre class="diffcode">{chr(10).join(out)}</pre>' if out else
-                     '<p class="muted">The code Barkley kept looks the same; what changed is '
-                     "around it (the function it sits in).</p>")  # fmt: skip
+                     '<p class="muted">The code Barkley kept looks the same. The change is '
+                     "in the code around it, in the function it sits in.</p>")  # fmt: skip
     body = (
         f'<p class="crumb"><a href="{base}/scan/{sid}">{ui.icon("back")} Back to the app</a></p>'
         f'<section class="box"><h1>What changed?</h1><p class="mt2"><b>{e(title)}</b> '
@@ -1372,7 +1399,7 @@ def render_account(base: str, name: str, token: str) -> str:
     """Standalone only: who is logged in, and a way out."""
     return (
         f'<form class="foot" method=post action="{base}/logout">'
-        f"Logged in with Home Assistant as {e(name, 100)}. "
+        f"You're logged in with Home Assistant as {e(name, 100)}. "
         f'<input type=hidden name=token value="{token}">'
         '<button class="link">Log out</button></form>'
     )
@@ -1412,9 +1439,9 @@ def render_setup(
         elif saved:
             state += f'<div class="banner">{ui.icon("check", 14, "ok")} Saved.</div>'
         body = (
-            "<p>GitHub allows 60 requests an hour without a token, about 5 scans, and 5,000 "
-            "with one. Barkley only reads public repositories, so the token needs no "
-            f"permissions.</p>{state}"
+            "<p>Without a token, GitHub allows 60 requests an hour, enough for about 5 scans. "
+            "With one, it allows 5,000. Barkley only reads public repositories, so the token "
+            f"needs no permissions.</p>{state}"
             + (
                 ""
                 if have
@@ -1433,15 +1460,16 @@ def render_setup(
         if src == "barkley":
             when = made.created[:10] or "now"
             state = (f'<p>{ui.icon("check", 14, "ok")} Barkley has its own Home Assistant '
-                     f"token ({e(made.how or 'created')} {e(when)}). It rotates every "
-                     f"{period} days (Settings, Token rotation).</p>")  # fmt: skip
+                     f"token ({e(made.how or 'created')} {e(when)}). Barkley replaces it "
+                     f"with a new one every {period} days (Settings, Token "
+                     "rotation).</p>")  # fmt: skip
         elif src:
             state = (f'<p>{ui.icon("check", 14, "ok")} Barkley uses the token you set in '
-                     "its environment (HA_TOKEN_FILE or HA_TOKEN). You manage that one; "
-                     "Barkley doesn't rotate it.</p>")  # fmt: skip
+                     "its environment (HA_TOKEN_FILE or HA_TOKEN). You manage that one. "
+                     "Barkley doesn't replace it.</p>")  # fmt: skip
         else:
             state = ("<p>Barkley needs its own Home Assistant token to list your apps and "
-                     "notify you. Create one with the login you just made, or paste one you "
+                     "notify you. Create one now using the login you just did, or paste one you "
                      "made yourself.</p>")  # fmt: skip
         if error:
             state += f'<div class="banner warn">{e(error, 300)}</div>'
@@ -1455,7 +1483,7 @@ def render_setup(
                  'token" placeholder="Paste a long-lived token"><button>Save token</button>'
                  "</form>")  # fmt: skip
         if not src:
-            label = "Create token" if held else "Create token (logs you in again)"
+            label = "Create token" if held else "Create token (you'll log in again)"
             ctl = (f'<form method=post action="{base}/ha-token/create" class="setform">'
                    f"{hidden}<button class=primary>{label}</button></form>"
                    f"{paste}")  # fmt: skip
@@ -1487,7 +1515,8 @@ def render_login(message: str = "", first: bool = False) -> bytes:
     )  # fmt: skip
     body = (
         f'<div class="head"><h1>{ui.logo_img()}Barkley</h1></div>{note}'
-        "<p>Barkley runs next to your Home Assistant, so it asks Home Assistant who you are. "
+        "<p>Barkley runs next to your Home Assistant, so you log in with your Home Assistant "
+        "account. "
         f"Only Home Assistant administrators can use it.</p>{first_note}"
         # A link, not a form: CSP form-action 'self' would stop the redirect to HA.
         '<p><a class="button" href="/login">Log in with Home Assistant</a></p>'
@@ -1532,8 +1561,8 @@ def render_auto_activity(base: str, w: watch.Watcher) -> str:
         '<div class="tablebox"><table><tr><th>when</th><th>what happened</th><th>result</th>'
         "</tr>" + "".join(rows) + "</table></div>"
         if rows
-        else '<p class="muted small">Nothing installed or updated since Barkley started '
-        "watching.</p>"
+        else '<p class="muted small">Nothing has been installed or updated since Barkley '
+        "started watching.</p>"
     )  # fmt: skip
     return (
         (f'<p class="small">{e(w.last_test, 300)}</p>' if w.last_test else "")
@@ -1558,16 +1587,16 @@ def _update_box(base: str, row: Row | None, token: str) -> str:
         parts.append('<p class="muted">Checking it now…</p>')
     elif link := _diff_link(row):
         if row.group == "attention" and row.reasons:
-            parts.append('<p class="sub">Worth a look before you update:</p><ul class="plain">')
+            parts.append('<p class="sub">Check these before you update:</p><ul class="plain">')
             parts.extend(f"<li>{e(x, 300)}</li>" for x in row.reasons)
             parts.append("</ul>")
         else:
-            parts.append('<p class="ok">We checked it: nothing important changes.</p>')
+            parts.append('<p class="ok">Barkley checked it. Nothing important changes.</p>')
         parts.append(f'<p class="small"><a href="{base}/diff?{link}">Everything the update '
                      "changes</a></p>")  # fmt: skip
     else:
-        parts.append('<p class="sub">Not checked yet. Checking scans the new version and '
-                     "compares it with the one you have.</p>")  # fmt: skip
+        parts.append('<p class="sub">This update isn\'t checked yet. Checking it scans the '
+                     "new version and compares it with the one you have.</p>")  # fmt: skip
     if not row.busy and (act := _action(base, row, token, primary=True)):
         parts.append(f'<div class="act">{act}</div>')
     parts.append("</section>")
@@ -1578,8 +1607,9 @@ def _ai_picker(base: str, sid: int, token: str, entity: str,
                choices: list[tuple[str, str]] | None, err: str) -> str:  # fmt: skip
     """A dropdown of the AI Task entities HA has (from the one fixed template)."""
     if err:
-        return (f'<p class="small">Couldn\'t list your AI Task entities: {e(err, 300)}. You can '
-                "still set <code>ai_entity</code> in the app's Configuration.</p>")  # fmt: skip
+        return (f'<p class="small">Barkley couldn\'t list your AI Task entities: '
+                f"{e(err, 300)}. You can still set <code>ai_entity</code> in the app's "
+                "Configuration.</p>")  # fmt: skip
     if not choices:
         return ('<p class="small">Your Home Assistant has no AI Task entity yet. Add an '
                 "<b>AI Task</b> entry under your AI integration (for OpenRouter: Settings &gt; "
@@ -1598,8 +1628,8 @@ def _ai_picker(base: str, sid: int, token: str, entity: str,
 
 
 AI_MODES = {
-    "summary": "AI summary only",
-    "deep": "AI deep analysis (reads the code around each finding)",
+    "summary": "Explain only",
+    "deep": "Explain and read code",
 }
 
 
@@ -1612,10 +1642,10 @@ def _mode_picker(base: str, sid: int, token: str, mode: str) -> str:
             f'<input type=hidden name=token value="{token}">'
             f'<input type=hidden name=scan value="{sid}">'
             f"<select name=mode>{opts}</select><button>Save</button></form>"
-            '<p class="tech">Deep analysis adds an "Explain in context" button to each finding, '
-            "port and unknown address. The AI then reads that part of the app's code, and every "
-            "statement it makes must cite lines that check out. Code is sent only when you "
-            "click.</p>")  # fmt: skip
+            '<p class="tech">Explain and read code adds an "Explain in context" button to each '
+            "item, port and unknown address. The AI then reads that part of the app's code. "
+            "Every statement it makes has to point to lines that Barkley can confirm. Code is "
+            "sent only when you click.</p>")  # fmt: skip
 
 
 def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: str,
@@ -1638,9 +1668,10 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
             f'<input type=hidden name=token value="{token}">'
             f'<input type=hidden name=scan value="{sid}">'
             f'<button class="ai">{ui.icon("sparkle", 16)} {{label}}</button></form>')  # fmt: skip
-    note = ('<p class="tech">Sends this scan\'s findings (about a public project, no Home '
-            f"Assistant data) to the AI provider behind <code>{e(entity, 120)}</code>. The AI "
-            "explains only; it can't change the score or the findings.</p>")  # fmt: skip
+    note = ('<p class="tech">Explain this app sends what this scan found to the AI provider '
+            f"behind <code>{e(entity, 120)}</code>. It's about a public project and contains "
+            "no Home Assistant data. The AI only explains. It can't change the score or what "
+            "Barkley found.</p>")  # fmt: skip
     change = (f"<details><summary>Change which AI explains, or how much "
               f"({e(AI_MODES.get(mode, mode))})</summary>{picker}</details>")  # fmt: skip
     if state == "running":
@@ -1654,10 +1685,10 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
         used = list(have.get("readings") or [])
         newer = [r for r in readings or [] if r not in used]
         n = len(used)
-        incl = (f" Includes {n} code reading{'s' if n != 1 else ''} from Explain in context."
+        incl = (f" It includes {n} code reading{'s' if n != 1 else ''} from Explain in context."
                 if n else "")  # fmt: skip
         d = int(have.get("dropped") or 0)
-        left = (f" Left out {d} sentence{'s' if d != 1 else ''} that dismissed something."
+        left = (f" Barkley left out {d} sentence{'s' if d != 1 else ''} that dismissed a concern."
                 if d else "")  # fmt: skip
         label = "Ask again"
         if newer:
@@ -1719,11 +1750,11 @@ def render_scan(
                             f"{e(it.get('package'), 120)}. Sniff this version again to include "
                             "that.</p>")  # fmt: skip
                 if it.get("kind") == "dependency":  # nothing of the app's own to read
-                    return (f'<p class="small muted">{ui.icon("sparkle")} Explain in context: we '
-                            "couldn't find "
+                    return (f'<p class="small muted">{ui.icon("sparkle")} Explain in context: '
+                            "Barkley couldn't find "
                             f"where the app's own code uses {e(it.get('package'), 120)}, so "
                             "there's no code to send. It may come in through another library, "
-                            "or a bundle hides the name.</p>")  # fmt: skip
+                            "or a bundle may hide the name.</p>")  # fmt: skip
                 return ""
             state, err = item_states.get(item_id, ("", ""))
             form = (f'<form method=post action="{base}/explain-item">'
@@ -1863,23 +1894,23 @@ def _advisory_line(
     if isinstance(rc, dict) and str(rc.get("of", "")).isdigit():
         of = int(rc["of"])
         bits.append(
-            f"The known advisories for its packages changed, so this entry replaced "
+            f"The known advisories for its packages changed, so this scan replaced "
             f'<a href="{base}/scan/{of}">scan @{of}</a> on {e(_utc(str(rc.get("at", ""))))} '
-            f'(<a href="{base}/diff?old={of}&amp;new={sid}">what changed</a>). The code is as '
-            f"sniffed on {e(str(rc.get('code_scanned_at', ''))[:10])}; only the advisories "
-            "were asked again."
+            f'(<a href="{base}/diff?old={of}&amp;new={sid}">what changed</a>). The code is the '
+            f"same as sniffed on {e(str(rc.get('code_scanned_at', ''))[:10])}. Only the "
+            "advisories were looked up again."
         )
     last = store.rechecks().get(sid)
     if last:
         when, result = e(_utc(last[0])), last[1]
         if result == "same":
-            bits.append(f"Advisories asked again {when}: nothing changed.")
+            bits.append(f"Advisories checked again on {when}. Nothing changed.")
         elif result.startswith("changed:") and result[8:].isdigit():
             new = int(result[8:])
             bits.append(f"An advisory re-check on {when} found changes: see "
                         f'<a href="{base}/scan/{new}">scan @{new}</a>.')  # fmt: skip
         elif result.startswith("failed"):
-            bits.append(f"The advisory re-check on {when} couldn't be done, so the advisories "
+            bits.append(f"Barkley couldn't check the advisories again on {when}, so the ones "
                         f"shown are older ({e(result, 200)}).")  # fmt: skip
     row = store.get(sid)
     can = (
@@ -1892,7 +1923,10 @@ def _advisory_line(
         and not (last and last[1].startswith("changed:"))
     )
     if busy:
-        bits.append('<span class="dot"></span>Asking OSV again about its packages…')
+        bits.append(
+            '<span class="dot"></span>Checking its packages against the OSV advisory '
+            "database again…"
+        )
     elif can:
         bits.append(
             f'<form method=post action="{base}/recheck">'
@@ -1938,7 +1972,7 @@ def render_search(
     out = [
         f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
         "<h1>Find an app to sniff</h1>",
-        '<p class="muted small">Searches the Marketplace catalog your Home Assistant already '
+        '<p class="muted small">This searches the Marketplace list your Home Assistant already '
         "has. Sniffing checks exactly what the Marketplace would install, without installing "
         "anything.</p>",
         _search_box(base, q, kind, primary=True),
@@ -1977,7 +2011,7 @@ def render_search(
             f'<div class="small">{_versions_link(base, it.repo)}</div></td></tr>'
         )
     if rows:
-        out.append(f'<p class="muted small">{len(results)} best matches of {total} '
+        out.append(f'<p class="muted small">The {len(results)} best matches out of {total} '
                    "integrations and cards.</p>")  # fmt: skip
         out.append('<table class="box">' + "".join(rows) + "</table>")
     return _page("Barkley · search", "".join(out), base)
@@ -2004,8 +2038,8 @@ def render_versions(
     out = [
         f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
         f"<h1>Versions of {e(name, 100)}</h1>",
-        f'<p class="muted small">{e(repo, 120)} · the {len(releases) or "newest"} newest '
-        "releases on GitHub, betas included. Sniffing a version checks exactly what the "
+        f'<p class="muted small">{e(repo, 120)} · the {f"{len(releases)} " if releases else ""}'
+        "newest releases on GitHub, betas included. Sniffing a version checks exactly what the "
         "Marketplace installs when you pick that version.</p>",
     ]
     if error:
@@ -2043,7 +2077,11 @@ def render_versions(
             chips.append('<span class="chip new">installed</span>')
         who = f" · published by {e(r.publisher, 60)}" + (" (a bot)" if r.bot else "")
         when = e((r.published_at or "")[:10])
-        act = action(r.tag) if _REF.match(r.tag) else '<span class="muted">odd tag name</span>'
+        act = (
+            action(r.tag)
+            if _REF.match(r.tag)
+            else '<span class="muted">can\'t sniff this tag name</span>'
+        )
         rows.append(
             f'<tr><td class="wrap"><b><code>{e(r.tag, 100)}</code></b> {"".join(chips)}<br>'
             f'<span class="muted small">{when}{who if r.publisher else ""}</span></td>'
@@ -2052,8 +2090,8 @@ def render_versions(
     if rows:
         out.append('<table class="box">' + "".join(rows) + "</table>")
     elif not error:
-        out.append('<p class="muted">No releases: the Marketplace installs the newest code on '
-                   "the default branch.</p>")  # fmt: skip
+        out.append('<p class="muted">This app has no releases. The Marketplace installs the '
+                   "newest code on its default branch.</p>")  # fmt: skip
         out.append(f"<p>{action(None)}</p>")
     running = any(v in ("running", "queued", "waiting") for v in busy.values())
     return ui.page(f"Barkley · versions of {name}", "".join(out), refresh=5 if running else 0,
@@ -2132,7 +2170,8 @@ def review_block(base: str, sid: int, report: dict[str, Any], token: str) -> ui.
         fid = str(f["id"])
         if not review.can_accept(f):
             why = ("Known malware can't be accepted." if f.get("rule_id") in kinds.NEVER_ACCEPT
-                   else "This finding can't be accepted (it has no fingerprint).")  # fmt: skip
+                   else "This can't be accepted, because Barkley can't tie it to a place in "
+                        "the code.")  # fmt: skip
             return f'<div class="rev"><span class="muted">{why}</span>{link}</div>'
         states = [(x.get("review") or {}) for x in fs]
         st = states[0]
@@ -2164,8 +2203,8 @@ def review_block(base: str, sid: int, report: dict[str, Any], token: str) -> ui.
                     f"{link}</div>")  # fmt: skip
         if state == "reconfirm":
             when = _ago_text(str(st.get("at") or ""))
-            return (f'<div class="rev"><span class="reopen">Accepted on {e(when)}: time to look '
-                    f"again</span>{all_of(form('accept', fid, 'Accept again', True))}"
+            return (f'<div class="rev"><span class="reopen">Accepted on {e(when)}. Time to look '
+                    f"again.</span>{all_of(form('accept', fid, 'Accept again', True))}"
                     f"{link}</div>")  # fmt: skip
         btn = all_of(form("accept", fid, "Mark reviewed", True))
         return f'<div class="rev">{btn}{link}</div>'
@@ -2304,13 +2343,13 @@ def render_trusted(base: str, trusted: trust.Trusted, names: dict[str, str], tok
 
     out = [f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
            "<h1>Addresses you trust</h1>",
-           '<p class="muted">Some findings are only about where an address points: an '
-           "internet address written into the code as a number, or an address in a code "
-           "library that an automatic check finds suspicious-looking. When you mark such an "
-           "address trusted on an app's page, those findings stop costing points. Nothing "
-           "else is affected: a finding about what an app sends, or about a paste site, "
-           "tunnel or chat webhook, can't be switched off here. Barkley's own score stays "
-           "on each app's page.</p>"]  # fmt: skip
+           '<p class="muted">Some things Barkley finds are only about where an address '
+           "points: an internet address written into the code as a number, or an address in "
+           "a code library that an automatic check finds suspicious. When you mark such an "
+           "address trusted on an app's page, those stop costing points. Nothing else "
+           "changes. Anything about what an app sends, or about a paste site, tunnel or chat "
+           "webhook, can't be switched off here. Barkley's own score stays on each app's "
+           "page.</p>"]  # fmt: skip
     if not trusted:
         out.append('<p class="muted">You haven\'t marked any address trusted.</p>')
     if trusted.everywhere:
@@ -2400,8 +2439,8 @@ def render_doctor(
     running = bool(state.get("running"))
     out = [f'<p class="crumb"><a href="{base}/">{ui.icon("back")} All apps</a></p>',
            "<h1>Diagnostics</h1>",
-           f'<p class="muted">Barkley {e(__version__)}. Each tool runs on a one-line '
-           "sample written here, never on scanned code.</p>"]  # fmt: skip
+           f'<p class="muted">This is Barkley {e(__version__)}. Each tool runs on a one-line '
+           "sample Barkley writes here, never on scanned code.</p>"]  # fmt: skip
     if running:
         total = int(state.get("total") or 0)
         out.append(
@@ -2455,11 +2494,12 @@ def render_diff(
     is an advisory re-check of the old one (same version, same code), and says so."""
     what = "What the advisory re-check changed" if recheck_of else "What the update changes"
     how = (
-        "Same version and the same code: only the known advisories for its packages were "
-        "asked again. It lists what is listed now that wasn't before, and the other way "
-        "round."
+        "Same version, same code. Barkley only looked up the known advisories for its "
+        "packages again. This page lists advisories that are new since then, and ones that "
+        "are gone."
         if recheck_of
-        else "It lists what the new version does that the old one didn't, and the other way round."
+        else "This page lists what the new version does that the old one didn't, and what the "
+        "old one did that the new one doesn't."
     )
     frm, to = d["from"], d["to"]
     changes = d.get("changes", [])
@@ -2474,8 +2514,8 @@ def render_diff(
         f"<div><h1>{what}: {e(title, 100)}</h1>"
         f"<div>From {_side_words(base, frm, old)} to {_side_words(base, to, new)} · "
         f"{e(frm.get('repo'), 120)}</div>"
-        f'<div class="muted small">Score {e(s_from)} → {e(s_to)}: each side\'s own score; '
-        f"this comparison never scores. {how}</div></div></section>",
+        f'<div class="muted small">Score {e(s_from)} → {e(s_to)}. Each number is that '
+        f"version's own score. The comparison itself adds no score. {how}</div></div></section>",
     ]
     for w in d.get("warnings", []):
         out.append(f'<div class="banner warn">{ui.icon("alert")} {e(w, 400)}</div>')
@@ -2499,11 +2539,11 @@ def render_diff(
                    f'{ui.icon("check", 16, "ok")} Nothing important changed.</p>'
                    "</section>")  # fmt: skip
     else:
-        out.append(f'<section class="box"><h2>Worth a look ({len(head)})</h2>{lines(head)}'
+        out.append(f'<section class="box"><h2>Changes to check ({len(head)})</h2>{lines(head)}'
                    "</section>")  # fmt: skip
     if rest:
-        out.append(f'<details class="box"><summary>Also changed ({len(rest)}): smaller things, '
-                   f"none of them a concern on its own</summary>{lines(rest, True)}"
+        out.append(f'<details class="box"><summary>Smaller changes ({len(rest)}). None is a '
+                   f"concern on its own.</summary>{lines(rest, True)}"
                    "</details>")  # fmt: skip
     return _page("Barkley · what changes", "".join(out), base)
 
@@ -3126,7 +3166,7 @@ class Panel:
 
             def _allowed(self) -> bool:
                 if panel.allow is not None and self.client_address[0] not in panel.allow:
-                    self._text(HTTPStatus.FORBIDDEN, "only reachable through Home Assistant")
+                    self._text(HTTPStatus.FORBIDDEN, "Barkley only opens through Home Assistant.")
                     return False
                 lg = panel.login
                 if lg is None:
@@ -3277,7 +3317,7 @@ class Panel:
                         q = urllib.parse.parse_qs(url.query)
                         m = _REPO.match((q.get("repo") or [""])[0])
                         if not m:
-                            return self._text(HTTPStatus.BAD_REQUEST, "want owner/repo")
+                            return self._text(HTTPStatus.BAD_REQUEST, "Give the app as owner/repo.")
                         repo = m[1]
                         rel, default, err = panel.releases(repo)
                         tv = panel.worker.tool_version
@@ -3329,10 +3369,12 @@ class Panel:
                         q = urllib.parse.parse_qs(url.query)
                         sid, fid = int(q["scan"][0]), q["finding"][0]
                         if not re.fullmatch(r"[0-9a-f]{16}", fid):
-                            return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                            return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
                         v = panel.shown_report(sid, show_minor=True)
                         if v is None:
-                            return self._text(HTTPStatus.NOT_FOUND, f"no stored scan @{sid}")
+                            return self._text(
+                                HTTPStatus.NOT_FOUND, f"There's no stored scan @{sid}."
+                            )
                         f = next((x for x in v["findings"] if x.get("id") == fid), {})
                         old_sid = (f.get("review") or {}).get("scan_id")
                         old = panel.report(int(old_sid)) if isinstance(old_sid, int) else None
@@ -3365,7 +3407,7 @@ class Panel:
                 except StoreError as ex:
                     return self._text(HTTPStatus.NOT_FOUND, str(ex))
                 except (KeyError, ValueError):
-                    return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                    return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
                 self._text(HTTPStatus.NOT_FOUND, "nothing to sniff here")
 
             def do_POST(self) -> None:
@@ -3373,11 +3415,15 @@ class Panel:
                     return
                 size = int(self.headers.get("Content-Length") or 0)
                 if size > 4096:
-                    return self._text(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "too large")
+                    return self._text(
+                        HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "That form is too large."
+                    )
                 form = urllib.parse.parse_qs(self.rfile.read(size).decode("utf-8", "replace"))
                 get = lambda k: (form.get(k) or [""])[0].strip()  # noqa: E731
                 if not secrets.compare_digest(get("token"), panel.token):
-                    return self._text(HTTPStatus.FORBIDDEN, "stale form; reload the page")
+                    return self._text(
+                        HTTPStatus.FORBIDDEN, "This page is out of date. Reload it and try again."
+                    )
                 path = urllib.parse.urlsplit(self.path).path
                 if path == "/logout" and panel.login is not None:
                     panel.login.logout(
@@ -3391,7 +3437,10 @@ class Panel:
                 if path in ("/auto-scan", "/notify-target", "/notify-test"):
                     w = panel.watcher
                     if w is None:
-                        return self._text(HTTPStatus.BAD_REQUEST, "auto-sniff needs the add-on")
+                        return self._text(
+                            HTTPStatus.BAD_REQUEST,
+                            "Auto-sniff only works when Barkley runs as a Home Assistant app.",
+                        )
                     if path == "/auto-scan":
                         w.set_enabled(get("on") == "1")
                     elif path == "/notify-target":
@@ -3407,13 +3456,15 @@ class Panel:
                        or self.headers.get("X-Remote-User-Name") or "")  # fmt: skip
                 if path in ("/accept", "/accept-all", "/unaccept"):
                     if not get("scan").isdigit():
-                        return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                        return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
                     sid = int(get("scan"))
                     ids = [get("finding"), *form.get("also", [])]
                     if path == "/accept-all":
                         v = panel.shown_report(sid, show_minor=True)
                         if v is None:
-                            return self._text(HTTPStatus.NOT_FOUND, f"no stored scan @{sid}")
+                            return self._text(
+                                HTTPStatus.NOT_FOUND, f"There's no stored scan @{sid}."
+                            )
                         ticked = set(form.get("threat", []))
                         ids = [str(f["id"]) for f in v["findings"]
                                if not kinds.is_threat(str(f["rule_id"]))
@@ -3432,7 +3483,7 @@ class Panel:
                     if not settings_mod.set_malware_only(
                         panel.store, get("repo"), get("on") == "1"
                     ):
-                        return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                        return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
                     sid = get("scan")
                     return self._redirect(f"{self._base()}/scan/{sid}" if sid.isdigit() else home)
                 if path == "/settings":
@@ -3456,7 +3507,10 @@ class Panel:
                     return self._redirect(f"{self._base()}{page}saved=1")
                 if path.startswith("/ha-token"):
                     if not panel.standalone:
-                        return self._text(HTTPStatus.BAD_REQUEST, "only when running standalone")
+                        return self._text(
+                            HTTPStatus.BAD_REQUEST,
+                            "This only works when Barkley runs on its own, outside Home Assistant.",
+                        )
                     setup = get("back") == "setup"
                     page = "/setup?" if setup else "/settings?"
                     if path == "/ha-token/create":
@@ -3469,7 +3523,7 @@ class Panel:
                             try:
                                 lg.token_fn(access)
                             except supervisor.SupervisorError as ex:
-                                why = f"Couldn't create Barkley's token ({ex})."
+                                why = f"Barkley couldn't create its token ({ex})."
                                 print(f"setup: {why}", file=sys.stderr)
                                 panel.setup_errors[self._sid()] = why[:300]
                                 return self._redirect(f"{self._base()}/setup?bad=create")
@@ -3502,18 +3556,18 @@ class Panel:
                     return self._redirect(home)
                 if path == "/recheck":
                     if not get("scan").isdigit():
-                        return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                        return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
                     sid = int(get("scan"))
                     row = panel.store.get(sid)
                     if row is None or not row.repo:
-                        return self._text(HTTPStatus.NOT_FOUND, f"no stored scan @{sid}")
+                        return self._text(HTTPStatus.NOT_FOUND, f"There's no stored scan @{sid}.")
                     panel.worker.submit("recheck", row.repo, row.ref, scan=sid)
                     return self._redirect(f"{self._base()}/scan/{sid}")
                 if path == "/trust":
                     fid, scope = get("finding"), get("scope")
                     if (not get("scan").isdigit() or not re.fullmatch(r"[0-9a-f]{16}", fid)
                             or scope not in ("app", "all")):  # fmt: skip
-                        return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                        return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
                     sid = int(get("scan"))
                     try:
                         if not panel.trust_finding(sid, fid, scope == "all"):
@@ -3525,7 +3579,7 @@ class Panel:
                 if path == "/untrust":
                     address, repo = get("address"), get("repo")
                     if not trust.valid_address(address) or (repo and not _REPO.match(repo)):
-                        return self._text(HTTPStatus.BAD_REQUEST, "bad request")
+                        return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
                     panel.untrust(address, repo or None)
                     sid = get("scan")
                     return self._redirect(f"{self._base()}/scan/{sid}" if sid.isdigit()
@@ -3557,20 +3611,23 @@ class Panel:
                 if path == "/explain-item":
                     item = get("item")
                     if not get("scan").isdigit() or not re.fullmatch(r"[0-9a-f]{16}", item):
-                        return self._text(HTTPStatus.BAD_REQUEST, "bad item")
+                        return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
                     sid = int(get("scan"))
                     try:
                         if not panel.explain_item(sid, item):
                             return self._text(
                                 HTTPStatus.BAD_REQUEST,
-                                "deep analysis is off, or there's no code for it",
+                                "Explain and read code is off, or Barkley has no code for "
+                                "this item.",
                             )
                     except StoreError as ex:
                         return self._text(HTTPStatus.NOT_FOUND, str(ex))
                     return self._redirect(f"{self._base()}/scan/{sid}?open={item}#ai-{item}")
                 if path == "/explain":
                     if not get("scan").isdigit() or not panel.ai_entity:
-                        return self._text(HTTPStatus.BAD_REQUEST, "no AI Task entity set")
+                        return self._text(
+                            HTTPStatus.BAD_REQUEST, "No AI Task entity is chosen yet."
+                        )
                     sid = int(get("scan"))
                     try:
                         panel.explain(sid)
@@ -3601,7 +3658,9 @@ class Panel:
                     or (to and not _REF.match(to))
                     or (path in ("/update", "/installed") and not ref)
                 ):
-                    return self._text(HTTPStatus.BAD_REQUEST, "want owner/repo and a tag")
+                    return self._text(
+                        HTTPStatus.BAD_REQUEST, "Give the app as owner/repo, with a tag."
+                    )
                 panel.worker.submit(path.lstrip("/"), m[1], ref, to if path == "/update" else None)
                 if path == "/scan" and get("back_to") == "versions":
                     back = urllib.parse.urlencode({"repo": m[1]})

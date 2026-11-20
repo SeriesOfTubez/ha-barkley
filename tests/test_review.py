@@ -340,7 +340,7 @@ def test_settings_page_saves_and_changes_scores(panel):  # noqa: F811
     sid = _saved(store, [minor])
     _, _, page = get(f"{base}/settings")
     for text in ("Paranoid mode", "Powerful, no threat", "Pages without a login",
-                 "Hidden usage reporting", "Ask again", "GitHub token", "It needs no permissions",
+                 "Hidden usage reporting", "Ask again", "GitHub token", "it needs no permissions",
                  "Reset to defaults"):  # fmt: skip
         assert text in ui.e(text) and ui.e(text) in page, text
     assert "write-only" not in page.lower()
@@ -450,7 +450,9 @@ def test_notification_says_reviewed_and_reopened():
     entry = {"repo": REPO, "version": "v2", "previous": "v1", "kind": "integration",
              "scan_ids": [1, 2]}  # fmt: skip
     _t, _md, plain = watch.notification(entry, v, None, "")
-    assert "1 finding you accepted changed in this version and is open again." in plain
+    assert (
+        "The code around 1 item you accepted changed in this version, so it is open again." in plain
+    )
     _t, _md, plain = watch.notification(entry, v, None, "", notify_reopen=False)
     assert "open again" not in plain
 

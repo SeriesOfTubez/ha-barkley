@@ -51,7 +51,7 @@ def test_summary_mode_has_no_button_and_refuses_the_call(tmp_path):
     store, base, httpd = _serve(tmp_path, lambda *a: calls.append(a), mode="summary")
     sid = store.save(_report(tmp_path))
     _, _, page = get(f"{base}/scan/{sid}")
-    assert "Explain in context</button>" not in page and "AI summary only" in page
+    assert "Explain in context</button>" not in page and "Explain only" in page
     assert post(f"{base}/explain-item", {"token": token(base), "scan": sid, "item": FID})[0] == 400
     assert not calls
     httpd.shutdown()

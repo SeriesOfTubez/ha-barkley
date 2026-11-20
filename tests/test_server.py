@@ -75,7 +75,7 @@ def test_refuses_clients_other_than_the_allowed(tmp_path):
     try:
         status, _, body = get(f"http://127.0.0.1:{httpd.server_address[1]}/")
         assert status == 403
-        assert "only reachable through Home Assistant" in body
+        assert "Barkley only opens through Home Assistant." in body
     finally:
         httpd.shutdown()
 
@@ -346,8 +346,8 @@ def test_installed_grid_leads_with_what_needs_attention(addon):
     assert "Check update" in unchecked and 'name=to value="v2"' in unchecked
     assert "Sniff it" in _card(page, "Never")
     assert "<b>5</b> apps installed" in page
-    assert "Sniff the 2 not yet sniffed" in page
-    assert "Not scanned (not an integration or card): 2 theme" in page
+    assert "Sniff 2 apps not yet sniffed" in page
+    assert "Not scanned because they aren't integrations or cards: 2 theme" in page
     _, _, look = get(base + "/?f=look")
     assert _card_order(look) == ["Moved"]
     _, _, ups = get(base + "/?f=updates")
@@ -399,7 +399,10 @@ def test_installed_list_error_is_shown_and_typed_checks_remain(addon):
 
     state["fn"] = broken
     _, _, page = get(base + "/?refresh=1")
-    assert "Can't list installed items: HACS isn&#x27;t &lt;b&gt;installed&lt;/b&gt;" in page
+    assert (
+        "Barkley can't list your installed apps: HACS isn&#x27;t &lt;b&gt;installed&lt;/b&gt;"
+        in page
+    )
     assert "What would updating change?" in page
 
 
@@ -455,7 +458,7 @@ def test_scans_from_older_rules_dont_count(addon):
     _, _, page = get(base + "/")
     fine = _card(page, "Fine")  # the old 75 isn't shown as today's verdict
     assert "app grey" in fine and ">75<" not in fine and "Sniff it" in fine
-    assert "Sniff the 5 not yet sniffed" in page
+    assert "Sniff 5 apps not yet sniffed" in page
     assert post(base + "/installed-all", {"token": token(base)})[0] == 303
     _worker(httpd).wait()
     assert ("acme/fine", "v1") in scan_fn.calls
@@ -488,18 +491,18 @@ def test_one_button_sniffs_every_unfinished_scan_again(addon):
         bad["complete"] = False
         store.save(bad)
     _, _, page = get(base + "/?refresh=1")
-    assert "Sniff the 2 unfinished again" in page and "not yet sniffed" not in page
+    assert "Sniff 2 unfinished again" in page and "not yet sniffed" not in page
     panel = httpd.panel
     job = server.Job(98, "installed", "acme/never", "v3", state="queued")
     panel.worker.jobs.insert(0, job)  # already waiting: not counted, not queued twice
     _, _, page = get(base + "/")
-    assert "Sniff the 1 unfinished again" in page
+    assert "Sniff 1 unfinished again" in page
     assert post(base + "/installed-all", {"token": token(base)})[0] == 303
     _worker(httpd).wait()
     assert scan_fn.calls == [("acme/new", "v1")]  # the complete ones are left alone
     panel.worker.jobs.remove(job)
     _, _, page = get(base + "/?refresh=1")
-    assert "Sniff the 1 unfinished again" in page  # acme/never is still unfinished
+    assert "Sniff 1 unfinished again" in page  # acme/never is still unfinished
 
 
 # --- auto-sniff: the panel's box and settings -------------------------------------------
@@ -568,7 +571,7 @@ def test_auto_jobs_show_in_the_jobs_table_and_doctor_names_the_watcher(auto, mon
     assert f"diff?old={job.scan_ids[0]}&amp;new={job.scan_ids[1]}" in page
     monkeypatch.setattr(server.doctor, "run_checks", lambda **kw: [])
     _, page = doctor_done(base)
-    assert "Auto-sniff (Marketplace events)" in page and "auto-sniff on" in page
+    assert "Auto-sniff (Marketplace events)" in page and "Auto-sniff is on" in page
 
 
 def test_the_watcher_refreshes_the_panels_installed_list(auto):

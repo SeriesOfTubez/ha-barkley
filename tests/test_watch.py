@@ -83,9 +83,9 @@ def test_an_install_is_sniffed_at_its_version_and_notified(ctx):
     assert store.get(job.scan_ids[0]).ref == "v2"  # the version that landed, not v9
     ((title, message, nid),) = fakes.bell
     assert title == "Barkley: acme/b v2" and nid == "barkley_acme_b"
-    assert "Card acme/b v2 was installed and sniffed" in message
-    assert "75/100" in message and "Worth a look: Reads your secrets file" in message
-    assert "[Open Barkley](/app/local_sniff_test): scan @1." in message
+    assert "Card acme/b v2 was installed. Barkley sniffed it." in message
+    assert "75/100" in message and "Things to check: Reads your secrets file" in message
+    assert "[Open Barkley](/app/local_sniff_test) to see scan @1." in message
     assert HOSTILE not in message and "x.invalid" not in message
     assert fakes.pushed == []  # no target chosen
     entry = w.log()[0]
@@ -103,8 +103,8 @@ def test_an_update_reuses_the_old_scan_and_says_what_changed(ctx):
     job = worker.jobs[0]
     assert job.prev == "v1" and job.scan_ids[0] == old_id and job.state == "done"
     ((title, message, _),) = fakes.bell
-    assert "Integration acme/a was updated from v1 to v2 and sniffed" in message
-    assert "What the update changes: 1 new site." in message  # fixed words, never the host
+    assert "Integration acme/a was updated from v1 to v2. Barkley sniffed it." in message
+    assert "Changes in this update: 1 new site." in message  # fixed words, never the host
     assert f"@{old_id} → @{job.scan_ids[1]}" in message
     ((target, ptitle, plain, url),) = fakes.pushed
     assert target == "mobile_app_phone" and ptitle == title
@@ -242,7 +242,7 @@ def test_list_errors_change_nothing(ctx):
     assert w.check() == [] and w.error.startswith("the Marketplace")
     assert w.sweep() == 0
     ok, line = w.diagnostics()
-    assert not ok and "last error: the Marketplace" in line
+    assert not ok and "Last error: the Marketplace" in line
 
 
 def test_only_an_ended_install_or_an_uninstall_triggers_a_check(ctx):
@@ -328,14 +328,15 @@ def test_notification_text_is_built_from_fixed_words_only():
     title, md, plain = watch.notification(entry, rep, d, "/app/x")
     assert title == "Barkley: acme/x v2"
     assert md.startswith(
-        "Integration acme/x was updated from v1 to v2 and sniffed: 🐕\u200d🦺 Very Sus"
+        "Integration acme/x was updated from v1 to v2. Barkley sniffed it. Score: 10/100, "
+        "🐕\u200d🦺 Very Sus"
     )
     assert "10/100" in md
-    assert "Worth a look: Sends private Home Assistant data out of your home; " in md
-    assert "What the update changes: 1 publisher or repository change, 2 new sites." in md
+    assert "Things to check: Sends private Home Assistant data out of your home; " in md
+    assert "Changes in this update: 1 publisher or repository change, 2 new sites." in md
     assert "score is capped at 89" in md
     assert HOSTILE not in md and HOSTILE not in plain
-    assert "what the update changes @3 → @4" in md
+    assert "what the update changes (@3 → @4)" in md
 
 
 def test_notify_test_and_target_validation(ctx):
@@ -347,7 +348,7 @@ def test_notify_test_and_target_validation(ctx):
     )
     assert w.notify_test() == ""
     assert fakes.bell[0][2] == "barkley_test" and fakes.pushed[0][0] == "mobile_app_phone"
-    assert w.last_test.startswith("sent at")
+    assert w.last_test.startswith("Test notification sent at")
     assert w.set_target("") is True and store.setting("notify_target") == "none"
     again = watch.Watcher(store, worker, fakes.installed, notify_target="mobile_app_phone")
     assert again.notify_target == ""  # the panel's "bell only" wins over the option
@@ -403,8 +404,8 @@ def test_an_offered_update_is_sniffed_before_it_is_installed(ctx, capsys):
     assert w.check() == []  # still offered: not queued again
     title, md, _nid = fakes.bell[-1]
     assert title == "Barkley: acme/a v2 (update waiting)"
-    assert "has an update waiting, v1 → v2, sniffed before you install it" in md
-    assert "What the update changes" in md and HOSTILE not in md
+    assert "has an update waiting, v1 to v2. Barkley sniffed it before you install it" in md
+    assert "Changes in this update" in md and HOSTILE not in md
     ids = [r.id for r in store.history("acme/a")]
     assert len(ids) == 2  # v1 (scanned first, it had no scan) and v2
     err = capsys.readouterr().err
@@ -415,7 +416,7 @@ def test_an_offered_update_is_sniffed_before_it_is_installed(ctx, capsys):
     assert w.check() == [watch.Change("update", "acme/a", "integration", "v2", "v1")]
     worker.wait()
     assert [r.id for r in store.history("acme/a")] == ids
-    assert "was updated from v1 to v2 and sniffed" in fakes.bell[-1][1]
+    assert "was updated from v1 to v2. Barkley sniffed it" in fakes.bell[-1][1]
     # A pending offered update survives a restart while it is still offered.
     fakes.items[0] = Installed("acme/a", "integration", "A", "v2", "v3", False)
     w2 = watch.Watcher(

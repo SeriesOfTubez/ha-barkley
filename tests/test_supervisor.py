@@ -268,7 +268,7 @@ def test_diagnostics_say_where_the_ha_version_came_from(monkeypatch):
     assert not checks[0].ok and "latest stable" in checks[0].summary
     assert not checks[1].ok and "HACS isn't installed" in checks[1].summary
     monkeypatch.delenv("SUPERVISOR_TOKEN")
-    assert "not running as an add-on" in doctor.supervisor_checks()[0].summary
+    assert "not running as a Home Assistant app" in doctor.supervisor_checks()[0].summary
 
 
 # --- auto-sniff: the subscription and the notification calls ------------------------------

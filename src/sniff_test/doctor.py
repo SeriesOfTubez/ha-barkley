@@ -139,15 +139,18 @@ def python_check() -> Check:
     m = re.search(r"^# python: (\d+)\.(\d+)\.(\d+)", text, re.M)
     src = re.search(r"^# Source: home-assistant/core at (\S+)", text, re.M)
     if not m:
-        return Check("Barkley's Python", True, f"{mine} (HA's not recorded)")
+        return Check("Barkley's Python", True,
+                     f"{mine} (Home Assistant's Python version isn't recorded)")  # fmt: skip
     ha = tuple(int(x) for x in m.groups())
     ok = sys.version_info[:3] >= ha
-    where = f"HA {src.group(1)} runs {'.'.join(m.groups())}" if src else "HA's"
+    ha_ver = ".".join(m.groups())
+    where = (f"Home Assistant {src.group(1)} runs {ha_ver}" if src
+             else f"Home Assistant runs {ha_ver}")  # fmt: skip
     return Check(
         "Barkley's Python",
         ok,
-        f"{mine}; {where}" + ("" if ok else ": older, so files using newer syntax are "
-                              "skipped by the parse-only checks"),
+        f"{mine}; {where}" + ("" if ok else ". Barkley's Python is older, so the checks that "
+                              "parse Python code skip files that use newer Python syntax."),
     )  # fmt: skip
 
 
@@ -158,7 +161,8 @@ def cpu_check(missing: list[str] | bool | None = False) -> Check:
 
     gap = cpu.missing_v2() if missing is False else missing
     if gap is None:
-        return Check("CPU", True, "not an x86-64 CPU, or its flags can't be read: nothing to check")
+        return Check("CPU", True, "Not an x86-64 CPU, or Barkley can't read its flags, so "
+                     "there's nothing to check.")  # fmt: skip
     if not gap:
         return Check("CPU", True, "x86-64-v2 instructions present")
     return Check("CPU", False, f"missing {', '.join(gap)}. {cpu.FIX}")
@@ -176,7 +180,8 @@ def github_check(budget: RateLimit | None = None, fetch: bool = True) -> Check:
     if budget is None and fetch:
         budget = GitHub.from_env().rate_limit()
     if budget is None:
-        return Check("GitHub API", True, "budget unknown (GitHub unreachable?)")
+        return Check("GitHub API", True, "Barkley couldn't read the request limit. GitHub "
+                     "may be unreachable.")  # fmt: skip
     when = time.strftime("%H:%M UTC", time.gmtime(budget.reset_at))
     token = "with a token" if budget.authenticated else "no token: 60/hour, about 5 scans"
     return Check(
@@ -196,12 +201,13 @@ def supervisor_checks(
     conn = supervisor.connection()
     if conn is None:
         return [Check("Home Assistant", True,
-                      "not running as an add-on (no SUPERVISOR_TOKEN), and no HA_URL")]  # fmt: skip
+                      "not running as a Home Assistant app (no SUPERVISOR_TOKEN), and no "
+                      "HA_URL set")]  # fmt: skip
     out = []
     if conn.mode == "direct":
         how = ("https" if conn.tls else
-               "plain http: the token crosses the network unencrypted; use https if "
-               "Home Assistant offers it")  # fmt: skip
+               "plain http, so the token crosses the network unencrypted. Use https if "
+               "Home Assistant offers it.")  # fmt: skip
         out.append(Check("Home Assistant connection", True,
                          f"standalone, {conn.base} ({how})"))  # fmt: skip
     t0 = time.monotonic()
@@ -210,8 +216,8 @@ def supervisor_checks(
         out.append(Check("Home Assistant version", True, f"{ha} (from {conn.where})"))
     else:
         out.append(Check("Home Assistant version", False,
-                         f"{conn.where} didn't answer /api/config; scans fall back to "
-                         "the latest stable HA release"))  # fmt: skip
+                         f"{conn.where} didn't answer /api/config, so scans use the "
+                         "latest stable Home Assistant release instead."))  # fmt: skip
     try:
         items, other = installed_fn()
         updates = sum(1 for i in items if i.update)
@@ -231,7 +237,7 @@ def supervisor_checks(
 
 def _semgrep_scan(sample: Path, run_dir: Path) -> Check:
     sg = _run(
-        "semgrep scan (our rules, one-line sample)",
+        "semgrep scan (Barkley's rules, one-line sample)",
         # (0.14.0) Both rule folders, so a missing or broken second pass shows here.
         ["semgrep", "scan", "--config", str(rules_dir()), "--config", str(rules_const_dir()),
          "--json", "--metrics=off",
@@ -319,7 +325,7 @@ def steps(addon: bool = False) -> list[Step]:
     out += [
         ("semgrep --version",
          lambda s, r: _run("semgrep --version", ["semgrep", "--version"], r, semgrep_env())),
-        ("semgrep scan (our rules, one-line sample)", _semgrep_scan),
+        ("semgrep scan (Barkley's rules, one-line sample)", _semgrep_scan),
         ("osv-scanner --version",
          lambda s, r: _run("osv-scanner --version", ["osv-scanner", "--version"], r,
                            _proc.tool_env())),

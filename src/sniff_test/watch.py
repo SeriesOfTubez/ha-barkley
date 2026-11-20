@@ -75,12 +75,12 @@ _KIND = {"integration": "Integration", "card": "Card", "plugin": "Card"}
 _GROUP = {  # diff.py's summary buckets, in fixed plain words (singular, plural)
     "findings": ("finding", "findings"),
     "flows": ("data flow", "data flows"),
-    "data": ("kind of private data read", "kinds of private data read"),
+    "data": ("type of private data it reads", "types of private data it reads"),
     "hosts": ("site", "sites"),
     "packages": ("package", "packages"),
-    "hooks": ("hook into Home Assistant", "hooks into Home Assistant"),
+    "hooks": ("way it plugs into Home Assistant", "ways it plugs into Home Assistant"),
     "repo": ("publisher or repository change", "publisher or repository changes"),
-    "coverage": ("change in what could be checked", "changes in what could be checked"),
+    "coverage": ("change in what Barkley could check", "changes in what Barkley could check"),
 }
 _NO_SIGN = {"repo", "coverage"}  # already say "change"
 _SIGN = {"+": "new", "-": "removed", "~": "changed"}
@@ -220,54 +220,56 @@ def notification(
     score = int(report.get("score", 0))
     offered = entry.get("action") == "available"
     if offered:
-        did = f"has an update waiting, {prev} → {ver}, sniffed before you install it"
+        did = f"has an update waiting, {prev} to {ver}. Barkley sniffed it before you install it"
     else:
         did = (
-            f"was updated from {prev} to {ver} and sniffed"
+            f"was updated from {prev} to {ver}. Barkley sniffed it"
             if prev
-            else f"{ver} was installed and sniffed"
+            else f"{ver} was installed. Barkley sniffed it"
         )
     rd = report.get("readings")
     if rd:  # (preview) the readings take the score's place, as on the panel
         return _readings_notification(entry, report, d, panel, rd, kind, did, offered)
-    lines = [f"{kind} {repo} {did}: {emoji} {label}, {score}/100."]
+    lines = [f"{kind} {repo} {did}. Score: {score}/100, {emoji} {label}."]
     titles = top_titles(report)
     if titles:
-        lines.append("Worth a look: " + "; ".join(titles) + ".")
+        lines.append("Things to check: " + "; ".join(titles) + ".")
     elif report.get("findings"):
-        lines.append("Only minor things were found.")
+        lines.append("Everything still open is minor.")
     else:
         lines.append("No security concerns were found.")
     if d is not None:
         summary = change_summary(d)
         lines.append(
-            f"What the update changes: {summary}." if summary
+            f"Changes in this update: {summary}." if summary
             else f"Nothing important changed since {prev}."
         )  # fmt: skip
     if not report.get("complete", True):
         lines.append("Part of the check didn't finish, so the score is capped at 89.")
     r = report.get("review") or {}
     if r.get("reviewed"):  # (0.14.0) the reviewed score is the big one; Barkley's beside it
-        lines.append(f"Reviewed by you; Barkley's own score is {int(r.get('own_score') or 0)}.")
+        own = int(r.get("own_score") or 0)
+        lines.append(f"The score includes your reviews. Barkley's own score is {own}.")
     due = len(r.get("reopened") or [])
     if due and notify_reopen:
-        lines.append(f"{due} finding{'s' * (due != 1)} you accepted changed in this version "
-                     f"and {'is' if due == 1 else 'are'} open again.")  # fmt: skip
+        lines.append(f"The code around {due} item{'s' * (due != 1)} you accepted changed in "
+                     f"this version, so {'it is' if due == 1 else 'they are'} open "
+                     "again.")  # fmt: skip
     t = report.get("trust")
     if t and not r.get("reviewed"):  # counts and Barkley's number; never the addresses
         n = len(t.get("addresses") or [])
         lines.append(
-            f"The score counts {n} address{'es' * (n != 1)} you trust as fine; "
+            f"The score doesn't count {n} address{'es' * (n != 1)} you trust. "
             f"Barkley's own score is {int(t.get('own_score') or 0)}."
         )
     ids = entry.get("scan_ids") or []
     where = f"scan @{ids[-1]}" if ids else "the app's page"
     if len(ids) == 2:
-        where += f", what the update changes @{ids[0]} → @{ids[1]}"
+        where += f" and what the update changes (@{ids[0]} → @{ids[1]})"
     link = f"[Open Barkley]({panel})" if panel else "Open Barkley from the sidebar"
     title = f"Barkley: {repo} {ver}" + (" (update waiting)" if offered else "")
-    plain = " ".join(lines) + f" Open Barkley from the sidebar: {where}."
-    return title, "\n\n".join(lines) + f"\n\n{link}: {where}.", plain
+    plain = " ".join(lines) + f" Open Barkley from the sidebar to see {where}."
+    return title, "\n\n".join(lines) + f"\n\n{link} to see {where}.", plain
 
 
 def _readings_notification(
@@ -284,7 +286,7 @@ def _readings_notification(
     developer's words or AI text."""
     repo, ver, prev = entry["repo"], entry["version"], entry.get("previous")
     was = entry.get("was_readings") if isinstance(entry.get("was_readings"), dict) else None
-    lines = [f"{kind} {repo} {did}. {readings_line(rd, was)}."]
+    lines = [f"{kind} {repo} {did}. {readings_line(rd, was)}"]
     if rd.get("threat_level") in ("found", "possible") and rd.get("threat_reason"):
         lines.append(f"It {rd['threat_reason']}.")  # a fixed phrase (readings._THREAT_PHRASE)
     if rd.get("threat_level") == "found":
@@ -292,7 +294,7 @@ def _readings_notification(
     if d is not None:
         summary = change_summary(d)
         lines.append(
-            f"What the update changes: {summary}." if summary
+            f"Changes in this update: {summary}." if summary
             else f"Nothing important changed since {prev}."
         )  # fmt: skip
     if not report.get("complete", True):
@@ -300,14 +302,14 @@ def _readings_notification(
     ids = entry.get("scan_ids") or []
     where = f"scan @{ids[-1]}" if ids else "the app's page"
     if len(ids) == 2:
-        where += f", what the update changes @{ids[0]} → @{ids[1]}"
+        where += f" and what the update changes (@{ids[0]} → @{ids[1]})"
     link = f"[Open Barkley]({panel})" if panel else "Open Barkley from the sidebar"
     if rd.get("threat_level") == "found":
         title = f"Barkley: 🔴 malicious behavior found in {repo} {ver}"
     else:
         title = f"Barkley: {repo} {ver}" + (" (update waiting)" if offered else "")
-    plain = " ".join(lines) + f" Open Barkley from the sidebar: {where}."
-    return title, "\n\n".join(lines) + f"\n\n{link}: {where}.", plain
+    plain = " ".join(lines) + f" Open Barkley from the sidebar to see {where}."
+    return title, "\n\n".join(lines) + f"\n\n{link} to see {where}.", plain
 
 
 def _package_findings(report: dict[str, Any]) -> dict[tuple[str, str], tuple[str, str]]:
@@ -342,11 +344,11 @@ def advisory_summary(n: dict[str, int]) -> str:
     if n["malicious"]:
         parts.append(f"{pk(n['malicious'])} now listed as malicious")
     if n["new"]:
-        parts.append(f"{pk(n['new'])} newly with known vulnerabilities")
+        parts.append(f"{pk(n['new'])} now with known vulnerabilities")
     if n["changed"]:
         parts.append(f"{pk(n['changed'])} with different advisories than before")
     if n["gone"]:
-        parts.append(f"{pk(n['gone'])} no longer with any")
+        parts.append(f"{pk(n['gone'])} with no advisories any more")
     return ", ".join(parts)
 
 
@@ -360,30 +362,32 @@ def advisory_notification(
     kind = _KIND.get(str(entry.get("kind")), "App")
     label, emoji = _VERDICT.get(str(report.get("verdict", {}).get("key")), ("?", ""))
     score, was = int(report.get("score", 0)), entry.get("was")
-    moved = f" (it was {int(was)}/100)" if isinstance(was, int) and was != score else ""
+    moved = f" (was {int(was)}/100)" if isinstance(was, int) and was != score else ""
     lines = []
     if entry.get("malicious"):
         lines.append("A package this app uses is now listed as malicious.")
     lines.append(
-        f"{kind} {repo} {ver}: the known advisories for the packages it uses changed since "
-        f"Barkley sniffed it. {emoji} {label}, {score}/100{moved}."
+        f"The known security advisories for the packages {kind.lower()} {repo} {ver} uses "
+        f"have changed since Barkley sniffed it. Score: {score}/100{moved}, {emoji} {label}."
     )
     if entry.get("changes"):
         lines.append(f"What changed: {entry['changes']}.")
-    lines.append("The app's code was not scanned again; only its packages were asked about.")
+    lines.append("Barkley didn't scan the app's code again. It only looked up its packages again.")
     t = report.get("trust")
     if t:
         n = len(t.get("addresses") or [])
         lines.append(
-            f"The score counts {n} address{'es' * (n != 1)} you trust as fine; "
+            f"The score doesn't count {n} address{'es' * (n != 1)} you trust. "
             f"Barkley's own score is {int(t.get('own_score') or 0)}."
         )
     ids = entry.get("scan_ids") or []
-    where = f"scan @{ids[-1]}, what changed @{ids[0]} → @{ids[-1]}" if len(ids) == 2 else "the app"
+    where = (
+        f"scan @{ids[-1]} and what changed (@{ids[0]} → @{ids[-1]})" if len(ids) == 2 else "the app"
+    )
     link = f"[Open Barkley]({panel})" if panel else "Open Barkley from the sidebar"
     title = f"Barkley: {repo} {ver} (advisories changed)"
-    plain = " ".join(lines) + f" Open Barkley from the sidebar: {where}."
-    return title, "\n\n".join(lines) + f"\n\n{link}: {where}.", plain
+    plain = " ".join(lines) + f" Open Barkley from the sidebar to see {where}."
+    return title, "\n\n".join(lines) + f"\n\n{link} to see {where}.", plain
 
 
 class Watcher:
@@ -522,26 +526,41 @@ class Watcher:
 
     def diagnostics(self) -> tuple[bool, str]:
         """(ok, one line) for the Diagnostics page and the panel."""
-        head = "on" if self.enabled else "off (installs and updates are noticed, not sniffed)"
-        how = self.mode
-        if self.since:
-            how += f" since {_now_iso(self.since)[11:16]} UTC"
-        bits = [f"auto-sniff {head}", how]
+        bits = [
+            "Auto-sniff is on"
+            if self.enabled
+            else "Auto-sniff is off. Barkley notices installs and updates but doesn't sniff them"
+        ]
+        at = f"{_now_iso(self.since)[11:16]} UTC" if self.since else ""
+        since = f" since {at}" if at else ""
+        how = {
+            "subscribed": f"Barkley has listened for Marketplace events{since}",
+            "polling (no subscription)": "Barkley couldn't subscribe to Marketplace events, so "
+            "it reads the installed list on a timer"
+            + (f". Its last subscription started at {at}" if at else ""),
+            "polling": f"Barkley reads the installed list on a timer{since}",
+            "not started": f"Barkley isn't listening for Marketplace events yet{since}",
+        }
+        bits.append(how.get(self.mode, f"Barkley is {self.mode}{since}"))
         if self.last_event:
-            bits.append(f"last event: {self.last_event}")
+            bits.append(f"Last Marketplace event: {self.last_event}")
         if self.last_check:
-            bits.append(f"list read {int(self.now_fn() - self.last_check) // 60} min ago")
-        if self.rechecked:
             bits.append(
-                f"advisories re-checked for {self.rechecked} scan(s) since the start, "
-                f"{self.recheck_changes} changed"
+                f"It read the installed list {int(self.now_fn() - self.last_check) // 60} min ago"
+            )
+        if self.rechecked:
+            n = self.rechecked
+            bits.append(
+                f"Since it started, it checked the advisories of {n} scan{'s' * (n != 1)} "
+                f"again, and {self.recheck_changes} had changed"
             )
         if self.error:
-            bits.append(f"last error: {self.error[:200]}")
+            bits.append(f"Last error: {self.error[:200]}")
         bits.append(
-            f"notifications: bell{' + notify.' + self.notify_target if self.notify_target else ''}"
+            "Notifications go to the bell"
+            + (f" and to notify.{self.notify_target}" if self.notify_target else "")
         )
-        return not self.error, "; ".join(bits)
+        return not self.error, ". ".join(bits)
 
     # --- the thread --------------------------------------------------------------------
 
@@ -966,17 +985,17 @@ class Watcher:
     def notify_test(self) -> str:
         """The panel's test button: a real notification through both channels."""
         md = (
-            "This is how Barkley tells you about an auto-sniffed install or update: the app, "
-            "its version, the verdict and score, what's worth a look, and for an update what "
+            "This is a test. When Barkley sniffs an install or update, it tells you the app, "
+            "its version, the verdict and score, what to check and, for an update, what "
             "changed. "
             + (f"[Open Barkley]({self.panel_path()})" if self.panel_path() else "Open Barkley")
         )
         plain = (
-            "This is how Barkley tells you about an auto-sniffed install or update. "
+            "This is a test. When Barkley sniffs an install or update, it tells you here. "
             "Open Barkley from the sidebar."
         )
         err = self._notify("Barkley: test notification", md, plain, "barkley_test")
-        self.last_test = err or f"sent at {_now_iso(self.now_fn())[11:16]} UTC"
+        self.last_test = err or f"Test notification sent at {_now_iso(self.now_fn())[11:16]} UTC."
         return err
 
     def sweep(self) -> int:

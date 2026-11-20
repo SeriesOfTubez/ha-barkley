@@ -221,4 +221,4 @@ def test_the_card_and_the_notification_say_the_score_counts_trusted_addresses(pa
     for text in (md, plain):
         assert "75/100" in text and "Barkley's own score is 50" in text
         assert "api.together.xyz" not in text  # never an address from scanned code
-    assert re.search(r"counts 1 address you trust as fine", md)
+    assert re.search(r"doesn't count 1 address you trust", md)

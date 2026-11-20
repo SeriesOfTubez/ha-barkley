@@ -340,7 +340,7 @@ def test_a_recheck_job_that_finds_nothing_or_fails_stores_no_scan(tmp_path):
     stale = store.save(card_report([CODE], ref="v3", tool="0.9.0"), inputs=INPUTS)
     job = worker.submit("recheck", "acme/card", "v3", scan=stale)
     worker.wait()
-    assert job.state == "done" and "by this Barkley version" in job.message
+    assert job.state == "done" and "made by this version of Barkley" in job.message
     assert len(store.history(limit=10)) == 3  # nothing was added by any of them
     assert server._need(job) == 0  # a re-check never spends GitHub's budget
 
@@ -443,12 +443,12 @@ def test_changed_advisories_notify_with_counts_and_scores_never_package_names(da
     ((title, message, nid),) = fakes.bell
     assert title == "Barkley: acme/card v1 (advisories changed)" and nid == "barkley_acme_card"
     assert message.startswith("A package this app uses is now listed as malicious.")
-    assert f"{now}/100 (it was {was}/100)" in message and "BORK" in message
-    want = ("What changed: 1 package now listed as malicious, 1 package newly with known "
+    assert f"Score: {now}/100 (was {was}/100)" in message and "BORK" in message
+    want = ("What changed: 1 package now listed as malicious, 1 package now with known "
             "vulnerabilities, 1 package with different advisories than before.")  # fmt: skip
     assert want in message
-    assert "The app's code was not scanned again" in message
-    assert f"scan @{new_id}, what changed @{sid} → @{new_id}" in message
+    assert "Barkley didn't scan the app's code again" in message
+    assert f"scan @{new_id} and what changed (@{sid} → @{new_id})" in message
     for leak in (HOSTILE_PKG, "yaml-lib", "third", "GHSA", "MAL-"):
         assert leak not in message and leak not in title
     ((target, ptitle, plain, _url),) = fakes.pushed
@@ -466,8 +466,8 @@ def test_a_withdrawn_advisory_is_reported_too(daily):
     assert w.recheck_due() == 1
     worker.wait()
     ((_title, message, _nid),) = fakes.bell
-    assert "What changed: 1 package no longer with any." in message
-    assert "malicious" not in message and f"(it was {store.get(sid).score}/100)" in message
+    assert "What changed: 1 package with no advisories any more." in message
+    assert "malicious" not in message and f"(was {store.get(sid).score}/100)" in message
 
 
 # --- the panel -----------------------------------------------------------------------------
@@ -506,7 +506,7 @@ def test_the_app_page_says_when_advisories_were_asked_and_offers_to_ask_again(pa
     httpd.panel.worker.wait()
     _, _, page = get(f"{base}/scan/{sid}")
     when = store.rechecks()[sid][0]
-    assert f"Advisories asked again {when[:10]} {when[11:16]} UTC: nothing changed." in page
+    assert f"Advisories checked again on {when[:10]} {when[11:16]} UTC. Nothing changed." in page
     assert len(store.history(limit=10)) == 3
     # now OSV lists one more advisory: a new entry, linked both ways, the old page unchanged
     state["new"] = [osv_finding(pkg=HOSTILE_PKG, ids="GHSA-aaaa, GHSA-bbbb", severity="high")]
@@ -517,16 +517,16 @@ def test_the_app_page_says_when_advisories_were_asked_and_offers_to_ask_again(pa
     assert f'found changes: see <a href="/scan/{new_id}">scan @{new_id}</a>' in old_page
     assert "Check advisories again" not in old_page  # only the newest entry is re-checked
     _, _, new_page = get(f"{base}/scan/{new_id}")
-    assert f'this entry replaced <a href="/scan/{sid}">scan @{sid}</a>' in new_page
+    assert f'this scan replaced <a href="/scan/{sid}">scan @{sid}</a>' in new_page
     assert f'href="/diff?old={sid}&amp;new={new_id}">what changed</a>' in new_page
-    assert "only the advisories were asked again" in new_page
+    assert "Only the advisories were looked up again." in new_page
     assert "Check advisories again</button>" in new_page
     assert "<script>" not in new_page.replace("&lt;script&gt;", "")  # the package name is escaped
     _, _, index = get(base + "/")
     assert "advisory re-check" in index and f"diff?old={sid}&amp;new={new_id}" in index
     status, _, diff_page = get(f"{base}/diff?old={sid}&new={new_id}")
     assert status == 200 and "What the advisory re-check changed" in diff_page
-    assert "Same version and the same code" in diff_page
+    assert "Same version, same code." in diff_page
     assert "What the update changes" not in diff_page
     assert json.loads(get(f"{base}/scan/{new_id}.json")[2])["recheck"]["of"] == sid
 
@@ -538,7 +538,10 @@ def test_the_page_reloads_itself_while_its_recheck_runs(panel):
     httpd.panel.worker.recheck_fn = lambda r, i, of, when: go.wait(10) and None
     post(base + "/recheck", {"token": httpd.panel.token, "scan": sid})
     _, _, page = get(f"{base}/scan/{sid}")
-    assert 'http-equiv="refresh"' in page and "Asking OSV again about its packages" in page
+    assert (
+        'http-equiv="refresh"' in page
+        and "Checking its packages against the OSV advisory database again" in page
+    )
     assert "Check advisories again" not in page
     go.set()
     httpd.panel.worker.wait()
