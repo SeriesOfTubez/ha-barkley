@@ -2488,18 +2488,21 @@ def hygiene_html(report: dict[str, Any]) -> str:
             f"{e(x.get('name'))} ({_SCAN_KIND.get(x.get('kind'), 'checks')})" for x in items
         )
 
-    in_ci = [x for x in sc if x.get("via") != "pre-commit"]
-    hooks = [x for x in sc if x.get("via") == "pre-commit"]
+    in_ci = [x for x in sc if not x.get("via")]
+    hooks = [x for x in sc if x.get("via")]  # pre-commit, lefthook or husky (0.15)
     if in_ci:
         li.append(f"{yes} Runs security scans in its GitHub workflows: {listed(in_ci)}.")
-    if hooks and any(x.get("ci") for x in hooks):
-        li.append(f"{yes} Runs security checks with pre-commit, and in its GitHub workflows: "
-                  f"{listed(hooks)}.")  # fmt: skip
-    elif hooks:
-        li.append(f"{yes} Runs security checks before each commit with pre-commit: "
-                  f"{listed(hooks)}. Barkley didn't see them in its GitHub workflows.")  # fmt: skip
+    for via in dict.fromkeys(str(x.get("via")) for x in hooks):
+        mine = [x for x in hooks if x.get("via") == via]
+        tool = e(via)
+        if any(x.get("ci") for x in mine):
+            li.append(f"{yes} Runs security checks with {tool}, and in its GitHub workflows: "
+                      f"{listed(mine)}.")  # fmt: skip
+        else:
+            li.append(f"{yes} Runs security checks before each commit with {tool}: "
+                      f"{listed(mine)}. Barkley didn't see them in its GitHub workflows.")  # fmt: skip
     if not sc:
-        li.append(f"{no} Its GitHub workflows and pre-commit hooks run no security scanner, "
+        li.append(f"{no} Its GitHub workflows and commit hooks run no security scanner, "
                   "such as CodeQL, Semgrep, Bandit, Trivy, OSV-Scanner, pip-audit or "
                   "Gitleaks.")  # fmt: skip
     sig = ((report.get("target") or {}).get("signature") or {}).get("state")
@@ -2918,7 +2921,7 @@ def all_green(h: Any) -> bool:
     # (0.14.1) a scanner counts when it runs in CI: a workflow, or pre-commit run by one
     ci = [
         x for x in h.get("scanners") or []
-        if isinstance(x, dict) and (x.get("via") != "pre-commit" or x.get("ci"))
+        if isinstance(x, dict) and (not x.get("via") or x.get("ci"))
     ]  # fmt: skip
     return (
         bool(ci)

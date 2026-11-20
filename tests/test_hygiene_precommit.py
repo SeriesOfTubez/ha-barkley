@@ -107,6 +107,10 @@ _N = 200_000
         "select = [" * (_N // 10),
         "[" * _N,
         "select" + " " * _N + "=" + " " * _N + "[",
+        "entry:" + " " * _N,
+        "run" + " " * _N + ":",
+        "gitleaks-" * (_N // 5),
+        "-ruff" * (_N // 5),
     ],
 )
 def test_the_patterns_stay_linear(text):
@@ -114,4 +118,52 @@ def test_the_patterns_stay_linear(text):
     repo_hygiene._HOOK_ID.findall(text)
     repo_hygiene.ruff_security_rules(text)
     repo_hygiene._RUNS_PRE_COMMIT.search(text)
+    repo_hygiene._ENTRY.findall(text)
+    repo_hygiene._TOOL.findall(text)
+    repo_hygiene._RUFF_CMD.search(text)
     assert time.monotonic() - start < 1.0
+
+
+# --- (0.15, his list 2026-11-20) the gaps: local hooks, lefthook, husky, ruff.toml --------
+
+RUFF_TOML = """\
+[lint]
+extend-select = ["S"]
+"""
+
+
+def test_a_local_pre_commit_hook_counts_by_its_command(tmp_path):
+    (tmp_path / ".pre-commit-config.yaml").write_text(
+        "repos:\n  - repo: local\n    hooks:\n      - id: secrets\n"
+        "        entry: gitleaks protect --staged\n        language: system\n"
+        "      - id: lint\n        entry: ruff check\n"
+    )
+    (tmp_path / "ruff.toml").write_text(RUFF_TOML)
+    sc = repo_hygiene.scan_files(tmp_path).scanners
+    assert [(x["name"], x["via"]) for x in sc] == [
+        ("Gitleaks", "pre-commit"), ("Ruff security rules", "pre-commit")
+    ]  # fmt: skip
+
+
+def test_lefthook_and_husky_hooks_count_but_not_as_ci(tmp_path):
+    (tmp_path / "lefthook.yml").write_text(
+        "pre-commit:\n  commands:\n    audit:\n      run: pip-audit -r requirements.txt\n"
+        "    # old:\n    #   run: bandit -r .\n"
+    )
+    (tmp_path / ".husky").mkdir()
+    (tmp_path / ".husky" / "pre-commit").write_text("#!/bin/sh\n# semgrep later\nnpx semgrep\n")
+    sc = repo_hygiene.scan_files(tmp_path).scanners
+    assert [(x["name"], x["via"], x["ci"]) for x in sc] == [
+        ("pip-audit", "lefthook", False), ("Semgrep", "husky", False)
+    ]  # fmt: skip
+    assert not all_green({"scanners": sc, "dependabot": ["pip"], "security_policy": "S",
+                          "update_prs": {"open": 0}, "security_issues": {"open": 0},
+                          "errors": []})  # fmt: skip
+
+
+def test_a_dotted_ruff_toml_counts_and_a_name_inside_a_word_does_not(tmp_path):
+    (tmp_path / ".ruff.toml").write_text('select = ["E", "S102"]\n')
+    (tmp_path / ".husky").mkdir()
+    (tmp_path / ".husky" / "pre-commit").write_text("my-gitleaks-wrapper\nruff check\n")
+    sc = repo_hygiene.scan_files(tmp_path).scanners
+    assert [x["name"] for x in sc] == ["Ruff security rules"]

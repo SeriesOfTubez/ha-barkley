@@ -58,6 +58,17 @@ PRE_COMMIT_HOOKS: dict[str, tuple[str, str]] = {
     "osv-scanner": ("OSV-Scanner", "deps"),
 }
 _PRE_COMMIT = (".pre-commit-config.yaml", ".pre-commit-config.yml")
+# (0.15) the other places hooks and Ruff's settings live (his list, 2026-11-20)
+_RUFF_CONFIGS = ("pyproject.toml", "ruff.toml", ".ruff.toml")
+_LEFTHOOK = ("lefthook.yml", "lefthook.yaml", ".lefthook.yml", ".lefthook.yaml")
+_HUSKY = (".husky/pre-commit", ".husky/pre-push")
+# A command that runs a known scanner: the tool's name as a whole word (linear: a fixed
+# alternation between non-word guards)
+_TOOL = re.compile(r"(?<![\w-])(gitleaks|trufflehog|detect-secrets|bandit|semgrep|pip-audit|"
+                   r"osv-scanner)(?![\w-])")  # fmt: skip
+_RUFF_CMD = re.compile(r"(?<![\w-])ruff(?![\w-])")
+# `entry:` of a `repo: local` hook, a lefthook `run:` line (one line each; no \s)
+_ENTRY = re.compile(r"^[ \t]*+(?:-[ \t]*+)?(?:entry|run)[ \t]*+:[ \t]*+(.{1,300})", re.M)
 # Linear on hostile files: no \\s (it would run across newlines from every line start).
 _HOOK_ID = re.compile(r"^[ \t]*+(?:-[ \t]*+)?id[ \t]*+:[ \t]*+[\"']?([A-Za-z0-9_.-]{1,60})", re.M)
 _RUFF_IDS = frozenset({"ruff", "ruff-check"})
@@ -133,26 +144,41 @@ def scan_files(root: Path) -> Hygiene:
             if _RUNS_PRE_COMMIT.search(commands):
                 ci_pre_commit = True
                 break
-    pc = next((t for rel in _PRE_COMMIT if (t := _read(root, rel)) is not None), None)
-    if pc is not None:
-        lines = "\n".join(ln for ln in pc.splitlines() if not ln.lstrip().startswith("#"))
-        found = [PRE_COMMIT_HOOKS[i] for i in _HOOK_ID.findall(lines) if i in PRE_COMMIT_HOOKS]
-        if _RUFF_IDS & set(_HOOK_ID.findall(lines)) and ruff_security_rules(
-            _read(root, "pyproject.toml") or ""
-        ):
-            found.append(("Ruff security rules", "code"))
+    ruff_s = any(ruff_security_rules(_read(root, rel) or "") for rel in _RUFF_CONFIGS)
+
+    def add(found: list[tuple[str, str]], where: str, via: str, ci: bool) -> None:
         for name, kind in found:
             if name not in seen:
                 seen.add(name)
-                h.scanners.append(
-                    {
-                        "name": name,
-                        "kind": kind,
-                        "workflow": ".pre-commit-config.yaml",
-                        "via": "pre-commit",
-                        "ci": ci_pre_commit,
-                    }
-                )
+                h.scanners.append({"name": name, "kind": kind, "workflow": where[:100],
+                                   "via": via, "ci": ci})  # fmt: skip
+
+    for rel in _PRE_COMMIT:
+        pc = _read(root, rel)
+        if pc is None:
+            continue
+        lines = "\n".join(ln for ln in pc.splitlines() if not ln.lstrip().startswith("#"))
+        ids = _HOOK_ID.findall(lines)
+        found = [PRE_COMMIT_HOOKS[i] for i in ids if i in PRE_COMMIT_HOOKS]
+        entries = _ENTRY.findall(lines)  # (0.15) `repo: local` hooks name their command
+        found += _tools("\n".join(entries))
+        if ruff_s and (_RUFF_IDS & set(ids) or any(_RUFF_CMD.search(x) for x in entries)):
+            found.append(("Ruff security rules", "code"))
+        add(found, rel, "pre-commit", ci_pre_commit)
+        break
+    for rel in _LEFTHOOK:  # (0.15) lefthook: `run:` commands
+        if (text := _read(root, rel)) is not None:
+            runs = "\n".join(_ENTRY.findall(_uncommented(text)))
+            found = _tools(runs) + ([("Ruff security rules", "code")]
+                                    if ruff_s and _RUFF_CMD.search(runs) else [])  # fmt: skip
+            add(found, rel, "lefthook", False)
+            break
+    for rel in _HUSKY:  # (0.15) husky: the hook is a shell script
+        if (text := _read(root, rel)) is not None:
+            cmds = _uncommented(text)
+            found = _tools(cmds) + ([("Ruff security rules", "code")]
+                                    if ruff_s and _RUFF_CMD.search(cmds) else [])  # fmt: skip
+            add(found, rel, "husky", False)
     for rel in _DEPENDABOT:
         if (text := _read(root, rel)) is not None:
             h.dependabot = sorted({m.lower() for m in _ECOSYSTEM.findall(text)})
@@ -160,6 +186,19 @@ def scan_files(root: Path) -> Hygiene:
     h.renovate = any(_read(root, rel) is not None for rel in _RENOVATE)
     h.security_policy = next((rel for rel in _SECURITY_MD if _read(root, rel) is not None), None)
     return h
+
+
+_TOOL_NAMES = PRE_COMMIT_HOOKS
+
+
+def _uncommented(text: str) -> str:
+    return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+
+
+def _tools(commands: str) -> list[tuple[str, str]]:
+    """Known scanners a hook's commands run, by name (once each, in order)."""
+    names = dict.fromkeys(m.lower() for m in _TOOL.findall(commands))
+    return [_TOOL_NAMES[n] for n in names if n in _TOOL_NAMES]
 
 
 def ruff_security_rules(pyproject: str) -> bool:
