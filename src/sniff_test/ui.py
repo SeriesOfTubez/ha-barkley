@@ -1816,7 +1816,7 @@ def privacy_html(notes: list[privacy.Note], inline: DeepFn | None = None) -> str
 
 _HOST_CLASS_WORDS = {
     "declared": "one of the app's own",
-    "undeclared": "not in the app's docs",
+    "undeclared": "not one of the app's own sites",
     "developer_hosted": "run by the developer",
     "analytics": "an analytics or crash-report service",
     "exfil_service": "a data-collection site",
@@ -2086,7 +2086,7 @@ def _flow_data(report: dict[str, Any]) -> _Flow | None:
     rest = [h for h in net if h not in dev]
     if rest:
         own = sum(1 for h in rest if h.cls == "declared")
-        sub = f"{own} named in the app's docs" if own else "none named in the app's docs"
+        sub = f"{own} of them the app's own" if own else "none of them the app's own"
         label = "Other internet sites" if dev else "Internet sites"
         right.append(("net", f"{label}: {len(rest)}", sub, ""))
     if not rd and not right:
@@ -2394,7 +2394,7 @@ ZONES = [
         "own",
         "cloud",
         "The app's own sites",
-        "Named in its docs, or matching its name",
+        "Its manifest or package.json links to them, or they match its name",
         {"declared"},
     ),
     (
@@ -2415,7 +2415,7 @@ ZONES = [
         "other",
         "globe",
         "Other sites",
-        "Not in the app's docs",
+        "Not linked from its manifest or package.json",
         {"undeclared", "public_ip", "exfil_service", "messaging"},
     ),
     (

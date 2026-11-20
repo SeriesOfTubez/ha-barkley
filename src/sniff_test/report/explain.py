@@ -51,9 +51,10 @@ RULES: dict[str, Explanation] = {
         "Sends your data out",
     ),
     "possible-exfil": _E(
-        "Reads private data and talks to a site its docs don't mention",
+        "Reads private data and talks to a site that isn't the app's own",
         "The app reads something private, for example your secrets file or other apps' "
-        "passwords. It also contacts a site that isn't in its own documentation. Barkley "
+        "passwords. It also contacts a site that isn't its own: its manifest or package.json "
+        "doesn't link to it, and it doesn't match the app's name. Barkley "
         "couldn't trace a direct path between the two, so this is a warning sign, not proof.",
         "Take it seriously. Before you trust it, check what the app reads and why, and what "
         "that site is.",

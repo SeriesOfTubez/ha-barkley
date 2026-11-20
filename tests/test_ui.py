@@ -107,7 +107,7 @@ def test_diff_changes_read_as_plain_english():
         ({"kind": "new_host", "sign": "+", "rank": 70,
           "text": "undeclared: status.weather-mirror.invalid (const.py:4)",
           "detail": {"target": "host:status.weather-mirror.invalid", "class": "undeclared"}},
-         "New", "not in the app's docs"),
+         "New", "not one of the app's own sites"),
         ({"kind": "new_package", "sign": "+", "rank": 45, "text": "depends on requests 2.32.0",
           "detail": {"target": "package:pypi/requests", "attrs": {}}},
          "New", "A new dependency"),

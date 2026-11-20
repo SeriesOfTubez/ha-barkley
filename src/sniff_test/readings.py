@@ -70,7 +70,7 @@ _THREAT_PHRASE = {
     "ha-exfil-taint": "sends your Home Assistant data out of your home",
     "card-token-exfil": "may send your login token to another site",
     "possible-exfil": (
-        "may send other apps' passwords or your secrets to sites its docs don't mention"
+        "may send other apps' passwords or your secrets to sites that aren't the app's own"
     ),
     "endpoint-exfil-host": "sends data to a site used for collecting data",
     "dep-malicious": "includes a package known to be malware",

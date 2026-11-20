@@ -241,7 +241,7 @@ def _label(report: dict[str, Any], node_id: str) -> str:
 
 
 _HOST_CLASS = {
-    "undeclared": "not named in the app's docs or manifest",
+    "undeclared": "not linked from the app's manifest or package.json, and not matching its name",
     "developer_hosted": "on a free app-hosting service, so likely run by the developer",
     "analytics": "a usage-statistics or crash-report service",
     "public_ip": "a public IP address written into the code",
@@ -314,7 +314,9 @@ def describe(report: dict[str, Any], item_id: str) -> tuple[str, dict[str, Any]]
         host = sanitize_untrusted(_label(report, edge.get("target", "")), 200)
         facts = {
             "address_untrusted": host,
-            "what_we_know": _HOST_CLASS.get(str(attrs.get("class")), "not explained by its docs"),
+            "what_we_know": _HOST_CLASS.get(
+                str(attrs.get("class")), "not one of the app's own sites"
+            ),
             "urls_untrusted": [sanitize_untrusted(u, 200) for u in attrs.get("urls", [])[:5]],
             "location_untrusted": sanitize_untrusted(where, 200),
         }
