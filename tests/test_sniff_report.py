@@ -106,6 +106,33 @@ def test_devnote_gives_nothing_when_the_docstring_runs_past_the_snippet():
     assert devnote.note(r, "x-0") is None
 
 
+def test_devnote_prefers_the_docstring_the_scan_stored_with_the_item():
+    """(0.15) A scan keeps the docstring itself, so a snippet that cuts it no longer hides
+    it; long ones end in an ellipsis and markup stays text."""
+    r = report(f("x", line=20))
+    r["context"]["snippets"]["s1"]["segments"][0]["code"] = CODE[8:]  # no docstring in it
+    r["context"]["snippets"]["s1"]["segments"][0]["start"] = 18
+    r["context"]["items"]["x-0"]["doc"] = {
+        "file": "cmds.py", "start": 14, "code": CODE[4:8], "cut": False, "of": "make_device_user",
+    }  # fmt: skip
+    n = devnote.note(r, "x-0")
+    assert n is not None and (n.file, n.start, n.end) == ("cmds.py", 14, 17)
+    assert n.text == (
+        "Give a device a user of its own, not an administrator. "
+        "The user has no password. <script>alert(1)</script>"
+    )
+    r["context"]["items"]["x-0"]["doc"] = {"file": "cmds.py", "start": 3, "code": ['"One."'],
+                                           "cut": False}  # fmt: skip
+    assert devnote.note(r, "x-0").text == "One."
+    r["context"]["items"]["x-0"]["doc"] = {"file": "cmds.py", "start": 3, "cut": True,
+                                           "code": ['"""Long'] + ["more"] * 40}  # fmt: skip
+    assert devnote.note(r, "x-0").text.endswith("…")
+    for junk in ({}, {"file": 1}, {"file": "a.py", "start": 1, "code": ["no quote"]},
+                 {"file": "a.py", "start": 1, "code": []}):  # fmt: skip
+        r["context"]["items"]["x-0"]["doc"] = junk
+        assert devnote.note(r, "x-0") is None
+
+
 def test_devnote_ignores_files_that_are_not_python():
     r = report(f("x", file="card.js", line=20))
     r["context"]["snippets"]["s1"]["segments"][0]["file"] = "card.js"

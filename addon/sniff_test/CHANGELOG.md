@@ -31,6 +31,21 @@ https://github.com/SeriesOfTubez/ha-barkley/releases
   accepted, the addresses you trusted and the apps set to Malware check only. Your
   stored scans and settings stay.
 
+**More facts on an integration's page (none of them scored)**
+
+- How it sends web requests: open a site under Where it connects to see the method (GET,
+  POST and so on) of each request the Python code sends there, and the names of what
+  the call puts into the body, the headers and the address. Requests to an address the
+  code puts together while it runs are listed apart. The method alone doesn't tell you
+  what is sent: a GET can carry data too. Dashboard cards aren't covered yet.
+- Environment variables it uses: which ones the code reads and sets, by name when the
+  code spells the name out, and whether it reads back one it set itself.
+- Published libraries: the list now also shows a library Barkley recognised but read as
+  code anyway, with the reason (too new, too few downloads, no answer from npm, a
+  malware warning), and how many large files matched nothing.
+- The developer's note under an item is the whole docstring now, not only the part that
+  fell inside the code Barkley kept for the AI.
+
 ## 0.14.1
 
 **Faster scans of big integrations**

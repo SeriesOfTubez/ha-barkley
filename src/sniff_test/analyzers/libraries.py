@@ -26,6 +26,12 @@ Skipping by path or name (vendor/, .min.js) is never done: that's where a payloa
    compares files. It is listed in the report, and its package is checked with OSV like
    any dependency (advisories become dep-vuln, osv.VENDORED_POLICY).
 
+4. (0.15) A lookup that named an npm package but didn't pass is kept too, with the reason
+   (`Lookup`), so the report can list every library it found and say which were read.
+   Nothing is concluded from those: the file was read as code like any other, and a
+   name from jsDelivr alone proves nothing, so OSV's answer for them is shown as data
+   and never becomes a finding.
+
 Off with the "Recognise published libraries" setting, for cards, and offline.
 """
 
@@ -75,6 +81,13 @@ class Library:
     files: tuple[str, ...]  # root-relative, as installed
     published: str | None = None  # date the version was published (YYYY-MM-DD)
     weekly: int | None = None  # downloads last week
+    # (0.15) advisories OSV lists for this version (None: OSV wasn't asked or didn't answer)
+    advisories: int | None = None
+    # (0.15) why the files were read as code after all; "" for a recognised library:
+    # new (published under MIN_AGE_DAYS ago) | few_downloads | no_facts (npm gave no date
+    # or count) | malware (OSV has a malware advisory for the version) | unchecked (OSV
+    # couldn't be asked)
+    why: str = ""
 
 
 @dataclass
@@ -84,6 +97,9 @@ class Result:
     analyzer: AnalyzerResult
     aside: dict[str, Library] = field(default_factory=dict)
     libraries: list[Library] = field(default_factory=list)
+    # (0.15) every lookup's outcome: {"looked_up", "unanswered", "no_match", "not_npm",
+    # "read": [Library with `why`]}; None when nothing was looked up
+    lookups: dict[str, Any] | None = None
 
 
 def _off(detail: str) -> Result:
@@ -231,40 +247,57 @@ def recognise(
     unanswered = len(digests) - len(answers)
 
     matched: dict[tuple[str, str], list[str]] = {}
+    no_match = not_npm = 0
     for rel, digest in files:
-        a = answers.get(digest)
-        if not isinstance(a, dict) or a.get("type") != "npm":
+        if digest not in answers:
+            continue
+        a = answers[digest]
+        if not isinstance(a, dict):
+            no_match += 1
+            continue
+        if a.get("type") != "npm":
+            not_npm += 1
             continue
         name, version = str(a.get("name") or ""), str(a.get("version") or "")
         if _NPM_NAME.match(name) and _VERSION.match(version):
             matched.setdefault((name, version), []).append(rel)
+        else:
+            not_npm += 1
 
     left = max(1.0, BUDGET - (time.monotonic() - started))
     facts = _parallel(lambda nv: package_facts(*nv), sorted(matched), left)
     passing: dict[tuple[str, str], Library] = {}
+    read: dict[tuple[str, str], Library] = {}  # named by jsDelivr, read as code anyway
     for (name, version), rels in matched.items():
         published, weekly = facts.get((name, version), (None, None))
         age = _age_days(published, now)
-        if age is None or age < MIN_AGE_DAYS or weekly is None or weekly < MIN_WEEKLY:
-            continue
-        passing[(name, version)] = Library(
-            name, version, tuple(sorted(rels)), (published or "")[:10] or None, weekly
-        )
+        lib = Library(name, version, tuple(sorted(rels)), (published or "")[:10] or None, weekly)
+        if age is None or weekly is None:
+            read[(name, version)] = dataclasses.replace(lib, why="no_facts")
+        elif age < MIN_AGE_DAYS:
+            read[(name, version)] = dataclasses.replace(lib, why="new")
+        elif weekly < MIN_WEEKLY:
+            read[(name, version)] = dataclasses.replace(lib, why="few_downloads")
+        else:
+            passing[(name, version)] = lib
 
     findings: list[Finding] = []
     note = ""
-    if passing:
+    if passing or read:
         exe = shutil.which("osv-scanner")
         pkgs = None
         if exe:
-            lock = _lockfile(sorted(passing), work / "libraries-osv")
+            lock = _lockfile(sorted({*passing, *read}), work / "libraries-osv")
             pkgs, err = osv.scan_lockfile(exe, lock, work)
             note = f"; advisory check failed ({err[:120]})" if pkgs is None else ""
         else:
             note = "; osv-scanner not installed"
         if pkgs is None:
-            passing = {}  # unchecked against malware advisories: read everything
+            # unchecked against malware advisories: read everything
+            read.update({k: dataclasses.replace(v, why="unchecked") for k, v in passing.items()})
+            passing = {}
         else:
+            counts = {(p.name, p.version): len(p.vulns) for p in pkgs}
             bad = {
                 (p.name, p.version)
                 for p in pkgs
@@ -283,8 +316,14 @@ def recognise(
                         [p], lib.files[0], set(), osv.VENDORED_POLICY, lookup=osv.latest_release
                     )
                 ]
-            for key in bad:
-                passing.pop(key, None)  # known malware: read as code, critical finding
+            for key in bad & set(passing):
+                # known malware: read as code, critical finding (above)
+                read[key] = dataclasses.replace(passing.pop(key), why="malware")
+            # an answer only for the packages OSV was asked about; none found: 0
+            passing = {
+                k: dataclasses.replace(v, advisories=counts.get(k, 0)) for k, v in passing.items()
+            }
+            read = {k: dataclasses.replace(v, advisories=counts.get(k, 0)) for k, v in read.items()}
 
     libs = sorted(passing.values(), key=lambda lib: (lib.name, lib.version))
     aside = {rel: lib for lib in libs for rel in lib.files}
@@ -295,7 +334,14 @@ def recognise(
     if unanswered:
         detail += f"; {unanswered} lookup(s) unanswered (those files were read)"
     result = AnalyzerResult(NAME, AnalyzerState.OK, findings=findings, detail=detail + note)
-    return Result(result, aside, libs)
+    lookups = {
+        "looked_up": len(files),
+        "unanswered": sum(1 for _rel, d in files if d not in answers),
+        "no_match": no_match,
+        "not_npm": not_npm,
+        "read": sorted(read.values(), key=lambda lib: (lib.name, lib.version)),
+    }
+    return Result(result, aside, libs, lookups)
 
 
 @contextlib.contextmanager
@@ -330,6 +376,16 @@ def to_json(libs: list[Library]) -> list[dict[str, Any]]:
             "files": list(lib.files),
             "published": lib.published,
             "weekly_downloads": lib.weekly,
+            **({"advisories": lib.advisories} if lib.advisories is not None else {}),
+            **({"why": lib.why} if lib.why else {}),
         }
         for lib in libs
     ]
+
+
+def lookups_json(lookups: dict[str, Any] | None) -> dict[str, Any] | None:
+    """(0.15) The report's `library_lookups`: what every lookup came to. `read` lists the
+    packages jsDelivr named whose files were read as code after all, with `why`."""
+    if not lookups:
+        return None
+    return {**lookups, "read": to_json(lookups["read"])}

@@ -118,7 +118,7 @@ def test_the_flagged_statements_function_is_cut_to_fit_not_left_out(tmp_path):
 
 def test_a_monkeypatch_item_says_what_is_replaced_and_whose_it_is(tmp_path):
     ctx = context.build(_pkg(tmp_path), [PATCH], None)
-    assert ctx["version"] == 5
+    assert ctx["version"] == 6
     assert ctx["items"][PATCH["id"]]["patch"] == {
         "object": "homeassistant.components.camera.media.VodSource",
         "origin": "Home Assistant's built-in camera integration",

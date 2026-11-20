@@ -14,9 +14,11 @@ from sniff_test.analyzers import (
     guarddog,
     libraries,
     osv,
+    py_env,
     py_group,
     py_pages,
     py_precision,
+    py_requests,
     pypi_meta,
     python_deps,
     repo_hygiene,
@@ -232,6 +234,7 @@ def scan(
             resolution=resolution,
             ha_version=env.version if env else None,
             libraries=libs.libraries,
+            library_lookups=libs.lookups,
             logic=logic.key(),
             cache=(
                 {
@@ -245,6 +248,11 @@ def scan(
         )
         # Built while the workspace still exists: it reads manifests and parses files.
         result.graph = graph.build(result)
+        if target.kind is TargetKind.INTEGRATION:
+            say("web requests")  # (0.15) the method and what each call carries; never scored
+            result.requests = py_requests.summary(py_requests.requests_in(target.root))
+            # (0.15) which environment variables it reads and sets, by name
+            result.environment = py_env.summary(py_env.uses_in(target.root))
         result.inputs = recheck.capture(target, resolution) if not offline else None
         result.context = context.build(
             target.root,

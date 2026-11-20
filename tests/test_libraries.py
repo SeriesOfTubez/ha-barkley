@@ -155,6 +155,50 @@ def test_anything_short_of_every_check_is_read(tmp_path, net, answer, facts, why
     assert res.aside == {}, why
 
 
+@pytest.mark.parametrize(
+    "facts, why",
+    [
+        (("2026-11-01T00:00:00.000Z", 60_000_000), "new"),
+        (("2025-01-02T00:00:00.000Z", 9_999), "few_downloads"),
+        ((None, 60_000_000), "no_facts"),
+    ],
+)
+def test_a_lookup_that_did_not_qualify_is_kept_with_the_reason(tmp_path, net, facts, why):
+    """(0.15) The report lists every library found, read or not."""
+    net.known = {_sha(LIB): LIB_ANSWER}
+    net.facts = {"docview-dist": facts}
+    _t, _w, res = _recognise(tmp_path, {"www/vendor/viewer.min.js": LIB, "www/app.js": _js(2)})
+    assert res.aside == {} and res.libraries == []
+    assert res.analyzer.findings == []  # data only: never a finding
+    out = libraries.lookups_json(res.lookups)
+    assert (out["looked_up"], out["no_match"], out["unanswered"], out["not_npm"]) == (2, 1, 0, 0)
+    [lib] = out["read"]
+    assert (lib["name"], lib["version"], lib["why"]) == ("docview-dist", "4.10.38", why)
+    assert lib["files"] == ["www/vendor/viewer.min.js"] and lib["advisories"] == 0
+
+
+def test_osvs_answer_for_a_library_that_was_read_is_data_not_a_finding(tmp_path, net, monkeypatch):
+    # jsDelivr names whichever package has the bytes, so nothing is concluded from it
+    monkeypatch.setattr(osv, "scan_lockfile", _osv(malware={"docview-dist"}))
+    net.known = {_sha(LIB): LIB_ANSWER}
+    net.facts = {"docview-dist": ("2026-11-01T00:00:00.000Z", 5)}
+    _t, _w, res = _recognise(tmp_path, {"www/vendor/viewer.min.js": LIB})
+    assert res.analyzer.findings == [] and res.aside == {}
+    [lib] = res.lookups["read"]
+    assert (lib.why, lib.advisories) == ("new", 1)
+
+
+def test_the_lookup_counts_cover_every_outcome(tmp_path, net):
+    a, b, c = _js(1), _js(2), _js(3)
+    net.known = {_sha(a): LIB_ANSWER, _sha(b): {**LIB_ANSWER, "type": "gh"}}
+    net.facts = {"docview-dist": OLD_POPULAR}
+    _t, _w, res = _recognise(tmp_path, {"www/a.js": a, "www/b.js": b, "www/c.js": c})
+    out = libraries.lookups_json(res.lookups)
+    assert (out["looked_up"], out["no_match"], out["not_npm"], out["read"]) == (3, 1, 1, [])
+    assert libraries.to_json(res.libraries)[0]["advisories"] == 0
+    assert libraries.lookups_json(None) is None
+
+
 def test_a_malware_advisory_means_read_in_full_and_critical(tmp_path, net, monkeypatch):
     monkeypatch.setattr(osv, "scan_lockfile", _osv(malware={"docview-dist"}))
     net.known = {_sha(LIB): LIB_ANSWER}
@@ -164,6 +208,7 @@ def test_a_malware_advisory_means_read_in_full_and_critical(tmp_path, net, monke
     [f] = res.analyzer.findings
     assert (f.rule_id, str(f.severity)) == ("dep-malicious", "critical")
     assert f.analyzer == libraries.NAME  # kept by the daily advisory re-check
+    assert [(x.name, x.why) for x in res.lookups["read"]] == [("docview-dist", "malware")]
 
 
 def test_the_advisory_recheck_keeps_a_librarys_findings():
@@ -200,6 +245,7 @@ def test_no_advisory_check_means_nothing_is_set_aside(tmp_path, net, monkeypatch
     _t, _w, res = _recognise(tmp_path, {"www/vendor/viewer.min.js": LIB})
     assert res.aside == {}
     assert res.analyzer.state is AnalyzerState.OK  # everything was read: still complete
+    assert [x.why for x in res.lookups["read"]] == ["unchecked"]
 
 
 def test_a_rate_limit_is_never_a_result(tmp_path, net):
@@ -330,7 +376,7 @@ def test_the_report_box_escapes_and_counts():
                              "published": "2025-01-02", "weekly_downloads": 60000000}]}  # fmt: skip
     html = ui.libraries_html(report)
     assert "<b>docview-dist 4.10.38</b>" in html
-    assert '<span class="muted">· 2 files</span></summary>' in html  # (0.15) one line each
+    assert '<span class="muted">· 2 files · not read</span></summary>' in html  # (0.15)
     assert "Published 2025-01-02. 60,000,000 downloads last week." in html
     assert "www/v/&lt;b&gt;.js" in html and "<b>.js" not in html
     assert ui.libraries_html({}) == "" and ui.libraries_html({"libraries": []}) == ""

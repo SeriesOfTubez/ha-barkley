@@ -2359,6 +2359,94 @@ def threat_destinations(report: dict[str, Any]) -> frozenset:
 
 
 ZONE_SHOWN = 5  # sites per zone before "N more" (his decision 2026-11-20: dense panels)
+REQUESTS_SHOWN = 4  # kinds of request per site before "and N more"
+
+
+def _names(values: Any, limit: int = 6) -> str:
+    """Field names from the scanned code, as code, the first few."""
+    names = [v for v in values if isinstance(v, str) and v][:limit]
+    more = len(values) - len(names)
+    out = ", ".join(f"<code>{e(n, 60)}</code>" for n in names)
+    return out + (f" and {more} more" if more > 0 and names else "")
+
+
+def request_line(shape: dict[str, Any], here: bool = True) -> str:
+    """One kind of request in plain words: the method, how often, and what the call puts
+    into the body, the headers and the address (analyzers/py_requests). Names come from the
+    scanned code: escaped. `here`: the line sits under the site it goes to."""
+    method = str(shape.get("method") or "")
+    n = shape.get("count") if isinstance(shape.get("count"), int) else 1
+    where = f"from {n} places in the code" if n != 1 else "from one place in the code"
+    to = " here" if here else ""
+    if method in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
+        out = [f"Sends <b>{method}</b> requests{to} {where}."]
+    else:
+        out = [f"Sends requests{to} {where}. The code picks the method (GET, POST and so on) "
+               "while it runs."]  # fmt: skip
+    for key, named, unnamed in (
+        ("body", "The body carries {}.", "It has a body that is put together elsewhere in the code."),
+        ("headers", "It sets the header {}.", "It sets headers that are put together elsewhere."),
+        ("query", "After the <code>?</code> in the address it adds {}.",
+         "It adds fields after the <code>?</code> in the address."),
+    ):  # fmt: skip
+        v = shape.get(key)
+        if isinstance(v, list):
+            text = named.format(_names(v)) if v else unnamed
+            if key == "headers" and len(v) > 1:
+                text = text.replace("the header ", "the headers ")
+            out.append(text)
+    addr = shape.get("address")
+    if isinstance(addr, list) and addr:
+        out.append(f"Into the address itself it puts {_names(addr)}.")
+    if shape.get("auth"):
+        out.append("It passes a login for the site (<code>auth</code>).")
+    if shape.get("more"):
+        out.append("The code that calls it can add more.")
+    at = [a for a in shape.get("at") or [] if isinstance(a, str)]
+    if at:
+        rest = n - len(at)
+        out.append(f'<span class="muted">{e(", ".join(at), 300)}'
+                   f'{f" and {rest} more" if rest > 0 else ""}</span>')  # fmt: skip
+    return " ".join(out)
+
+
+def _requests_spans(shapes: Any) -> str:
+    shapes = [x for x in shapes or [] if isinstance(x, dict)]
+    out = "".join(f'<span class="u">{request_line(x)}</span>' for x in shapes[:REQUESTS_SHOWN])
+    if len(shapes) > REQUESTS_SHOWN:
+        out += (f'<span class="u">And {len(shapes) - REQUESTS_SHOWN} more kinds of request to '
+                "this site.</span>")  # fmt: skip
+    return out
+
+
+def requests_note(report: dict[str, Any]) -> str:
+    """One sentence for the box, once the scan read the requests (integrations, 0.15)."""
+    if not isinstance(report.get("requests"), dict):
+        return ""
+    return (" Open a site to see how the code sends requests to it. GET or POST alone doesn't "
+            "tell you what is sent: a GET can carry data too, in the address or in a header.")  # fmt: skip
+
+
+def site_requests(report: dict[str, Any]) -> dict[str, Any]:
+    r = report.get("requests")
+    sites = r.get("sites") if isinstance(r, dict) else None
+    return sites if isinstance(sites, dict) else {}
+
+
+def requests_elsewhere_html(report: dict[str, Any]) -> str:
+    """Requests whose address isn't in the code: counted apart, under the sites."""
+    r = report.get("requests")
+    shapes = [x for x in (r.get("elsewhere") if isinstance(r, dict) else None) or []
+              if isinstance(x, dict)]  # fmt: skip
+    if not shapes:
+        return ""
+    items = [f'<li><span class="u">{request_line(x, here=False)}</span></li>' for x in shapes]
+    return (
+        f'<div class="zone"><h3>{icon("plug")} Requests to addresses that aren\'t in the code</h3>'
+        '<div class="zs">The code puts these addresses together while it runs, for example '
+        "from a device or a server you entered during setup. So Barkley can't tie them to a "
+        f"site.</div>{_zone_list(items)}</div>"
+    )
 
 
 def _fold(item_id: str, summary: str, body: str, open_: bool) -> str:
@@ -2375,6 +2463,7 @@ def _host_li(
     open_: bool = False,
     dev_words: bool = True,
     near: frozenset = frozenset(),
+    reqs: Any = None,
 ) -> str:
     """One line per site: the name and whether Barkley flagged it. Inside: scheme, port (the
     URL's own, else the scheme's default) and encryption, who runs it, the addresses, where
@@ -2412,7 +2501,7 @@ def _host_li(
     dev = (f'<span class="u">{src_tag("dev")} {e(" ".join(said))}</span>'
            if said and dev_words and not h.flagged and h.name not in near else "")  # fmt: skip
     return _fold(h.edge_id, f"<code>{e(h.name, 120)}</code>{flag}", who + back + dev + how
-                 + urls + where + deep, open_)  # fmt: skip
+                 + _requests_spans(reqs) + urls + where + deep, open_)  # fmt: skip
 
 
 def _zone_list(items: list[str]) -> str:
@@ -2434,8 +2523,11 @@ def zones_html(
     wouldn't show). `open_id`: the item whose sheet is open (?open=), so its fold is too."""
     hs = hosts(report)
     pts = ports(report)
+    reqs = site_requests(report)
+    elsewhere = requests_elsewhere_html(report)
     if not hs and not pts:
-        return '<p class="muted">Its code names no sites, IP addresses or ports.</p>'
+        none = '<p class="muted">Its code names no sites, IP addresses or ports.</p>'
+        return none + (f'<div class="zones">{elsewhere}</div>' if elsewhere else "")
 
     def inline(item_id: str) -> str:
         return deep(item_id, part="inline") if deep and item_id else ""
@@ -2446,7 +2538,7 @@ def zones_html(
         if not zh:
             continue
         lis = [_host_li(h, inline(h.edge_id), bool(open_id) and h.edge_id == open_id,
-                        dev_words, near) for h in zh]  # fmt: skip
+                        dev_words, near, reqs.get(h.name)) for h in zh]  # fmt: skip
         out.append(f'<div class="zone {key}"><h3>{icon(ic)} {title}</h3><div class="zs">{sub}'
                    f"</div>{_zone_list(lis)}</div>")  # fmt: skip
     if pts:
@@ -2471,6 +2563,7 @@ def zones_html(
             "setup or from another server while the app runs. So Barkley can't tie them to any "
             f"site listed here.</div>{_zone_list(items)}</div>"
         )
+    out.append(elsewhere)
     out.append("</div>")
     if deep:  # every sheet outside the folds, once
         out.extend(deep(i, part="sheet") for i in dict.fromkeys(
@@ -2623,37 +2716,115 @@ def libraries_html(report: dict[str, Any]) -> str:
     (analyzers/libraries.py). Names, versions and dates come from jsDelivr and npm and the
     file names from the app: all escaped."""
     libs = [x for x in report.get("libraries") or [] if isinstance(x, dict)]
-    if not libs:
+    lk = report.get("library_lookups") if isinstance(report.get("library_lookups"), dict) else {}
+    read = [x for x in lk.get("read") or [] if isinstance(x, dict)]
+    if not libs and not read:
         return ""
-    items = []
-    for lib in libs:
+
+    def line(lib: dict[str, Any], was_read: bool) -> str:
         # (0.15) one line per package; the dates, downloads and files fold open, and a long
         # list shows 5 then "N more" (his decision 2026-11-20: long lists aren't dumped)
         files = [f for f in lib.get("files") or [] if isinstance(f, str)]
         facts = []
+        if was_read:
+            why = _LIB_WHY.get(str(lib.get("why")), "it didn't pass every check")
+            facts.append(f"Barkley read this as code, because {why}.")
         if lib.get("published"):
             facts.append(f"Published {e(lib['published'], 20)}.")
         weekly = lib.get("weekly_downloads")
         if isinstance(weekly, int):
             facts.append(f"{weekly:,} downloads last week.")
+        known = lib.get("advisories")
+        if isinstance(known, int) and not isinstance(known, bool):
+            facts.append("No known security problems are listed for this version." if known == 0
+                         else f"{known} known security problem{'s are' if known != 1 else ' is'} "
+                         "listed for this version.")  # fmt: skip
         n = len(files)
         shown = "".join(f'<span class="u"><code>{e(f, 300)}</code></span>' for f in files[:50])
         if n > 50:
             shown += f'<span class="u">and {n - 50} more files</span>'
-        items.append(
+        tag = "read as code" if was_read else "not read"
+        return (
             f'<li><details class="site"><summary><b>{e(lib.get("name"), 120)} '
             f'{e(lib.get("version"), 80)}</b> <span class="muted">· {n} file{"s" * (n != 1)}'
-            f'</span></summary><div class="in">'
+            f' · {tag}</span></summary><div class="in">'
             + (f'<span class="u">{" ".join(facts)}</span>' if facts else "")
             + f"{shown}</div></details></li>"
         )
+
+    items = [line(x, False) for x in libs] + [line(x, True) for x in read]
+    counts = []
+    for key, one, many in (
+        ("no_match", "One large JavaScript file matched no published file",
+         "{} large JavaScript files matched no published file"),
+        ("not_npm", "One matched a file that isn't from npm", "{} matched files that aren't from npm"),
+        ("unanswered", "One lookup got no answer", "{} lookups got no answer"),
+    ):  # fmt: skip
+        n = lk.get(key)
+        if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+            counts.append(one if n == 1 else many.format(n))
+    rest = (f'<p class="sub mt2">{". ".join(counts)}. Barkley read all of those as code.</p>'
+            if counts else "")  # fmt: skip
     return (
         '<section class="box"><h2>Published libraries it ships</h2><p class="sub">These '
-        "files are exact copies of files these npm packages publish, so Barkley didn't read "
-        "them as code. Barkley still checks them for known security problems, like any "
-        "dependency. Only a well-known package counts. It must be at least a month old, have "
-        "at least 10,000 downloads a week and have no malware warning. If a file differs by "
-        "even one byte, Barkley reads all of it.</p>"
+        "files are exact copies of files that npm packages publish. Barkley doesn't read a "
+        "copy as code when the package is well known: at least a month old, at least 10,000 "
+        "downloads a week and no malware warning. It still checks that package for known "
+        "security problems, like any dependency. Every other file is read as code, and so is "
+        "a file that differs by even one byte.</p>"
+        f'<div class="libs">{_zone_list(items)}</div>{rest}</section>'
+    )
+
+
+_LIB_WHY = {
+    "new": "this version was published less than a month ago",
+    "few_downloads": "the package has fewer than 10,000 downloads a week",
+    "no_facts": "npm didn't say when this version was published or how often it's downloaded",
+    "malware": "there is a malware warning for this package version",
+    "unchecked": "Barkley couldn't check it for malware warnings",
+}
+
+
+def environment_html(report: dict[str, Any]) -> str:
+    """(0.15) The environment variables the code reads and sets, by name
+    (analyzers/py_env). Names are plain names from the scanned code: still escaped."""
+    env = report.get("environment")
+    if not isinstance(env, dict):
+        return ""
+
+    def at(d: dict[str, Any]) -> str:
+        places = [a for a in d.get("at") or [] if isinstance(a, str)]
+        n = d.get("count") if isinstance(d.get("count"), int) else len(places)
+        rest = n - len(places)
+        return (f' <span class="muted">{e(", ".join(places), 300)}'
+                f'{f" and {rest} more" if rest > 0 else ""}</span>') if places else ""  # fmt: skip
+
+    li = []
+    for d in [x for x in env.get("reads") or [] if isinstance(x, dict)]:
+        own = " The app sets this one itself." if d.get("own") else ""
+        li.append(f"Reads <code>{e(d.get('name'), 80)}</code>.{own}{at(d)}")
+    for d in [x for x in env.get("writes") or [] if isinstance(x, dict)]:
+        li.append(f"Sets or removes <code>{e(d.get('name'), 80)}</code>.{at(d)}")
+    n = env.get("unnamed_reads")
+    if isinstance(n, int) and n > 0:
+        li.append(f"Reads {'one' if n == 1 else n} more whose name{'s are' if n != 1 else ' is'} "
+                  "put together while the app runs.")  # fmt: skip
+    n = env.get("unnamed_writes")
+    if isinstance(n, int) and n > 0:
+        li.append(f"Sets {'one' if n == 1 else n} more whose name{'s are' if n != 1 else ' is'} "
+                  "put together while the app runs.")  # fmt: skip
+    whole = env.get("whole") if isinstance(env.get("whole"), dict) else {}
+    if isinstance(whole.get("count"), int) and whole["count"] > 0:
+        li.append("Uses all of them at once, for example to copy them or hand them to another "
+                  f"program.{at(whole)}")  # fmt: skip
+    if not li:
+        return ""
+    items = [f'<li><span class="u">{x}</span></li>' for x in li]
+    return (
+        '<section class="box"><h2>Environment variables it uses</h2><p class="sub">These are '
+        "settings of the system Home Assistant runs on. Most are harmless, like the time zone. "
+        "On Home Assistant OS one of them holds the Supervisor's key, and Barkley lists a read "
+        "of that one under What it can do.</p>"
         f'<div class="libs">{_zone_list(items)}</div></section>'
     )
 
@@ -2874,7 +3045,7 @@ def _can_phrase(title: str) -> str:
 
 # The panel's words under each kind's heading (plain-words pass, 2026-11-20). They live
 # here, not in kinds.py, so a wording change doesn't change the scan-logic key (kinds.py
-# isn't panel-only); kinds.BLURBS is the old copy, unused, removed in 0.15.
+# isn't panel-only).
 KIND_BLURBS = {
     kinds.THREAT: "Signs of malicious behavior. For example, sending your data or logins out "
     "of your home, hidden or disguised code, or known malware.",
@@ -3366,11 +3537,12 @@ def render_app(
         '<p class="sub">This lists every site, IP address '
         "and port in the shipped code, grouped by where it is. A site is listed because the code "
         "mentions it. That doesn't mean Barkley saw it connect. Web addresses are cut off at the "
-        f"<code>?</code>, because what comes after it can hold keys.</p>"
+        f"<code>?</code>, because what comes after it can hold keys.{requests_note(report)}</p>"
         f"{zones_html(report, zdeep if deep else None, open_item, rd.get('threat_level') != 'found')}"
         "</section>"
     )
     parts.append(tag(libraries_html(report)))
+    parts.append(tag(environment_html(report)))
     parts.append(tag(hygiene_html(report)))
     can = explain.can_do(report)
     inside = "Everything it uses inside Home Assistant " + src_tag("scan")

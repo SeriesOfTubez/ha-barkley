@@ -64,11 +64,17 @@ class ScanResult:
     source: dict[str, Any] | None = None  # (0.11.0) sources.capture(); kept beside the scan
     # (0.14.1) unchanged published libraries not read as code (analyzers/libraries.py)
     libraries: list[Any] = field(default_factory=list)
+    # (0.15) what every library lookup came to, the ones read as code included
+    library_lookups: dict[str, Any] | None = None
     # (0.14.1) the scan-logic key (logic.key()) this scan was made with
     logic: str | None = None
     # (0.14.1) what the scan cache answered: files of the main pass, from the cache, and
     # the seconds those answers took when they were made (scancache.Stats)
     cache: dict[str, Any] | None = None
+    # (0.15) how the Python sends web requests (analyzers/py_requests.summary); never scored
+    requests: dict[str, Any] | None = None
+    # (0.15) environment variables read and set, by name (analyzers/py_env.summary)
+    environment: dict[str, Any] | None = None
 
 
 def sanitize_untrusted(text: str | None, limit: int = _UNTRUSTED_MAX) -> str:
@@ -201,7 +207,14 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
         # (0.14.1) files identical to a published npm file, not read as code; values come
         # from jsDelivr and npm, checked against npm's name and version rules
         "libraries": libraries.to_json(scan.libraries),
+        # (0.15) every lookup's outcome; `read`: packages named but read as code, with why
+        "library_lookups": libraries.lookups_json(scan.library_lookups),
         "cache": scan.cache,
+        # (0.15) the method of each web request and the names of what it carries; names
+        # are text from the scanned code (untrusted)
+        "requests": scan.requests,
+        # (0.15) environment variables read and set; names are plain names from the code
+        "environment": scan.environment,
         "ai_brief": ai_brief(scan, findings),
         # Code from the scanned repo (untrusted), for "Explain in context". Not in ai_brief.
         "context": scan.context,

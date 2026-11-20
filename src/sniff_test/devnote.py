@@ -1,5 +1,6 @@
-"""(preview) The developer's note: the docstring of the Python function or class around an
-item, read from the code snippet the scan already stored for the AI (report["context"]).
+"""The developer's note: the docstring of the Python function or class around an item.
+A 0.15 scan stores it with the item (`context.items[id].doc`, report/context.docstring);
+for an older scan it is read from the code snippet stored for the AI (report["context"]).
 
 Panel-only (logic.PANEL_ONLY): nothing here changes what a scan finds or stores. The text
 is the developer's own words from the scanned repository, so it is untrusted: the caller
@@ -63,9 +64,45 @@ def _opens(stripped: str) -> str | None:
     return None
 
 
+def _from_doc(doc: dict[str, Any]) -> Note | None:
+    """The note from a stored docstring: {"file", "start", "code", "cut"}."""
+    file, start, code = doc.get("file"), doc.get("start"), doc.get("code")
+    if not isinstance(file, str) or not isinstance(start, int) or not isinstance(code, list):
+        return None
+    code = [c if isinstance(c, str) else "" for c in code]
+    if not code:
+        return None
+    first = code[0].strip()
+    opener = next(
+        (p + q for p in _PREFIXES for q in (*_QUOTES, '"', "'") if first.startswith(p + q)),
+        None,
+    )
+    if opener is None:
+        return None
+    quote = opener.lstrip("rRuU")
+    lines = [first[len(opener) :], *[c.strip() for c in code[1:]]]
+    cut = bool(doc.get("cut"))
+    if not cut and lines[-1].endswith(quote):
+        lines[-1] = lines[-1][: -len(quote)]
+    if len(lines) > MAX_LINES:
+        lines = [*lines[:MAX_LINES], "…"]
+    elif cut:
+        lines.append("…")
+    text = " ".join(" ".join(lines).split())
+    if not text or text == "…":
+        return None
+    if len(text) > MAX_CHARS:
+        text = text[: MAX_CHARS - 1].rstrip() + "…"
+    return Note(file, start, start + len(code) - 1, text)
+
+
 def note(report: dict[str, Any], item_id: str) -> Note | None:
-    """The docstring of the innermost `def`/`class` above the item's line within the
-    stored segment, or None when there is none or it isn't fully in the segment."""
+    """The docstring of the innermost `def`/`class` around the item: the one the scan
+    stored with the item, else (a scan from before 0.15) the one above the item's line
+    within the stored segment, or None when there is none or it isn't fully in the segment."""
+    item = ((report.get("context") or {}).get("items") or {}).get(item_id)
+    if isinstance(item, dict) and isinstance(item.get("doc"), dict):
+        return _from_doc(item["doc"])
     found = _segment(report, item_id)
     if found is None:
         return None

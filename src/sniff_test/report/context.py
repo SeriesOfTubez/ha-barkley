@@ -47,8 +47,9 @@ from sniff_test.report import compare
 
 # 2: long lines reformatted (0.7.2); 3: dependency items (0.7.4); 4: imports, constants,
 # referenced functions and classes, `patch` on a monkeypatch item, `source` (0.11.0);
-# 5: `patch.compare` and `patch.inside`, `readme` (0.12.0)
-CONTEXT_VERSION = 5
+# 5: `patch.compare` and `patch.inside`, `readme` (0.12.0); 6: `readme_topics`, an item's
+# `doc` and `module_docs` (0.15)
+CONTEXT_VERSION = 6
 MAX_LINES = 150  # per snippet, without the header lines
 MAX_CHARS = 16_000  # per snippet
 HEADER_LINES = 40  # more lines per snippet for imports and module-level constants
@@ -186,6 +187,8 @@ def build(
                                 "line": first["start"], "snippet": sid}  # fmt: skip
         else:
             out_items[it.id] = {"kind": it.kind, "file": it.file, "line": it.line, "snippet": sid}
+            if (doc := docstring(tree, it.file, it.line)) is not None:
+                out_items[it.id]["doc"] = doc  # (0.15) the developer's own words, in full
             if it.kind == "finding" and it.id in patches:
                 fact, repl = _patch(tree, it.file, it.line)
                 if fact:
@@ -202,6 +205,12 @@ def build(
     doc = readme(source_root)
     if doc:
         out["readme"] = doc
+    topics = readme_topics(source_root)
+    if topics:
+        out["readme_topics"] = topics
+    mods = module_docs(tree, [str(i["file"]) for i in out_items.values() if i.get("file")])
+    if mods:
+        out["module_docs"] = mods
     return out
 
 
@@ -245,6 +254,168 @@ def readme(source_root: Path | None) -> dict[str, Any] | None:
     if not code:
         return None
     return {"file": name, "start": 1, "code": code, "total": len(lines)}
+
+
+# --- what the README says about logins, accounts and where data goes (0.15) -------------------
+
+# His decision 2026-11-20: the README passages the AI may be shown are picked by topic, with
+# their line numbers, not just the file's start (a real integration's README explains its
+# per-PC account and token at lines 124-126 of 452). Links are never followed. The text is
+# the author's own: untrusted, and never evidence of what the code does.
+TOPICS: dict[str, tuple[str, ...]] = {
+    "login": ("token", "password", "passwd", "credential", "secret", "api key", "apikey",
+              "oauth", "login", "log in", "sign in", "signs in", "authenticat", "2fa"),
+    "accounts": ("user account", "new user", "administrator", "admin", "permission",
+                 "privilege", "owner", "non-admin"),
+    "network": ("cloud", "upload", "sends", "sent to", "webhook", "expose", "proxy",
+                "tunnel", "third party", "third-party"),
+    "privacy": ("telemetry", "analytics", "tracking", "privacy", "anonymous", "usage data",
+                "statistics", "opt out", "opt-out"),
+    "system": ("shell", "command line", "executes", "runs a script", "ssh", "terminal"),
+}  # fmt: skip
+_CORE_TOPICS = frozenset({"login", "accounts", "privacy"})  # kept first when there are many
+TOPIC_CONTEXT = 1  # lines kept each side of a line that names a topic
+TOPIC_PASSAGES = 12  # per README
+TOPIC_PASSAGE_LINES = 12
+TOPIC_CHARS = 8_000  # all passages together
+_README_MAX_LINES = 5_000
+
+
+def _readme_file(source_root: Path | None) -> tuple[str, list[str]] | None:
+    if source_root is None:
+        return None
+    try:
+        names = {p.name.lower(): p.name for p in source_root.iterdir() if not p.is_symlink()}
+    except OSError:
+        return None
+    name = next((names[n] for n in _README_NAMES if n in names), None)
+    if name is None or not re.fullmatch(r"[A-Za-z0-9_.\-]{1,40}", name):
+        return None
+    text = _read(source_root, name)
+    if not text or not text.strip():
+        return None
+    return name, text.splitlines()
+
+
+def _line_topics(line: str) -> list[str]:
+    low = line[:2000].lower()
+    return [t for t, words in TOPICS.items() if any(w in low for w in words)]
+
+
+def readme_topics(source_root: Path | None) -> dict[str, Any] | None:
+    """Passages of the README that name a topic in TOPICS, each with its first line number
+    and the topics it names: {"file", "total", "passages": [{"start", "code", "topics"}]}.
+    When there are too many, the passages naming the most topics are kept (logins, accounts
+    and privacy count double); they are listed in file order. Plain substring search on
+    each line (no pattern), so it stays linear."""
+    found = _readme_file(source_root)
+    if found is None:
+        return None
+    name, lines = found
+    hits: dict[int, list[str]] = {}
+    for i, raw in enumerate(lines[:_README_MAX_LINES]):
+        s = raw.strip()
+        if not s or s.startswith(("![", "[![", "<img", "<!--")):
+            continue  # badges, images and comments name topics without saying anything
+        got = _line_topics(s)
+        if got:
+            hits[i] = got
+    if not hits:
+        return None
+    # runs of hit lines with their context, merged when they touch
+    runs: list[list[int]] = []
+    for i in sorted(hits):
+        a, b = max(0, i - TOPIC_CONTEXT), min(len(lines) - 1, i + TOPIC_CONTEXT)
+        if runs and a <= runs[-1][1] + 1 and b - runs[-1][0] < TOPIC_PASSAGE_LINES:
+            runs[-1][1] = max(runs[-1][1], b)
+        else:
+            runs.append([a, b])
+    scored = []
+    for a, b in runs:
+        topics = sorted({t for i in range(a, b + 1) for t in hits.get(i, [])})
+        weight = sum(2 if t in _CORE_TOPICS else 1 for t in topics)
+        scored.append((-weight, a, b, topics))
+    kept, chars = [], 0
+    for _n, a, b, topics in sorted(scored):
+        if len(kept) >= TOPIC_PASSAGES:
+            break
+        code = []
+        for raw in lines[a : b + 1]:
+            line = _clean(raw).rstrip()
+            code.append(line[:README_LINE] + " …" if len(line) > README_LINE else line)
+        size = sum(len(c) + 1 for c in code)
+        if chars + size > TOPIC_CHARS:
+            continue
+        chars += size
+        kept.append({"start": a + 1, "code": code, "topics": topics})
+    if not kept:
+        return None
+    return {"file": name, "total": len(lines), "passages": sorted(kept, key=lambda p: p["start"])}
+
+
+# --- the developer's own notes in the code (0.15) ---------------------------------------------
+
+DOC_LINES = 30  # of one docstring
+DOC_CHARS = 2_000
+MODULE_DOCS = 10  # files per report
+MODULE_DOC_LINES = 15
+
+
+def _doc_of(py: _Py, node: ast.AST, max_lines: int) -> dict[str, Any] | None:
+    body = getattr(node, "body", None)
+    if not body or not isinstance(body[0], ast.Expr):
+        return None
+    c = body[0].value
+    if not isinstance(c, ast.Constant) or not isinstance(c.value, str) or not c.value.strip():
+        return None
+    a, b = c.lineno, c.end_lineno or c.lineno
+    code, chars = [], 0
+    for raw in py.lines[a - 1 : min(b, a - 1 + max_lines)]:
+        line = _clean(raw).rstrip()[:README_LINE]
+        if chars + len(line) > DOC_CHARS:
+            break
+        chars += len(line) + 1
+        code.append(line)
+    if not code:
+        return None
+    return {"file": py.rel, "start": a, "code": code, "cut": a - 1 + len(code) < b}
+
+
+def docstring(tree: _Tree, rel: str, line: int) -> dict[str, Any] | None:
+    """The docstring of the innermost function or class around `line` that has one:
+    {"file", "start", "code", "cut", "of"}. The developer's own words, kept with their
+    line numbers: untrusted, shown as theirs, never evidence of what the code does."""
+    if not rel.endswith(".py"):
+        return None
+    py = tree.py(rel)
+    if py is None:
+        return None
+    around = [
+        n
+        for n in ast.walk(py.tree)
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+        and n.lineno <= line <= (n.end_lineno or n.lineno)
+    ]
+    for node in sorted(around, key=lambda n: -n.lineno):  # innermost first
+        doc = _doc_of(py, node, DOC_LINES)
+        if doc is not None:
+            doc["of"] = _clean(node.name)[:80]
+            return doc
+    return None
+
+
+def module_docs(tree: _Tree, rels: list[str]) -> dict[str, dict[str, Any]]:
+    """The module docstring of each file that holds an item (the first MODULE_DOCS)."""
+    out: dict[str, dict[str, Any]] = {}
+    for rel in dict.fromkeys(rels):
+        if len(out) >= MODULE_DOCS:
+            break
+        if not rel.endswith(".py") or (py := tree.py(rel)) is None:
+            continue
+        doc = _doc_of(py, py.tree, MODULE_DOC_LINES)
+        if doc is not None:
+            out[rel] = doc
+    return out
 
 
 # --- what a monkeypatch replaces (0.11.0) -----------------------------------------------------

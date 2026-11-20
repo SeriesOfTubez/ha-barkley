@@ -155,7 +155,7 @@ def test_ha_source_never_turns_a_failure_into_a_cached_answer(tmp_path, monkeypa
 def test_the_replacement_is_compared_with_the_original_line_by_line(tmp_path):
     calls = []
     ctx = _built(tmp_path, _fetch(calls=calls))
-    assert ctx["version"] == 5
+    assert ctx["version"] == 6
     patch = ctx["items"][PATCH["id"]]["patch"]
     cmp = patch["compare"]
     assert calls == [HA_PATH]
