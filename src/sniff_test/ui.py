@@ -101,6 +101,16 @@ _ICONS = {
     "6l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2"
     '.122 2.122 0 0 0 1.597-1.16z"/>',
     "back": '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+    # (0.15) the head's facts row: GitHub's mark (Lucide "github"), downloads, version
+    "github": '<path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5'
+    ".28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 "
+    "0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23"
+    '-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/>',
+    "download": '<path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
+    '<path d="m7 10 5 5 5-5"/>',
+    "tag": '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 '
+    '1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/>'
+    '<circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
 }
 
 
@@ -310,7 +320,10 @@ a.button:hover { filter:brightness(1.08); }
 .finding dt { color:var(--muted); } .finding dd { margin:0; min-width:0; }
 .finding.quiet { color:var(--muted); padding:var(--s2) 0 0; }
 .finding.quiet details { margin-top:0; }
-.facts { color:var(--muted); font-size:var(--t-xs); margin-top:var(--s1); }
+.facts { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s1) var(--s4);
+  font-size:var(--t-md); margin:var(--s2) 0 var(--s1); }
+.facts > * { display:inline-flex; align-items:center; gap:var(--s1); min-width:0;
+  overflow-wrap:anywhere; }
 .kindh { margin:var(--s4) 0 0; }
 .kindh:first-of-type { margin-top:var(--s2); }
 .kindh + .sub { margin-bottom:0; }
@@ -2603,7 +2616,7 @@ def cache_text(report: dict[str, Any]) -> str:
         else ""
     )
     return (
-        f'<p class="facts">{icon("check", 12, "ok")} Barkley reused {hits:,} of {files:,} '
+        f'<p class="muted small">{icon("check", 12, "ok")} Barkley reused {hits:,} of {files:,} '
         f"files it had already read{when}.</p>"
     )
 
@@ -2683,24 +2696,54 @@ def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow
 ReviewFn = Callable[[dict[str, Any], list[dict[str, Any]]], str]
 
 
+_REPO_LINK = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_.-]{1,100}")
+
+# (0.15, his report: an app with releases read as having none) why GitHub has no download
+# count, by how the Marketplace installs it (fetch/hacs.py: only an attached file is counted)
+_NO_COUNT = {
+    "tag_source": "GitHub doesn't count downloads for this app. GitHub only counts files "
+    "attached to a release, and the Marketplace installs this release's source code instead.",
+    "default_branch": "GitHub doesn't count downloads for this app. It has no releases, so "
+    "the Marketplace installs its default branch.",
+}
+
+
 def facts_line(report: dict[str, Any]) -> str:
-    """Stars and downloads: facts, never scored (popularity isn't safety, and stars can be
-    bought). Downloads count only a release file; an app installed from its source has
-    none, so they're "not counted", never 0. Scans from before 0.14.0 have neither."""
-    pop = report.get("popularity")
-    if not isinstance(pop, dict):
-        return ""
+    """(0.15, his ask) The facts under the title at body size: what kind of app, the
+    version, the repository (a link to GitHub, with its mark), stars and downloads. Stars
+    and downloads are facts, never scored (popularity isn't safety, and stars can be
+    bought). Downloads count only a file attached to a release, so without one they're
+    "not counted", never 0, with a line saying why. Scans from before 0.14.0 have no stars
+    or downloads."""
+    t = report.get("target") or {}
     parts = []
-    stars = pop.get("stars")
-    if isinstance(stars, int):
-        parts.append(f"{icon('star', 12)} {stars:,} star{'s' * (stars != 1)} on GitHub")
-    dl = pop.get("downloads")
-    if isinstance(dl, int):
-        parts.append(f"{dl:,} download{'s' * (dl != 1)} of this release's file")
-    else:
-        parts.append("Downloads aren't counted, because it's installed from source and has no "
-                     "release file.")  # fmt: skip
-    return f'<p class="facts">{" · ".join(parts)}</p>'
+    kind = KIND.get(str(t.get("kind")), str(t.get("kind") or ""))
+    if kind:
+        parts.append(f"<span>{e(kind)}</span>")
+    if t.get("ref"):
+        parts.append(f"<span>{icon('tag')} {e(t['ref'], 60)}</span>")
+    repo = str(t.get("repo") or "")
+    if _REPO_LINK.fullmatch(repo):
+        parts.append(f'<a href="https://github.com/{e(repo)}" target="_blank" '
+                     f'rel="noopener noreferrer">{icon("github")} {e(repo)}</a>')  # fmt: skip
+    elif t.get("input"):
+        parts.append(f"<span>{e(t['input'], 120)}</span>")
+    why = ""
+    pop = report.get("popularity")
+    if isinstance(pop, dict):
+        stars = pop.get("stars")
+        if isinstance(stars, int):
+            parts.append(f"<span>{icon('star')} {stars:,} star{'s' * (stars != 1)}</span>")
+        dl = pop.get("downloads")
+        if isinstance(dl, int):
+            parts.append(f"<span>{icon('download')} {dl:,} download{'s' * (dl != 1)}</span>")
+        else:
+            parts.append(f"<span>{icon('download')} downloads not counted</span>")
+            why = _NO_COUNT.get(str(t.get("install_source")), "")
+    if not parts:
+        return ""
+    return (f'<div class="facts">{"".join(parts)}</div>'
+            + (f'<p class="muted small">{e(why)}</p>' if why else ""))  # fmt: skip
 
 
 def _it_can(title: str) -> str:
@@ -3130,7 +3173,6 @@ def render_app(
     title = name or (t.get("repo") or t.get("input") or "?").rsplit("/", 1)[-1]
     rd = report.get("readings") or readings.compute(report).to_dict()
     b = readings_band(rd)
-    kind = KIND.get(str(t.get("kind")), str(t.get("kind")))
     ha = (
         f", with dependencies worked out for Home Assistant {e(report['ha_version'])}"
         if report.get("ha_version")
@@ -3143,13 +3185,12 @@ def render_app(
         f'<p class="crumb"><a href="{base}/">{icon("back")} All apps</a></p>'
         f'<section class="box dhead rdhead">'
         f'<div style="min-width:0"><h1>{e(title, 80)}</h1>'
-        f'<div><span class="verdict" style="color:var(--{b})">'
-        f"{e(vline)}</span> "
-        f'<span class="muted">· {e(kind)}{" · " + e(t["ref"], 60) if t.get("ref") else ""} · {e(t.get("repo") or t.get("input"), 120)}</span></div>'
+        f'<div class="verdict" style="color:var(--{b})">{e(vline)}</div>'
+        f"{facts_line(report)}"
         f'<div class="muted small">Checked with Barkley {e(report.get("tool", {}).get("version"))}. It read '
         f"{e(_SOURCE.get(str(t.get('install_source')), t.get('install_source')))}"
         f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}.</div>"
-        f"{facts_line(report)}{cache_text(report)}{again}"
+        f"{cache_text(report)}{again}"
         f"{readings_dials(rd)}</div></section>"
     )
     parts = [f'<div class="stack">{head}{update}</div>' if update else head]

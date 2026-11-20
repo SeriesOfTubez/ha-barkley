@@ -309,12 +309,25 @@ def test_a_plus_star_with_seven_days_grace():
 
 def test_stars_and_downloads_are_facts_never_scores():
     r = rep([])
-    assert ui.facts_line(r) == ""  # scans from before 0.14.0
+    r["target"]["install_source"] = "tag_source"
+    assert "star" not in ui.facts_line(r)  # scans from before 0.14.0
     r["popularity"] = {"stars": 1234, "downloads": None}
     line = ui.facts_line(r)
-    assert "1,234 stars" in line and "Downloads aren't counted" in line and "scored" not in line
+    assert "1,234 stars" in line and "downloads not counted" in line and "scored" not in line
+    # (0.15, his report) an app with releases but no attached file: not "no releases"
+    assert "the Marketplace installs this release&#x27;s source code instead" in line
+    r["target"]["install_source"] = "default_branch"
+    assert "It has no releases" in ui.facts_line(r)
     r["popularity"] = {"stars": 1, "downloads": 0}
-    assert "0 downloads" in ui.facts_line(r)
+    assert "0 downloads" in ui.facts_line(r) and "doesn&#x27;t count" not in ui.facts_line(r)
+
+
+def test_the_repository_is_a_link_to_github():
+    r = rep([])
+    line = ui.facts_line(r)
+    assert f'href="https://github.com/{REPO}"' in line and 'rel="noopener noreferrer"' in line
+    r["target"]["repo"] = 'evil/../x"><script>'
+    assert "href=" not in ui.facts_line(r) and "<script>" not in ui.facts_line(r)
 
 
 @pytest.mark.parametrize(("title", "phrase"), [
