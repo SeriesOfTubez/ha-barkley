@@ -150,7 +150,8 @@ def test_the_preview_switches_the_page_from_the_score_to_the_readings(tmp_path):
     panel.save_settings({"preview": "1"})
     on = ui.render_app("", sid, panel.shown_report(sid), []).decode()
     assert 'aria-label="Exposure 1.25 of 10"' in on and "<h2>Exposure <span" in on
-    assert "Nothing found that sends your data off the box" in on and "What we found" not in on
+    assert "Barkley found nothing that sends your data off your Home Assistant machine" in on
+    assert "What Barkley found" not in on
     assert 'aria-label="Score 50 of 100"' not in on and "Very Sus" not in on
     assert "Good Boy · no signs of malicious behavior" in on
     assert "banner threat" not in on

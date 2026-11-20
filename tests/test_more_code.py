@@ -348,7 +348,7 @@ def test_one_click_runs_the_second_round_with_what_the_ai_picked(tmp_path):
     assert (
         "What it replaces" in page and "Home Assistant&#x27;s built-in camera integration" in page
     )
-    assert "Barkley adds up to 150 lines" in page and not calls
+    assert "Barkley adds up to 150 more lines" in page and not calls
     assert _click(base, sid)[0] == 303
     _wait(httpd, sid)
     assert len(calls) == 2
@@ -365,7 +365,9 @@ def test_one_click_runs_the_second_round_with_what_the_ai_picked(tmp_path):
     assert "thumbs.py:14|" not in first[0] and "thumbs.py:10|     def url(self, day):" in first[0]
     _, _, page = get(f"{base}/scan/{sid}")
     assert "asked to see more (<code>thumbs.py: _name</code>), and read again" in page
-    assert "The statements below are from both readings; the questions are from the second" in page
+    assert (
+        "The statements below come from both readings. The questions come from the second" in page
+    )
     # cites an added line, and the name is on it: shown
     assert "The link&#x27;s name is a hash made by <code>hashlib.sha256</code>." in page
     assert "is harmless" not in page and "keeps files under" not in page

@@ -223,5 +223,5 @@ def test_the_panel_says_why_in_plain_english():
          "problems": [{"file": "d<x>.whl", "source": "files.pythonhosted.org", "tries": 3,
                        "seconds": 40, "kind": "timeout", "error": "timed out"}]}  # fmt: skip
     html = ui._missing_html(a)
-    assert "couldn't fetch 1 file" in html and "Tried 3 times over 40 seconds" in html
+    assert "It couldn't fetch 1 file" in html and "Tried 3 times over 40 seconds" in html
     assert "d&lt;x&gt;.whl" in html and "<b>" not in html.split("</b>", 1)[1]

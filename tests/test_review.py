@@ -345,7 +345,7 @@ def test_settings_page_saves_and_changes_scores(panel):  # noqa: F811
         assert text in ui.e(text) and ui.e(text) in page, text
     assert "write-only" not in page.lower()
     _, _, app = get(f"{base}/scan/{sid}")
-    assert "1 minor finding not shown or counted" in app
+    assert "1 minor thing isn't shown or counted" in app
     tok = token(base)
     assert post(f"{base}/settings", {"token": tok, "paranoid": "1", "parallel": "3"})[0] == 303
     assert httpd.panel.settings.paranoid and httpd.panel.worker.parallel == 3
@@ -428,7 +428,7 @@ def test_stars_and_downloads_are_facts_never_scores():
     assert ui.facts_line(r) == ""  # scans from before 0.14.0
     r["popularity"] = {"stars": 1234, "downloads": None}
     line = ui.facts_line(r)
-    assert "1,234 stars" in line and "not counted" in line and "scored" not in line
+    assert "1,234 stars" in line and "Downloads aren't counted" in line and "scored" not in line
     r["popularity"] = {"stars": 1, "downloads": 0}
     assert "0 downloads" in ui.facts_line(r)
 

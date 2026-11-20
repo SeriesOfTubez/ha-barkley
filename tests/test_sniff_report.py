@@ -59,7 +59,7 @@ def test_the_report_puts_threat_and_exposure_first_and_the_rest_as_context():
     t, x = out.index("<h2>Threat <span"), out.index("<h2>Exposure <span")
     c = out.index("What it can do")
     assert t < x < c
-    assert "What we found" not in out and "Should you worry?" not in out
+    assert "What Barkley found" not in out and "Should you worry?" not in out
     assert 'class="lvl high"' not in out and "points" not in out.split("What it can do", 1)[1]
     assert out.count('class="src scan"') >= 5  # Threat, Exposure, In short, can do, …
     assert "capability score" in out
@@ -68,7 +68,7 @@ def test_the_report_puts_threat_and_exposure_first_and_the_rest_as_context():
 def test_the_developer_s_note_is_quoted_with_its_lines_and_escaped():
     out = page(report(f("ha-auth-change-users", line=19)))
     dash = "\u2013"  # the en dash the panel puts between line numbers
-    assert f"note · docstring, cmds.py:14{dash}17" in out
+    assert f"note · description in the code, cmds.py:14{dash}17" in out
     assert "Give a device a user of its own, not an administrator." in out
     assert "<script>alert(1)</script>" not in out and "&lt;script&gt;" in out
     assert "change the readings." in out
@@ -76,7 +76,7 @@ def test_the_developer_s_note_is_quoted_with_its_lines_and_escaped():
 
 def test_no_developer_s_words_on_a_page_with_a_found_threat():
     out = page(report(f("ha-auth-change-users", line=19), f("ha-exfil-taint", "critical")))
-    assert "banner threat" in out and "Nothing found that sends" not in out
+    assert "banner threat" in out and "no hidden code and no known-bad packages" not in out
     assert "Give a device a user" not in out and 'class="src dev"' not in out
 
 
@@ -95,7 +95,7 @@ def test_the_old_page_is_unchanged_without_the_preview():
     r = report(f("ha-auth-change-users", line=19))
     del r["readings"]
     out = page(r)
-    assert "What we found" in out and "Should you worry?" in out
+    assert "What Barkley found" in out and "Should you worry?" in out
     assert 'class="src' not in out and "Give a device a user" not in out
 
 
@@ -195,7 +195,7 @@ def test_nothing_to_accept_and_no_malware_only_link_with_the_preview(tmp_path):
 def test_the_exposure_box_reads_plainly():
     out = page(report())
     assert "<h2>Exposure <span" in out and "what it opens up" not in out
-    assert "Nothing found that would let someone who isn" in out
+    assert "Barkley found nothing that would let someone who isn" in out
     assert "an administrator can already do everything" not in out
 
 
@@ -227,8 +227,10 @@ def test_stored_reviews_are_left_out_of_the_preview(tmp_path):
 def test_in_short_says_it_plainly():
     out = ui.in_short(report(f("ha-auth-change-users", line=19)), preview=True)
     assert "It can change who can log in to Home Assistant." in out
-    assert "worth a look" not in out and "We found" not in out and "<b>" not in out
-    assert out.endswith("Barkley found nothing that sends your data off the box.")
+    assert "to check" not in out and "<b>" not in out
+    assert out.endswith(
+        "Barkley found nothing that sends your data off your Home Assistant machine."
+    )
 
 
 def test_a_card_title_is_its_own_sentence_not_it_can_it():
@@ -261,4 +263,4 @@ def test_card_chips_are_neutral_except_a_threat():
 def test_the_card_sentence_says_plus_n_more():
     r = report(f("ha-auth-change-users", line=19), f("ha-auth-internals", n=1))
     s = ui.card_sentence(_card(r))
-    assert "Plus 1 more." in s and "worth a look" not in s
+    assert "There is 1 more." in s and "to check" not in s

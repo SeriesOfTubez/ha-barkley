@@ -519,7 +519,7 @@ def page(title: str, body: str, refresh: int = 0, base: str = "", refresh_url: s
 
 BANDS = {
     "green": ("Fine", "no concerns found"),
-    "yellow": ("Look", "worth a look"),
+    "yellow": ("Check", "a few things to check"),
     "orange": ("Sus", "several concerns"),
     "red": ("Bork", "don't install"),
     "grey": ("?", "not checked or unfinished"),
@@ -725,27 +725,30 @@ class Card:
 
 def card_sentence(c: Card) -> str:
     if c.scan is None:
-        return f"Not sniffed yet with Barkley {__version__}."
+        return f"Barkley {__version__} hasn't checked this yet."
     if not c.scan.complete:
-        return "The last check didn't finish, so we can't vouch for it yet. Sniff it again."
+        return (
+            "The last check didn't finish, so Barkley can't say whether it's safe yet. "
+            "Sniff it again."
+        )
     rep = c.report or {}
     big = [t for t in scored_findings(rep) if t[0]["severity"] in ("critical", "high", "medium")
            and not all((x.get("review") or {}).get("state") == "accepted" for x in t[1])]  # fmt: skip
     if c.malware_only:
         threats = [t for t in big if kinds.is_threat(str(t[0]["rule_id"]))]
         first = (explain.explain(threats[0][0]["rule_id"]).title + "." if threats
-                 else "No Threats and no known malware.")  # fmt: skip
+                 else "Barkley found no Threats and no known malware.")  # fmt: skip
         return first
     if c.reviewed and not big:
-        first = "Every finding accepted."
+        first = "You accepted everything Barkley flagged."
     elif big:
         first = explain.explain(big[0][0]["rule_id"]).title + "."
         if len(big) > 1 and rep.get("readings"):  # (preview) plain words
-            first += f" Plus {len(big) - 1} more."
+            first += f" There {'is' if len(big) == 2 else 'are'} {len(big) - 1} more."
         elif len(big) > 1:
-            first += f" And {len(big) - 1} more thing{'s' * (len(big) > 2)} worth a look."
+            first += f" Barkley found {len(big) - 1} more thing{'s' * (len(big) > 2)} to check."
     else:
-        first = "No security concerns found."
+        first = "Barkley found no security concerns."
     notes = c.notes()
     if notes:
         second = notes[0].title + "."
@@ -759,8 +762,8 @@ def card_sentence(c: Card) -> str:
     if t and not c.reviewed:  # never silent: the card says the score leans on the user's list
         n = len(t.get("addresses") or [])
         second += (
-            f" The score counts {n} address{'es' * (n != 1)} you trust as fine "
-            f"(Barkley's own: {t.get('own_score')})."
+            f" The score treats {n} address{'es' * (n != 1)} you trust as fine. "
+            f"Barkley's own score is {t.get('own_score')}."
         )
     return f"{first} {second}"
 
@@ -781,10 +784,10 @@ def ports_sentence(pts: list[Port]) -> str:
         return ""
     dirs = {p.direction for p in pts}
     if dirs == {"out"}:
-        return f"Connects to {port_phrase(pts)} on a device or server it's set up with."
+        return f"It connects to {port_phrase(pts)} on a device or server it's set up with."
     if dirs == {"in"}:
-        return f"Listens on {port_phrase(pts)}."
-    return f"Its code names {port_phrase(pts)}."
+        return f"It listens on {port_phrase(pts)}."
+    return f"Its code mentions {port_phrase(pts)}."
 
 
 def connection_sentence(rep: dict[str, Any]) -> str:
@@ -793,12 +796,12 @@ def connection_sentence(rep: dict[str, Any]) -> str:
     home = [h for h in hs if h.cls == "local"]
     pts = ports(rep)
     if net:
-        s = f"Names {len(net)} internet site{'s' * (len(net) != 1)}"
-        s += " and addresses on your own network." if home else " in its code."
+        s = f"Its code mentions {len(net)} internet site{'s' * (len(net) != 1)}"
+        s += " and addresses on your own network." if home else "."
     elif home:
-        s = "Names no internet sites, only addresses on your own network."
+        s = "Its code mentions no internet sites, only addresses on your own network."
     else:
-        s = "No internet sites in its code."
+        s = "Its code mentions no internet sites."
     if pts:
         s += " " + ports_sentence(pts)
     return s
@@ -813,7 +816,7 @@ def card_chips(c: Card) -> list[tuple[str, str]]:
     preview = bool((c.report or {}).get("readings"))
     if c.available:
         if c.group == "attention" and c.reasons and not preview:
-            chips.append(("warn", f"Update {c.available} needs a look"))
+            chips.append(("warn", f"Update {c.available}: check it first"))
         else:
             chips.append(("", f"Update {c.available}"))
     if c.report and c.scan and c.scan.complete:
@@ -873,8 +876,8 @@ def card_state(c: Card) -> str:
     if c.scan is None or c.report is None:
         return ""
     if c.malware_only:
-        return ('<div class="rev"><span class="muted">Malware check only: shows Threats and '
-                "known malware only</span></div>")  # fmt: skip
+        return ('<div class="rev"><span class="muted">Malware check only. Shows only Threats '
+                "and known malware.</span></div>")  # fmt: skip
     pill = "" if c.report.get("readings") else split_pill(c.report)
     if c.due:
         return (f'<div class="rev"><span class="reopen">{icon("refresh", 14)} {c.due} accepted '
@@ -1020,7 +1023,7 @@ def render_grid(base: str, cards: list[Card], v: View | None = None, lead: str =
     if counts["reviewed"]:
         summary.append(item("reviewed", "reviewed by you", "green"))
     if counts["malware"]:
-        summary.append(item("malware", "on Malware check only"))
+        summary.append(item("malware", "set to Malware check only"))
     summary.append(item("fine", "no concerns found", "green"))
     if counts["privacy"]:
         summary.append(item("privacy", "with privacy notes", "priv"))
@@ -1095,69 +1098,69 @@ def in_short(report: dict[str, Any], preview: bool = False) -> str:
     home = [h for h in hs if h.cls == "local"]
     own = [h for h in net if h.cls == "declared"]
     if net:
-        s = f"Its code names {len(net)} site{'s' * (len(net) != 1)} on the internet"
+        s = f"Its code mentions {len(net)} site{'s' * (len(net) != 1)} on the internet"
         if own:
-            s += f", {len(own)} of them {'is' if len(own) == 1 else 'are'} the app's own"
-        s += " and addresses on your own network." if home else "."
+            s += f", and {len(own)} of them {'is' if len(own) == 1 else 'are'} the app's own"
+        s += ". It also mentions addresses on your own network." if home else "."
         out.append(s)
     elif home:
-        out.append("Its code names no internet sites, only addresses on your own network.")
+        out.append("Its code mentions no internet sites, only addresses on your own network.")
     else:
-        out.append("Its code names no internet sites.")
+        out.append("Its code mentions no internet sites.")
     if pts := ports(report):
         out.append(
             ports_sentence(pts).removesuffix(".")
-            + "; the address comes from setup or a cloud service."
+            + ". The address comes from setup or a cloud service."
         )
     groups = scored_findings(report)
     big = [g for g in groups if g[0]["severity"] in ("critical", "high", "medium")]
     if big:
         # (0.14.0, his wording) what it can do is said as "It can …"; anything else (a
-        # Threat, a vulnerability, how it's made) keeps "We found …: <title>"
-        lead = f"We found {len(big)} thing{'s' * (len(big) != 1)} worth a look"
+        # Threat, a vulnerability, how it's made) keeps "Barkley found …: <title>"
+        lead = f"Barkley found {len(big)} thing{'s' * (len(big) != 1)} to check"
         can = [g for g in big[:2] if kinds.kind(str(g[0]["rule_id"])) == kinds.CAPABILITY]
         if len(can) == len(big[:2]):
             out.append(
                 f"{lead}. "
                 + " ".join(_it_can(explain.explain(g[0]["rule_id"]).title) for g in can)
-                + (" And more below." if len(big) > 2 else "")
+                + (" More are listed below." if len(big) > 2 else "")
             )
         else:
             titles = [_lower1(explain.explain(g[0]["rule_id"]).title) for g in big[:2]]
             out.append(
                 f"{lead}: {titles[0]}"
                 + (f", and {titles[1]}" if len(titles) > 1 else "")
-                + (" (and more below)." if len(big) > 2 else ".")
+                + (". More are listed below." if len(big) > 2 else ".")
             )
     elif groups:
-        out.append("We found only minor things, listed below.")
+        out.append("Barkley found only minor things. They're listed below.")
     else:
-        out.append("We found no security concerns.")
+        out.append("Barkley found no security concerns.")
     fl = flows(report)
     rd = [r for r in reads(report) if r[2]]
     if any(x["evidence"] == "proven" for x in fl):
-        out.append("<b>We traced private data being sent out of your home.</b>")
+        out.append("<b>Barkley traced private data being sent out of your home.</b>")
     elif fl:
         out.append(
-            "<b>It reads private data and can talk to sites we can't explain,</b> "
-            "though we found no direct path between the two."
+            "<b>It reads private data and can talk to sites Barkley can't explain.</b> "
+            "Barkley found no direct path between the two."
         )
     elif rd:
         what = explain.data_label(rd[0][1]).lower().replace("ha ", "HA ")
         out.append(
-            f"It can read {e(what)}, but <b>we found no path that sends your data to the "
+            f"It can read {e(what)}, but <b>Barkley found no path that sends your data to the "
             "internet.</b>"
         )
     else:
-        out.append("<b>We found no path that sends your data to the internet.</b>")
+        out.append("<b>Barkley found no path that sends your data to the internet.</b>")
     n = len(privacy.notes(report))
     if n:
         out.append(
             f"There {'is' if n == 1 else 'are'} {n} privacy note{'s' * (n != 1)} "
             + (
-                "below; they don't change the readings."
+                "below. They don't change the readings."
                 if preview
-                else "below; they don't change the score."
+                else "below. They don't change the score."
             )
         )
     if not report.get("complete"):
@@ -1174,12 +1177,14 @@ def _missing_html(a: dict[str, Any]) -> str:
     English (fetch.retry.plain: which file, from where, tries, time, the error, what it
     means); the analyzer's own detail stays underneath as the technical line."""
     problems = [p for p in a.get("problems") or [] if isinstance(p, dict)][:5]
-    head = f"<b>{e(a.get('name'))}</b> {e(a.get('state'))}"
+    state = str(a.get("state"))
+    did = {"skipped": "was skipped", "error": "stopped with an error"}.get(state, f"was {state}")
+    head = f"The <b>{e(a.get('name'))}</b> check {e(did)}"
     if not problems:
         return f"<li>{head}: {e(a.get('detail'), 300)}</li>"
     more = len(a.get("problems") or []) - len(problems)
     return (
-        f"<li>{head}: couldn't fetch {len(problems) + more} "
+        f"<li>{head}. It couldn't fetch {len(problems) + more} "
         f"file{'s' * (len(problems) + more != 1)}.<ul class=plain>"
         + "".join(f"<li>{e(retry.plain(p), 700)}</li>" for p in problems)
         + (f"<li>and {more} more</li>" if more > 0 else "")
@@ -1206,8 +1211,8 @@ def _where(fs: list[dict[str, Any]]) -> str:
     test = ""
     if all("test-code" in (f.get("tags") or []) for f in fs if f.get("file")):
         test = (
-            '<br><span class="muted">Test code: no part of the app that Home Assistant '
-            "loads imports this file. Still shown, since code can hide anywhere.</span>"
+            '<br><span class="muted">This is test code. No part of the app that Home Assistant '
+            "loads imports this file. Barkley still shows it, because code can hide anywhere.</span>"
         )
     return shown + more + times + test
 
@@ -1233,8 +1238,8 @@ def patch_html(patch: Any) -> str:
             text += f", defined at <code>{e(at[0], 200)}:{int(at[1])}</code>"
         text += "."
     return (
-        f"<dt>What it replaces</dt><dd>{text} "
-        '<span class="muted">Read from the code\'s imports by Barkley, not by AI.</span></dd>'
+        f"<dt>What it replaces</dt><dd>It replaces {text} "
+        '<span class="muted">Barkley read this from the code\'s imports. No AI was used.</span></dd>'
         + compare_html(patch)
     )
 
@@ -1274,18 +1279,21 @@ def compare_html(patch: dict[str, Any]) -> str:
         a, b = (int(x) for x in cmp["original"])
         added, removed = int(cmp.get("added") or 0), int(cmp.get("removed") or 0)
         if added or removed:
-            result = (f"{_plural(added, 'line')} only in the replacement, "
-                      f"{_plural(removed, 'line')} only in the original")  # fmt: skip
+            result = (f"{_plural(added, 'line')} {'is' if added == 1 else 'are'} only in the "
+                      f"replacement, and {_plural(removed, 'line')} "
+                      f"{'is' if removed == 1 else 'are'} only in the original")  # fmt: skip
         else:
-            result = "the two are the same, line for line"
+            result = "The two are the same, line for line"
         cut = (
-            " The comparison is long: its last changes are left out here." if cmp.get("cut") else ""
+            " The comparison is long, so its last changes are left out here."
+            if cmp.get("cut")
+            else ""
         )
         out += (
             "<dt>How it differs from the original</dt><dd>Barkley compared the replacement "
-            f"with <code>{e(cmp.get('name'), 200)}</code> in Home Assistant "
+            f"line by line with <code>{e(cmp.get('name'), 200)}</code> in Home Assistant "
             f"{e(cmp.get('ha_version'), 20)} (<code>{e(cmp.get('file'), 200)}</code>, lines "
-            f"{a}–{b}), line by line: {result}."
+            f"{a}–{b}). {result}."
             + (
                 f"<details><summary>Show the comparison</summary>{diff_html(cmp)}"
                 '<p class="tech">Left number: the line in Home Assistant\'s file. Right number: '
@@ -1299,11 +1307,11 @@ def compare_html(patch: dict[str, Any]) -> str:
         )
     elif isinstance(cmp, dict):
         why = compare.WHY.get(str(cmp.get("why")), "it couldn't be made")
-        again = (" Sniffing this version again tries once more."
+        again = (" Sniff this version again to try once more."
                  if cmp.get("why") == "unreachable" else "")  # fmt: skip
         out += (
             "<dt>How it differs from the original</dt><dd>Barkley has no comparison with "
-            f"Home Assistant's original: {e(why, 200)}.{again}</dd>"
+            f"Home Assistant's original, because {e(why, 200)}.{again}</dd>"
         )
     inside = patch.get("inside")
     if isinstance(inside, dict) and isinstance(inside.get("lines"), list):
@@ -1314,23 +1322,23 @@ def compare_html(patch: dict[str, Any]) -> str:
         n_f = len(rules) + int(inside.get("more_findings") or 0)
         n_a, n_p = int(inside.get("addresses") or 0), int(inside.get("ports") or 0)
         if not (n_f or n_a or n_p):
-            found = ("Barkley's other checks found nothing there: no other finding, and no "
-                     "address or port in its list.")  # fmt: skip
+            found = ("Barkley's other checks found nothing there. Nothing else was flagged, "
+                     "and there's no address or port from Barkley's list.")  # fmt: skip
         else:
             bits = []
             if n_f:
                 titles = ", ".join(e(explain.explain(r).title, 120) for r in rules)
-                bits.append(f"{_plural(n_f, 'other finding')} ({titles})")
+                bits.append(f"{n_f} other thing{'s' * (n_f != 1)} Barkley flagged ({titles})")
             if n_a:
                 bits.append(_plural(n_a, "address") if n_a == 1 else f"{n_a} addresses")
             if n_p:
                 bits.append(_plural(n_p, "port"))
-            found = f"This scan also has there: {', '.join(bits)}."
+            found = f"This scan also found these in those lines: {', '.join(bits)}."
         out += (
             f"<dt>The rest of the replacement</dt><dd>The replacement is lines {a}–{b}"
             f"{where}. {found} "
-            '<span class="muted">That covers what Barkley\'s rules look for and nothing '
-            "more; it isn't a statement that the code is safe.</span></dd>"
+            '<span class="muted">That covers only what Barkley\'s rules look for. It '
+            "doesn't mean the code is safe.</span></dd>"
         )
     return out
 
@@ -1389,7 +1397,7 @@ def finding_html(
         f"<div><h3>{e(ex.title)}</h3><dl{' class=ai' if ai else ''}>"
         f"<dt>What it means</dt><dd>{e(means or ex.means, 800)}</dd>"
         f"{worry}"
-        + (f"<dt>Where we saw it</dt><dd>{where}</dd>" if where else "")
+        + (f"<dt>Where Barkley saw it</dt><dd>{where}</dd>" if where else "")
         + fact
         + _links_html(ex.links)
         + dep_html
@@ -1411,12 +1419,12 @@ def _links_html(links: tuple[tuple[str, str], ...]) -> str:
 
 _DEP_ACTION = {
     "npm": "The library is built into the card's JavaScript, so you can't update it yourself. "
-    "If the bug matters for how the card uses it, ask the developer to update, patch or "
-    "replace it (an issue on their repository). Be wary of switching to a replacement "
-    "library someone suggests online without checking who publishes it.",
-    "PyPI": "Home Assistant installs the version the integration asks for, so changing it "
-    "yourself doesn't last. If the bug matters for how the integration uses it, ask the "
-    "developer to update or replace it (an issue on their repository).",
+    "If the bug matters for how the card uses it, open an issue on the developer's "
+    "repository and ask them to update, patch or replace it. Before you switch to a "
+    "replacement library someone suggests online, check who publishes it.",
+    "PyPI": "Home Assistant installs the version the integration asks for, so if you change it "
+    "yourself, the change doesn't last. If the bug matters for how the integration uses it, "
+    "open an issue on the developer's repository and ask them to update or replace it.",
 }
 
 
@@ -1440,9 +1448,9 @@ def advisory_lines(d: dict[str, Any]) -> str:
 
 
 _EXPLOITATION = {
-    "active": "exploited in the wild",
-    "poc": "a proof of concept exists",
-    "none": "no known exploitation",
+    "active": "attackers are using it",
+    "poc": "public code to exploit it exists",
+    "none": "no known attacks",
 }
 
 
@@ -1452,16 +1460,31 @@ def ssvc_phrase(v: Any) -> str:
         return ""
     bits = []
     if v.get("kev") is True:
-        bits.append("in CISA's Known Exploited Vulnerabilities list")
+        bits.append("it's on CISA's Known Exploited Vulnerabilities list")
     if (x := _EXPLOITATION.get(str(v.get("exploitation")))) and not (
-        v.get("kev") is True and x != "exploited in the wild"
+        v.get("kev") is True and x != _EXPLOITATION["active"]
     ):
         bits.append(x)
     if v.get("automatable") in ("yes", "no"):
-        bits.append("automatable" if v["automatable"] == "yes" else "not automatable")
+        bits.append(
+            "attacks can be automated"
+            if v["automatable"] == "yes"
+            else "attacks can't be automated"
+        )
     if v.get("impact") in ("partial", "total"):
-        bits.append(f"{v['impact']} impact")
-    return "CISA: " + ", ".join(bits) if bits else ""
+        bits.append(
+            "it can give an attacker full control or all of its data"
+            if v["impact"] == "total"
+            else "it can give an attacker some control or some of its data"
+        )
+    if not bits:
+        return ""
+    said = (
+        bits[0]
+        if len(bits) == 1
+        else ", ".join(bits[:-1]) + ("," * (len(bits) > 2)) + " and " + bits[-1]
+    )
+    return "CISA says: " + said
 
 
 def dependency_line(d: dict[str, Any]) -> str:
@@ -1478,21 +1501,23 @@ def dependency_line(d: dict[str, Any]) -> str:
     elif latest:
         n = d.get("behind")
         ahead = (
-            f", {int(n)} release{'s' if n != 1 else ''} newer" if isinstance(n, int) and n else ""
+            f", {int(n)} release{'s' if n != 1 else ''} after this one"
+            if isinstance(n, int) and n
+            else ""
         )
         parts.append(f"newest is {e(latest, 60)}{on}{ahead}")
     elif d.get("lookup_error"):
-        parts.append("we couldn't look up the newest release")
+        parts.append("Barkley couldn't look up the newest release")
     age = years_since(when) if latest else None
     if age is not None and age >= STALE_YEARS:
-        stale = f"no release in over {age} years: likely unmaintained"
+        stale = f"no release in over {age} years, so it's likely unmaintained"
         if not d.get("fixed_in"):
-            stale += ", so a fix may never come"
+            stale += " and a fix may never come"
         parts.append(f"<b>{stale}</b>")
     if d.get("direct") is True:
         parts.append("the app lists it itself")
     elif d.get("direct") is False:
-        parts.append("comes in through another library")
+        parts.append("another library brings it in")
     return f"{name}: " + " · ".join(parts)
 
 
@@ -1518,7 +1543,8 @@ def code_html(snip: dict[str, Any]) -> str:
         if "line" in seg and f != last:
             out.append(
                 f'<span class="fn">{e(f, 200)}</span> <span class="nc">line {int(seg["line"])} '
-                "is one long line; shown reformatted (numbers are of the reformatted text)</span>"
+                "is one very long line. It's shown reformatted, and the line numbers count the "
+                "reformatted text.</span>"
             )
             last = f
         elif "col" in seg:
@@ -1551,19 +1577,20 @@ def more_note(snip: dict[str, Any], missing: dict[str, Any] | None) -> str:
         return ""  # cards and non-Python files: never offered
     if missing is None:
         return (
-            " If the AI asks to see more, Barkley adds up to 150 lines of this app's code, "
-            "which the AI can only pick by name from a list Barkley offers, and asks once "
-            "more. Your one click covers both."
+            " If the AI asks to see more, Barkley adds up to 150 more lines of this app's code "
+            "and asks again. The AI can only pick those lines by name, from a list Barkley "
+            "offers. Your one click covers both rounds."
         )
     if missing.get("why") == "too big":
         return (
-            " This app's Python is too big for Barkley to keep a copy (over 1 MB compressed, "
-            "or more than 3,000 files), so the AI can't ask to see more than these lines."
+            " Barkley keeps no copy of this app's Python because it's too big (over 1 MB "
+            "compressed, or more than 3,000 files). So the AI can't ask to see more than these "
+            "lines."
         )
     return (
-        " Barkley has no copy of this version's code (it keeps one for the installed "
-        "version and a waiting update, for scans made by 0.11.0 or later), so the AI can't "
-        "ask to see more than these lines."
+        " Barkley has no copy of this version's code, so the AI can't ask to see more than "
+        "these lines. Barkley keeps a copy only for the installed version and a waiting "
+        "update, from scans made by version 0.11.0 or later."
     )
 
 
@@ -1573,7 +1600,7 @@ def also_note(cmp: dict[str, Any] | None, doc: dict[str, Any] | None) -> str:
     bits = []
     if cmp:
         bits.append(
-            "Barkley's comparison with the original in Home Assistant "
+            "its comparison with the original in Home Assistant "
             f"{e(cmp.get('ha_version'), 20)} (shown on the page under “How it differs from "
             "the original”)"
         )
@@ -1581,9 +1608,9 @@ def also_note(cmp: dict[str, Any] | None, doc: dict[str, Any] | None) -> str:
         n = len(doc.get("code") or [])
         bits.append(
             f"the first {n} line{'' if n == 1 else 's'} of the app's "
-            f"<code>{e(doc.get('file'), 40)}</code>, as what its author says the app does"
+            f"<code>{e(doc.get('file'), 40)}</code>, marked as the author's own description of the app"
         )
-    return f"Also sent: {' and '.join(bits)}." if bits else ""
+    return f"Barkley also sends {' and '.join(bits)}." if bits else ""
 
 
 def _names(labels: list[Any]) -> str:
@@ -1651,12 +1678,12 @@ def deep_html(
                   "(can take minutes)</a>")  # fmt: skip
         body = (
             '<p class="small"><b>Reading the code…</b> This can take a few minutes, depending '
-            "on your AI. You don't have to wait here: close this and carry on. The answer is "
-            "saved, and this item's chip on the page changes to the AI's reading when it's "
+            "on your AI. You don't have to wait here. Close this and carry on. The answer is "
+            "saved, and the button for this item changes to the AI's reading when it's "
             "ready. While it works, this page refreshes by itself.</p>"
             + (
-                f'<p class="small"><b>Second round.</b> The AI asked to see more code: '
-                f"{_names(asking)}. Barkley added it and asked again.</p>"
+                f'<p class="small">The AI asked to see more code ({_names(asking)}), so '
+                "Barkley added it and asked again.</p>"
                 if asking
                 else ""
             )
@@ -1673,8 +1700,9 @@ def deep_html(
         )
         body = (
             f'<p class="small">Explain in context sends these {lines} lines of the app\'s own '
-            f"code (public on GitHub, no Home Assistant data) to the AI behind "
-            f"<code>{e(entity, 120)}</code>. Nothing is sent until you click.{more}</p>"
+            f"code to the AI set up as <code>{e(entity, 120)}</code>. The code is public on "
+            "GitHub, and no Home Assistant data is sent. Nothing is sent until you click."
+            f"{more}</p>"
             + form.replace("{label}", f"{icon('sparkle', 16)} Explain in context")
             + sent
         )
@@ -1685,28 +1713,28 @@ def deep_html(
         summary = f"{n_c} statement{'s' if n_c != 1 else ''}"
         if n_q:
             summary += f", {n_q} question{'s' if n_q != 1 else ''}"
-        inline = (f'<a class="aichip" href="{to}">{icon("sparkle")} AI\'s reading of the code: '
-                  f"{summary}</a>")  # fmt: skip
+        inline = (f'<a class="aichip" href="{to}">{icon("sparkle")} AI\'s reading of the code '
+                  f"({summary})</a>")  # fmt: skip
         out = []
         asked = answer.get("asked") or []
         if asked and answer.get("second_failed"):
             out.append(
                 f'<p class="small">The AI asked to see more code ({_names(asked)}). Barkley '
                 "added it and asked again, but the second answer didn't arrive "
-                f"({e(answer.get('second_failed'), 200)}), so this is its first reading, made "
+                f"({e(answer.get('second_failed'), 200)}). This is the AI's first reading, made "
                 "without that code.</p>"
             )
         elif asked and answer.get("both"):
             out.append(
                 f'<p class="small">The AI read the code, asked to see more ({_names(asked)}), '
-                "and read again with that code added. The statements below are from both "
-                "readings; the questions are from the second.</p>"
+                "and read again with that code added. The statements below come from both "
+                "readings. The questions come from the second.</p>"
             )
         elif asked:  # an answer saved before both readings were kept: only the second
             out.append(
-                f'<p class="small">The AI asked to see more code before answering: '
-                f"{_names(asked)}. Barkley added it and asked again; only that second "
-                "answer is shown.</p>"
+                f'<p class="small">The AI asked to see more code ({_names(asked)}) before '
+                "answering. Barkley added it and asked again. Only the second answer is "
+                "shown.</p>"
             )
         if claims:
             out.append(
@@ -1715,10 +1743,12 @@ def deep_html(
                 + "</ul>"
             )
         else:
-            out.append('<p class="small">It gave no statement we could check against the code.</p>')
+            out.append(
+                '<p class="small">The AI gave no statement Barkley could check against the code.</p>'
+            )
         if questions:
             out.append(
-                "<h3>Worth checking</h3><ul>"
+                "<h3>Questions the AI raised</h3><ul>"
                 + "".join(
                     f"<li>{_ai_text(q['text'], 300)}{_cite(q['cites'])}</li>" for q in questions
                 )
@@ -1727,13 +1757,13 @@ def deep_html(
         opinion = answer.get("alignment")
         if isinstance(opinion, dict) and opinion.get("text"):
             out.append(
-                "<h3>The AI's opinion: consistent with the README</h3>"
+                "<h3>The AI thinks the code matches the README</h3>"
                 f'<p class="opinion">{_ai_text(opinion["text"], 400)}'
                 f"{_cite(opinion.get('cites') or [])}</p>"
-                "<p class=\"tech\">This is the AI's opinion, not one of Barkley's checks. The "
-                "README is written by the app's author, like the code, so code that matches "
-                "it does what the author says, which is not the same as safe. The finding and "
-                "the score are unchanged.</p>"
+                "<p class=\"tech\">This is the AI's opinion. It isn't one of Barkley's checks. "
+                "The app's author wrote both the README and the code. Code that matches the "
+                "README does what the author says, but that doesn't make it safe. What Barkley "
+                "flagged and the score stay the same.</p>"
             )
         refused = int(answer.get("refused") or 0)
         if refused:
@@ -1743,28 +1773,29 @@ def deep_html(
             )
             one = refused == 1
             out.append(
-                f'<p class="tech">It also asked for {refused} thing{"" if one else "s"} that '
-                f"{'was' if one else 'were'}n't on Barkley's list, so "
-                f"{'it was' if one else 'they were'} ignored{named}</p>"
+                f'<p class="tech">The AI also asked for {refused} thing{"" if one else "s"} '
+                f"that {'was' if one else 'were'}n't on Barkley's list, so Barkley ignored "
+                f"{'it' if one else 'them'}{named}</p>"
             )
         repeats = answer.get("repeats")
         if isinstance(repeats, int) and repeats > 0:
             out.append(
-                f'<p class="tech">{repeats} statement{"s" if repeats != 1 else ""} of the second '
-                f"reading repeated {'one' if repeats == 1 else 'ones'} above in other words, "
-                f"so {'it is' if repeats == 1 else 'they are'} not shown again.</p>"
+                f'<p class="tech">{repeats} statement{"s" if repeats != 1 else ""} in the second '
+                f"reading said the same as {'one' if repeats == 1 else 'ones'} above, "
+                f"so {'it isn' if repeats == 1 else 'they aren'}'t shown again.</p>"
             )
         dropped = answer.get("dropped") or []
         if dropped:
             why = ", ".join(e(w, 60) for w in sorted(set(dropped)))
             n = len(dropped)
-            out.append(f'<p class="tech">Left out {n} statement{"s" if n != 1 else ""} that '
+            out.append(f'<p class="tech">Barkley left out {n} statement{"s" if n != 1 else ""} that '
                        f"didn't check out ({why}).</p>")  # fmt: skip
         out.append(
-            f'<p class="tech">By <code>{e(answer.get("entity_id"), 120)}</code>, '
+            f'<p class="tech">Written by <code>{e(answer.get("entity_id"), 120)}</code> on '
             f"{e(str(answer.get('created', ''))[:16].replace('T', ' '))} UTC. Each statement "
-            "cites lines we sent, which contain the code it names (comments don't count). It "
-            "can still be wrong, and it can't change the score or clear a finding.</p>"
+            "points to lines Barkley sent, and those lines contain the code it names (comments "
+            "don't count). The AI can still be wrong, and it can't change the score or clear "
+            "anything Barkley flagged.</p>"
         )
         body = "".join(out) + sent + form.replace("{label}", f"{icon('sparkle', 16)} Ask again")
     close = close_url or f"#item-{e(item_id, 40)}"
@@ -1826,12 +1857,12 @@ def note_reading(note: privacy.Note, inline: DeepFn) -> str:
         return f'<div class="noteai">{lead}{body}</div>'
     if note.classes and all(c == "declared" for c in note.classes):
         why = (
-            "its addresses are named in the app's documentation or manifest, and Barkley "
-            "offers a reading only for addresses that aren't"
+            ". Its addresses are named in the app's documentation or manifest, and Barkley "
+            "only offers a reading for addresses that aren't"
         )
     else:
-        why = "none of its addresses has one on this page"
-    return f'<p class="small muted noteai">No “Explain in context” for this note: {why}.</p>'
+        why = ", because none of its addresses has one on this page"
+    return f'<p class="small muted noteai">This note has no “Explain in context”{why}.</p>'
 
 
 def privacy_html(notes: list[privacy.Note], inline: DeepFn | None = None) -> str:
@@ -1841,7 +1872,7 @@ def privacy_html(notes: list[privacy.Note], inline: DeepFn | None = None) -> str
         return ""
     parts = [
         f'<section class="privbox"><h2>{icon("lock", 16)} Privacy notes ({len(notes)})</h2>'
-        '<p class="sub">Things worth knowing about your privacy. They never change the score.</p>'
+        '<p class="sub">These notes are about your privacy. They never change the score.</p>'
     ]
     for n in notes:
         hosts_html = ""
@@ -1854,8 +1885,8 @@ def privacy_html(notes: list[privacy.Note], inline: DeepFn | None = None) -> str
             f'<div class="finding"><div class="lvl p">{e(n.label)}</div><div>'
             f"<h3>{e(n.title)}</h3><dl>"
             f"<dt>What it means</dt><dd>{e(n.means, 600)}{(' Address:' if len(n.hosts) == 1 else ' Addresses:') + hosts_html if hosts_html else ''}</dd>"
-            f"<dt>What we can't tell</dt><dd>{e(n.unknown, 400)}</dd>"
-            + (f"<dt>Where we saw it</dt><dd>{where}</dd>" if where else "")
+            f"<dt>What Barkley can't tell</dt><dd>{e(n.unknown, 400)}</dd>"
+            + (f"<dt>Where Barkley saw it</dt><dd>{where}</dd>" if where else "")
             + "</dl>"
             + (note_reading(n, inline) if inline else "")
             + "</div></div>"
@@ -1884,7 +1915,7 @@ _RELATION_WORDS = {
     "exposes": "opens",
     "calls_service": "calls the action",
     "listens_to": "listens for the event",
-    "fires_event": "fires the event",
+    "fires_event": "sends the event",
     "reads": "reads",
     "writes": "writes",
     "imports": "imports",
@@ -1894,9 +1925,9 @@ _RELATION_WORDS = {
 }
 _KIND_WORDS = {
     "http_view": "a web page or API route",
-    "http_static": "a static-file route",
+    "http_static": "a route that serves files",
     "webhook": "a webhook",
-    "ws_command": "a websocket command",
+    "ws_command": "a live-connection command",
     "inbound": "a way in from the network",
     "service": "an action",
     "panel": "a sidebar page",
@@ -1956,7 +1987,12 @@ def change_line(c: dict[str, Any]) -> tuple[str, str, str]:
         out = e(explain.explain(rule).title) + (f" (<code>{e(where, 160)}</code>)" if where else "")
     elif kind == "resolved_finding":
         rule = str(d.get("rule_id", ""))
-        out = f"No longer: {e(_lower1(explain.explain(rule).title))}"
+        title = explain.explain(rule).title
+        verb = title.partition(" ")[0]
+        if verb.endswith("s") and not verb.endswith("ss") and verb not in ("Its", "This", "Is"):
+            out = f"It no longer {e(_lower1(title))}"  # titles start with a verb: "Reads …"
+        else:
+            out = f"No longer flagged: {e(_lower1(title))}"
     elif kind in ("severity_up", "severity_down"):
         rule = str(d.get("rule_id", ""))
         was = explain.level(str(d.get("from", "")))
@@ -1971,10 +2007,10 @@ def change_line(c: dict[str, Any]) -> tuple[str, str, str]:
             f" and {len(targets) - 3} more" if len(targets) > 3 else ""
         )
         if ev == "proven":
-            out = f"<b>We traced {e(_lower1(src))} being sent to {shown}</b>"
+            out = f"<b>Barkley traced {e(_lower1(src))} being sent to {shown}</b>"
         else:
-            out = (f"It now reads {e(_lower1(src))} and can reach {shown}, which we can't "
-                   "explain; the path isn't proven")  # fmt: skip
+            out = (f"It now reads {e(_lower1(src))} and can reach {shown}, which Barkley "
+                   "can't explain. The path isn't proven")  # fmt: skip
     elif kind == "new_read":
         out = f"It now reads {e(_lower1(_node_words(str(d.get('target', '')))))}"
     elif kind == "new_package":
@@ -2005,10 +2041,12 @@ def change_line(c: dict[str, Any]) -> tuple[str, str, str]:
         if "targets" in d:
             names = [_node_words(t) for t in d["targets"]]
             shown = ", ".join(f"<code>{e(n, 80)}</code>" for n in names[:4])
-            out = f"{len(names)} new sites ({e(cw)}): {shown}" + (", …" if len(names) > 4 else "")
+            out = f"Its code now mentions {len(names)} new sites ({e(cw)}): {shown}" + (
+                ", …" if len(names) > 4 else ""
+            )
         else:
             host = _node_words(str(d.get("target", "")))
-            out = f"Names a new site, <code>{e(host, 120)}</code>: {e(cw)}"
+            out = f"Its code now mentions a new site, <code>{e(host, 120)}</code>, which is {e(cw)}"
     elif kind.startswith("removed_"):
         rel = str(d.get("relation", ""))
         target = str(d.get("target", ""))
@@ -2042,7 +2080,7 @@ def change_line(c: dict[str, Any]) -> tuple[str, str, str]:
     else:
         out = e(head, 300)
     if why and why.lower() not in html.unescape(re.sub(r"<[^>]+>", "", out)).lower():
-        out += f". Flagged: {e(why, 300)}"
+        out += f". Barkley flagged it for: {e(why, 300)}"
     return lead, out, text
 
 
@@ -2081,11 +2119,9 @@ def _flow_data(report: dict[str, Any]) -> _Flow | None:
     for t in flow_targets[:3]:
         n = nodes.get(t, {})
         if n.get("kind") == "network":
-            right.append(
-                (t, "Somewhere off your box", "destination not visible in the code", "bad")
-            )
+            right.append((t, "Off your HA machine", "the code doesn't show where", "bad"))
         else:
-            right.append((t, _clip(n.get("label", t)), "unexplained site", "bad"))
+            right.append((t, _clip(n.get("label", t)), "site Barkley can't explain", "bad"))
     extra = len(flow_targets) - 3
     home = [h for h in hs if h.cls == "local"]
     if home:
@@ -2208,20 +2244,23 @@ def _flow_way(d: _Flow, key: str) -> str | None:
 
 def _flow_caption(d: _Flow) -> list[str]:
     if d.fl:
-        cap = ["solid: traced in the code", "dashed: reads it and can reach an unexplained site, "
-               "path not proven"]  # fmt: skip
+        cap = ["Solid line: Barkley traced it in the code.",
+               "Dashed line: it reads the data and can reach a site Barkley can't explain, but "
+               "the path isn't proven."]  # fmt: skip
         if d.extra > 0:
-            cap.append(f"{d.extra} more destination{'s' * (d.extra != 1)} below")
+            cap.append(f"{d.extra} more place{'s' * (d.extra != 1)} your data may go "
+                       f"{'are' if d.extra != 1 else 'is'} listed below.")  # fmt: skip
         return cap
-    return ["Arrows: which way the connection goes.", "No path found from your data to the "
-            "internet."]  # fmt: skip
+    return ["Arrows show which way the connection goes.", "Barkley found no path from your data "
+            "to the internet."]  # fmt: skip
 
 
 def _flow_wide(d: _Flow, name: str) -> str:
     """Left: reads. Middle: the app. Right: destinations. Red lines left to right."""
     row_h, top, w = 56, 16, 700
     rows = max(len(d.rd), len(d.right), 2)
-    height = top * 2 + rows * row_h + 22
+    caption = [ln for part in _flow_caption(d) for ln in textwrap.wrap(part, 110)]
+    height = top * 2 + rows * row_h + 22 + 14 * (len(caption) - 1)
     cy = top + rows * row_h / 2
     parts = [
         f'<svg class="flow" viewBox="0 0 {w} {height:.0f}" width="100%" style="min-width:560px" '
@@ -2276,8 +2315,10 @@ def _flow_wide(d: _Flow, name: str) -> str:
             f'stroke="var(--red)" stroke-width="{width}"{dash} marker-end="url(#arr)"/>'
         )
     parts[center_at:center_at] = lines  # under the app's box, so its name stays readable
-    cap = " · ".join(_flow_caption(d))
-    parts.append(f'<text class="sm" x="6" y="{height - 8:.0f}">{e(cap)}</text></svg>')
+    for i, line in enumerate(caption):  # one sentence per line: they don't fit on one
+        y = height - 8 - 14 * (len(caption) - 1 - i)
+        parts.append(f'<text class="sm" x="6" y="{y:.0f}">{e(line)}</text>')
+    parts.append("</svg>")
     return "".join(parts)
 
 
@@ -2497,7 +2538,7 @@ def zones_html(report: dict[str, Any], deep: DeepFn | None = None) -> str:
         out.append(
             f'<div class="zone"><h3>{icon("plug")} Connections whose address isn\'t in the code</h3>'
             '<div class="zs">The code sets these ports, but the server\'s address comes from '
-            "setup or from another server while the app runs. So we can't tie them to any "
+            "setup or from another server while the app runs. So Barkley can't tie them to any "
             "site listed here.</div><ul>" + "".join(items) + "</ul></div>"
         )
     out.append("</div>")
@@ -2546,11 +2587,12 @@ def hygiene_html(report: dict[str, Any]) -> str:
         li.append(f"{yes} Runs security checks with pre-commit, and in its GitHub workflows: "
                   f"{listed(hooks)}.")  # fmt: skip
     elif hooks:
-        li.append(f"{yes} Runs security checks before each commit (pre-commit; not seen in its "
-                  f"GitHub workflows): {listed(hooks)}.")  # fmt: skip
+        li.append(f"{yes} Runs security checks before each commit with pre-commit: "
+                  f"{listed(hooks)}. Barkley didn't see them in its GitHub workflows.")  # fmt: skip
     if not sc:
-        li.append(f"{no} No security scanner in its GitHub workflows or pre-commit hooks "
-                  "(CodeQL, Semgrep, Bandit, Trivy, OSV-Scanner, pip-audit, Gitleaks…).")  # fmt: skip
+        li.append(f"{no} Its GitHub workflows and pre-commit hooks run no security scanner, "
+                  "such as CodeQL, Semgrep, Bandit, Trivy, OSV-Scanner, pip-audit or "
+                  "Gitleaks.")  # fmt: skip
     dep = h.get("dependabot")
     if dep is not None:
         what = ", ".join(_ECO.get(x, x) for x in dep) or "its dependencies"
@@ -2558,12 +2600,13 @@ def hygiene_html(report: dict[str, Any]) -> str:
     if h.get("renovate"):
         li.append(f"{yes} Renovate is set up to propose dependency updates.")
     if dep is None and not h.get("renovate"):
-        li.append(f"{no} No Dependabot or Renovate set up for dependency updates.")
+        li.append(f"{no} Neither Dependabot nor Renovate is set up to propose dependency updates.")
     if h.get("security_policy"):
-        li.append(f"{yes} Has a security policy (<code>{e(h['security_policy'])}</code>): how to "
-                  "report a problem privately.")  # fmt: skip
+        li.append(f"{yes} Has a security policy (<code>{e(h['security_policy'])}</code>) that "
+                  "says how to report a problem privately.")  # fmt: skip
     else:
-        li.append(f"{no} No SECURITY.md telling people how to report a problem privately.")
+        li.append(f"{no} It has no SECURITY.md that tells people how to report a problem "
+                  "privately.")  # fmt: skip
     prs = h.get("update_prs")
     if isinstance(prs, dict) and prs.get("off"):
         li.append(f"{no} Pull requests are turned off on this repository.")
@@ -2571,12 +2614,18 @@ def hygiene_html(report: dict[str, Any]) -> str:
         n = int(prs.get("open") or 0)
         oldest = prs.get("oldest_days")
         if n and isinstance(oldest, int) and oldest < HABITS_GRACE_DAYS:
-            li.append(f"{yes} No dependency-update pull requests left waiting: {n} opened in "
-                      f"the last {HABITS_GRACE_DAYS} days.")  # fmt: skip
+            li.append(f"{yes} No dependency-update pull requests left waiting. {n} "
+                      + ("is open, opened" if n == 1 else "are open, all opened")
+                      + f" in the last {HABITS_GRACE_DAYS} days.")  # fmt: skip
         elif n:
             old = _ago(oldest)
-            li.append(f"Dependency-update pull requests waiting to be merged: <b>{n}</b>"
-                      + (f", the oldest {old}" if old else "") + ".")  # fmt: skip
+            if old == "opened today":
+                old = "was opened today"
+            elif old:
+                old = f"is {old}"
+            li.append(f"<b>{n}</b> dependency-update pull "
+                      + ("request is" if n == 1 else "requests are") + " waiting to be merged."
+                      + (f" {'It' if n == 1 else 'The oldest'} {old}." if old else ""))  # fmt: skip
         elif dep is not None or h.get("renovate"):
             li.append(f"{yes} No dependency-update pull requests left waiting.")
     iss = h.get("security_issues")
@@ -2594,16 +2643,17 @@ def hygiene_html(report: dict[str, Any]) -> str:
                 for it in iss.get("items") or []
                 if isinstance(it.get("number"), int)
             )
-            li.append(f"Open issues that look security-related: <b>{n}</b>{among}"
+            li.append(f"<b>{n}</b> open issue{'s' * (n != 1)} look{'s' * (n == 1)} "
+                      f"security-related{among}:"
                       f'<ul class="plain">{items}</ul>')  # fmt: skip
         else:
             li.append(f"{yes} No open issue labeled or titled as a security problem "
                       f"({of} open issue{'s' * (of != 1)} checked).")  # fmt: skip
     if h.get("dependabot_but_known_vulns"):
         li.append(
-            f"{icon('alert', 14, 'warn')} Dependabot watches these dependencies, yet this "
-            "release ships some with known vulnerabilities (see What we found). Either an alert "
-            "wasn't acted on, or the fix came after this release."
+            f"{icon('alert', 14, 'warn')} Dependabot watches these dependencies, but this "
+            "release ships some with known vulnerabilities (listed above). Either nobody acted "
+            "on an alert, or the fix came after this release."
         )
     for err in h.get("errors") or []:
         li.append(f'<span class="muted">Not checked: {e(err, 300)}</span>')
@@ -2612,9 +2662,9 @@ def hygiene_html(report: dict[str, Any]) -> str:
     return (
         '<section class="box"><h2>The developer\'s security habits</h2>'
         + star
-        + '<p class="sub">What the '
-        "app's own repository shows about keeping it safe. This is context and never changes "
-        "the score. GitHub keeps scan alerts private, so it's read from public signs.</p>"
+        + '<p class="sub">This is what the '
+        "app's own repository shows about how it's kept safe. It never changes "
+        "the score. GitHub keeps scan alerts private, so Barkley reads public signs instead.</p>"
         '<ul class="plain marks">' + "".join(f"<li>{x}</li>" for x in li) + "</ul></section>"
     )
 
@@ -2646,10 +2696,11 @@ def libraries_html(report: dict[str, Any]) -> str:
         )
     return (
         '<section class="box"><h2>Published libraries it ships</h2><p class="sub">These '
-        "files are exactly the files these npm packages publish, so Barkley didn't read them "
-        "as code. Their known advisories are checked like any dependency's. Only a "
-        "well-known package counts: a month old, 10,000 downloads a week, no malware "
-        "advisory. A file that differs by a single byte is read in full.</p>"
+        "files are exact copies of files these npm packages publish, so Barkley didn't read "
+        "them as code. Barkley still checks them for known security problems, like any "
+        "dependency. Only a well-known package counts. It must be at least a month old, have "
+        "at least 10,000 downloads a week and have no malware warning. If a file differs by "
+        "even one byte, Barkley reads all of it.</p>"
         '<ul class="plain">' + "".join(items) + "</ul></section>"
     )
 
@@ -2664,13 +2715,13 @@ def cache_text(report: dict[str, Any]) -> str:
     if not (isinstance(hits, int) and isinstance(files, int) and hits > 0):
         return ""
     when = (
-        f", {scancache.saved_text(float(saved))} saved"
+        f", which saved {scancache.saved_text(float(saved))}"
         if isinstance(saved, (int, float)) and saved >= 1
         else ""
     )
     return (
-        f'<p class="facts">{icon("check", 12, "ok")} {hits:,} of {files:,} files from the '
-        f"cache of code already read{when}</p>"
+        f'<p class="facts">{icon("check", 12, "ok")} Barkley reused {hits:,} of {files:,} '
+        f"files it had already read{when}.</p>"
     )
 
 
@@ -2691,7 +2742,7 @@ def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow
             cause = "first check"
         elif prev.ref == r.ref and prev.tool_version != r.tool_version:
             cause = (
-                f"our rules changed ({e(rules_label(prev.tool_version))} → "
+                f"Barkley's rules changed ({e(rules_label(prev.tool_version))} → "
                 f"{e(rules_label(r.tool_version))})"
             )
         elif prev.ref == r.ref:
@@ -2710,7 +2761,7 @@ def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow
         here = " <b>(this page)</b>" if r.id == sid else ""
         items.append(
             f"<li><b>{what}</b> · {score} · {cause} · "
-            f'<span class="muted">{e(r.scanned_at[:10])}, rules {e(rules_label(r.tool_version))}'
+            f'<span class="muted">{e(r.scanned_at[:10])}, rules version {e(rules_label(r.tool_version))}'
             f"</span>{here}</li>"
         )
         prev = r
@@ -2765,7 +2816,7 @@ def split_pill(report: dict[str, Any]) -> str:
     right = (f"+{delta} <small>from your review</small>" if delta > 0
              else "+0 <small>from your review</small>")  # fmt: skip
     return (
-        '<div class="split" title="Barkley\'s own score never changes; your review adds to it">'
+        '<div class="split" title="Barkley\'s own score never changes. Your review adds to it.">'
         f"<span class=l>{mini_ring(own)}<small>Barkley's score</small></span>"
         f"<span class=r>{right}</span></div>"
     )
@@ -2799,7 +2850,8 @@ def facts_line(report: dict[str, Any]) -> str:
     if isinstance(dl, int):
         parts.append(f"{dl:,} download{'s' * (dl != 1)} of this release's file")
     else:
-        parts.append("Downloads: not counted (installed from the source, no release file)")
+        parts.append("Downloads aren't counted, because it's installed from source and has no "
+                     "release file.")  # fmt: skip
     return f'<p class="facts">{" · ".join(parts)}</p>'
 
 
@@ -2834,21 +2886,29 @@ def _in_short_plain(report: dict[str, Any]) -> str:
     own = sum(1 for h in net if h.cls == "declared")
     n = len(net)
     if not n:
-        out.append("Its code names no websites.")
+        out.append("Its code mentions no websites.")
     elif own == n:
         out.append(
-            f"Its code names {n} website{'s' * (n != 1)}, "
-            + ("its own." if n == 1 else "all its own." if n > 2 else "both its own.")
+            f"Its code mentions {n} website{'s' * (n != 1)}, "
+            + (
+                "the app's own."
+                if n == 1
+                else "all of them the app's own."
+                if n > 2
+                else "both the app's own."
+            )
         )
     elif own:
-        out.append(f"Its code names {n} websites, {own} of them its own.")
+        out.append(
+            f"Its code mentions {n} websites. {own} of them {'is' if own == 1 else 'are'} "
+            "the app's own."
+        )
     else:
-        out.append(f"Its code names {n} website{'s' * (n != 1)}.")
+        out.append(f"Its code mentions {n} website{'s' * (n != 1)}.")
     if home:
-        out.append("It also names addresses on your home network.")
+        out.append("It also mentions addresses on your home network.")
     if pts := ports(report):
-        ps = ports_sentence(pts)
-        out.append("It c" + ps[1:] if ps.startswith("Connects") else ps)
+        out.append(ports_sentence(pts))
     titles = [
         explain.explain(g[0]["rule_id"]).title
         for g in scored_findings(report)
@@ -2864,12 +2924,12 @@ def _in_short_plain(report: dict[str, Any]) -> str:
                                 ", ".join(can[:-1]) + " and " + can[-1]) + ".")  # fmt: skip
     fl = flows(report)
     if any(x["evidence"] == "proven" for x in fl):
-        out.append("Barkley traced your data being sent off the box.")
+        out.append("Barkley traced your data being sent off your Home Assistant machine.")
     elif fl:
         out.append("It reads private data and names websites Barkley can't explain. Barkley "
                    "found no direct path between the two.")  # fmt: skip
     else:
-        out.append("Barkley found nothing that sends your data off the box.")
+        out.append("Barkley found nothing that sends your data off your Home Assistant machine.")
     p = len(privacy.notes(report))
     if p:
         out.append(f"There {'is' if p == 1 else 'are'} {p} privacy note{'s' * (p != 1)} below.")
@@ -2942,17 +3002,18 @@ def minor_line(base: str, sid: int, report: dict[str, Any], preview: bool = Fals
     if preview:
         what = f"{n} minor thing{'s' * (n != 1)} ({e(', '.join(chips))})"
         if r.get("show_minor"):
-            return (f'<p class="muted small mt3">{what} shown above. '
+            return (f'<p class="muted small mt3">{what} {"is" if n == 1 else "are"} shown above. '
                     f'<a href="{base}/scan/{sid}">Hide them</a></p>')  # fmt: skip
-        return (f'<p class="muted small mt3">{what} not shown. '
+        return (f'<p class="muted small mt3">{what} {"isn" if n == 1 else "aren"}\'t shown. '
                 f'<a href="{base}/scan/{sid}?minor=1">Show them</a></p>')  # fmt: skip
+    things = f"{n} minor thing{'s' * (n != 1)}"
     if r.get("show_minor"):
-        return (f'<p class="muted small mt3">{n} minor finding{"s" * (n != 1)} shown above, not '
-                f'counted ({e(", ".join(chips))}). <a href="{base}/scan/{sid}">Hide them</a> · '
-                f'<a href="{base}/settings">Paranoid mode</a> counts them always.</p>')  # fmt: skip
-    return (f'<p class="muted small mt3">{n} minor finding{"s" * (n != 1)} not shown or counted '
-            f'({e(", ".join(chips))}). <a href="{base}/scan/{sid}?minor=1">Show them</a> · '
-            f'<a href="{base}/settings">Paranoid mode</a> shows and counts them always.</p>')  # fmt: skip
+        return (f'<p class="muted small mt3">{things} {"is" if n == 1 else "are"} shown above but '
+                f'not counted ({e(", ".join(chips))}). <a href="{base}/scan/{sid}">Hide them</a> · '
+                f'<a href="{base}/settings">Paranoid mode</a> always counts them.</p>')  # fmt: skip
+    return (f'<p class="muted small mt3">{things} {"isn" if n == 1 else "aren"}\'t shown or '
+            f'counted ({e(", ".join(chips))}). <a href="{base}/scan/{sid}?minor=1">Show them</a> · '
+            f'<a href="{base}/settings">Paranoid mode</a> always shows and counts them.</p>')  # fmt: skip
 
 
 def all_green(h: Any) -> bool:
@@ -2988,7 +3049,7 @@ HABITS_GRACE_DAYS = 7
 
 def own_score_text(report: dict[str, Any]) -> str:
     t = report.get("trust") or {}
-    return f"Barkley's own score for this scan: {e(t.get('own_score'))}."
+    return f"Barkley's own score for this scan is {e(t.get('own_score'))}."
 
 
 def trust_line(report: dict[str, Any]) -> str:
@@ -2999,9 +3060,9 @@ def trust_line(report: dict[str, Any]) -> str:
         return ""
     n = len(t.get("addresses") or [])
     return (
-        f'<div class="small">{icon("check", 14, "ok")} {e(report.get("score"))} with '
-        f"{n} address{'es' * (n != 1)} you trust. {own_score_text(report)} "
-        "The findings are still listed below.</div>"
+        f'<div class="small">{icon("check", 14, "ok")} The score is {e(report.get("score"))} '
+        f"because you trust {n} address{'es' * (n != 1)}. {own_score_text(report)} "
+        "What Barkley found is still listed below.</div>"
     )
 
 
@@ -3099,7 +3160,7 @@ def threat_banner(r: dict[str, Any] | None, many: int = 0) -> str:
     if (r or {}).get("threat_level") != "found":
         return ""
     return (f'<div class="banner threat"><b>🚨 This app {e(r.get("threat_reason"), 200)}. '
-            "Don't install it.</b><span class=small>If it's installed, remove it, then log out "
+            "Don't install it.</b><span class=small>If it's installed, remove it. Then log out "
             "of Home Assistant everywhere and change the passwords it could reach.</span></div>")  # fmt: skip
 
 
@@ -3126,7 +3187,7 @@ def devnote_html(n: devnote.Note | None, title: str = "The developer's note") ->
         return ""
     lines = f"{n.start}" if n.start == n.end else f"{n.start}–{n.end}"
     return (
-        f'<div class="devq">{src_tag("dev", f"docstring, {n.file}:{lines}", title)}'
+        f'<div class="devq">{src_tag("dev", f"description in the code, {n.file}:{lines}", title)}'
         f"<q>{e(n.text, 900)}</q>"
         '<span class="cite">It doesn\'t change the readings.</span></div>'
     )
@@ -3148,9 +3209,10 @@ def threat_box(r: dict[str, Any], items: str) -> str:
     """The Threat box: the signs found, or what Barkley looked for and didn't find."""
     t = str(r.get("threat_level"))
     if t == "none":
-        sofar = "" if r.get("complete", True) else " in the part Barkley could check"
-        body = (f"<p>{icon('check', 14, 'ok')} Nothing found{sofar} that sends your data off "
-                "the box, no hidden code, and no known-bad packages.</p>")  # fmt: skip
+        who = ("Barkley found" if r.get("complete", True)
+               else "In the part Barkley could check, it found")  # fmt: skip
+        body = (f"<p>{icon('check', 14, 'ok')} {who} nothing that sends your data off your "
+                "Home Assistant machine, no hidden code and no known-bad packages.</p>")  # fmt: skip
     else:
         body = items
     return f'<section class="box"><h2>Threat {src_tag("scan")}</h2>{body}</section>'
@@ -3161,15 +3223,19 @@ def exposure_box(r: dict[str, Any], pages: str = "") -> str:
     pages, then where Home Assistant runs. `pages`: escaped HTML of those notes."""
     why = [w for w in r.get("exposure_reasons") or []
            if not str(w).startswith("A possible sign of malicious")]  # fmt: skip
-    where = {"home": "a home network", "shared": "a shared or work network",
-             "internet": "reachable from the internet"}.get(str(r.get("network")), "")  # fmt: skip
+    based = {  # one whole sentence per network setting
+        "home": "Based on Home Assistant running on a home network (Settings).",
+        "shared": "Based on Home Assistant running on a shared or work network (Settings).",
+        "internet": "Based on Home Assistant being reachable from the internet (Settings).",
+    }.get(str(r.get("network")), "")
     return (
         f'<section class="box"><h2>Exposure {src_tag("scan")}</h2>'
         + ('<ul class="rdwhy">' + "".join(f"<li>{e(w, 400)}</li>" for w in why) + "</ul>"
-           if why else "<p>Nothing found that would let someone who isn't an admin in.</p>")
+           if why else "<p>Barkley found nothing that would let someone who isn't an admin "
+                       "get in.</p>")
         + pages
-        + f'<p class="small muted">Based on Home Assistant running on {e(where)} '
-        "(Settings).</p></section>"
+        + (f'<p class="small muted">{e(based)}</p>' if based else "")
+        + "</section>"
     )  # fmt: skip
 
 
@@ -3202,7 +3268,7 @@ def render_app(
     plain = BANDS[b][1] if complete else "the check didn't finish"
     kind = KIND.get(str(t.get("kind")), str(t.get("kind")))
     ha = (
-        f", with dependencies resolved for HA {e(report['ha_version'])}"
+        f", with dependencies worked out for Home Assistant {e(report['ha_version'])}"
         if report.get("ha_version")
         else ""
     )
@@ -3233,7 +3299,7 @@ def render_app(
         f'<div><span class="verdict" style="color:var(--{b})">'
         f"{e(vline)}</span> "
         f'<span class="muted">· {e(kind)}{" · " + e(t["ref"], 60) if t.get("ref") else ""} · {e(t.get("repo") or t.get("input"), 120)}</span></div>'
-        f'<div class="muted small">Checked with Barkley {e(report.get("tool", {}).get("version"))}: '
+        f'<div class="muted small">Checked with Barkley {e(report.get("tool", {}).get("version"))}. It read '
         f"{e(_SOURCE.get(str(t.get('install_source')), t.get('install_source')))}"
         f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}.</div>"
         f"{'' if rd else split_pill(report)}{facts_line(report)}{cache_text(report)}"
@@ -3254,9 +3320,10 @@ def render_app(
         parts.append(
             '<div class="banner warn"><b>Part of the check didn\'t finish</b>, so '
             + (
-                "Barkley can't vouch for everything:"
+                "Barkley can't speak for every part of the app. What didn't finish:"
                 if rd
-                else "the score is capped at 89 and we can't vouch for everything:"
+                else "the score is capped at 89 and Barkley can't speak for every part of the "
+                "app. What didn't finish:"
             )
             + "<ul class=plain>"
             + "".join(_missing_html(a) for a in missing)
@@ -3349,27 +3416,27 @@ def render_app(
             f'</span> {src_tag("scan")}</h2>'
             + (kinds_html(report, rest, one, skip=frozenset({kinds.THREAT}),
                           untitled=frozenset({kinds.CAPABILITY})) if rest else
-               f'<p class="ok">{icon("check", 16, "ok")} Nothing notable.</p>')
+               f'<p class="ok">{icon("check", 16, "ok")} Barkley found nothing notable.</p>')
             + minor_line(base, sid, report, preview=True)
             + "</section>"
         )  # fmt: skip
     elif groups:
         parts.append(
-            f'<section class="box"><h2>What we found ({len(groups)})</h2>'
+            f'<section class="box"><h2>What Barkley found ({len(groups)})</h2>'
             + (kinds_html(report, groups, one) if review else "".join(one(*g) for g in groups))
             + minor_line(base, sid, report)
             + "</section>"
         )
     elif review:
         parts.append(
-            f'<section class="box"><h2>What we found</h2><p class="ok">{icon("check", 16, "ok")} '
-            f"{'Nothing else smelled off.' if aside else 'Nothing smelled off.'}</p>"
+            f'<section class="box"><h2>What Barkley found</h2><p class="ok">{icon("check", 16, "ok")} '
+            f"{'Barkley found nothing else wrong.' if aside else 'Barkley found nothing wrong.'}</p>"
             f"{minor_line(base, sid, report)}</section>"
         )
     else:
         parts.append(
-            f'<section class="box"><h2>What we found</h2><p class="ok">{icon("check", 16, "ok")} '
-            f"{'Nothing else smelled off.' if aside else 'Nothing smelled off.'}</p></section>"
+            f'<section class="box"><h2>What Barkley found</h2><p class="ok">{icon("check", 16, "ok")} '
+            f"{'Barkley found nothing else wrong.' if aside else 'Barkley found nothing wrong.'}</p></section>"
         )
     if aside:
         n = len(aside)
@@ -3378,7 +3445,7 @@ def render_app(
             '<p class="sub">Barkley found '
             f"{'this' if n == 1 else 'these'} and still shows {'it' if n == 1 else 'them'}. "
             f"{'It costs' if n == 1 else 'They cost'} no points because you marked the "
-            f"address trusted. {own_score_text(report)}</p>"
+            f"address as trusted. {own_score_text(report)}</p>"
             + "".join(
                 finding_html(
                     f,
@@ -3395,18 +3462,19 @@ def render_app(
         )
     parts.append(
         f'<section class="box"><h2>{"What it touches " + src_tag("scan") if rd else "Where your data can go"}</h2>'
-        '<p class="sub">Left: what it can read. Right: where it can connect. A red line means '
-        "we found a path from your data to that place in the code. No line means we found no "
-        "path.</p>"
+        '<p class="sub">On the left is what it can read. On the right is where it can connect. '
+        "A red line means Barkley found a path in the code from your data to that place. No "
+        "line means Barkley found no path.</p>"
         f"{flow_svg(report, title)}</section>"
     )
     tag = with_tag if rd else (lambda x, _k="scan": x)
     parts.append(
         f'<section class="box"><h2>Where it connects{" " + src_tag("scan") if rd else ""}</h2>'
-        '<p class="sub">Every site, IP address '
-        "and port in the shipped code, grouped by where it is. A site being here means the code "
-        "mentions it, not that it was seen connecting. Web addresses drop anything after "
-        f"<code>?</code>, which can hold keys.</p>{zones_html(report, dfn if deep else None)}</section>"
+        '<p class="sub">This lists every site, IP address '
+        "and port in the shipped code, grouped by where it is. A site is listed because the code "
+        "mentions it. That doesn't mean Barkley saw it connect. Web addresses are cut off at the "
+        f"<code>?</code>, because what comes after it can hold keys.</p>"
+        f"{zones_html(report, dfn if deep else None)}</section>"
     )
     parts.append(tag(libraries_html(report)))
     habits = hygiene_html(report)
@@ -3416,18 +3484,19 @@ def render_app(
     can = explain.can_do(report)
     inside = ("Everything it uses inside Home Assistant " + src_tag("scan") if rd
               else "What it can do inside Home Assistant")  # fmt: skip
-    tech = ("Technical report (raw JSON, with the capability score: what the code openly "
-            "uses, not a judgment)" if rd else "Technical report (raw JSON)")  # fmt: skip
+    tech = (" It includes the capability score, which counts what the code openly uses. "
+            "That score isn't a judgment." if rd else "")  # fmt: skip
     parts.append(
         f'<div class="two"><section class="box"><h2>{inside}</h2>'
         + (
             '<ul class="plain">' + "".join(f"<li>{e(x)}</li>" for x in can) + "</ul>"
             if can
-            else '<p class="muted small">Nothing notable.</p>'
+            else '<p class="muted small">Barkley found nothing notable.</p>'
         )
         + f'</section><section class="box"><h2>History{" " + src_tag("scan") if rd else ""}</h2>'
         f"{history_html(base, sid, report, rows)}"
-        f'<p class="tech"><a href="{base}/scan/{sid}.json">{tech}</a></p></section></div>'
+        f'<p class="tech"><a href="{base}/scan/{sid}.json">Technical report (raw JSON)</a>'
+        f"{tech}</p></section></div>"
     )
     if deep:  # a note's address beyond the 12 shown per zone: its sheet goes at the end
         parts.extend(

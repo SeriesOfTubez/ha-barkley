@@ -339,8 +339,8 @@ def test_installed_grid_leads_with_what_needs_attention(addon):
     assert order[:2] == ["Never", "Unchecked"] or order[:2] == ["Unchecked", "Never"]
     assert order.index("Moved") < order.index("Fine")
     moved = _card(page, "Moved")
-    assert 'class="app grey"' not in moved and "Update v2 needs a look" in moved
-    assert "Update v2 needs a look" in moved and "diff?old=" in moved
+    assert 'class="app grey"' not in moved and "Update v2: check it first" in moved
+    assert "Update v2: check it first" in moved and "diff?old=" in moved
     unchecked = _card(page, "Unchecked")
     assert "app grey" in unchecked or 'class="app "' not in unchecked
     assert "Check update" in unchecked and 'name=to value="v2"' in unchecked
@@ -362,7 +362,7 @@ def test_detail_page_of_an_installed_app_shows_its_update(addon):
     assert "<h1>Moved</h1>" in page and "All apps</a>" in page
     assert "Update available: v1 → v2" in page
     assert "Everything the update" in page
-    assert "What we found" in page and "Where it connects" in page
+    assert "What Barkley found" in page and "Where it connects" in page
 
 
 def test_check_runs_the_update_diff_reusing_stored_scans(addon):

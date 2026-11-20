@@ -87,8 +87,8 @@ def test_deep_flow_sends_the_snippet_and_shows_only_checked_claims(tmp_path):
     assert "It reads <code>secrets.yaml</code> and returns it." in page
     assert "(diag.py:3\u20134)" in page
     assert "The code is safe" not in page and "A comment asks" not in page
-    assert "Left out 2 statements" in page
-    assert "reading of the code: 1 statement, 1 question" in page
+    assert "Barkley left out 2 statements" in page
+    assert "reading of the code (1 statement, 1 question)" in page
     assert "<script>" not in page
     assert store.report(sid)["score"] == 75  # untouched
     assert 'aria-label="Score 75 of 100"' in page
@@ -225,7 +225,7 @@ def test_a_running_reading_refreshes_to_a_fresh_url_that_keeps_its_sheet_open(tm
     gate.set()
     _wait(httpd, sid)
     _, _, done = get(f"{base}/scan/{sid}?open={FID}")
-    assert "http-equiv" not in done and "reading of the code: 1 statement" in done
+    assert "http-equiv" not in done and "reading of the code (1 statement" in done
     # nothing refreshes any more: the sheet opens and closes in place again
     assert f'class="aichip" href="#ai-{FID}"' in done and f'class="x" href="#item-{FID}"' in done
     httpd.shutdown()

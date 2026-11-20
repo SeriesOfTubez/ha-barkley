@@ -79,7 +79,7 @@ def test_the_page_and_the_star(tmp_path):
 
     cases = (
         (LINT, "with pre-commit, and in its GitHub workflows"),
-        (None, "before each commit (pre-commit; not seen in its GitHub"),
+        (None, "before each commit with pre-commit"),
     )
     for workflow, says in cases:
         root = tmp_path / ("ci" if workflow else "local")
@@ -88,7 +88,7 @@ def test_the_page_and_the_star(tmp_path):
             repo_hygiene.scan_files(_repo(root, workflow=workflow)), set(), "integration"
         )
         html = ui.hygiene_html({"hygiene": h, "target": {"repo": "acme/x"}})
-        assert says in html and "No security scanner" not in html
+        assert says in html and "run no security scanner" not in html
         h.update(update_prs={"open": 0}, security_issues={"open": 0, "of": 3},
                  security_policy="SECURITY.md", dependabot=["pip"])  # fmt: skip
         assert all_green(h) is bool(workflow)  # only checks CI runs count toward A+

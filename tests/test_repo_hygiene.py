@@ -103,10 +103,13 @@ def test_cross_check_and_page_section(tmp_path):
     assert not rh.to_dict(h, {"dep-vuln"}, "plugin")["dependabot_but_known_vulns"]  # npm
     html = ui.hygiene_html({"target": {"repo": "a/b"}, "hygiene": d})
     assert "Dependabot is set up to propose updates for Python packages" in html
-    assert "<b>3</b>, the oldest 4 months old" in html
+    assert (
+        "<b>3</b> dependency-update pull requests are waiting to be merged. "
+        "The oldest is 4 months old." in html
+    )
     assert 'href="https://github.com/a/b/issues/9"' in html
     assert "<script>" not in html and "&lt;script&gt;" in html
-    assert "yet this release ships some with known vulnerabilities" in html
+    assert "but this release ships some with known vulnerabilities (listed above)" in html
     assert "never changes the score" in html
     assert ui.hygiene_html({}) == ""  # reports from before 0.6.0
 

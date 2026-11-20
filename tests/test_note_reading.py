@@ -105,7 +105,7 @@ def test_a_note_opens_the_same_reading_as_its_address(tmp_path):
     _, _, page = get(f"{base}/scan/{sid}")
     tele = _note(page, "Can send usage statistics to the developer")
     assert f'class="aichip" href="#ai-{TELE}"' in tele
-    assert "reading of the code: 1 statement" in tele
+    assert "reading of the code (1 statement" in tele
     assert page.count(f'id="ai-{TELE}"') == 1
     assert page.count("It sends a ping to") == 1  # the answer is in the one sheet
     assert store.report(sid)["score"] == 100  # untouched
@@ -119,7 +119,7 @@ def test_a_note_without_a_reading_says_why(tmp_path):
     plain = _note(page, "Uses unencrypted web addresses on the internet")
     assert "Explain in context</button>" not in plain
     assert (
-        "No “Explain in context” for this note: its addresses are named in the app's "
+        "This note has no “Explain in context”. Its addresses are named in the app's "
         "documentation or manifest" in plain
     )
     httpd.shutdown()
@@ -166,14 +166,14 @@ def test_the_sheet_says_how_many_restatements_it_left_out():
            "entity_id": "ai_task.t", "created": "2026-11-17T00:50"}  # fmt: skip
     html = ui.deep_html("<form>{label}</form>", item_id="d4" * 8, title="t", answer=ans,
                         state="", error="", snip=snip, entity="ai_task.t")  # fmt: skip
-    assert "4 statements of the second reading repeated ones above in other words" in html
-    assert "so they are not shown again" in html
+    assert "4 statements in the second reading said the same as ones above" in html
+    assert "so they aren't shown again" in html
     ans["repeats"] = 1
     html = ui.deep_html("<form>{label}</form>", item_id="d4" * 8, title="t", answer=ans,
                         state="", error="", snip=snip, entity="ai_task.t")  # fmt: skip
-    assert "1 statement of the second reading repeated one above" in html
-    assert "so it is not shown again" in html
+    assert "1 statement in the second reading said the same as one above" in html
+    assert "so it isn't shown again" in html
     ans["repeats"] = 0
     html = ui.deep_html("<form>{label}</form>", item_id="d4" * 8, title="t", answer=ans,
                         state="", error="", snip=snip, entity="ai_task.t")  # fmt: skip
-    assert "repeated" not in html
+    assert "said the same as" not in html

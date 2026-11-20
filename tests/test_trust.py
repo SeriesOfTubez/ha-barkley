@@ -181,9 +181,9 @@ def test_trust_button_flow_in_the_panel(panel):  # noqa: F811
     # Barkley's own 50 and what the review added
     assert 'aria-label="Score 75 of 100"' in page and ">Reviewed<" in page
     assert "Barkley's score 50" in page.replace("&#x27;", "'") and "+25 <small>" in page
-    assert "Barkley's own score for this scan: 50." in page.replace("&#x27;", "'")
+    assert "Barkley's own score for this scan is 50." in page.replace("&#x27;", "'")
     assert "Findings about addresses you trust (1)" in page and "You trust this address" in page
-    assert "What we found (1)" in page and "Stop trusting api.together.xyz" in page
+    assert "What Barkley found (1)" in page and "Stop trusting api.together.xyz" in page
     # the raw report is untouched
     _, _, raw = get(f"{base}/scan/{sid}.json")
     assert json.loads(raw)["score"] == 50 and "trusted_findings" not in raw
@@ -211,7 +211,7 @@ def test_the_card_and_the_notification_say_the_score_counts_trusted_addresses(pa
     c = ui.Card(repo=REPO, name="Agent", kind="integration", installed="v0.9.5",
                 available=None, scan=shown_row,
                 report=trust.view(store.report(sid), store.trusted()))  # fmt: skip
-    assert "The score counts 1 address you trust as fine (Barkley's own: 50)." in (
+    assert "The score treats 1 address you trust as fine. Barkley's own score is 50." in (
         ui.card_sentence(c)
     )
     assert ">75<" in ui.card_html("", c)

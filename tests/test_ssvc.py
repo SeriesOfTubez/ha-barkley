@@ -143,10 +143,11 @@ def test_the_panel_says_cisas_assessment_in_plain_words():
         ui.ssvc_phrase(
             {"exploitation": "poc", "automatable": "yes", "impact": "total", "kev": False}
         )
-        == "CISA: a proof of concept exists, automatable, total impact"
+        == "CISA says: public code to exploit it exists, attacks can be automated, and it can "
+        "give an attacker full control or all of its data"
     )
     assert ui.ssvc_phrase({"exploitation": "poc", "kev": True}) == (
-        "CISA: in CISA's Known Exploited Vulnerabilities list"
+        "CISA says: it's on CISA's Known Exploited Vulnerabilities list"
     )
     assert ui.ssvc_phrase({"exploitation": "<script>", "automatable": "x"}) == ""
     assert ui.ssvc_phrase(None) == ""

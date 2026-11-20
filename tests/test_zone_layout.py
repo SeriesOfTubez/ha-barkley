@@ -49,7 +49,7 @@ def test_the_cache_line_has_its_own_line():
 
     line = ui.cache_text({"cache": {"files": 124, "hits": 124, "saved_secs": 159.6}})
     assert line.startswith('<p class="facts">')
-    assert "124 of 124 files from the cache of code already read, about 3 min saved" in line
+    assert "Barkley reused 124 of 124 files it had already read, which saved about 3 min." in line
     assert ui.cache_text({"cache": {"files": 124, "hits": 0, "saved_secs": 0}}) == ""
     assert ui.cache_text({}) == ""
 

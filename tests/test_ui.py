@@ -64,7 +64,7 @@ def test_flow_lines_follow_the_graph():
     svg = ui.flow_svg(rep, "acme")
     assert svg.count('marker-end="url(#arr)"') == 1  # the wide layout
     assert svg.count('marker-end="url(#arrv)"') == 1  # the stacked one for phones
-    assert "Somewhere off your box" in svg and "Your secrets file" in svg
+    assert "Off your HA machine" in svg and "Your secrets file" in svg
     assert 'stroke-dasharray="6 4"' not in svg  # proven: solid
 
 
@@ -103,7 +103,7 @@ def test_diff_changes_read_as_plain_english():
           "text": "proven: user's access token → evil.invalid · card-token-exfil",
           "detail": {"source": "auth:user's access token", "targets": ["host:evil.invalid"],
                      "evidence": "proven"}},
-         "Danger", "We traced your HA login being sent to evil.invalid"),
+         "Danger", "Barkley traced your HA login being sent to evil.invalid"),
         ({"kind": "new_host", "sign": "+", "rank": 70,
           "text": "undeclared: status.weather-mirror.invalid (const.py:4)",
           "detail": {"target": "host:status.weather-mirror.invalid", "class": "undeclared"}},
