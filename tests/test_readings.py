@@ -36,19 +36,42 @@ def test_powerful_uses_alone_are_no_threat():
 
 
 def test_pages_without_a_login_count_by_the_check_barkley_can_see():
+    # the strongest page in full, each further one a quarter (his decision 2026-11-20)
     own = [f("ha-unauth-view", "low", "views.py", n=i) for i in range(6)]
-    assert readings.compute(rep(*own)).exposure == 4.5  # 6 x 0.75, a check it can't confirm
+    assert readings.compute(rep(*own)).exposure == 1.69  # 0.75 + 5 x 0.1875
     signed = [f("ha-unauth-view", "low", "whep.py", n=i) for i in range(4)]
     r = readings.compute(rep(*signed, f("ha-auth-token-check", "low", "whep.py")))
-    assert r.exposure == 1.0 and "signed link" in r.exposure_reasons[0]  # 4 x 0.25
+    assert r.exposure == 0.44  # 0.25 + 3 x 0.0625
+    assert r.exposure_reasons[0] == (
+        "4 pages skip Home Assistant's login and check a signed link or token instead."
+    )
+    one = readings.compute(rep(signed[0], f("ha-auth-token-check", "low", "whep.py")))
+    assert "login and checks a signed link" in one.exposure_reasons[0]
+
+
+def test_many_pages_of_one_app_stay_below_high_at_home():
+    """Issue #26's shape: an OAuth integration with 12 login-free pages (callbacks and
+    webhooks) used to sum to 9 by pages alone."""
+    own = [f("ha-unauth-view", "low", f"oauth{i}.py") for i in range(12)]
+    r = readings.compute(rep(*own))
+    assert r.exposure == 2.81 and r.exposure_level == "medium"  # 0.75 + 11 x 0.1875
+
+
+def test_a_page_barkley_can_confirm_counts_less_than_one_it_cannot():
+    mixed = [
+        f("ha-unauth-view", "low", "whep.py"),
+        f("ha-auth-token-check", "low", "whep.py"),
+        f("ha-unauth-view", "low", "panel.py"),
+    ]
+    assert readings.compute(rep(*mixed)).exposure == 0.81  # 0.75 in full + 0.25 x 0.25
 
 
 def test_the_network_raises_exposure_and_public_raises_it_most():
-    own = [f("ha-unauth-view", "low", "v.py", n=i) for i in range(6)]
-    assert readings.compute(rep(*own), "shared").exposure == 5.62  # 4.5 x 1.25, rounded
-    assert readings.compute(rep(*own), "shared").exposure_level == "high"
+    own = [f("ha-unauth-view", "low", "v.py", n=i) for i in range(12)]
+    assert readings.compute(rep(*own), "shared").exposure == 3.52  # 2.8125 x 1.25, rounded
+    assert readings.compute(rep(*own), "shared").exposure_level == "medium"
     pub = readings.compute(rep(*own, exposure="public"), "home")
-    assert pub.exposure == 6.75 and pub.network == "internet"
+    assert pub.exposure == 4.22 and pub.network == "internet"
     assert readings.compute(rep(*own), "nonsense").network == "home"
 
 

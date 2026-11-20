@@ -14,7 +14,8 @@ mock-ups and his yes to items 1-4 of round 4):
 - **Exposure, 0-10**: only what lets someone other than an administrator in, measured for
   Home Assistant (an administrator can already do everything, so admin-only adds 0):
   a page that skips Home Assistant's login (0.25 when the same file checks a signed link or
-  token, else 0.75: a check of its own Barkley can't confirm); a login token the app may
+  token, else 0.75: a check of its own Barkley can't confirm; the strongest page counts in
+  full, each further page a quarter); a login token the app may
   hand out (non-admin 1, administrator 3, times a lifetime factor); a library bug (medium
   1, high 3, critical 5). Times 1.25 on a shared or work network, 1.5 when Home Assistant
   is reachable from the internet. Under 2 low, under 5 medium, 5 and up high. A found
@@ -158,12 +159,18 @@ def compute(report: dict[str, Any], network: str = "home") -> Readings:
     views = [f for f in findings if f.get("rule_id") == UNAUTH_VIEW]
     recognised = [f for f in views if str(f.get("file")) in checked_files]
     own = [f for f in views if str(f.get("file")) not in checked_files]
+    # Pages: the strongest counts in full, each further page a quarter, as Threat repeats
+    # (his decision 2026-11-20: an OAuth integration's 12 login-free pages summed to 9).
+    page_pts = sorted([PAGE_OWN_CHECK] * len(own) + [PAGE_RECOGNISED] * len(recognised),
+                      reverse=True)  # fmt: skip
+    if page_pts:
+        pts += page_pts[0] + REPEAT * sum(page_pts[1:])
     if recognised:
-        pts += PAGE_RECOGNISED * len(recognised)
-        reasons.append(_plural(len(recognised), "page skips", "pages skip") + " Home "
-                       "Assistant's login and checks a signed link or token instead.")  # fmt: skip
+        n = len(recognised)
+        reasons.append(_plural(n, "page skips", "pages skip") + " Home Assistant's login and "
+                       + ("checks" if n == 1 else "check") + " a signed link or token "
+                       "instead.")  # fmt: skip
     if own:
-        pts += PAGE_OWN_CHECK * len(own)
         reasons.append(_plural(len(own), "page skips", "pages skip") + " Home Assistant's "
                        "login. Barkley can't confirm what checks the caller.")  # fmt: skip
     if any(f.get("rule_id") == AUTH_INTERNALS for f in findings):
