@@ -104,12 +104,6 @@ CREATE TABLE IF NOT EXISTS settings (  -- panel settings (M8), e.g. the chosen A
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS finding_addresses (  -- (0.9.0) addresses a finding is about
-    scan_id    INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
-    finding_id TEXT NOT NULL,
-    address    TEXT NOT NULL,   -- host or IP the user may mark trusted (see trust.py)
-    PRIMARY KEY (scan_id, finding_id, address)
-);
 CREATE TABLE IF NOT EXISTS scan_inputs (  -- (0.10.0) the lockfiles of a scan, for re-checks
     scan_id INTEGER PRIMARY KEY REFERENCES scans (id) ON DELETE CASCADE,
     data    BLOB NOT NULL    -- zlib(JSON), recheck.capture(); text from the scan, only parsed
@@ -156,6 +150,8 @@ def _remove_reviews(db: sqlite3.Connection) -> list[str]:
         rows = db.execute("SELECT count(*) FROM reviews").fetchone()[0]
         db.execute("DROP TABLE reviews")
         gone.append(f"{rows} accepted finding{'s' * (rows != 1)}")
+    # the index of addresses a user could mark trusted: nothing has read it since
+    db.execute("DROP TABLE IF EXISTS finding_addresses")
     for key in _REVIEW_SETTINGS:
         if db.execute("DELETE FROM settings WHERE key = ?", (key,)).rowcount:
             gone.append("trusted addresses" if key == "trusted_addresses"
@@ -344,15 +340,6 @@ class Store:
                     for e in edges
                 ],
             )  # fmt: skip
-            db.executemany(
-                "INSERT OR IGNORE INTO finding_addresses VALUES (?,?,?)",
-                [
-                    (sid, f["id"], a)
-                    for f in report.get("findings", [])
-                    for a in f.get("addresses") or []
-                    if isinstance(a, str)
-                ],
-            )
             db.executemany(
                 "INSERT OR IGNORE INTO edge_findings VALUES (?,?,?)",
                 [(sid, e["id"], fid) for e in edges for fid in e.get("finding_ids", [])],

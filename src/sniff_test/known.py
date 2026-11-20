@@ -3,8 +3,7 @@
 The list ships with Barkley (`data/known_services.txt`) and is matched locally, so no
 host from a scan is ever sent anywhere to be looked up. It adds a name to a host and
 nothing else: no class, finding or score depends on it. The panel shows the name where
-the host is listed and as a hint in the "Trust this address?" box (`trust.py`), where
-the user decides.
+the host is listed.
 """
 
 from __future__ import annotations

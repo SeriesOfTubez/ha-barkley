@@ -33,15 +33,6 @@ TITLES = {
     PRACTICE: "How it's made",
     COVERAGE: "What Barkley couldn't read",
 }
-BLURBS = {
-    THREAT: "Signs of malicious behavior: sending your data or logins off the box, hidden or "
-    "disguised code, known malware.",
-    CAPABILITY: "Powerful things the app is able to do. Normal for some apps; it's what an "
-    "attacker would get if this app were ever compromised.",
-    VULNERABILITY: "Published security bugs in code libraries it uses.",
-    PRACTICE: "The developer's habits and how the release was built.",
-    COVERAGE: "Parts of the code the scan couldn't check.",
-}
 
 THREAT_RULES = frozenset(
     {
@@ -78,9 +69,6 @@ PRACTICE_RULES = frozenset(
         "telemetry-usage",
     }
 )
-
-# Known malware can never be accepted (hard rule): no tick, no reviewed score.
-NEVER_ACCEPT = frozenset({"dep-malicious"})
 
 # Paranoid mode (default off, user decision 2026-11-17/18): while it's off these are left
 # out of the page and the score. The test for each: it touches no password or login,
