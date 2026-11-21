@@ -309,6 +309,9 @@ a.button:hover { filter:brightness(1.08); }
 .devq { border-left:1px solid var(--line); padding:var(--s1) 0 var(--s1) var(--s3);
   margin:var(--s2) 0 0; display:flex; flex-direction:column; gap:var(--s1); max-width:72ch; }
 .devq .cite { font-size:var(--t-xs); color:var(--muted); }
+.says { font-size:var(--t-md); line-height:1.55; max-width:72ch; margin:var(--s2) 0; }
+.fn { font-size:var(--t-xs); line-height:0; color:var(--muted); padding-left:var(--s1); }
+.fnotes { font-size:var(--t-xs); color:var(--muted); margin:0; padding-left:var(--s4); }
 .banner.threat { background:var(--red-bg); border:1px solid var(--red-edge); padding:var(--s3) var(--s4); }
 .banner.threat b { display:block; color:var(--red); font-size:var(--t-lg); line-height:1.25; }
 .verdict { font-weight:600; }
@@ -3858,37 +3861,67 @@ def _lines(cites: Any) -> str:
     return ", ".join(out[:4])
 
 
+# (his report 2026-11-21: four sentences that each start "The README says" read like a
+# robot) the heading already says whose words these are, so the lead-in is dropped, in
+# answers stored before the request stopped asking for it too
+_SAYS_LEAD = re.compile(
+    r"^(?:the readme|a description in the code|the description in the code) "
+    r"(?:says|states)(?: that)?[ ,:]+",
+    re.I,
+)
+
+
+def _said(x: dict[str, Any]) -> str:
+    """One sentence without its "The README says" lead-in, ending on a full stop."""
+    text = _SAYS_LEAD.sub("", str(x.get("text") or "").strip(), count=1).strip()
+    if not text:
+        return ""
+    text = text[0].upper() + text[1:]
+    return text if text[-1] in ".!?…" else text + "."
+
+
 def said_html(says: list[dict[str, Any]]) -> str:
     """(0.15) "AI inferred" sentences under one item: what the developer's README or
     docstrings say about it, as the AI summed it up (report/ai_words), each with the
     lines Barkley checked. Text from an AI about untrusted text: escaped."""
     return "".join(
         f'<div class="devq">{src_tag("ai", _lines(x.get("cites")), "AI inferred")}'
-        f"<div>{e(x.get('text'), 400)}</div>"
+        f"<div>From the developer's text: {e(_said(x), 400)}</div>"
         '<span class="cite">The developer wrote those lines. It doesn\'t change the readings.'
         "</span></div>"
         for x in says
-        if isinstance(x, dict) and x.get("text")
+        if isinstance(x, dict) and _said(x)
     )
 
 
 def said_box(says: list[dict[str, Any]], failed: str = "") -> str:
-    """The sentences that aren't about one listed item, in a box of their own."""
-    rows = "".join(
-        f'<li>{e(x.get("text"), 400)} <span class="u">{e(_lines(x.get("cites")), 300)}</span></li>'
-        for x in says
-        if isinstance(x, dict) and x.get("text")
-    )
-    if not rows and not failed:
+    """The sentences that aren't about one listed item, in a box of their own: one
+    paragraph, each sentence followed by the number of the note that names the lines it
+    was read from."""
+    notes: list[str] = []
+    parts = []
+    for x in says:
+        if not isinstance(x, dict) or not _said(x):
+            continue
+        where = _lines(x.get("cites"))
+        if where and where not in notes:
+            notes.append(where)
+        mark = f'<sup class="fn">{notes.index(where) + 1}</sup>' if where else ""
+        parts.append(f"{e(_said(x), 400)}{mark}")
+    if not parts and not failed:
         return ""
-    body = (f'<div class="libs"><ul>{rows}</ul></div>' if rows else
-            f'<p class="muted">The AI didn\'t answer this part: {e(failed, 300)}</p>')  # fmt: skip
+    body = (
+        f'<p class="says">{" ".join(parts)}</p>'
+        f'<ol class="fnotes">{"".join(f"<li>{e(n, 300)}</li>" for n in notes)}</ol>'
+        if parts
+        else f'<p class="muted">The AI didn\'t answer this part: {e(failed, 300)}</p>'
+    )
     return (
         f'<section class="box"><h2>What the developer says it does {src_tag("ai", "", "AI inferred")}'
         '</h2><p class="sub">Your AI read parts of the app\'s README and the descriptions in '
         "its code, and summed up what they say. The developer wrote those lines. Barkley "
-        "checked that each line exists and holds these words, not that they are true. "
-        "Nothing here changes the readings.</p>"
+        "checked that each numbered line exists and holds these words, not that they are "
+        "true. Nothing here changes the readings.</p>"
         f"{body}</section>"
     )
 

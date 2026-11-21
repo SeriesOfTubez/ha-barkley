@@ -175,3 +175,31 @@ def test_the_readmes_opening_is_sent_first_and_not_twice():
         ai_words.sent(rep),
     )
     assert kept and not why
+
+
+def test_the_box_is_one_paragraph_with_numbered_notes_for_the_lines():
+    says = [
+        {"text": "The README says this is an integration for desktop agents.",
+         "cites": [["README.md", 16, 18]]},
+        {"text": "It connects through MQTT", "cites": [["README.md", 16, 18]]},
+        {"text": "A description in the code says that it adds buttons.",
+         "cites": [["button.py", 3, 3]]},
+    ]  # fmt: skip
+    box = ui.said_box(says)
+    assert box.count('<p class="says">') == 1 and "README says" not in box
+    assert (
+        'This is an integration for desktop agents.<sup class="fn">1</sup> '
+        'It connects through MQTT.<sup class="fn">1</sup> '
+        'It adds buttons.<sup class="fn">2</sup>'
+    ) in box
+    assert (
+        '<ol class="fnotes"><li>README.md lines 16–18</li><li>button.py line 3</li></ol>'  # noqa: RUF001
+    ) in box
+    assert "From the developer's text: It adds buttons." in ui.said_html(says).replace(
+        "&#x27;", "'"
+    )
+
+
+def test_the_request_asks_for_a_paragraph_not_for_a_lead_in_on_every_sentence():
+    rules = ai_words._RULES
+    assert "read together as that paragraph" in rules and "do not start them with" in rules
