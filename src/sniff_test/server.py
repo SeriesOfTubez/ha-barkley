@@ -50,7 +50,7 @@ from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import GitHubError, RateLimit, RateLimitError
 from sniff_test.releases import ReleasesError
 from sniff_test.report import ai as report_ai
-from sniff_test.report import ai_context, context
+from sniff_test.report import ai_context, ai_words, context
 from sniff_test.report.json_report import sanitize_untrusted
 from sniff_test.store import ScanRow, Store, StoreError
 
@@ -2293,6 +2293,27 @@ class Panel:
                 accepted = report_ai.accept(report, data, readings)
                 if not accepted["summary"] and not accepted["findings"]:
                     raise supervisor.SupervisorError("the answer had no usable text")
+                # (0.15) "AI inferred": in the read-code mode, one more request with the
+                # README passages and docstrings the scan stored. Its failure never costs
+                # the explanation above; the page says it didn't answer.
+                if self.ai_mode == "deep" and ai_words.wanted(report):
+                    started = time.monotonic()
+                    try:
+                        instructions, structure = ai_words.build_request(report)
+                        said = self.ai_fn(self.ai_entity, instructions, structure,
+                                          ai_words.TASK_NAME)  # fmt: skip
+                        accepted["words"] = ai_words.accept(report, said)
+                        w = accepted["words"]
+                        print(f"explain @{sid} developer's words "
+                              f"({time.monotonic() - started:.0f} s): {len(w['says'])} "
+                              f"sentence(s), {len(w['dropped'])} dropped "
+                              f"{sorted(set(w['dropped']))}",
+                              file=sys.stderr, flush=True)  # fmt: skip
+                    except Exception as ex:
+                        why = f"{type(ex).__name__}: {ex}"
+                        accepted["words"] = {"says": [], "dropped": [], "failed": str(ex)[:300]}
+                        print(f"explain @{sid} developer's words failed: {why}",
+                              file=sys.stderr, flush=True)  # fmt: skip
                 self.store.save_explanation(sid, self.ai_entity, accepted)
                 with self._ai_lock:
                     self._ai.pop(sid, None)

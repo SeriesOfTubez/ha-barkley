@@ -3502,6 +3502,53 @@ def devnote_html(n: devnote.Note | None, title: str = "The developer's note") ->
     )
 
 
+def _lines(cites: Any) -> str:
+    """`README.md lines 123-129, api.py line 40` (with a dash) from checked citations."""
+    out = []
+    for c in cites or []:
+        try:
+            f, a, b = str(c[0]), int(c[1]), int(c[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        out.append(f"{f} line {a}" if a == b else f"{f} lines {a}–{b}")
+    return ", ".join(out[:4])
+
+
+def said_html(says: list[dict[str, Any]]) -> str:
+    """(0.15) "AI inferred" sentences under one item: what the developer's README or
+    docstrings say about it, as the AI summed it up (report/ai_words), each with the
+    lines Barkley checked. Text from an AI about untrusted text: escaped."""
+    return "".join(
+        f'<div class="devq">{src_tag("ai", _lines(x.get("cites")), "AI inferred")}'
+        f"<div>{e(x.get('text'), 400)}</div>"
+        '<span class="cite">The developer wrote those lines. It doesn\'t change the readings.'
+        "</span></div>"
+        for x in says
+        if isinstance(x, dict) and x.get("text")
+    )
+
+
+def said_box(says: list[dict[str, Any]], failed: str = "") -> str:
+    """The sentences that aren't about one listed item, in a box of their own."""
+    rows = "".join(
+        f'<li>{e(x.get("text"), 400)} <span class="u">{e(_lines(x.get("cites")), 300)}</span></li>'
+        for x in says
+        if isinstance(x, dict) and x.get("text")
+    )
+    if not rows and not failed:
+        return ""
+    body = (f'<div class="libs"><ul>{rows}</ul></div>' if rows else
+            f'<p class="muted">The AI didn\'t answer this part: {e(failed, 300)}</p>')  # fmt: skip
+    return (
+        f'<section class="box"><h2>What the developer says it does {src_tag("ai", "", "AI inferred")}'
+        '</h2><p class="sub">Your AI read parts of the app\'s README and the descriptions in '
+        "its code, and summed up what they say. The developer wrote those lines. Barkley "
+        "checked that each line exists and holds these words, not that they are true. "
+        "Nothing here changes the readings.</p>"
+        f"{body}</section>"
+    )
+
+
 def notes_allowed(report: dict[str, Any], f: dict[str, Any]) -> bool:
     """(his rule, 2026-11-20) The developer's words never sit next to a found or possible
     threat: none on a page with a found threat, none on a threat item, and with a possible
@@ -3693,9 +3740,24 @@ def render_app(
                 return devnote_html(n, title)
         return ""
 
+    # (0.15) "AI inferred": never on a page with a found threat; with a possible threat
+    # only under an item the developer's words may sit beside (ai_words keeps no other)
+    words = ai.get("words") if isinstance(ai.get("words"), dict) else {}
+    says = [x for x in words.get("says") or [] if isinstance(x, dict)]
+    if rd.get("threat_level") == "found":
+        says = []
+    placed: set[int] = set()
+
+    def said_for(f: dict[str, Any]) -> str:
+        mine = [x for x in says if x.get("about") == f.get("rule_id")]
+        placed.update(id(x) for x in mine)
+        return said_html(mine)
+
     def one(f: dict[str, Any], fs: list[dict[str, Any]], p: int) -> str:
         ctx = not kinds.is_threat(str(f["rule_id"]))
         note = note_for(fs) if ctx and notes_allowed(report, f) else ""
+        if ctx and notes_allowed(report, f):
+            note += said_for(f)
         return finding_html(
             f,
             fs,
@@ -3740,6 +3802,9 @@ def render_app(
         + minor_line(base, sid, report)
         + "</section>"
     )  # fmt: skip
+    loose = [x for x in says if id(x) not in placed]
+    if rd.get("threat_level") == "none":  # beside a possible threat: only the placed ones
+        parts.append(said_box(loose, str(words.get("failed") or "")))
     parts.append(
         f'<section class="box"><h2>{"What it touches " + src_tag("scan")}</h2>'
         '<p class="sub">On the left is what it can read. On the right is where it can connect. '
