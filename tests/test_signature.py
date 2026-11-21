@@ -56,10 +56,12 @@ def test_no_change_and_scans_from_before_say_nothing():
     assert diff.signature_changes(_rep(None), _rep("unsigned")) == []
 
 
-def test_the_habits_box_says_how_the_commit_is_signed():
+def test_where_its_code_comes_from_says_how_the_commit_is_signed():
+    """(0.15) A fact about the release, so it sits with the publishers, not the habits."""
     from sniff_test import ui
 
     rep = {"hygiene": {"scanners": [], "errors": []}, "target": {"signature": {"state": "github"}}}
-    assert "made on github.com, and GitHub signed it" in ui.hygiene_html(rep)
+    assert "made on github.com, and GitHub signed it" in ui.supply_html(rep)
+    assert "signed it" not in ui.hygiene_html(rep)
     rep["target"]["signature"] = {"state": "unsigned"}
-    assert "says nothing bad on its own" in ui.hygiene_html(rep)
+    assert "says nothing bad on its own" in ui.supply_html(rep)

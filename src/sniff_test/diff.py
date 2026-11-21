@@ -632,6 +632,161 @@ def signature_changes(old: dict, new: dict) -> list[Change]:
     return []
 
 
+# --- (0.15) facts a scan keeps since 0.15: requests, environment variables, libraries -----
+
+FACT_RANK = 30  # listed with the other changes, below the headline: facts, not warnings
+_FACT_NAMES = 6  # names quoted in one sentence
+_PARTS = (("body", "in the body"), ("headers", "as headers"), ("query", "after the ? in "
+          "the address"), ("address", "in the address itself"))  # fmt: skip
+
+
+def _section(report: dict, key: str) -> dict[str, Any] | None:
+    v = report.get(key)
+    return v if isinstance(v, dict) else None
+
+
+def _names(values: Any) -> list[str]:
+    return [v for v in values or [] if isinstance(v, str) and v]
+
+
+def _quoted(names: list[str]) -> str:
+    shown = ", ".join(sorted(names)[:_FACT_NAMES])
+    more = len(names) - _FACT_NAMES
+    return shown + (f" and {more} more" if more > 0 else "")
+
+
+def _request_kinds(shapes: Any) -> dict[str, dict[str, set[str]]]:
+    """{method: {part: names}} for one site's requests ("" = the method is picked while
+    the app runs)."""
+    out: dict[str, dict[str, set[str]]] = {}
+    for sh in shapes or []:
+        if not isinstance(sh, dict):
+            continue
+        m = sh.get("method") if isinstance(sh.get("method"), str) else ""
+        parts = out.setdefault(m, {k: set() for k, _w in _PARTS})
+        for k, _w in _PARTS:
+            parts[k].update(_names(sh.get(k)))
+    return out
+
+
+def request_changes(old: dict, new: dict) -> list[Change]:
+    """A kind of request (GET, POST…) the new version sends to a site and the old one
+    didn't, and names that newly go into a request the old one already sent. From the
+    `requests` section (analyzers/py_requests); a scan from before 0.15 has none, and then
+    nothing is said. Method and names are text from the scanned code."""
+    a, b = _section(old, "requests"), _section(new, "requests")
+    if a is None or b is None:
+        return []
+    out = []
+    sides = [(str(h), (a.get("sites") or {}).get(h), shapes)
+             for h, shapes in sorted((b.get("sites") or {}).items())]  # fmt: skip
+    sides.append(("", a.get("elsewhere"), b.get("elsewhere")))
+    for host, before, after in sides:
+        was, now = _request_kinds(before), _request_kinds(after)
+        to = f"to {host}" if host else "to an address that isn't in the code"
+        for method in sorted(now):
+            verb = f"{method} requests" if method else "requests with a method picked while it runs"
+            if method not in was:
+                carried = [f"{_quoted(sorted(now[method][k]))} {words}"
+                           for k, words in _PARTS if now[method][k]]  # fmt: skip
+                out.append(Change(
+                    "new_request", FACT_RANK, "hosts",
+                    f"It now sends {verb} {to}"
+                    + (", with " + "; ".join(carried) if carried else ""),
+                    detail={"host": host, "method": method},
+                ))  # fmt: skip
+                continue
+            for k, words in _PARTS:
+                added = now[method][k] - was[method][k]
+                if added:
+                    out.append(Change(
+                        "request_carries", FACT_RANK, "hosts",
+                        f"Its {verb} {to} now carry {_quoted(sorted(added))} {words}",
+                        sign="~", detail={"host": host, "method": method, "part": k},
+                    ))  # fmt: skip
+    return out
+
+
+def environment_changes(old: dict, new: dict) -> list[Change]:
+    """Environment variables the new version reads or sets that the old one didn't (the
+    `environment` section, analyzers/py_env). Nothing for a scan from before 0.15."""
+    a, b = _section(old, "environment"), _section(new, "environment")
+    if a is None or b is None:
+        return []
+    out = []
+    for key, verb in (("reads", "reads"), ("writes", "sets or removes")):
+        was = {d.get("name") for d in a.get(key) or [] if isinstance(d, dict)}
+        now = {d.get("name") for d in b.get(key) or [] if isinstance(d, dict)}
+        added = sorted(n for n in now - was if isinstance(n, str) and n)
+        if added:
+            many = len(added) != 1
+            out.append(Change(
+                "new_env", FACT_RANK, "data",
+                f"It now {verb} the environment variable{'s' * many} {_quoted(added)}",
+                detail={"names": added[:50], "how": key},
+            ))  # fmt: skip
+
+    def whole(sec: dict) -> int:
+        w = sec.get("whole")
+        return w.get("count") if isinstance(w, dict) and isinstance(w.get("count"), int) else 0
+
+    if whole(b) and not whole(a):
+        text = ("It now uses all environment variables at once, for example to copy them or "
+                "hand them to another program")  # fmt: skip
+        out.append(Change("new_env", FACT_RANK, "data", text, detail={"how": "whole"}))
+    return out
+
+
+def _libraries(report: dict) -> dict[str, dict[str, bool]] | None:
+    """{name: {version: read as code?}} for the published libraries a scan found copied
+    into the app; None for a scan that never looked (before 0.14.1, or lookups off)."""
+    libs, lk = report.get("libraries"), _section(report, "library_lookups")
+    if not isinstance(libs, list) and lk is None:
+        return None
+    out: dict[str, dict[str, bool]] = {}
+    found = [(x, False) for x in libs or []]
+    found += [(x, True) for x in (lk or {}).get("read") or []]
+    for lib, read in found:
+        if isinstance(lib, dict) and isinstance(lib.get("name"), str) and lib["name"]:
+            out.setdefault(lib["name"], {})[str(lib.get("version") or "")] = read
+    return out
+
+
+def library_changes(old: dict, new: dict) -> list[Change]:
+    """Published libraries copied into the app: one that is new, one whose version
+    changed, and one Barkley recognised before and reads as code now. Names and versions
+    come from jsDelivr's answer for a file of the scanned app."""
+    a, b = _libraries(old), _libraries(new)
+    if a is None or b is None:
+        return []
+    out = []
+    for name in sorted(b):
+        now = b[name]
+        vs = ", ".join(sorted(v for v in now if v)) or "no version given"
+        read = any(now.values())
+        if name not in a:
+            how = "Barkley read it as code" if read else "Barkley recognised it and didn't read it"
+            out.append(Change("new_library", FACT_RANK, "packages",
+                              f"A new published library is copied in: {name} {vs}. {how}",
+                              detail={"name": name}))  # fmt: skip
+            continue
+        was = a[name]
+        if set(was) != set(now):
+            before = ", ".join(sorted(v for v in was if v)) or "no version given"
+            out.append(Change("library_version", FACT_RANK, "packages",
+                              f"The copied-in library {name} is now {vs} (was {before})",
+                              sign="~", detail={"name": name}))  # fmt: skip
+        if read and not any(was.values()):
+            out.append(Change("library_read", FACT_RANK, "packages",
+                              f"Barkley recognised the copied-in library {name} before and "
+                              "reads it as code now", sign="~", detail={"name": name}))  # fmt: skip
+    for name in sorted(set(a) - set(b)):
+        out.append(Change("library_gone", 2, "packages",
+                          f"The published library {name} is no longer copied in",
+                          sign="-", detail={"name": name}))  # fmt: skip
+    return out
+
+
 def diff(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     warnings = []
     if old.get("schema_version") != new.get("schema_version"):
@@ -672,6 +827,8 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
         repo[0].finding_ids += [i for c in folded for i in c.finding_ids]
         fchanges = [c for c in fchanges if c not in folded]
     changes = fchanges + echanges + repo + signature_changes(old, new) + coverage_changes(old, new)
+    changes += request_changes(old, new) + environment_changes(old, new)
+    changes += library_changes(old, new)
     changes.sort(key=lambda c: (-c.rank, _GROUP_ORDER.get(c.group, 9), c.text))
     summary: dict[str, dict[str, int]] = {}
     for c in changes:

@@ -1890,6 +1890,10 @@ def change_line(c: dict[str, Any]) -> tuple[str, str, str]:
         out = "A different publisher: " + e(head, 300)
     elif kind in ("signature_stopped", "signature_changed", "signature_started"):
         out = e(head, 300)  # fixed words from diff.signature_changes
+    elif kind in ("new_request", "request_carries", "new_env", "new_library",
+                  "library_version", "library_read", "library_gone"):  # fmt: skip
+        out = e(text, 400)  # (0.15) a whole sentence from diff.py; the names in it are untrusted
+        lead = _SIGN_WORDS.get(sign, "Changed")
     elif kind == "coverage_lost":
         out = "Part of the new check didn't finish, so changes may be missing: " + e(head, 300)
     elif kind == "install_source":
@@ -2632,9 +2636,6 @@ def hygiene_html(report: dict[str, Any]) -> str:
         li.append(f"{no} Its GitHub workflows and commit hooks run no security scanner, "
                   "such as CodeQL, Semgrep, Bandit, Trivy, OSV-Scanner, pip-audit or "
                   "Gitleaks.")  # fmt: skip
-    sig = ((report.get("target") or {}).get("signature") or {}).get("state")
-    if sig in _SIGNATURE_LINE:  # (0.15) GitHub's verdict on this version's commit
-        li.append((yes if sig in ("github", "developer") else no) + " " + _SIGNATURE_LINE[sig])
     dep = h.get("dependabot")
     if dep is not None:
         what = ", ".join(_ECO.get(x, x) for x in dep) or "its dependencies"
@@ -2711,10 +2712,11 @@ def hygiene_html(report: dict[str, Any]) -> str:
     )
 
 
-def libraries_html(report: dict[str, Any]) -> str:
+def libraries_html(report: dict[str, Any], inner: bool = False) -> str:
     """(0.14.1) Files identical to a published npm file, not read as code
     (analyzers/libraries.py). Names, versions and dates come from jsDelivr and npm and the
-    file names from the app: all escaped."""
+    file names from the app: all escaped. `inner`: as a part of "Where its code comes
+    from" (a sub-heading, no box of its own)."""
     libs = [x for x in report.get("libraries") or [] if isinstance(x, dict)]
     lk = report.get("library_lookups") if isinstance(report.get("library_lookups"), dict) else {}
     read = [x for x in lk.get("read") or [] if isinstance(x, dict)]
@@ -2765,15 +2767,20 @@ def libraries_html(report: dict[str, Any]) -> str:
             counts.append(one if n == 1 else many.format(n))
     rest = (f'<p class="sub mt2">{". ".join(counts)}. Barkley read all of those as code.</p>'
             if counts else "")  # fmt: skip
-    return (
-        '<section class="box"><h2>Published libraries it ships</h2><p class="sub">These '
+    intro = (
+        "These "
         "files are exact copies of files that npm packages publish. Barkley doesn't read a "
         "copy as code when the package is well known: at least a month old, at least 10,000 "
         "downloads a week and no malware warning. It still checks that package for known "
         "security problems, like any dependency. Every other file is read as code, and so is "
-        "a file that differs by even one byte.</p>"
-        f'<div class="libs">{_zone_list(items)}</div>{rest}</section>'
+        "a file that differs by even one byte."
     )
+    body = f'<div class="libs">{_zone_list(items)}</div>{rest}'
+    if inner:
+        return (f'<h3 class="kindh">Published libraries it ships ({len(items)})</h3>'
+                f'<p class="sub">{intro}</p>{body}')  # fmt: skip
+    return (f'<section class="box"><h2>Published libraries it ships</h2><p class="sub">{intro}'
+            f"</p>{body}</section>")  # fmt: skip
 
 
 _LIB_WHY = {
@@ -2827,6 +2834,215 @@ def environment_html(report: dict[str, Any]) -> str:
         "of that one under What it can do.</p>"
         f'<div class="libs">{_zone_list(items)}</div></section>'
     )
+
+
+PACKAGES_LISTED = 300  # package lines drawn (a real integration has 78)
+RUNTIME_CODE_RULES = (  # code that arrives some other way than the release Barkley read
+    "py-runtime-pip",
+    "py-runtime-pip-listed",
+    "card-remote-script",
+    "card-eval-remote",
+    "dep-vcs-or-url-requirement",
+)
+_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _day(value: Any) -> str:
+    """The date part of a timestamp from GitHub, or "" when it isn't one."""
+    m = _DAY.match(str(value or ""))
+    return m[0] if m else ""
+
+
+def _count(n: int, one: str, many: str) -> str:
+    return f"one {one}" if n == 1 else f"{n:,} {many}"
+
+
+def _supply_repo(report: dict[str, Any]) -> str:
+    """The project and this release: what the Marketplace installs, whose project it is,
+    who published the release, how the commit is signed. All from GitHub's API, read
+    during the scan (report.provenance, report.target)."""
+    t = report.get("target") if isinstance(report.get("target"), dict) else {}
+    prov = report.get("provenance") if isinstance(report.get("provenance"), dict) else {}
+    ref = f"<code>{e(t.get('ref'), 80)}</code>" if t.get("ref") else "this version"
+    li = []
+    src = str(t.get("install_source") or "")
+    if src == "release_asset":
+        li.append(f"The Marketplace installs a file attached to release {ref}. Barkley read "
+                  "that file.")  # fmt: skip
+    elif src == "tag_source":
+        li.append(f"The Marketplace installs the code as it is at {ref}. Barkley read that code.")
+    elif src == "default_branch":
+        li.append("The project has no release the Marketplace can use, so it installs the "
+                  "newest code. Barkley read that code as it was at one commit.")  # fmt: skip
+    full = str(prov.get("full_name") or "")
+    if full:
+        whose = {"Organization": "an organization's account",
+                 "User": "one person's account"}.get(str(prov.get("owner_type")), "")  # fmt: skip
+        made = _day(prov.get("created_at"))
+        li.append(f"The project is <code>{e(full, 200)}</code> on GitHub"
+                  + (f", under {whose}" if whose else "")
+                  + (f". It was created on {made}." if made else "."))  # fmt: skip
+    for f in [x for x in prov.get("former_names") or [] if isinstance(x, dict)][:5]:
+        if f.get("name"):
+            li.append(f"It used to be at <code>{e(f['name'], 200)}</code>.")
+    rels = [x for x in prov.get("releases") or [] if isinstance(x, dict)]
+    mine = next((x for x in rels if x.get("installed")), None)
+    if mine and mine.get("publisher"):
+        when = _day(mine.get("published_at"))
+        bot = ", an automated workflow" if mine.get("bot") else ""
+        li.append(f"This release was published by <code>{e(mine['publisher'], 80)}</code>{bot}"
+                  + (f"{',' if bot else ''} on {when}." if when else "."))  # fmt: skip
+        other = [u for u in mine.get("asset_uploaders") or []
+                 if isinstance(u, str) and u != mine["publisher"]]  # fmt: skip
+        if other:
+            li.append("Its files were uploaded by "
+                      + ", ".join(f"<code>{e(u, 80)}</code>" for u in other[:5]) + ".")  # fmt: skip
+    pubs = [p for p in prov.get("publishers") or []
+            if isinstance(p, dict) and isinstance(p.get("releases"), int)]  # fmt: skip
+    if pubs:
+        total = sum(p["releases"] for p in pubs)
+        rows = "".join(
+            f"<li><code>{e(p.get('login'), 80)}</code>"
+            f"{' (an automated workflow)' if p.get('bot') else ''}: "
+            f"{_count(p['releases'], 'release', 'releases')}"
+            + (f", {_day(p.get('first'))} to {_day(p.get('last'))}"
+               if _day(p.get("first")) and _day(p.get("last")) != _day(p.get("first"))
+               else f", {_day(p.get('first'))}" if _day(p.get("first")) else "")
+            + "</li>"
+            for p in pubs[:20]
+        )  # fmt: skip
+        li.append(
+            f"The project has {_count(total, 'release', 'releases')}, from "
+            f"{_count(len(pubs), 'publisher', 'publishers')}."
+            f'<details class="more"><summary>Who published them</summary>'
+            f'<ul class="plain">{rows}</ul></details>'
+        )
+    sig = (t.get("signature") or {}).get("state") if isinstance(t.get("signature"), dict) else ""
+    if sig in _SIGNATURE_LINE:  # GitHub's verdict on this version's commit
+        li.append(_SIGNATURE_LINE[sig])
+    noted = dict.fromkeys(
+        explain.explain(str(f.get("rule_id"))).title
+        for f in report.get("findings") or []
+        if str(f.get("rule_id")).startswith("repo-")
+    )
+    li.extend(f"<b>{e(x)}.</b> More about it above, under How it's made." for x in noted)
+    if not li:
+        return ""
+    return ('<h3 class="kindh">The project and this release</h3><ul class="plain">'
+            + "".join(f"<li>{x}</li>" for x in li) + "</ul>")  # fmt: skip
+
+
+def _supply_packages(report: dict[str, Any]) -> str:
+    """Every package the app is installed or built with: for an integration what Home
+    Assistant would install (worked out by uv during the scan, the packages those bring
+    along included), for a card the packages its package.json lists. Names and versions
+    come from the scanned repo's files and the package index: escaped."""
+    g, nodes = _graph(report)
+    chips = {str(f.get("id")): explain.explain(str(f.get("rule_id"))).chip
+             for f in report.get("findings") or []}  # fmt: skip
+    py, npm = [], []
+    for edge in g.get("edges", []):
+        if edge.get("source") != g.get("subject"):
+            continue
+        label = str(nodes.get(edge.get("target"), {}).get("label", ""))
+        eco, _, name = label.partition("/")
+        a = edge.get("attrs") if isinstance(edge.get("attrs"), dict) else {}
+        marks = sorted({chips[i] for i in edge.get("finding_ids") or [] if i in chips})
+        if edge.get("relation") == "depends_on" and eco == "pypi" and name:
+            py.append((name, a, marks))
+        elif edge.get("relation") == "bundles" and eco == "npm" and name:
+            npm.append((name, a, marks))
+
+    def line(name: str, facts: list[str], marks: list[str]) -> str:
+        tail = "".join(f" · {e(x, 80)}" for x in facts)
+        noted = "".join(f" · <b>{e(m, 80)}</b>" for m in marks)
+        return f'<li><code>{e(name, 120)}</code><span class="muted">{tail}</span>{noted}</li>'
+
+    out = []
+    if py:
+        py.sort(key=lambda x: (not x[1].get("direct"), x[0]))
+        n = len(py)
+        direct = sum(1 for _n, a, _m in py if a.get("direct"))
+        if any("version" in a for _n, a, _m in py):
+            shipped = sum(1 for _n, a, _m in py if a.get("ha_provided"))
+            ha = e(report.get("ha_version") or "", 20)
+            rest = n - direct
+            text = (f"Home Assistant installs {_count(n, 'Python package', 'Python packages')} "
+                    "for this app. "
+                    + ("The app asks for all of them itself." if not rest else
+                       f"The app asks for {'one' if direct == 1 else direct} of them itself, and "
+                       f"the other {'one comes' if rest == 1 else f'{rest} come'} along with "
+                       f"{'it' if direct == 1 else 'those'}.")
+                    + (f" Home Assistant{' ' + ha if ha else ''} already ships "
+                       f"{'all of them' if shipped == n else f'{shipped} of them'} at the same "
+                       "version." if shipped else ""))  # fmt: skip
+        else:  # a scan that couldn't work out the full list (offline)
+            text = (f"The app asks for {_count(n, 'Python package', 'Python packages')}. "
+                    "Barkley didn't work out what those bring along in this scan.")  # fmt: skip
+        items = []
+        for name, a, marks in py[:PACKAGES_LISTED]:
+            facts = [str(a["version"])] if a.get("version") else []
+            if a.get("requirement") and not a.get("version"):
+                facts.append(str(a["requirement"]))
+            facts.append("the app asks for it" if a.get("direct") else "comes along")
+            if a.get("ha_provided"):
+                facts.append("Home Assistant already ships it")
+            items.append(line(name, facts, marks))
+        if n > PACKAGES_LISTED:
+            items.append(f"<li>and {n - PACKAGES_LISTED:,} more</li>")
+        out.append(f'<h3 class="kindh">Python packages ({n:,})</h3>'
+                   f'<p class="sub">{text}</p><div class="libs">{_zone_list(items)}</div>')  # fmt: skip
+    if npm:
+        npm.sort(key=lambda x: x[0])
+        n = len(npm)
+        items = [line(name, [str(a["spec"])] if a.get("spec") else [], marks)
+                 for name, a, marks in npm[:PACKAGES_LISTED]]  # fmt: skip
+        if n > PACKAGES_LISTED:
+            items.append(f"<li>and {n - PACKAGES_LISTED:,} more</li>")
+        out.append(f'<h3 class="kindh">npm packages it is built from ({n:,})</h3>'
+                   f'<p class="sub">Its <code>package.json</code> lists '
+                   f"{_count(n, 'npm package', 'npm packages')}, with the versions it accepts. "
+                   "The developer builds them into the file you install.</p>"
+                   f'<div class="libs">{_zone_list(items)}</div>')  # fmt: skip
+    return "".join(out)
+
+
+def _supply_runtime(report: dict[str, Any]) -> str:
+    """Code that doesn't come with the release: installed or downloaded while the app
+    runs, or a library taken straight from a web address. From the scan's own items."""
+    by: dict[str, list[dict[str, Any]]] = {}
+    for f in report.get("findings") or []:
+        if str(f.get("rule_id")) in RUNTIME_CODE_RULES:
+            by.setdefault(str(f["rule_id"]), []).append(f)
+    head = '<h3 class="kindh">Code it gets while it runs</h3>'
+    if not by:
+        kind = str((report.get("target") or {}).get("kind"))
+        what = ("that loads code from a website while the card runs" if kind in ("plugin", "card")
+                else "that installs packages while the app runs")  # fmt: skip
+        who = ("Barkley found" if report.get("complete", True)
+               else "In the part Barkley could check, it found")  # fmt: skip
+        return f'{head}<p class="sub">{who} nothing {what}.</p>'
+    li = []
+    for rule in RUNTIME_CODE_RULES:
+        fs = by.get(rule) or []
+        if fs:
+            li.append(f"<b>{e(explain.explain(rule).title)}.</b> "
+                      f'<span class="muted">{_where(fs)}</span>')  # fmt: skip
+    return (f'{head}<p class="sub">Barkley can only read the code in the release. It '
+            'never sees code that arrives later.</p><ul class="plain">'
+            + "".join(f"<li>{x}</li>" for x in li) + "</ul>")  # fmt: skip
+
+
+def supply_html(report: dict[str, Any]) -> str:
+    """(0.15, his decision 2026-11-20) "Where its code comes from": the project and this
+    release, every Python or npm package, the published libraries copied into it, and
+    code it gets while it runs. Facts from the scan; nothing here is scored."""
+    parts = [_supply_repo(report), _supply_packages(report),
+             libraries_html(report, inner=True), _supply_runtime(report)]  # fmt: skip
+    if not any(parts[:3]) and "nothing" in parts[3]:
+        return ""  # a report with none of these facts (a local folder scanned offline)
+    return ('<section class="box"><h2>Where its code comes from</h2>'
+            + "".join(parts) + "</section>")  # fmt: skip
 
 
 def cache_text(report: dict[str, Any]) -> str:
@@ -3541,7 +3757,7 @@ def render_app(
         f"{zones_html(report, zdeep if deep else None, open_item, rd.get('threat_level') != 'found')}"
         "</section>"
     )
-    parts.append(tag(libraries_html(report)))
+    parts.append(tag(supply_html(report)))
     parts.append(tag(environment_html(report)))
     parts.append(tag(hygiene_html(report)))
     can = explain.can_do(report)
