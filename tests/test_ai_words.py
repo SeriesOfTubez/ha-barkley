@@ -153,3 +153,25 @@ def test_it_never_moves_a_reading():
     before = readings.compute(rep).to_dict()
     ai_words.accept(rep, {"says_1": GOOD, "about_1": "1"})
     assert readings.compute(rep).to_dict() == before
+
+
+def test_the_readmes_opening_is_sent_first_and_not_twice():
+    """(his report 2026-11-21) a card's summary was one thin sentence: only topic passages
+    were sent, never the lines where the developer says what the app is."""
+    rep = _report()
+    opening = ["# Acme Radar", "", "A card that shows rain radar from radar.example."] + [
+        f"line {i}" for i in range(4, 40)
+    ]
+    rep["context"]["readme"] = {"file": "README.md", "start": 1, "code": opening}
+    rep["context"]["readme_topics"]["passages"].insert(0, {"start": 3, "code": [opening[2]]})
+    segs = ai_words.sent(rep)["segments"]
+    assert (segs[0]["start"], len(segs[0]["code"])) == (1, ai_words.MAX_OPENING_LINES)
+    assert [s["start"] for s in segs if s["kind"] == "readme"] == [1, 122]  # line 3 once
+    text, _ = ai_words.build_request(rep)
+    assert "A card that shows rain radar from radar.example." in text
+    assert "first sentence say what the app is" in text
+    kept, why = ai_words.check(
+        "The README says it is a card that shows rain radar from radar.example (README.md:3).",
+        ai_words.sent(rep),
+    )
+    assert kept and not why

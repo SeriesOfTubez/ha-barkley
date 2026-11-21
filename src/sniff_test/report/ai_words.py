@@ -40,6 +40,9 @@ MAX_DOCS = 6  # docstrings sent
 MAX_DOC_LINES = 30
 MAX_CHARS = 6_000  # of developer text in one request
 MIN_SHARED = 3
+# (his report 2026-11-21: one thin sentence for a card) the README's opening is where a
+# developer says what the app is; only topic passages were sent before
+MAX_OPENING_LINES = 16
 # A verdict of the AI's own. Narrower than the README opinion's list (ai_context._VERDICT):
 # "approved" and "expected" are words developers use about their own features ("once an
 # administrator has approved it"), and reporting them isn't judging.
@@ -70,9 +73,12 @@ it rests on, as (file:line) or (file:first-last), using the file names and line 
 at the start of each line.
 - Report only what the cited lines say, in words close to theirs. Add nothing you know from \
 elsewhere, and do not guess.
-- Pick what a security-minded user would want to know: logins, tokens and passwords, user \
-accounts, who may use a feature, what is sent out of the home, what the app opens to the \
-network, what it runs or installs on the system. Skip install steps, screenshots, badges and \
+- Make the first sentence say what the app is and what it is for, when the README's \
+opening lines say so.
+- After that, pick what a security-minded user would want to know: logins, tokens and \
+passwords, user accounts, who may use a feature, what is sent out of the home, what the app \
+opens to the network, what it runs or installs on the system, and which outside services it \
+gets data from. Skip install steps, screenshots, badges and \
 thanks.
 - You report the developer's words; you do not judge them. Never say or suggest that anything \
 is safe, secure, harmless, fine, expected, legitimate or a false positive, and never that what \
@@ -153,10 +159,22 @@ def sent(report: dict[str, Any]) -> dict[str, Any]:
         size += n
         out["segments"].append({**seg, "kind": kind})
 
+    opening_end = 0
+    intro = ctx.get("readme")
+    if isinstance(intro, dict) and (seg := _segment(intro)) is not None:
+        seg["code"] = seg["code"][:MAX_OPENING_LINES]
+        if any(x.strip() for x in seg["code"]):
+            out["readme"] = seg["file"]
+            add(seg, "readme")
+            opening_end = seg["start"] + len(seg["code"])
     topics = ctx.get("readme_topics")
     if isinstance(topics, dict) and isinstance(topics.get("file"), str):
         out["readme"] = topics["file"]
         for p in topics.get("passages") or []:
+            if isinstance(p, dict) and isinstance(p.get("start"), int) and (
+                p["start"] < opening_end
+            ):
+                continue  # already sent with the opening
             if isinstance(p, dict):
                 add(_segment({"file": topics["file"], "start": p.get("start"),
                               "code": p.get("code")}), "readme")  # fmt: skip
