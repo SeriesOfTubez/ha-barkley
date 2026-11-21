@@ -2532,11 +2532,37 @@ def requests_elsewhere_html(report: dict[str, Any]) -> str:
     return (
         f'<div class="zone"><h3>{icon("plug")} Requests to addresses that aren\'t in the code</h3>'
         f'<div class="zs">{_count(total, "request goes", "requests go")} to an address the code '
-        f"only works out while the app runs ({e(kinds)}), for example from a device or a server "
-        "you entered during setup. Barkley can't say where they go.</div>"
+        f"only works out while the app runs ({e(kinds)}), "
+        + ("for example one it builds from another site's answer or from the card's settings"
+           if isinstance(r, dict) and r.get("code") == "card" else
+           "for example from a device or a server you entered during setup")
+        + ". Barkley can't say where they go.</div>"
         f'<details class="more"><summary>Where in the code</summary><div class="in">{blocks}'
         f"</div></details>{_test_requests(r)}</div>"
     )
+
+
+def site_images(report: dict[str, Any]) -> dict[str, Any]:
+    """(0.15) Sites a card's map-tile addresses name (analyzers/js_requests)."""
+    r = report.get("requests")
+    imgs = r.get("images") if isinstance(r, dict) else None
+    return imgs if isinstance(imgs, dict) else {}
+
+
+def _images_span(img: Any) -> str:
+    """ "Loads map images from here": a map-tile address names the site."""
+    if not isinstance(img, dict):
+        return ""
+    n = img.get("count") if isinstance(img.get("count"), int) else 1
+    at = [a for a in img.get("at") or [] if isinstance(a, str)]
+    rest = n - len(at)
+    where = (f'<div class="muted">{e(", ".join(at), 300)}'
+             f'{f" and {rest} more" if rest > 0 else ""}</div>') if at else ""  # fmt: skip
+    return (f'<div class="req"><div><b>Loads map images</b> from here. '
+            f"{_count(n, 'address', 'addresses').capitalize()} in the code "
+            f"{'is a map-tile pattern' if n == 1 else 'are map-tile patterns'} "
+            "(<code>{z}/{x}/{y}</code>) for this site. The map draws them as pictures, so "
+            f"there is no request call to read.</div>{where}</div>")  # fmt: skip
 
 
 def _fold(item_id: str, summary: str, body: str, open_: bool) -> str:
@@ -2555,6 +2581,7 @@ def _host_li(
     near: frozenset = frozenset(),
     reqs: Any = None,
     elsewhere: bool = False,
+    images: Any = None,
 ) -> str:
     """One line per site: the name and whether Barkley flagged it. Inside: scheme, port (the
     URL's own, else the scheme's default) and encryption, who runs it, the addresses, where
@@ -2595,7 +2622,9 @@ def _host_li(
     dev = (f'<span class="u">{src_tag("dev")} {e(" ".join(said))}</span>'
            if said and dev_words and not h.flagged and h.name not in near else "")  # fmt: skip
     return _fold(h.edge_id, f"<code>{e(h.name, 120)}</code>{flag}", who + back + dev + how
-                 + _requests_spans(reqs, elsewhere) + urls + where + deep, open_)  # fmt: skip
+                 + (_images_span(images) + _requests_spans(reqs or None, elsewhere)
+                    if images else _requests_spans(reqs, elsewhere))
+                 + urls + where + deep, open_)  # fmt: skip
 
 
 def _zone_list(items: list[str], shown: int = ZONE_SHOWN) -> str:
@@ -2627,16 +2656,26 @@ def zones_html(
     # (0.15, his decision 2026-11-21) `part`: "connects" = the sites Barkley read a request
     # to (and any site with a threat item, so none is ever tucked away), the ports and the
     # requests without a site; "mentioned" = every other address in the code. "" = all.
+    imgs = site_images(report)
+    # a site Barkley read a request or a map-tile address for, but that the site list
+    # doesn't hold (a pattern like https://{s}.tiles.site/… isn't read as a site there)
+    known = {h.name for h in hs}
+    extra = [
+        _fold("", f"<code>{e(name, 120)}</code>",
+              _images_span(imgs.get(name)) + _requests_spans(reqs.get(name), False), False)
+        for name in sorted((set(reqs) | set(imgs)) - known)
+    ] if part != "mentioned" else []  # fmt: skip
     if part == "connects":
-        hs = [h for h in hs if h.name in reqs or h.flagged or h.name in near]
-        if not hs and not pts and not elsewhere:
+        hs = [h for h in hs if h.name in reqs or h.name in imgs or h.flagged or h.name in near]
+        if not hs and not pts and not elsewhere and not extra:
             return '<p class="muted">Barkley read no request to a site named in the code.</p>'
     elif part == "mentioned":
-        hs = [h for h in hs if not (h.name in reqs or h.flagged or h.name in near)]
+        hs = [h for h in hs
+              if not (h.name in reqs or h.name in imgs or h.flagged or h.name in near)]  # fmt: skip
         pts, elsewhere, read = [], "", False
         if not hs:
             return ""
-    if not hs and not pts:
+    if not hs and not pts and not extra:
         none = '<p class="muted">Its code names no sites, IP addresses or ports.</p>'
         return none + (f'<div class="zones">{elsewhere}</div>' if elsewhere else "")
 
@@ -2651,7 +2690,7 @@ def zones_html(
         lis = [_host_li(h, inline(h.edge_id), bool(open_id) and h.edge_id == open_id,
                         dev_words, near,
                         reqs.get(h.name, [] if read and not h.redirect else None),
-                        bool(elsewhere)) for h in zh]  # fmt: skip
+                        bool(elsewhere), imgs.get(h.name)) for h in zh]  # fmt: skip
         out.append(f'<div class="zone {key}"><h3>{icon(ic)} {title}</h3><div class="zs">{sub}'
                    f"</div>{_zone_list(lis)}</div>")  # fmt: skip
     if pts:
@@ -2675,6 +2714,12 @@ def zones_html(
             '<div class="zs">The code sets these ports, but the server\'s address comes from '
             "setup or from another server while the app runs. So Barkley can't tie them to any "
             f"site listed here.</div>{_zone_list(items)}</div>"
+        )
+    if extra:
+        out.append(
+            f'<div class="zone"><h3>{icon("globe")} Sites named by an address pattern</h3>'
+            '<div class="zs">The code writes these addresses with a placeholder in them, so '
+            f"they aren't in the lists above.</div>{_zone_list(extra)}</div>"
         )
     out.append(elsewhere)
     out.append("</div>")

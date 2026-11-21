@@ -12,6 +12,7 @@ from sniff_test.analyzers import (
     correlate,
     endpoints,
     guarddog,
+    js_requests,
     libraries,
     osv,
     py_env,
@@ -256,6 +257,9 @@ def scan(
             result.requests = py_requests.summary(py_requests.requests_in(target.root), tests)
             # (0.15) which environment variables it reads and sets, by name
             result.environment = py_env.summary(py_env.uses_in(target.root))
+        else:
+            say("web requests")  # (0.15) a card's built file: fetch calls and map-tile sites
+            result.requests = js_requests.summary(*js_requests.requests_in(target.root))
         result.inputs = recheck.capture(target, resolution) if not offline else None
         result.context = context.build(
             target.root,
