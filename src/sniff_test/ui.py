@@ -410,6 +410,14 @@ details summary { cursor:pointer; color:var(--muted); font-size:var(--t-xs); }
 :is(.zone, .libs) details.site .in { padding:var(--s1) 0 0 var(--s4); display:flex;
   flex-direction:column; gap:var(--s1); min-width:0; }
 :is(.zone, .libs) details.more > summary { margin-top:var(--s1); }
+:is(.zone, .libs) details.more > .in { padding:var(--s1) 0 0 var(--s4); display:flex;
+  flex-direction:column; gap:var(--s1); }
+.pkchk { display:flex; flex-wrap:wrap; gap:var(--s1) var(--s4); align-items:center;
+  margin-bottom:var(--s2); }
+.pk { display:inline-flex; align-items:center; gap:var(--s1); }
+.pk.ok svg { color:var(--green); } .pk.bad { color:var(--red); }
+.req { border-left:1px solid var(--line); padding-left:var(--s2); font-size:var(--t-sm);
+  display:flex; flex-direction:column; }
 :is(.zone, .libs) details.more > ul { margin-top:var(--s2); }
 .zone.home { background:var(--soft); }
 .zone.dev, .zone.ana { border-color:var(--priv); }
@@ -2374,7 +2382,7 @@ def _names(values: Any, limit: int = 6) -> str:
     return out + (f" and {more} more" if more > 0 and names else "")
 
 
-def request_line(shape: dict[str, Any], here: bool = True) -> str:
+def request_line(shape: dict[str, Any], here: bool = True, parts: bool = False) -> Any:
     """One kind of request in plain words: the method, how often, and what the call puts
     into the body, the headers and the address (analyzers/py_requests). Names come from the
     scanned code: escaped. `here`: the line sits under the site it goes to."""
@@ -2411,15 +2419,33 @@ def request_line(shape: dict[str, Any], here: bool = True) -> str:
         rest = n - len(at)
         out.append(f'<span class="muted">{e(", ".join(at), 300)}'
                    f'{f" and {rest} more" if rest > 0 else ""}</span>')  # fmt: skip
-    return " ".join(out)
+    return out if parts else " ".join(out)
 
 
-def _requests_spans(shapes: Any) -> str:
+def request_block(shape: dict[str, Any], here: bool = True) -> str:
+    """One kind of request as a block of its own: the method on the first line, then one
+    line per fact (his report: one paragraph per request ran together)."""
+    head, *rest = request_line(shape, here, parts=True)
+    return (f'<div class="req"><div>{head}</div>'
+            + "".join(f'<span class="u">{x}</span>' for x in rest) + "</div>")  # fmt: skip
+
+
+def _requests_spans(shapes: Any, elsewhere: bool = False) -> str:
+    """The requests under one site. A site the code names without any request Barkley
+    could read says so (`shapes` is [] then; None: the scan didn't read requests)."""
+    if shapes is None:
+        return ""
     shapes = [x for x in shapes or [] if isinstance(x, dict)]
-    out = "".join(f'<span class="u">{request_line(x)}</span>' for x in shapes[:REQUESTS_SHOWN])
+    if not shapes:
+        more = (" The app also sends requests whose address it works out while it runs, so it "
+                "may still reach it." if elsewhere else
+                " The code may only mention it, for example as a link.")  # fmt: skip
+        return f'<span class="u">Barkley saw no request in the code that names this address.{more}</span>'
+    out = "".join(request_block(x) for x in shapes[:REQUESTS_SHOWN])
     if len(shapes) > REQUESTS_SHOWN:
-        out += (f'<span class="u">And {len(shapes) - REQUESTS_SHOWN} more kinds of request to '
-                "this site.</span>")  # fmt: skip
+        rest = "".join(request_block(x) for x in shapes[REQUESTS_SHOWN:])
+        out += (f'<details class="more"><summary>{len(shapes) - REQUESTS_SHOWN} more kinds of '
+                f'request to this site</summary><div class="in">{rest}</div></details>')  # fmt: skip
     return out
 
 
@@ -2444,12 +2470,25 @@ def requests_elsewhere_html(report: dict[str, Any]) -> str:
               if isinstance(x, dict)]  # fmt: skip
     if not shapes:
         return ""
-    items = [f'<li><span class="u">{request_line(x, here=False)}</span></li>' for x in shapes]
+    by: dict[str, int] = {}
+    for x in shapes:
+        m = str(x.get("method") or "")
+        m = (
+            m
+            if m in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
+            else "with the method picked while it runs"
+        )
+        by[m] = by.get(m, 0) + (x["count"] if isinstance(x.get("count"), int) else 1)
+    total = sum(by.values())
+    kinds = ", ".join(f"{n} {m}" for m, n in sorted(by.items(), key=lambda kv: -kv[1]))
+    blocks = "".join(request_block(x, here=False) for x in shapes)
     return (
         f'<div class="zone"><h3>{icon("plug")} Requests to addresses that aren\'t in the code</h3>'
-        '<div class="zs">The code puts these addresses together while it runs, for example '
-        "from a device or a server you entered during setup. So Barkley can't tie them to a "
-        f"site.</div>{_zone_list(items)}</div>"
+        f'<div class="zs">{_count(total, "request goes", "requests go")} to an address the code '
+        f"only works out while the app runs ({e(kinds)}), for example from a device or a server "
+        "you entered during setup. Barkley can't say where they go.</div>"
+        f'<details class="more"><summary>Where in the code</summary><div class="in">{blocks}'
+        "</div></details></div>"
     )
 
 
@@ -2468,6 +2507,7 @@ def _host_li(
     dev_words: bool = True,
     near: frozenset = frozenset(),
     reqs: Any = None,
+    elsewhere: bool = False,
 ) -> str:
     """One line per site: the name and whether Barkley flagged it. Inside: scheme, port (the
     URL's own, else the scheme's default) and encryption, who runs it, the addresses, where
@@ -2488,7 +2528,10 @@ def _host_li(
     how = f'<span class="u">{" · ".join(bits)}</span>' if bits else ""
     urls = "".join(f'<span class="u"><code>{e(u, 200)}</code></span>' for u in h.urls[:3])
     if len(h.urls) > 3:
-        urls += f'<span class="u">and {len(h.urls) - 3} more addresses</span>'
+        rest = "".join(f'<span class="u"><code>{e(u, 200)}</code></span>' for u in h.urls[3:50])
+        n = len(h.urls) - 3
+        urls += (f'<details class="more"><summary>{n} more address{"es" * (n != 1)}</summary>'
+                 f'<div class="in">{rest}</div></details>')  # fmt: skip
     where = (f'<span class="u">In the code at {e(", ".join(h.where[:3]), 300)}'
              f"{f' and {len(h.where) - 3} more places' if len(h.where) > 3 else ''}</span>"
              if h.where else "")  # fmt: skip
@@ -2505,7 +2548,7 @@ def _host_li(
     dev = (f'<span class="u">{src_tag("dev")} {e(" ".join(said))}</span>'
            if said and dev_words and not h.flagged and h.name not in near else "")  # fmt: skip
     return _fold(h.edge_id, f"<code>{e(h.name, 120)}</code>{flag}", who + back + dev + how
-                 + _requests_spans(reqs) + urls + where + deep, open_)  # fmt: skip
+                 + _requests_spans(reqs, elsewhere) + urls + where + deep, open_)  # fmt: skip
 
 
 def _zone_list(items: list[str]) -> str:
@@ -2529,6 +2572,7 @@ def zones_html(
     pts = ports(report)
     reqs = site_requests(report)
     elsewhere = requests_elsewhere_html(report)
+    read = isinstance(report.get("requests"), dict)  # the scan read the requests
     if not hs and not pts:
         none = '<p class="muted">Its code names no sites, IP addresses or ports.</p>'
         return none + (f'<div class="zones">{elsewhere}</div>' if elsewhere else "")
@@ -2542,7 +2586,9 @@ def zones_html(
         if not zh:
             continue
         lis = [_host_li(h, inline(h.edge_id), bool(open_id) and h.edge_id == open_id,
-                        dev_words, near, reqs.get(h.name)) for h in zh]  # fmt: skip
+                        dev_words, near,
+                        reqs.get(h.name, [] if read and not h.redirect else None),
+                        bool(elsewhere)) for h in zh]  # fmt: skip
         out.append(f'<div class="zone {key}"><h3>{icon(ic)} {title}</h3><div class="zs">{sub}'
                    f"</div>{_zone_list(lis)}</div>")  # fmt: skip
     if pts:
@@ -2932,6 +2978,32 @@ def _supply_repo(report: dict[str, Any]) -> str:
             + "".join(f"<li>{x}</li>" for x in li) + "</ul>")  # fmt: skip
 
 
+def _checked_line(report: dict[str, Any], analyzer: str) -> str:
+    """ "Checked for malware warnings: 0 · known bugs: 0" above a package list, from the
+    scan's own items, when the advisory check ran; what didn't run otherwise."""
+    state = next((a.get("state") for a in report.get("analyzers") or []
+                  if a.get("name") == analyzer), None)  # fmt: skip
+    if state is None:
+        return ""
+    if state != "ok":
+        return (f'<p class="pkchk">{icon("minus", 14, "muted")} Barkley couldn\'t check these '
+                "packages for malware warnings and known bugs in this scan.</p>")  # fmt: skip
+    deps = [f for f in report.get("findings") or [] if isinstance(f.get("dependency"), dict)]
+    counts = (
+        ("malware warnings", len({f["dependency"].get("package") for f in deps
+                                  if f.get("rule_id") == "dep-malicious"})),
+        ("with known bugs", len({f["dependency"].get("package") for f in deps
+                                 if f.get("rule_id") in kinds.VULNERABILITY_RULES})),
+    )  # fmt: skip
+    bits = "".join(
+        f'<span class="pk {"bad" if n else "ok"}">{icon("alert" if n else "check", 14)} '
+        f"<b>{n}</b> {label}</span>"
+        for label, n in counts
+    )
+    return (f'<p class="pkchk">{bits}<span class="muted">Every package checked against OSV\'s '
+            "list of malware and known bugs.</span></p>")  # fmt: skip
+
+
 def _supply_packages(report: dict[str, Any]) -> str:
     """Every package the app is installed or built with: for an integration what Home
     Assistant would install (worked out by uv during the scan, the packages those bring
@@ -2991,7 +3063,8 @@ def _supply_packages(report: dict[str, Any]) -> str:
         if n > PACKAGES_LISTED:
             items.append(f"<li>and {n - PACKAGES_LISTED:,} more</li>")
         out.append(f'<h3 class="kindh">Python packages ({n:,})</h3>'
-                   f'<p class="sub">{text}</p><div class="libs">{_zone_list(items)}</div>')  # fmt: skip
+                   f'<p class="sub">{text}</p>{_checked_line(report, "osv-python")}'
+                   f'<div class="libs">{_zone_list(items)}</div>')  # fmt: skip
     if npm:
         npm.sort(key=lambda x: x[0])
         n = len(npm)
@@ -3003,6 +3076,7 @@ def _supply_packages(report: dict[str, Any]) -> str:
                    f'<p class="sub">Its <code>package.json</code> lists '
                    f"{_count(n, 'npm package', 'npm packages')}, with the versions it accepts. "
                    "The developer builds them into the file you install.</p>"
+                   f"{_checked_line(report, 'osv-npm')}"
                    f'<div class="libs">{_zone_list(items)}</div>')  # fmt: skip
     return "".join(out)
 

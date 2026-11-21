@@ -73,8 +73,9 @@ def test_many_kinds_of_request_are_cut_and_names_escaped():
     many = [dict(SHAPES[0], body=[f"f{i}"], count=1, at=[]) for i in range(7)]
     many[0]["body"] = ["<script>x</script>", *[f"n{i}" for i in range(9)]]
     html = ui.zones_html(_report({"api.acme.invalid": many}))
-    assert html.count("Sends <b>POST</b>") == ui.REQUESTS_SHOWN
-    assert "And 3 more kinds of request to this site." in html
+    shown, folded = html.split("3 more kinds of request to this site</summary>")
+    assert shown.count("Sends <b>POST</b>") == ui.REQUESTS_SHOWN  # the rest fold open
+    assert folded.count("Sends <b>POST</b>") == 3
     assert "<script>x" not in html and "&lt;script&gt;" in html and "and 4 more" in html
     junk = {"api.acme.invalid": ["x", None, {"method": "<b>", "count": "many", "at": [3]}]}
     assert "<b>&lt;" not in ui.zones_html(_report(junk))  # an unknown method isn't printed
@@ -132,3 +133,50 @@ def test_libraries_that_were_read_are_listed_with_the_reason():
     only_read = {"library_lookups": rep["library_lookups"]}
     assert "tiny-lib" in ui.libraries_html(only_read)
     assert ui.libraries_html({"library_lookups": {"read": [], "no_match": 4}}) == ""
+
+
+def test_each_request_is_a_block_with_one_fact_per_line():
+    html = ui.zones_html(_report({"api.acme.invalid": SHAPES}))
+    assert html.count('<div class="req">') == 2
+    assert ('<div>Sends <b>POST</b> requests here from 3 places in the code.</div>'
+            '<span class="u">The body carries') in html  # fmt: skip
+
+
+def test_a_site_without_a_request_says_so_once_the_scan_read_requests():
+    rep = _report({})
+    html = ui.zones_html(rep)
+    assert "Barkley saw no request in the code that names this address." in html
+    assert "may only mention it" in html
+    rep["requests"]["elsewhere"] = [SHAPES[1]]
+    html = ui.zones_html(rep)
+    assert "so it may still reach it" in html and "may only mention it" not in html
+    del rep["requests"]  # a card, or a scan from before 0.15: nothing is claimed
+    assert "saw no request" not in ui.zones_html(rep)
+
+
+def test_requests_without_a_site_are_one_sentence_with_the_detail_folded():
+    html = ui.zones_html(_report(elsewhere=[SHAPES[0], SHAPES[1]]))
+    assert "4 requests go to an address the code only works out while the app runs" in html
+    assert "(3 POST, 1 GET)" in html and "<summary>Where in the code</summary>" in html
+
+
+def test_more_addresses_fold_open():
+    urls = [f"https://api.acme.invalid/v{i}" for i in range(6)]
+    rep = _graph_report([("api.acme.invalid", "undeclared", ["https"], [], urls)])
+    html = ui.zones_html(rep)
+    assert "<summary>3 more addresses</summary>" in html and "/v5</code>" in html
+
+
+def test_packages_say_what_was_checked_and_what_came_back():
+    rep = {"target": {"kind": "integration"}, "analyzers": [{"name": "osv-python", "state": "ok"}],
+           "findings": [],
+           "graph": {"subject": "s", "nodes": [{"id": "package:pypi/x", "label": "pypi/x"}],
+                     "edges": [{"source": "s", "target": "package:pypi/x",
+                                "relation": "depends_on", "attrs": {"version": "1"}}]}}  # fmt: skip
+    html = ui.supply_html(rep)
+    assert "<b>0</b> malware warnings" in html and "<b>0</b> with known bugs" in html
+    bug = {"rule_id": "dep-vuln", "dependency": {"package": "x"}}
+    rep["findings"] = [{"id": "a", **bug}, {"id": "b", **bug}]
+    assert "<b>1</b> with known bugs" in ui.supply_html(rep)
+    rep["analyzers"][0]["state"] = "error"
+    assert "check these packages" in ui.supply_html(rep) and "<b>0</b>" not in ui.supply_html(rep)
