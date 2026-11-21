@@ -43,8 +43,19 @@ def test_request_uses_ai_brief_and_keeps_scanned_text_out_of_the_schema():
     assert HOSTILE not in json.dumps(structure)  # field names/descriptions: ids only
     assert all(v["required"] and "text" in v["selector"] for v in structure.values())
     data = json.loads(instructions.split("Scan data (JSON):\n", 1)[1])
-    assert data["score"] == 75 and data["findings"][0]["occurrences"] == 2
-    assert "evidence_untrusted" in data["findings"][0]
+    assert data["items"][0]["occurrences"] == 2 and "evidence_untrusted" in data["items"][0]
+    # (0.15) the two readings, never the 0-100 score, the verdict word or a grade for context
+    assert "score" not in data and "verdict" not in data and "Kinda Sus" not in instructions
+    assert data["threat"] in ("none", "possible", "found") and data["exposure"] in (
+        "low", "medium", "high")  # fmt: skip
+    assert "two readings and they are final" in instructions
+    assert "The score and verdict are final" not in instructions
+    assert ("severity" in data["items"][0]) == (
+        "Threat" in data["items"][0]["kind"] or "bug" in data["items"][0]["kind"])  # fmt: skip
+    shown = {"threat_level": "none", "exposure_level": "low", "exposure": 1.69,
+             "exposure_reasons": ["4 pages open without logging in"]}  # fmt: skip
+    text = ai.build_request(_report(), None, shown)[0]
+    assert '"exposure_out_of_10": 1.69' in text and "4 pages open without logging in" in text
     assert "Respond only with JSON." not in instructions  # the structure replaces it
 
 

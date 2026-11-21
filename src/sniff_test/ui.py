@@ -1682,7 +1682,7 @@ def note_reading(note: privacy.Note, inline: DeepFn) -> str:
         return f'<div class="noteai">{lead}{body}</div>'
     if note.classes and all(c == "declared" for c in note.classes):
         why = (
-            ". Its addresses are named in the app's documentation or manifest, and Barkley "
+            ". Its addresses are linked from the app's manifest or package.json, and Barkley "
             "only offers a reading for addresses that aren't"
         )
     else:

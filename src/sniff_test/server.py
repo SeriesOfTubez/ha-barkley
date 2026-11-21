@@ -883,7 +883,7 @@ def render_index(
             if parallel <= 1
             else f"Up to {parallel} scans run at once, as memory allows. "
         )
-        + f'Scores never come from an AI. <a href="{base}/doctor">Diagnostics</a> shows '
+        + f'The readings never come from an AI. <a href="{base}/doctor">Diagnostics</a> shows '
         f'whether each tool can run on this machine. <a href="{e(report_issue_url(ha))}" '
         'target="_blank" rel="noopener noreferrer" title="Opens a new public issue on '
         "Barkley's GitHub, with the versions filled in\">Report an issue</a> · "
@@ -993,7 +993,7 @@ SETTING_HELP = {
     "Notify": (
         "Every result goes to Home Assistant's bell. Pick a notify service, such as your "
         "phone, to get it there too. A notification carries the app's name, its version, "
-        "the score and counts, never text from the app's code."
+        "the readings and counts, never text from the app's code."
     ),
     "AI": (
         "Explanations go through the Home Assistant AI Task entity you pick, so they use the "
@@ -1532,7 +1532,7 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
             f'<button class="ai">{ui.icon("sparkle", 16)} {{label}}</button></form>')  # fmt: skip
     note = ('<p class="tech">Explain this app sends what this scan found to the AI provider '
             f"behind <code>{e(entity, 120)}</code>. It's about a public project and contains "
-            "no Home Assistant data. The AI only explains. It can't change the score or what "
+            "no Home Assistant data. The AI only explains. It can't change the readings or what "
             "Barkley found.</p>")  # fmt: skip
     change = (f"<details><summary>Change which AI explains, or how much "
               f"({e(AI_MODES.get(mode, mode))})</summary>{picker}</details>")  # fmt: skip
@@ -1558,7 +1558,7 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
             label = f"Ask again to include {k} newer code reading{'s' if k != 1 else ''}"
         return (f'<p class="tech">AI explanation by <code>{e(have.get("entity_id"), 120)}</code>, '
                 f"{e(str(have.get('created', ''))[:16].replace('T', ' '))} UTC.{incl}{left} It "
-                "can be wrong; it can't change the score.</p>"
+                "can be wrong. It can't change the readings.</p>"
                 + form.replace("{label}", label) + change)  # fmt: skip
     return form.replace("{label}", "Explain this app") + note + change
 
@@ -2288,7 +2288,8 @@ class Panel:
         def run() -> None:
             try:
                 readings = self.store.item_explanations(sid)
-                instructions, structure, _ids = report_ai.build_request(report, readings)
+                shown = (self.shown_report(sid) or {}).get("readings")
+                instructions, structure, _ids = report_ai.build_request(report, readings, shown)
                 data = self.ai_fn(self.ai_entity, instructions, structure, report_ai.TASK_NAME)
                 accepted = report_ai.accept(report, data, readings)
                 if not accepted["summary"] and not accepted["findings"]:

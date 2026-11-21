@@ -119,8 +119,8 @@ def test_a_note_without_a_reading_says_why(tmp_path):
     plain = _note(page, "Uses unencrypted web addresses on the internet")
     assert "Explain in context</button>" not in plain
     assert (
-        "This note has no “Explain in context”. Its addresses are named in the app's "
-        "documentation or manifest" in plain
+        "This note has no “Explain in context”. Its addresses are linked from the app's "
+        "manifest or package.json" in plain
     )
     httpd.shutdown()
 
