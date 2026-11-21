@@ -473,12 +473,17 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
             return EXIT_ERROR
     from sniff_test import sandbox
 
-    abi, sandbox_line = sandbox.status()
-    if standalone and not abi and os.environ.get(sandbox.UNSANDBOXED_ENV) != "1":
+    _, sandbox_line = sandbox.status()
+    sandboxed = sandbox.enabled()
+    if not sandboxed and os.environ.get(sandbox.UNSANDBOXED_ENV) != "1":
+        need = (
+            "Landlock (Linux 5.13 or later)"
+            if standalone
+            else "Landlock, or the app's AppArmor profile (loaded on install and Update)"
+        )
         err.print(
-            f"[red]🐕 {escape(sandbox_line)}. Standalone, Barkley has no AppArmor profile of "
-            "its own, so it doesn't scan hostile code without Landlock (Linux 5.13 or later). "
-            f"To run anyway, set {sandbox.UNSANDBOXED_ENV}=1.[/]"
+            f"[red]🐕 {escape(sandbox_line)}. Barkley doesn't scan hostile code without "
+            f"{need}. To run anyway, set {sandbox.UNSANDBOXED_ENV}=1.[/]"
         )
         return EXIT_ERROR
     # Standalone the image runs without the add-on's start script, which made these.
@@ -572,7 +577,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
             out.print("🐕 [yellow]HA_URL is plain http: the token crosses your network "
                       "unencrypted. Use https if Home Assistant offers it.[/]")  # fmt: skip
     out.print(f"🐕 Tool sandbox: {sandbox_line}"
-              + ("" if abi or not standalone else f" ({sandbox.UNSANDBOXED_ENV}=1)"))  # fmt: skip
+              + ("" if sandboxed else f" ({sandbox.UNSANDBOXED_ENV}=1)"))  # fmt: skip
     if login_cfg is not None:
         out.print(f"🐕 Login with Home Assistant ({login_cfg.ha_url}), administrators only; "
                   f"Barkley's address: {login_cfg.public_url}")  # fmt: skip

@@ -160,6 +160,35 @@ class MemoryRefused(Exception):
     """The memory guard stopped a scan before it started."""
 
 
+def failure_message(ex: BaseException) -> str:
+    """A failed job's message for the panel and notifications: a fixed sentence per kind
+    of failure. An exception's own text can quote what the scanned project chose (an
+    archive member's name, a tag), and a notification carries only counts, readings and
+    validated names; the full text goes to the app log."""
+    from sniff_test.deps.ha_env import HAEnvError
+    from sniff_test.fetch.hacs import FetchError
+    from sniff_test.fetch.http import HttpError
+    from sniff_test.recheck import RecheckError
+    from sniff_test.workspace import UnsafeArchiveError
+
+    kinds: tuple[tuple[type[BaseException], str], ...] = (
+        (UnsafeArchiveError, "the release archive has a file Barkley won't unpack"),
+        (RecheckError, "the advisory check couldn't run"),
+        (ReleasesError, "Barkley couldn't find that release"),
+        (GitHubError, "GitHub didn't answer"),
+        (HttpError, "a download failed"),
+        (FetchError, "Barkley couldn't download the app"),
+        (HAEnvError, "Home Assistant's package list couldn't be fetched"),
+        (StoreError, "Barkley's scan store couldn't be read or written"),
+        (MemoryError, "the scan ran out of memory"),
+        (TimeoutError, "the scan took too long"),
+    )
+    for cls, text in kinds:
+        if isinstance(ex, cls):
+            return f"{text} (the app log has the details)"
+    return "something went wrong inside Barkley (the app log has the details)"
+
+
 # Parallel scans (M8): a job runs beside others only if the box could take one more full
 # scan on top of the warn threshold. Each running scan counts as able to grow by this
 # much (an integration scan peaked at ~1.1 GB, measured M6), since one that just started
@@ -467,8 +496,10 @@ class Worker:
                 print(f"job {job.id} {job.repo} refused: {job.message}", file=sys.stderr)
             except Exception as ex:
                 job.state = "failed"
-                job.message = f"{type(ex).__name__}: {ex}"
-                print(f"job {job.id} {job.repo} failed: {job.message}", file=sys.stderr)
+                job.message = failure_message(ex)
+                # the detail only here; repr keeps a crafted name to one escaped line
+                print(f"job {job.id} {job.repo} failed: {type(ex).__name__}: {str(ex)!r}",
+                      file=sys.stderr)  # fmt: skip
             finally:
                 job.finished = time.time()
                 for fn in list(self.on_done):

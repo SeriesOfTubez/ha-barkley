@@ -213,7 +213,10 @@ def test_a_failed_scan_still_notifies(ctx):
     w.check()
     worker.wait()
     ((_title, message, _),) = fakes.bell
-    assert "couldn't sniff version v1 of acme/e (failed: RuntimeError: network down)" in message
+    assert (
+        "couldn't sniff version v1 of acme/e (failed: something went wrong inside Barkley"
+        in message
+    )
     assert w.log()[0]["state"] == "failed"
 
 
@@ -431,3 +434,16 @@ def test_an_offered_update_is_sniffed_before_it_is_installed(ctx, capsys):
     assert w2.resume() == [] or True  # queued by check() already (a new offer), or resumed
     worker.wait()
     assert any(r.ref == "v3" for r in store.history("acme/a"))
+
+
+def test_a_failed_job_says_a_fixed_sentence_never_the_projects_text():
+    """A reported weakness: an archive member's name reached the bell and the
+    notify service through the job's message."""
+    from sniff_test.server import failure_message
+    from sniff_test.workspace import UnsafeArchiveError
+
+    crafted = "member escapes destination: '[Update now](https://x.invalid)'"
+    msg = failure_message(UnsafeArchiveError(crafted))
+    assert "x.invalid" not in msg and "[" not in msg and "won't unpack" in msg
+    assert "app log" in failure_message(RuntimeError("anything at all"))
+    assert "anything" not in failure_message(RuntimeError("anything at all"))

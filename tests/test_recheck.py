@@ -332,7 +332,7 @@ def test_a_recheck_job_that_finds_nothing_or_fails_stores_no_scan(tmp_path):
     outcome[0] = recheck.RecheckError("osv-npm error: timed out")
     job = worker.submit("recheck", "acme/card", "v1", scan=sid)
     worker.wait()
-    assert job.state == "failed" and "timed out" in job.message
+    assert job.state == "failed" and job.message.startswith("the advisory check couldn't run")
     assert store.rechecks()[sid][1] == "failed: osv-npm error: timed out"
     job = worker.submit("recheck", "acme/card", "v2", scan=bare)
     worker.wait()

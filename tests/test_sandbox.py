@@ -68,11 +68,88 @@ def test_the_wrapper_refuses_bad_input_and_never_runs_the_tool_unsandboxed(monke
     assert "not running /bin/true" in capsys.readouterr().err
 
 
-def test_without_landlock_tools_run_as_before(monkeypatch, ws):
+def _no_landlock(monkeypatch, label, nnp=False, child=True):
     monkeypatch.setattr(sandbox, "abi", lambda: 0)
+    monkeypatch.setattr(sandbox, "apparmor_label", lambda: label)
+    monkeypatch.setattr(sandbox, "no_new_privs", lambda: nnp)
+    monkeypatch.setattr(sandbox, "apparmor_child_works", lambda: child)
+
+
+def test_without_any_sandbox_tools_run_as_before(monkeypatch, ws):
+    _no_landlock(monkeypatch, None)
     cmd, env = _proc.sandboxed(["/bin/true"], ws[1], {"PATH": "/usr/bin"}, "semgrep")
     assert cmd == ["/bin/true"] and env == {"PATH": "/usr/bin"}
+    assert sandbox.mode() == "none" and not sandbox.enabled()
     assert "NOT sandboxed" in sandbox.status()[1]
+
+
+def test_without_landlock_the_app_runs_tools_in_its_apparmor_child(monkeypatch, ws):
+    """HA OS has no Landlock: each tool starts through the launcher, which the app's
+    profile moves into `tools`."""
+    _no_landlock(monkeypatch, "local_sniff_test")
+    assert sandbox.mode() == "apparmor"
+    cmd, env = _proc.sandboxed(["/bin/true", "x"], ws[1], {"PATH": "/usr/bin"}, "uv")
+    assert cmd == [sandbox.APPARMOR_LAUNCHER, "/bin/true", "x"]
+    assert env["HOME"].endswith(".tool-home") and env["TMPDIR"].endswith(".tool-tmp")
+    assert "AppArmor" in sandbox.status()[1] and "NOT" not in sandbox.status()[1]
+    # Barkley's own commands never go through it
+    assert _proc.sandboxed(["/bin/true"], ws[1], {}, None)[0] == ["/bin/true"]
+
+
+@pytest.mark.parametrize(
+    ("label", "nnp", "child"),
+    [
+        ("docker-default", False, True),  # standalone on an AppArmor host: not our profile
+        ("local_sniff_test", True, True),  # no-new-privileges: the move would be refused
+        ("local_sniff_test", False, False),  # the profile didn't load (a Rebuild)
+        ("local_sniff_test//tools", False, True),  # already inside
+    ],
+)
+def test_no_apparmor_child_means_no_sandbox(monkeypatch, label, nnp, child):
+    _no_landlock(monkeypatch, label, nnp, child)
+    assert sandbox.mode() == "none"
+
+
+def test_no_new_privileges_is_named_as_the_cause(monkeypatch):
+    _no_landlock(monkeypatch, "local_sniff_test", nnp=True)
+    monkeypatch.setattr(sandbox.platform, "system", lambda: "Linux")
+    assert "no-new-privileges" in sandbox.status()[1]
+
+
+def test_landlock_wins_over_apparmor(monkeypatch):
+    monkeypatch.setattr(sandbox, "abi", lambda: 6)
+    monkeypatch.setattr(sandbox, "apparmor_label", lambda: "local_sniff_test")
+    assert sandbox.mode() == "landlock"
+
+
+def test_landlock_policies_grant_no_credential(monkeypatch, tmp_path):
+    """The same files the AppArmor child denies, for each tool's
+    policy as its call site builds it: s6's copy of the container environment, the
+    add-on's options, the GitHub token file, the scan store; and no writes under /etc."""
+    from sniff_test import doctor
+
+    data = tmp_path / "data"
+    monkeypatch.setenv("SNIFF_TEST_CACHE", str(data / "cache"))
+    secrets = [data / "options.json", data / "github-token", data / "sniff-test.db",
+               Path("/run/s6/container_environment/SUPERVISOR_TOKEN")]  # fmt: skip
+    work = Path(tempfile.mkdtemp(prefix="sniff-test-")) / "run"
+    work.mkdir()
+    try:
+        for tool, (write, read) in doctor._TOOLS.items():
+            extra_w = (data / "cache" / "uv",) if tool == "uv" else ()
+            pol = sandbox.policy_for(tool, work, "/usr/bin/true", (*write(), *extra_w), read())
+            granted = [Path(x) for x in (*pol.rx, *pol.read, *pol.write)]
+            for secret in secrets:
+                assert not any(secret == g or secret.is_relative_to(g) for g in granted), (
+                    tool,
+                    secret,
+                )
+            assert not any(g == Path("/run") or g.is_relative_to("/run") for g in granted)
+            assert not any(Path(w).is_relative_to("/etc") for w in pol.write)
+            assert "/" not in (*pol.rx, *pol.read, *pol.write)
+            assert pol.list in ((), ("/",))  # folder names only (osv-scanner)
+    finally:
+        shutil.rmtree(work.parent, ignore_errors=True)
 
 
 def test_with_landlock_the_tool_goes_through_the_wrapper(monkeypatch, ws):

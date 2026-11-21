@@ -105,6 +105,48 @@ def test_apparmor_profile_is_what_the_supervisor_loads():
     assert not any(r.startswith(("/** ", "/{,**} ")) for r in rules)
 
 
+def _child(text: str) -> str:
+    start = text.index("  profile tools ")
+    return text[start : text.index("\n  }\n", start)]
+
+
+def test_the_tools_run_in_a_child_profile_without_credentials():
+    """A reported weakness: without Landlock the tools ran under the main profile, which
+    lets s6 read /run/s6/container_environment (SUPERVISOR_TOKEN) and write s6's /etc
+    folders, and reads all of /data (options.json, the GitHub token file, the store).
+    They now start through the launcher, which the profile moves into `tools`."""
+    text = (ADDON / "apparmor.txt").read_text()
+    assert "/usr/lib/barkley/tool rcx -> tools," in text
+    assert "signal (send) peer=@{profile_name}//tools," in text
+    child = _child(text)
+    rules = [ln.strip() for ln in child.splitlines()[1:] if ln.strip()
+             and not ln.strip().startswith("#")]  # fmt: skip
+    for path in ("/run/s6/container_environment/{,**}", "/data/options.json",
+                 "/data/github-token", "/data/sniff-test.db*"):  # fmt: skip
+        assert f"deny {path} rwkl," in rules
+    allowed = [r for r in rules if not r.startswith("deny ") and r.startswith(("/", "@{"))]
+    assert not any(r.startswith(("/run", "/{,var/}run")) for r in allowed)
+    assert not any(r.startswith("/etc/") and any(c in r.split()[-1] for c in "wkl")
+                   for r in allowed)  # fmt: skip
+    data = [r for r in allowed if r.startswith("/data")]
+    assert data == ["/data/cache/{,**} rwk,"]
+    assert not any(r.startswith(("/tmp", "/data")) and "x" in r.split()[-1] for r in allowed)
+    # The tools can't start Barkley itself or reach its Python: only their own files.
+    assert not any(r.startswith(("/opt/sniff-test", "/opt/python")) for r in allowed)
+    for forbidden in ("capability", "mount", "ptrace", "change_profile", "file,"):
+        assert not any(r.startswith(forbidden) for r in rules), forbidden
+    # Indented, so the Supervisor still sees exactly one `profile` line (test above).
+    assert child.startswith("  profile tools flags=(attach_disconnected,mediate_deleted) {")
+
+
+def test_the_launcher_execs_its_arguments_and_nothing_else():
+    launcher = ADDON / "rootfs/usr/lib/barkley/tool"
+    code = [ln for ln in launcher.read_text().splitlines() if not ln.startswith("#")]
+    assert launcher.read_text().startswith("#!/bin/sh\n")
+    assert [ln for ln in code if ln.strip()] == ['exec "$@"']
+    assert launcher.stat().st_mode & 0o111 == 0o111
+
+
 def test_panel_only_trusts_the_supervisor_by_default():
     assert server.SUPERVISOR_IP == "172.30.32.2"
 

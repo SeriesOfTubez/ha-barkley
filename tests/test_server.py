@@ -175,7 +175,7 @@ def test_failed_scan_marks_the_job_and_the_worker_survives(tmp_path):
     w.submit("scan", "acme/acme", "v1")
     w.wait()
     assert [j.state for j in w.jobs] == ["done", "failed"]
-    assert "boom" in w.jobs[1].message
+    assert "boom" not in w.jobs[1].message and "app log" in w.jobs[1].message
     assert len(store.history()) == 1
 
 

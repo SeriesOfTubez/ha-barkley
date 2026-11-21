@@ -5,7 +5,8 @@
 - always run from an empty directory we own, never from inside a scanned tree;
 - with `tool=`, inside the Landlock sandbox (sandbox.py) wherever the kernel has it:
   the tool can write only its scan's workspace (and the caches named here), run only
-  what the image ships, and connect only where its policy says.
+  what the image ships, and connect only where its policy says. Without Landlock, in
+  the app's AppArmor profile for tools (sandbox.mode()).
 """
 
 from __future__ import annotations
@@ -41,12 +42,17 @@ def sandboxed(
     write: tuple[Path, ...] = (),
     read: tuple[Path, ...] = (),
 ) -> tuple[list[str], dict[str, str]]:
-    """`cmd` and `env` as they should run: through the sandbox when `tool` is named and
-    the kernel has Landlock, unchanged otherwise."""
-    if tool is None or not sandbox.enabled():
+    """`cmd` and `env` as they should run when `tool` is named: through the Landlock
+    wrapper where the kernel has Landlock, else through the launcher into the app's
+    AppArmor profile for tools, else unchanged (serve refuses to start then, unless
+    BARKLEY_UNSANDBOXED=1; a dev machine runs the CLI that way)."""
+    how = sandbox.mode() if tool is not None else "none"
+    if how == "none":
         return cmd, env
     exe = cmd[0] if Path(cmd[0]).is_absolute() else (shutil.which(cmd[0]) or cmd[0])
     policy = sandbox.policy_for(tool, cwd, exe, write, read)
+    if how == "apparmor":  # the profile has no per-scan folders; HOME/TMPDIR still move
+        return sandbox.apparmor_wrap([exe, *cmd[1:]]), {**env, **policy.env}
     return sandbox.wrap([exe, *cmd[1:]], policy), {**env, **policy.env}
 
 

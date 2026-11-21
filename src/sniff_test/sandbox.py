@@ -30,14 +30,25 @@ What a tool gets (`policy_for`):
   /proc/<Barkley's pid>/environ (where an add-on's SUPERVISOR_TOKEN lives) can't be read.
 
 Not covered: hosts (only ports), UDP, reading the image's own files.
+
+Without Landlock (HA OS has none), the app's AppArmor profile does the same job: each
+tool starts through `APPARMOR_LAUNCHER`, a two-line script that the profile sends into
+its child profile `tools` (apparmor.txt), which grants what scanning needs and nothing
+that holds a credential: no /run (s6 keeps SUPERVISOR_TOKEN there), no options.json or
+token file, no scan store, no writes under /etc. The two never stack: with Landlock the
+wrapper sets no_new_privs, and the kernel refuses a move into another AppArmor profile
+after that. Neither one (`mode()` "none"): serve refuses to start unless
+BARKLEY_UNSANDBOXED=1.
 """
 
 from __future__ import annotations
 
 import ctypes
+import functools
 import json
 import os
 import platform
+import subprocess
 import sys
 import tempfile
 from dataclasses import asdict, dataclass, field
@@ -265,18 +276,108 @@ def wrap(cmd: list[str], policy: Policy) -> list[str]:
     return [sys.executable, "-I", "-m", "sniff_test.sandbox", "--policy", spec, "--", *cmd]
 
 
+# The app's launcher into its AppArmor child profile `tools` (rootfs; apparmor.txt).
+APPARMOR_LAUNCHER = "/usr/lib/barkley/tool"
+APPARMOR_CHILD = "tools"
+# The Supervisor names the app's profile after its id: local_sniff_test, <hash>_sniff_test.
+_APP_PROFILE_SUFFIX = "_sniff_test"
+
+
+def apparmor_label() -> str | None:
+    """The AppArmor profile this process runs under ("local_sniff_test"), without the
+    mode; None when there is none to read (not Linux, no AppArmor, unconfined)."""
+    for f in ("/proc/self/attr/apparmor/current", "/proc/self/attr/current"):
+        try:
+            text = Path(f).read_text(encoding="utf-8", errors="replace").strip("\x00\n ")
+        except OSError:
+            continue
+        label = text.split(" (", 1)[0].strip()
+        if label and label != "unconfined":
+            return label
+    return None
+
+
+def no_new_privs() -> bool:
+    """Is no_new_privs already set on this process (Docker's no-new-privileges)?"""
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("NoNewPrivs:"):
+                return line.split(":", 1)[1].strip() == "1"
+    except OSError:
+        pass
+    return False
+
+
+def mode() -> str:
+    """How the scanner tools are sandboxed here: "landlock", "apparmor" (the app's
+    profile on a kernel without Landlock) or "none"."""
+    if abi() > 0:
+        return "landlock"
+    label = apparmor_label()
+    if (
+        label
+        and label.endswith(_APP_PROFILE_SUFFIX)
+        and "//" not in label
+        and not no_new_privs()  # the kernel refuses the move into `tools` then
+        and apparmor_child_works()
+    ):
+        return "apparmor"
+    return "none"
+
+
+@functools.cache
+def apparmor_child_works() -> bool:
+    """Does a program started through the launcher really run in `tools`? Asked once:
+    `cat` reads its own label. A profile that didn't load (a Rebuild doesn't reload it)
+    or a refused move says no, and then no tool runs (fail closed)."""
+    if not os.access(APPARMOR_LAUNCHER, os.X_OK):
+        return False
+    try:
+        out = subprocess.run(  # fixed paths, no input
+            [APPARMOR_LAUNCHER, "/bin/cat", "/proc/self/attr/current"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env={"PATH": "/usr/bin:/bin"},
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    label = out.stdout.strip("\x00\n ").split(" (", 1)[0]
+    return out.returncode == 0 and label.endswith("//" + APPARMOR_CHILD)
+
+
 def status() -> tuple[int, str]:
-    """(ABI, one line for Diagnostics)."""
+    """(ABI, one line for Diagnostics). ABI is 0 without Landlock."""
     v = abi()
     if v:
         net = "ports limited" if v >= 4 else "ports NOT limited (kernel too old for that)"
         return v, f"Landlock ABI {v}: each scanner tool is sandboxed (files, {net})"
-    why = "not Linux" if platform.system() != "Linux" else "no Landlock in this kernel"
+    if mode() == "apparmor":
+        return 0, (
+            "no Landlock in this kernel: each scanner tool runs in the app's AppArmor "
+            f"profile for tools ({APPARMOR_CHILD})"
+        )
+    if platform.system() != "Linux":
+        why = "not Linux"
+    elif apparmor_label() and no_new_privs():
+        why = (
+            "no Landlock in this kernel, and no-new-privileges is set, so the tools "
+            "can't enter the app's AppArmor profile for them"
+        )
+    else:
+        why = "no Landlock in this kernel, and no AppArmor profile of the app's"
     return 0, f"scanner tools are NOT sandboxed ({why})"
 
 
 def enabled() -> bool:
-    return abi() > 0
+    """Is there a sandbox for the scanner tools here?"""
+    return mode() != "none"
+
+
+def apparmor_wrap(cmd: list[str]) -> list[str]:
+    """`cmd` started through the launcher, so it runs in the `tools` profile."""
+    return [APPARMOR_LAUNCHER, *cmd]
 
 
 def main(argv: list[str]) -> int:

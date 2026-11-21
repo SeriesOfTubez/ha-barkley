@@ -55,15 +55,14 @@ _TOOLS: dict[str, tuple[Callable[[], tuple[Path, ...]], Callable[[], tuple[Path,
 def sandbox_check() -> Check:
     from sniff_test import sandbox
 
-    v, line = sandbox.status()
-    return Check("Tool sandbox (Landlock)", v > 0 or not _sandbox_required(), line)
+    _, line = sandbox.status()
+    return Check("Tool sandbox", sandbox.enabled() or not _sandbox_required(), line)
 
 
 def _sandbox_required() -> bool:
-    """Standalone has no AppArmor profile of Barkley's, so the sandbox is required there
-    (serve refuses to start without it unless BARKLEY_UNSANDBOXED=1)."""
-    conn = supervisor.connection()
-    return conn is not None and conn.mode == "direct"
+    """In the app and standalone the tools must be sandboxed (serve refuses to start
+    otherwise unless BARKLEY_UNSANDBOXED=1); the CLI on a dev machine runs without."""
+    return supervisor.connection() is not None
 
 
 def _run(name: str, cmd: list[str], cwd: Path, env: dict[str, str], timeout: int = 300) -> Check:

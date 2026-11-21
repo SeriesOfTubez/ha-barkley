@@ -1,0 +1,5 @@
+#!/bin/sh
+# Barkley starts each scanner tool through this file when the kernel has no Landlock.
+# The app's AppArmor profile runs it in the child profile `tools` (apparmor.txt), so
+# the tool runs there too: no credential, no s6 folder, no scan store.
+exec "$@"
