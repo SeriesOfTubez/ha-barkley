@@ -212,3 +212,13 @@ def test_landlock_structs_match_the_kernel_layout():
     assert sandbox._PathBeneath.parent_fd.offset == 8
     assert ctypes.sizeof(sandbox._NetPort) == 16
     assert sandbox._NetPort.port.offset == 8
+
+
+def test_the_tools_path_leaves_out_s6s_command_folder(monkeypatch):
+    """uv lists every PATH folder for Pythons; s6's /command isn't one a tool needs (the
+    box's first run of the tools profile logged it as a denial)."""
+    from sniff_test.analyzers import semgrep
+
+    monkeypatch.setenv("PATH", "/command:/usr/local/bin:/usr/bin:/bin")
+    for env in (_proc.tool_env(), semgrep._tool_env()):
+        assert env["PATH"] == "/usr/local/bin:/usr/bin:/bin"

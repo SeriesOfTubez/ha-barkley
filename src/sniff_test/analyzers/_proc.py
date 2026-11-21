@@ -22,8 +22,17 @@ from sniff_test import sandbox
 _KEEP = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR")
 
 
+# s6-overlay's command folder, on the add-on's PATH: no tool needs it, and uv lists every
+# PATH folder looking for Pythons (a denial in the tools' AppArmor profile otherwise).
+_NOT_FOR_TOOLS = ("/command",)
+
+
 def tool_env(**extra: str) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k in _KEEP}
+    if "PATH" in env:
+        env["PATH"] = os.pathsep.join(
+            d for d in env["PATH"].split(os.pathsep) if d.rstrip("/") not in _NOT_FOR_TOOLS
+        )
     env.update(extra)
     return env
 

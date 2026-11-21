@@ -196,6 +196,8 @@ profile sniff_test flags=(attach_disconnected,mediate_deleted) {
     /usr/local/{s,}bin/ r,
     /{usr/,}lib{,64}/ld-linux-*.so* ix,
     /{usr/,}lib/@{multiarch}/ld-linux-*.so* ix,
+    # Barkley's own Semgrep rules (read only; the rest of Barkley stays out of reach)
+    /opt/sniff-test/lib/python3*/site-packages/sniff_test/{rules,rules_const}/{,**} r,
 
     # the caches (uv's packages, HA's constraints, GuardDog's lists) and the workspaces;
     # HOME and TMPDIR are moved inside the scan's workspace. Never executable.

@@ -6,7 +6,6 @@ import ast
 import dataclasses
 import hashlib
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -151,7 +150,7 @@ def normalize_js(root: Path, pristine: dict[str, str] | None = None) -> int:
 
 def _tool_env() -> dict[str, str]:
     keep = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "SSL_CERT_FILE")
-    env = {k: v for k, v in os.environ.items() if k in keep}
+    env = {k: v for k, v in _proc.tool_env().items() if k in keep}
     env["SEMGREP_SEND_METRICS"] = "off"
     env["SEMGREP_ENABLE_VERSION_CHECK"] = "0"
     return env

@@ -131,8 +131,13 @@ def test_the_tools_run_in_a_child_profile_without_credentials():
     data = [r for r in allowed if r.startswith("/data")]
     assert data == ["/data/cache/{,**} rwk,"]
     assert not any(r.startswith(("/tmp", "/data")) and "x" in r.split()[-1] for r in allowed)
-    # The tools can't start Barkley itself or reach its Python: only their own files.
-    assert not any(r.startswith(("/opt/sniff-test", "/opt/python")) for r in allowed)
+    # The tools can't start Barkley itself or reach its Python: only their own files and
+    # Barkley's Semgrep rules (the box's first run of this profile: Semgrep was denied
+    # the rule folders).
+    own = [r for r in allowed if r.startswith(("/opt/sniff-test", "/opt/python"))]
+    assert own == [
+        "/opt/sniff-test/lib/python3*/site-packages/sniff_test/{rules,rules_const}/{,**} r,"
+    ]
     for forbidden in ("capability", "mount", "ptrace", "change_profile", "file,"):
         assert not any(r.startswith(forbidden) for r in rules), forbidden
     # Indented, so the Supervisor still sees exactly one `profile` line (test above).
