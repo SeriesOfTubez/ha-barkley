@@ -182,6 +182,7 @@ def _notes(report: dict[str, Any]) -> list[Note]:
     dev_other: list[tuple[dict, dict]] = []
     analytics: list[tuple[dict, dict]] = []
     plain: list[tuple[dict, dict]] = []
+    web = 0
     for e, n in _host_edges(report):
         cls = e["attrs"].get("class")
         if cls == "developer_hosted":
@@ -190,6 +191,8 @@ def _notes(report: dict[str, Any]) -> list[Note]:
         elif cls == "analytics":
             analytics.append((e, n))
         schemes = set(e["attrs"].get("schemes", []))
+        if schemes & {"http", "ws", "https", "wss"} and cls not in _NO_TRANSPORT_NOTE:
+            web += 1  # a site the note could be about: how many of them are unencrypted
         if (
             schemes & {"http", "ws"}
             and not schemes & {"https", "wss"}
@@ -244,14 +247,19 @@ def _notes(report: dict[str, Any]) -> list[Note]:
             )
         )
     if plain:
+        # (his report 2026-11-21) "Unencrypted" read as if all its traffic were clear text;
+        # when only some of its sites are, the chip and the title say how many
+        some = len(plain) < web
         out.append(
             Note(
                 "unencrypted",
-                "Unencrypted",
-                "Uses unencrypted web addresses on the internet",
-                "The code only ever reaches these sites with http:// or ws://, never the "
-                "encrypted https:// or wss://. Anything sent that way can be read or "
-                "changed along the route.",
+                "Partly unencrypted" if some else "Unencrypted",
+                (f"Reaches {len(plain)} of its {web} sites without encryption" if some
+                 else "Uses unencrypted web addresses on the internet"),
+                ("The code only ever reaches these sites with http:// or ws://, never the "
+                 "encrypted https:// or wss://. Anything sent that way can be read or "
+                 "changed along the route."
+                 + (" Its other sites are reached with encryption." if some else "")),
                 "Barkley can't tell whether the app sends anything private over these "
                 "addresses, or whether the sites switch to an encrypted address.",
                 [n["label"] for _, n in plain],

@@ -69,6 +69,17 @@ def test_analytics_and_unencrypted():
     notes = privacy.notes(r)
     assert [n.kind for n in notes] == ["analytics", "unencrypted"]
     assert notes[1].hosts == ["api.vendor.example"]
+    # (his report 2026-11-21) one of its three internet sites: not "Unencrypted" outright
+    assert notes[1].label == "Partly unencrypted"
+    assert notes[1].title == "Reaches 1 of its 3 sites without encryption"
+    assert notes[1].means.endswith("Its other sites are reached with encryption.")
+    only = privacy.notes(_report(
+        ("api.vendor.example", {"class": "declared", "schemes": ["http"]}, 4),
+        ("ws.vendor.example", {"class": "undeclared", "schemes": ["ws"]}, 5),
+        ("192.168.1.2", {"class": "local", "schemes": ["https"]}, 6),
+    ))  # fmt: skip
+    assert (only[0].label, only[0].title) == (
+        "Unencrypted", "Uses unencrypted web addresses on the internet")  # fmt: skip
 
 
 def test_mqtt_1883_only():

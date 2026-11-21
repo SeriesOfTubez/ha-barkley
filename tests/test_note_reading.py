@@ -116,7 +116,7 @@ def test_a_note_without_a_reading_says_why(tmp_path):
     store, base, httpd = _serve(tmp_path, lambda *a: {})
     sid = store.save(_report(tmp_path))
     _, _, page = get(f"{base}/scan/{sid}")
-    plain = _note(page, "Uses unencrypted web addresses on the internet")
+    plain = _note(page, "Reaches 1 of its 2 sites without encryption")
     assert "Explain in context</button>" not in plain
     assert (
         "This note has no “Explain in context”. Its addresses are linked from the app's "
