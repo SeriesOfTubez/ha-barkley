@@ -214,3 +214,13 @@ def test_a_quiet_or_archived_project_is_said_on_the_page_and_the_card():
     assert "The owner has archived the project on GitHub" in ui.supply_html(old)
     assert ui.quiet({"provenance": {"pushed_at": "<script>"}}) == ("", "")
     assert ui.quiet({}) == ("", "")  # a scan from before 0.15
+
+    # (his ask) the same in the facts under the app's name: release day, last push, a chip
+    rep["target"]["repo"] = "acme/widget"
+    facts = ui.facts_line(rep)
+    assert "v1.2.0, released 2026-10-30</span>" in facts and "Last push 2024-08-24</span>" in facts
+    assert '<span class="chip" title="The project has gone quiet' in facts
+    assert "No changes in" in facts
+    assert "chip" not in ui.facts_line(fresh) and "Last push 2999-01-01" in ui.facts_line(fresh)
+    assert "Archived project</span>" in ui.facts_line(old)
+    assert "Last push" not in ui.facts_line({"target": {"ref": "v1"}})  # before 0.15

@@ -3440,8 +3440,13 @@ def facts_line(report: dict[str, Any]) -> str:
     kind = KIND.get(str(t.get("kind")), str(t.get("kind") or ""))
     if kind:
         parts.append(f"<span>{e(kind)}</span>")
+    prov = report.get("provenance") if isinstance(report.get("provenance"), dict) else {}
     if t.get("ref"):
-        parts.append(f"<span>{icon('tag')} {e(t['ref'], 60)}</span>")
+        mine = next((x for x in prov.get("releases") or []
+                     if isinstance(x, dict) and x.get("installed")), {})  # fmt: skip
+        out = _day(mine.get("published_at"))
+        parts.append(f"<span>{icon('tag')} {e(t['ref'], 60)}"
+                     + (f", released {out}" if out else "") + "</span>")  # fmt: skip
     repo = str(t.get("repo") or "")
     if _REPO_LINK.fullmatch(repo):
         parts.append(f'<a href="https://github.com/{e(repo)}" target="_blank" '
@@ -3456,6 +3461,14 @@ def facts_line(report: dict[str, Any]) -> str:
         dl = pop.get("downloads")
         if isinstance(dl, int):
             parts.append(f"<span>{icon('download')} {dl:,} download{'s' * (dl != 1)}</span>")
+    # (0.15, his ask 2026-11-21) how alive the project is, as GitHub said when it was
+    # sniffed: the last push, and a chip when it has gone quiet or is archived (quiet())
+    if pushed := _day(prov.get("pushed_at")):
+        parts.append('<span title="The last push to the project on GitHub, when Barkley '
+                     f'sniffed it">{icon("clock")} Last push {pushed}</span>')  # fmt: skip
+    chip, why = quiet(report)
+    if chip:
+        parts.append(f'<span class="chip" title="{e(why, 300)}">{e(chip)}</span>')
     return f'<div class="facts">{"".join(parts)}</div>' if parts else ""
 
 
