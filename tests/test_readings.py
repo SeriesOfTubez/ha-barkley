@@ -118,7 +118,9 @@ def test_where_home_assistant_runs_is_one_choice_stored_as_two_values():
     assert (s.where, s.exposure) == ("internet", "public")
     assert settings.from_dict({"where": "the moon"}, s) == s
     assert settings.from_dict({"network": "internet"}).network == "home"  # not a choice
-    assert settings.PARTS["readings"] == ("exposure", "network", "show_minor")
+    assert settings.PARTS["readings"] == ("exposure", "network", "show_minor", "quiet_months")
+    assert settings.from_dict({"quiet_months": "24"}).quiet_months == 24
+    assert settings.from_dict({"quiet_months": "7"}).quiet_months == 12  # not a choice
     assert not hasattr(d, "preview") and not hasattr(d, "paranoid")
 
 

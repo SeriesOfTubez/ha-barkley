@@ -76,16 +76,46 @@ def test_every_python_package_is_listed_the_apps_own_first():
                                             "ha_provided": False, "finding_ids": ["f1"]}),
         ("pypi/anyio", "depends_on", {"version": "4.0", "direct": False, "ha_provided": False}),
     ]  # fmt: skip
-    rep = _report(pk, findings=[{"id": "f1", "rule_id": "dep-vuln"}])
+    rep = _report(pk, findings=[
+        {"id": "f1", "rule_id": "dep-vuln", "dependency": {
+            "package": "acme-client", "ecosystem": "PyPI", "version": "2.1.0",
+            "advisories": [{"id": "GHSA-a"}, {"id": "GHSA-b"}]}},
+        {"id": "f2", "rule_id": "dep-malicious",
+         "evidence": "zlib-extra@1.0 (PyPI): MAL-2026-1"},
+    ])  # fmt: skip
     html = ui.supply_html(rep)
     assert "Python packages (3)" in html
     assert ("Home Assistant installs 3 Python packages for this app. The app asks for one of "
             "them itself, and the other 2 come along with it. Home Assistant 2026.11.2 already "
             "ships 1 of them at the same version.") in html  # fmt: skip
-    assert html.index("acme-client") < html.index("anyio") < html.index("zlib-extra")
+    # (0.15, his report) affected packages come first: malware, then known bugs, each with
+    # an icon; then the app's own, then the rest
+    assert html.index("<code>zlib-extra") < html.index("<code>acme-client") < html.index(
+        "<code>anyio")  # fmt: skip
     assert "the app asks for it" in html and "comes along" in html
     assert "Home Assistant already ships it" in html
-    assert f"<b>{ui.explain.explain('dep-vuln').chip}</b>" in html  # the item it has above
+    assert 'class="pk bug">' in html and "2 known bugs</span>" in html
+    assert 'class="pk bad">' in html and "malware warning</span>" in html
+
+
+def test_a_cards_lock_file_packages_with_a_known_bug_are_listed():
+    pk = [("npm/lit", "bundles", {"spec": "^3.0.0"})]
+    rep = _report(pk, findings=[
+        {"id": "f1", "rule_id": "dep-vuln", "dependency": {
+            "package": "semver", "ecosystem": "npm", "version": "5.7.1",
+            "advisories": [{"id": "GHSA-a"}]}},
+        {"id": "f2", "rule_id": "dep-vuln", "dependency": {
+            "package": "semver", "ecosystem": "npm", "version": "6.3.0",
+            "advisories": [{"id": "GHSA-a"}]}},
+        {"id": "f3", "rule_id": "dep-build-tool-vuln",
+         "evidence": "<img/src=x>@1.0 (npm): GHSA-b, GHSA-c"},
+    ])  # fmt: skip
+    html = ui.supply_html(rep)
+    assert "Its lock file brings along 2 more packages with a known bug or a malware" in html
+    assert "<code>semver</code>" in html and "5.7.1, 6.3.0 · comes along through the lock" in html
+    assert "only used to build it" in html and "<img" not in html
+    assert "one known bug</span>" in html and "2 known bugs</span>" in html  # an advisory once
+    assert html.index("<code>lit</code>") < html.index("<code>semver</code>")
 
 
 def test_a_long_package_list_folds_and_names_are_escaped():
@@ -152,3 +182,35 @@ def test_nothing_in_the_section_moves_a_reading():
     rep["provenance"] = PROVENANCE
     ui.supply_html(rep)
     assert readings.compute(rep).to_dict() == before
+
+
+def test_a_quiet_or_archived_project_is_said_on_the_page_and_the_card():
+    """(0.15, his report) nothing pushed for as long as the Quiet projects setting says."""
+    from datetime import date
+
+    rep = _report(findings=[{"id": "f1", "rule_id": "dep-vuln",
+                             "evidence": "semver@5.7.1 (npm): GHSA-a"}])  # fmt: skip
+    rep["provenance"] = {**PROVENANCE, "pushed_at": "2024-08-24T15:15:10Z", "archived": False}
+    today = date(2026, 11, 21)
+    assert ui.quiet(rep, today) == (
+        "No changes in over 2 years",
+        "The project has gone quiet: when Barkley sniffed it, the last push to it on GitHub "
+        "was on 2024-08-24, over 2 years ago.",
+    )
+    assert ui.quiet(rep, date(2025, 8, 24))[0] == "No changes in a year"
+    assert ui.quiet(rep, date(2025, 8, 23)) == ("", "")  # a day short of the 12 months
+    assert ui.quiet({**rep, "shown": {"quiet_months": 6}}, date(2025, 4, 24))[0] == (
+        "No changes in 8 months")  # fmt: skip
+    assert ui.quiet({**rep, "shown": {"quiet_months": 0}}, today) == ("", "")  # never say it
+    html = ui.supply_html(rep)
+    assert "<b>The project has gone quiet:" in html
+    assert "The known bugs in its packages are unlikely to be fixed." in html
+    fresh = {**rep, "provenance": {**PROVENANCE, "pushed_at": "2999-01-01T00:00:00Z"}}
+    assert ("When Barkley sniffed it, the last push to the project on GitHub was on "
+            "2999-01-01.") in ui.supply_html(fresh)  # fmt: skip
+    old = {**rep, "provenance": {**PROVENANCE, "pushed_at": "2999-01-01T00:00:00Z",
+                                 "archived": True}}  # fmt: skip
+    assert ui.quiet(old)[0] == "Archived project"
+    assert "The owner has archived the project on GitHub" in ui.supply_html(old)
+    assert ui.quiet({"provenance": {"pushed_at": "<script>"}}) == ("", "")
+    assert ui.quiet({}) == ("", "")  # a scan from before 0.15

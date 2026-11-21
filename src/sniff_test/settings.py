@@ -49,6 +49,9 @@ class Settings:
     # reading. The page shows it with `exposure` as one choice: home, shared or work
     # network, or reachable from the internet (exposure "public")
     network: str = "home"  # home | shared
+    # (0.15, his report) months without a push after which an app's page and card say the
+    # project has gone quiet; 0: never say it. Context only, never a reading.
+    quiet_months: int = 12
 
     @property
     def where(self) -> str:
@@ -68,7 +71,7 @@ def where_values(where: str) -> dict[str, str]:
 DEFAULTS = Settings()
 # "Reset to defaults" per section of the page
 PARTS = {
-    "readings": ("exposure", "network", "show_minor"),
+    "readings": ("exposure", "network", "show_minor", "quiet_months"),
     "checking": ("parallel", "jobs", "memory_gb", "libraries", "cache_mb", "token_days"),
 }
 
@@ -87,6 +90,7 @@ CHOICES: dict[str, tuple[Any, ...]] = {
     "memory_gb": (0, 2, 3, 4, 6, 8, 12, 16),
     "cache_mb": (0, 512, 1024, 2048, 4096),
     "token_days": (30, 60, 90, 180),
+    "quiet_months": (0, 6, 12, 24, 36),
 }
 
 

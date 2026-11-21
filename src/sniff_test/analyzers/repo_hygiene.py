@@ -6,8 +6,10 @@ must never offset something we found (decided with the user, 2026-11-10).
 Two sources:
 - Files in the downloaded source tree at the release (read as plain text, never run):
   workflows that run a security scanner, Dependabot or Renovate config, SECURITY.md.
-- Two GitHub requests: open pull requests (to count Dependabot/Renovate ones and their
-  age), and open issues (to count ones labeled or titled as security issues).
+- Three GitHub requests: open pull requests (to count Dependabot/Renovate ones and their
+  age), open issues (to count ones labeled or titled as security issues), and the list of
+  workflows (0.15: CodeQL's "default setup" and Dependabot's updates are switched on in
+  the repository's settings and have no file in the repo; GitHub lists them there).
 
 GitHub keeps Dependabot and code-scanning *alerts* private (repo admins only), so
 whether findings get fixed is inferred from public signals, and labeled as inferred.
@@ -21,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sniff_test.fetch.github import GitHub, GitHubError, RateLimitError
+from sniff_test.fetch.github import GitHub, GitHubError, NotFoundError, RateLimitError
 from sniff_test.models import Target
 
 _MAX_FILE = 256 * 1024
@@ -88,6 +90,10 @@ _SECURITY_TITLE = re.compile(
     r"\b(security|vulnerab\w*|CVE-\d{4}-\d{3,}|exploit\w*|XSS|RCE|injection)\b", re.I
 )
 _SECURITY_LABEL = re.compile(r"security|vulnerab|cve", re.I)
+# (0.15) What GitHub runs from a repository's settings, with no workflow file: the path
+# GitHub's workflow list gives it. Only an "active" one counts.
+_CODEQL_DEFAULT = "dynamic/github-code-scanning/codeql"
+_DEPENDABOT_UPDATES = "dynamic/dependabot/dependabot-updates"
 ISSUES_SHOWN = 5
 
 
@@ -99,6 +105,7 @@ class Hygiene:
     security_policy: str | None = None  # path of SECURITY.md
     update_prs: dict[str, Any] | None = None  # open, oldest_days, by bot; None: not checked
     security_issues: dict[str, Any] | None = None  # open, of, items
+    dependabot_updates: bool = False  # (0.15) Dependabot's updates run from the settings
     errors: list[str] = field(default_factory=list)
 
 
@@ -255,6 +262,19 @@ def security_issues(issues: list[dict[str, Any]], now: datetime) -> dict[str, An
     return {"open": len(hits), "of": len(real), "items": hits[:ISSUES_SHOWN]}
 
 
+def settings_workflows(h: Hygiene, listing: Any) -> None:
+    """Add what GitHub's workflow list shows running from the repository's settings."""
+    rows = listing.get("workflows") if isinstance(listing, dict) else None
+    for w in rows if isinstance(rows, list) else []:
+        if not isinstance(w, dict) or w.get("state") != "active":
+            continue
+        path = str(w.get("path") or "")
+        if path == _CODEQL_DEFAULT and not any(x["name"] == "CodeQL" for x in h.scanners):
+            h.scanners.append({"name": "CodeQL", "kind": "code", "workflow": "", "via": "github"})
+        elif path == _DEPENDABOT_UPDATES:
+            h.dependabot_updates = True
+
+
 def run(
     target: Target, gh: GitHub | None = None, now: datetime | None = None, offline: bool = False
 ) -> Hygiene | None:
@@ -284,6 +304,14 @@ def run(
         raise  # the job waits for the reset and runs again; never stored as a result
     except GitHubError as ex:
         h.errors.append(f"GitHub didn't answer ({ex})"[:300])
+    try:
+        settings_workflows(h, gh.get_json(f"/repos/{full}/actions/workflows?per_page=100"))
+    except RateLimitError:
+        raise
+    except NotFoundError:
+        pass  # Actions is off for this repository: nothing runs from its settings either
+    except GitHubError as ex:
+        h.errors.append(f"GitHub didn't list the workflows ({ex})"[:300])
     return h
 
 
@@ -299,6 +327,7 @@ def to_dict(h: Hygiene | None, findings_rules: set[str], kind: str) -> dict[str,
         "scored": False,
         "scanners": h.scanners,
         "dependabot": h.dependabot,
+        "dependabot_updates": h.dependabot_updates,
         "renovate": h.renovate,
         "security_policy": h.security_policy,
         "update_prs": h.update_prs,

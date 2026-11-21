@@ -45,6 +45,7 @@ SENSITIVE_NODES: dict[str, tuple[str, str]] = {
     "ha-own-storage-path": ("data", ".storage files"),
     "ha-bulk-location-read": ("data", "household locations"),
     "ha-supervisor-token": ("auth", "Supervisor token"),
+    "ha-supervisor-token-local": ("auth", "Supervisor token, used on this box"),
     "card-read-tokens": ("auth", "stored HA tokens"),
     "card-access-token-use": ("auth", "user's access token"),
 }

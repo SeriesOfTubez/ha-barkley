@@ -99,6 +99,22 @@ class Resolver:
             self._imports[rel] = out
         return self._imports[rel]
 
+    def _own_module(self, rel: str, name: str) -> str | None:
+        """The file of the app's own module that `name` stands for in `rel`
+        (`from . import const as name`, `from .helpers import const`), else None. A name
+        the file also assigns is not certain."""
+        hit = self.imports(rel).get(name)
+        tree = self.tree(rel)
+        if hit is None or tree is None or not hit[0].startswith("."):
+            return None
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Store):
+                return None
+        mod, orig = hit
+        level = len(mod) - len(mod.lstrip("."))
+        inner = ".".join(p for p in (mod.lstrip("."), orig) if p)
+        return self._module_file(rel, level, inner)
+
     # --- values ------------------------------------------------------------------------
 
     def constant(self, rel: str, name: str, depth: int = 0) -> str | None:
@@ -142,6 +158,11 @@ class Resolver:
             return node.value if isinstance(node.value, str) else None
         if isinstance(node, ast.Name):
             return self.constant(rel, node.id, depth)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            # `from . import const as c` … `c.DOMAIN`: a constant of the app's own module
+            if (target := self._own_module(rel, node.value.id)) is not None:
+                return self.constant(target, node.attr, depth + 1)
+            return None
         if isinstance(node, ast.JoinedStr):
             parts: list[str] = []
             for v in node.values:

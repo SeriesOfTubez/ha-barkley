@@ -246,6 +246,8 @@ def _provenance_json(p: Provenance | None) -> dict[str, Any] | None:
         "requested_as": p.requested_as,
         "created_at": p.created_at,
         "owner_type": p.owner_type,
+        "pushed_at": p.pushed_at,
+        "archived": p.archived,
         "former_names": p.former_names,
         "installed_tag": p.installed_tag,
         "publishers": p.publishers,

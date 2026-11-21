@@ -368,7 +368,14 @@ def _precise(findings: list[Finding], root: Path, target: Target) -> list[Findin
     packages. Fixed-list package installs go to Target.runtime_requirements."""
     res = Resolver(root)
     out: list[Finding] = []
+    # (0.15) a send whose literal address is the Supervisor on this box isn't off-box
+    local = {f.id for f in findings if py_precision.supervisor_only(f, res)}
     for f in findings:
+        if f.id in local:
+            continue
+        if (url := py_precision.supervisor_token_stays(f, res)) is not None:
+            out.append(py_precision.sent_to_supervisor(f, url))
+            continue
         if py_precision.entry_finding_dropped(f, res, target.domain):
             continue
         if py_precision.secrets_dropped(f, res):

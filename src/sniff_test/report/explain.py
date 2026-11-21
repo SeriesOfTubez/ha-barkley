@@ -186,6 +186,16 @@ RULES: dict[str, Explanation] = {
         "Yes. Find out why before keeping it.",
         "Reads the system key",
     ),
+    "ha-supervisor-token-local": _E(
+        "Asks the Supervisor with the system key",
+        "The Supervisor is the part of Home Assistant that runs the system. The app reads "
+        "its key and uses it to ask the Supervisor on this same box a question, such as "
+        "which apps are installed. In the function that reads the key, Barkley saw it sent "
+        "nowhere else. The key itself can do far more than that.",
+        "Usually not. It's unusual for a custom integration, so check that the reason "
+        "makes sense for what the app does.",
+        "System key, used on this box",
+    ),
     "card-read-tokens": _E(
         "Its dashboard card reads your saved login",
         "Your browser keeps a long-lived Home Assistant login in its storage. Cards talk to "

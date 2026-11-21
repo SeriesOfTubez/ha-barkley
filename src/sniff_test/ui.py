@@ -16,6 +16,7 @@ import textwrap
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import UTC, date, datetime
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
@@ -101,6 +102,13 @@ _ICONS = {
     "6l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2"
     '.122 2.122 0 0 0 1.597-1.16z"/>',
     "back": '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+    # (0.15) beside a package with a known bug (Lucide "bug"); malware uses "alert"
+    "bug": '<path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/>'
+    '<path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 '
+    '0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/>'
+    '<path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/>'
+    '<path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/>'
+    '<path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/>',
     # (0.15) the head's facts row: GitHub's mark (Lucide "github"), downloads, version
     "github": '<path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5'
     ".28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 "
@@ -416,6 +424,7 @@ details summary { cursor:pointer; color:var(--muted); font-size:var(--t-xs); }
   margin-bottom:var(--s2); }
 .pk { display:inline-flex; align-items:center; gap:var(--s1); }
 .pk.ok svg { color:var(--green); } .pk.bad { color:var(--red); }
+.pk.bug { color:var(--orange); } li > .pk { margin-left:var(--s2); font-weight:600; }
 .req { border-left:1px solid var(--line); padding-left:var(--s2); font-size:var(--t-sm);
   display:flex; flex-direction:column; }
 :is(.zone, .libs) details.more > ul { margin-top:var(--s2); }
@@ -655,6 +664,7 @@ class Card:
     busy: str = ""
     diff_link: str = ""  # "old=..&new=.." when an update check exists
     action: str = ""  # rendered form/button HTML (built by the server)
+    stale: bool = False  # sniffed with earlier rules (an app that isn't installed)
 
     @property
     def readings(self) -> dict[str, Any] | None:
@@ -753,6 +763,10 @@ def card_chips(c: Card) -> list[tuple[str, str]]:
     """Each chip is there because it can change a decision; the sentence above already
     says where the app connects, so no chip repeats that."""
     chips: list[tuple[str, str]] = []
+    if c.stale:
+        chips.append(("", "Sniffed with earlier rules"))
+    if c.report and (gone := quiet(c.report)[0]):
+        chips.append(("", gone))
     # colour means a threat: a threat is red, the rest are neutral (his note 2026-11-20).
     # Privacy notes keep their own colour (a kind).
     if c.available:  # an update whose diff has headline changes: say so, in neutral grey
@@ -813,19 +827,23 @@ class View:
     f: str = "all"
     view: str = "cards"
     pg: int = 1
+    pg2: int = 1  # the page of "Sniffed, not installed", under the installed list
 
     @classmethod
     def parse(cls, q: dict[str, list[str]], default_view: str = "cards") -> View:
         f = (q.get("f") or ["all"])[0]
         view = (q.get("view") or [default_view])[0]
-        try:
-            pg = int((q.get("page") or ["1"])[0])
-        except ValueError:
-            pg = 1
+        def num(key: str) -> int:
+            try:
+                return max(1, min(int((q.get(key) or ["1"])[0]), 10_000))
+            except ValueError:
+                return 1
+
         return cls(
             f if f in FILTERS else "all",
             view if view in VIEWS else "cards",
-            max(1, min(pg, 10_000)),
+            num("page"),
+            num("page2"),
         )
 
     def qs(self, sep: str = "&amp;", **kw: Any) -> str:
@@ -838,6 +856,8 @@ class View:
         parts.append(f"view={v.view}")
         if v.pg > 1:
             parts.append(f"page={v.pg}")
+        if v.pg2 > 1:
+            parts.append(f"page2={v.pg2}")
         return sep.join(parts)
 
 
@@ -896,17 +916,23 @@ def card_row(base: str, c: Card) -> str:
     )
 
 
-def _pager(base: str, v: View, pages: int) -> str:
+def _pager(base: str, v: View, pages: int, key: str = "pg", anchor: str = "") -> str:
+    """Page links. `key`: which of the view's two page numbers these links change."""
     if pages <= 1:
         return ""
+    at = getattr(v, key)
+
+    def href(n: int) -> str:
+        return f"{base}/?{v.qs(**{key: n})}{anchor}"
+
     links = []
-    if v.pg > 1:
-        links.append(f'<a class="pill" href="{base}/?{v.qs(pg=v.pg - 1)}">‹ Previous</a>')
+    if at > 1:
+        links.append(f'<a class="pill" href="{href(at - 1)}">‹ Previous</a>')
     for n in range(1, pages + 1):
-        on = " on" if n == v.pg else ""
-        links.append(f'<a class="pill{on}" href="{base}/?{v.qs(pg=n)}">{n}</a>')
-    if v.pg < pages:
-        links.append(f'<a class="pill" href="{base}/?{v.qs(pg=v.pg + 1)}">Next ›</a>')
+        on = " on" if n == at else ""
+        links.append(f'<a class="pill{on}" href="{href(n)}">{n}</a>')
+    if at < pages:
+        links.append(f'<a class="pill" href="{href(at + 1)}">Next ›</a>')
     return f'<nav class="filters pager" aria-label="pages">{"".join(links)}</nav>'
 
 
@@ -2572,10 +2598,10 @@ def _host_li(
                  + _requests_spans(reqs, elsewhere) + urls + where + deep, open_)  # fmt: skip
 
 
-def _zone_list(items: list[str]) -> str:
-    """The first ZONE_SHOWN lines, then the rest behind "N more" (a fold, no script)."""
-    head = "".join(items[:ZONE_SHOWN])
-    rest = items[ZONE_SHOWN:]
+def _zone_list(items: list[str], shown: int = ZONE_SHOWN) -> str:
+    """The first `shown` lines, then the rest behind "N more" (a fold, no script)."""
+    head = "".join(items[:shown])
+    rest = items[shown:]
     if not rest:
         return f"<ul>{head}</ul>"
     return (f'<ul>{head}<li><details class="more"><summary>{len(rest)} more</summary>'
@@ -2703,9 +2729,14 @@ def hygiene_html(report: dict[str, Any]) -> str:
         )
 
     in_ci = [x for x in sc if not x.get("via")]
-    hooks = [x for x in sc if x.get("via")]  # pre-commit, lefthook or husky (0.15)
+    # (0.15) switched on in the repository's settings: no workflow file to read
+    by_github = [x for x in sc if x.get("via") == "github"]
+    hooks = [x for x in sc if x.get("via") and x not in by_github]  # pre-commit, lefthook, husky
     if in_ci:
         li.append(f"{yes} Runs security scans in its GitHub workflows: {listed(in_ci)}.")
+    if by_github:
+        li.append(f"{yes} GitHub's code scanning is switched on in the repository's settings: "
+                  f"{listed(by_github)}.")  # fmt: skip
     for via in dict.fromkeys(str(x.get("via")) for x in hooks):
         mine = [x for x in hooks if x.get("via") == via]
         tool = e(via)
@@ -2725,7 +2756,9 @@ def hygiene_html(report: dict[str, Any]) -> str:
         li.append(f"{yes} Dependabot is set up to propose updates for {e(what)}.")
     if h.get("renovate"):
         li.append(f"{yes} Renovate is set up to propose dependency updates.")
-    if dep is None and not h.get("renovate"):
+    if dep is None and h.get("dependabot_updates"):
+        li.append(f"{yes} Dependabot's updates are switched on in the repository's settings.")
+    elif dep is None and not h.get("renovate"):
         li.append(f"{no} Neither Dependabot nor Renovate is set up to propose dependency updates.")
     if h.get("security_policy"):
         li.append(f"{yes} Has a security policy (<code>{e(h['security_policy'])}</code>) that "
@@ -2832,10 +2865,14 @@ def libraries_html(report: dict[str, Any], inner: bool = False) -> str:
         if n > 50:
             shown += f'<span class="u">and {n - 50} more files</span>'
         tag = "read as code" if was_read else "not read"
+        bugs = ""
+        if isinstance(known, int) and not isinstance(known, bool) and known > 0:
+            bugs = (f' <span class="pk bug">{icon("bug", 14)} '
+                    f'{_count(known, "known bug", "known bugs")}</span>')  # fmt: skip
         return (
             f'<li><details class="site"><summary><b>{e(lib.get("name"), 120)} '
             f'{e(lib.get("version"), 80)}</b> <span class="muted">· {n} file{"s" * (n != 1)}'
-            f' · {tag}</span></summary><div class="in">'
+            f' · {tag}</span>{bugs}</summary><div class="in">'
             + (f'<span class="u">{" ".join(facts)}</span>' if facts else "")
             + f"{shown}</div></details></li>"
         )
@@ -2959,6 +2996,36 @@ def _day(value: Any) -> str:
     return m[0] if m else ""
 
 
+def quiet(report: dict[str, Any], today: date | None = None) -> tuple[str, str]:
+    """(chip, sentence) when the project is archived, or nothing was pushed to it for as
+    long as the Quiet projects setting says (report.shown.quiet_months; 0: never). From
+    GitHub's repository record as it was when the scan ran; ("", "") otherwise."""
+    prov = report.get("provenance") if isinstance(report.get("provenance"), dict) else {}
+    shown = report.get("shown") if isinstance(report.get("shown"), dict) else {}
+    months = shown.get("quiet_months", 12)
+    months = months if isinstance(months, int) and not isinstance(months, bool) else 12
+    if prov.get("archived") is True:
+        return ("Archived project", "The owner has archived the project on GitHub: it is "
+                "read-only and gets no more updates.")  # fmt: skip
+    day = _day(prov.get("pushed_at"))
+    if not day or months <= 0:
+        return "", ""
+    try:
+        then = date.fromisoformat(day)
+    except ValueError:
+        return "", ""
+    today = today or datetime.now(UTC).date()
+    gone = (today.year - then.year) * 12 + today.month - then.month - (today.day < then.day)
+    if gone < months:
+        return "", ""
+    span = (_count(gone // 12, "year", "years") if gone >= 24
+            else "a year" if gone >= 12 else _count(gone, "month", "months"))  # fmt: skip
+    over = "" if gone % 12 == 0 and gone >= 12 else "over " if gone >= 12 else ""
+    return (f"No changes in {over}{span}",
+            f"The project has gone quiet: when Barkley sniffed it, the last push to it on "
+            f"GitHub was on {day}, {over}{span} ago.")  # fmt: skip
+
+
 def _count(n: int, one: str, many: str) -> str:
     return f"one {one}" if n == 1 else f"{n:,} {many}"
 
@@ -2991,6 +3058,14 @@ def _supply_repo(report: dict[str, Any]) -> str:
     for f in [x for x in prov.get("former_names") or [] if isinstance(x, dict)][:5]:
         if f.get("name"):
             li.append(f"It used to be at <code>{e(f['name'], 200)}</code>.")
+    _chip, gone_quiet = quiet(report)
+    if gone_quiet:
+        bugs = any(m["bugs"] or m["malware"] for m in _package_marks(report).values())
+        li.append(f"<b>{e(gone_quiet)}</b>"
+                  + (" The known bugs in its packages are unlikely to be fixed." if bugs else ""))
+    elif _day(prov.get("pushed_at")):
+        li.append("When Barkley sniffed it, the last push to the project on GitHub was on "
+                  f"{_day(prov.get('pushed_at'))}.")  # fmt: skip
     rels = [x for x in prov.get("releases") or [] if isinstance(x, dict)]
     mine = next((x for x in rels if x.get("installed")), None)
     if mine and mine.get("publisher"):
@@ -3048,13 +3123,11 @@ def _checked_line(report: dict[str, Any], analyzer: str) -> str:
     if state != "ok":
         return (f'<p class="pkchk">{icon("minus", 14, "muted")} Barkley couldn\'t check these '
                 "packages for malware warnings and known bugs in this scan.</p>")  # fmt: skip
-    deps = [f for f in report.get("findings") or [] if isinstance(f.get("dependency"), dict)]
+    marks = _package_marks(report).values()
     counts = (
-        ("malware warnings", len({f["dependency"].get("package") for f in deps
-                                  if f.get("rule_id") == "dep-malicious"})),
-        ("with known bugs", len({f["dependency"].get("package") for f in deps
-                                 if f.get("rule_id") in kinds.VULNERABILITY_RULES})),
-    )  # fmt: skip
+        ("malware warnings", sum(1 for m in marks if m["malware"])),
+        ("with known bugs", sum(1 for m in marks if m["bugs"])),
+    )
     bits = "".join(
         f'<span class="pk {"bad" if n else "ok"}">{icon("alert" if n else "check", 14)} '
         f"<b>{n}</b> {label}</span>"
@@ -3064,14 +3137,74 @@ def _checked_line(report: dict[str, Any], analyzer: str) -> str:
             "list of malware and known bugs.</span></p>")  # fmt: skip
 
 
+# What the advisory check writes as a package finding's evidence: "name@1.2.3 (npm): IDS"
+_DEP_EVIDENCE = re.compile(r"(@?[^@\s]{1,214})@(\S{1,80}) \((PyPI|npm)\): (.{0,2000})")
+
+
+def _dep_of(f: dict[str, Any]) -> tuple[str, str, str, list[str]] | None:
+    """(ecosystem, package, version, advisory ids) of a package finding: from its checked
+    facts, else from its evidence line (malware warnings and build tools carry no facts)."""
+    d = f.get("dependency")
+    if isinstance(d, dict) and d.get("package"):
+        ids = [str(a.get("id")) for a in d.get("advisories") or [] if isinstance(a, dict)]
+        return (str(d.get("ecosystem") or ""), str(d["package"]), str(d.get("version") or ""),
+                ids or [str(f.get("id"))])  # fmt: skip
+    m = _DEP_EVIDENCE.fullmatch(str(f.get("evidence") or ""))
+    if not m:
+        return None
+    return m[3], m[1], m[2], [x.strip() for x in m[4].split(",") if x.strip()] or [m[2]]
+
+
+def _package_marks(report: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    """What the advisory check found, per (ecosystem, package name): how many known bugs
+    (each advisory once, however many versions have it), whether a malware warning names
+    it, and the versions (a lock file can hold several)."""
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    seen: dict[tuple[str, str], set[str]] = {}
+    for f in report.get("findings") or []:
+        rule = str(f.get("rule_id"))
+        if rule != "dep-malicious" and rule not in kinds.VULNERABILITY_RULES:
+            continue
+        if (dep := _dep_of(f)) is None:
+            continue
+        eco, name, version, ids = dep
+        key = (eco.lower(), name.lower())
+        m = out.setdefault(key, {"name": name, "bugs": 0, "malware": False, "versions": [],
+                                 "build": True})  # fmt: skip
+        if rule == "dep-malicious":
+            m["malware"] = True
+        else:
+            seen.setdefault(key, set()).update(ids)
+            m["bugs"] = len(seen[key])
+        m["build"] = m["build"] and rule == "dep-build-tool-vuln"
+        if version and version not in m["versions"]:
+            m["versions"].append(version)
+    return out
+
+
+def _mark_html(m: dict[str, Any] | None) -> str:
+    """The icons beside an affected package: a warning sign for malware, a bug with the
+    number of known bugs."""
+    if not m:
+        return ""
+    out = ""
+    if m["malware"]:
+        out += f'<span class="pk bad">{icon("alert", 14)} malware warning</span>'
+    if m["bugs"]:
+        out += (f'<span class="pk bug">{icon("bug", 14)} '
+                f'{_count(m["bugs"], "known bug", "known bugs")}</span>')  # fmt: skip
+    return out
+
+
 def _supply_packages(report: dict[str, Any]) -> str:
     """Every package the app is installed or built with: for an integration what Home
     Assistant would install (worked out by uv during the scan, the packages those bring
-    along included), for a card the packages its package.json lists. Names and versions
-    come from the scanned repo's files and the package index: escaped."""
+    along included), for a card the packages its package.json lists, and the ones its lock
+    file brings along that have a known bug or a malware warning. Affected packages come
+    first, each with an icon. Names and versions come from the scanned repo's files and the
+    package index: escaped."""
     g, nodes = _graph(report)
-    chips = {str(f.get("id")): explain.explain(str(f.get("rule_id"))).chip
-             for f in report.get("findings") or []}  # fmt: skip
+    marks = _package_marks(report)
     py, npm = [], []
     for edge in g.get("edges", []):
         if edge.get("source") != g.get("subject"):
@@ -3079,20 +3212,22 @@ def _supply_packages(report: dict[str, Any]) -> str:
         label = str(nodes.get(edge.get("target"), {}).get("label", ""))
         eco, _, name = label.partition("/")
         a = edge.get("attrs") if isinstance(edge.get("attrs"), dict) else {}
-        marks = sorted({chips[i] for i in edge.get("finding_ids") or [] if i in chips})
         if edge.get("relation") == "depends_on" and eco == "pypi" and name:
-            py.append((name, a, marks))
+            py.append((name, a, marks.get(("pypi", name.lower()))))
         elif edge.get("relation") == "bundles" and eco == "npm" and name:
-            npm.append((name, a, marks))
+            npm.append((name, a, marks.get(("npm", name.lower()))))
 
-    def line(name: str, facts: list[str], marks: list[str]) -> str:
+    def line(name: str, facts: list[str], m: dict[str, Any] | None) -> str:
         tail = "".join(f" · {e(x, 80)}" for x in facts)
-        noted = "".join(f" · <b>{e(m, 80)}</b>" for m in marks)
-        return f'<li><code>{e(name, 120)}</code><span class="muted">{tail}</span>{noted}</li>'
+        return (f'<li><code>{e(name, 120)}</code><span class="muted">{tail}</span>'
+                f"{_mark_html(m)}</li>")  # fmt: skip
+
+    def first(m: dict[str, Any] | None) -> tuple[bool, bool]:
+        return (not (m and m["malware"]), not m)  # malware, then known bugs, then the rest
 
     out = []
     if py:
-        py.sort(key=lambda x: (not x[1].get("direct"), x[0]))
+        py.sort(key=lambda x: (*first(x[2]), not x[1].get("direct"), x[0]))
         n = len(py)
         direct = sum(1 for _n, a, _m in py if a.get("direct"))
         if any("version" in a for _n, a, _m in py):
@@ -3112,32 +3247,48 @@ def _supply_packages(report: dict[str, Any]) -> str:
             text = (f"The app asks for {_count(n, 'Python package', 'Python packages')}. "
                     "Barkley didn't work out what those bring along in this scan.")  # fmt: skip
         items = []
-        for name, a, marks in py[:PACKAGES_LISTED]:
+        for name, a, m in py[:PACKAGES_LISTED]:
             facts = [str(a["version"])] if a.get("version") else []
             if a.get("requirement") and not a.get("version"):
                 facts.append(str(a["requirement"]))
             facts.append("the app asks for it" if a.get("direct") else "comes along")
             if a.get("ha_provided"):
                 facts.append("Home Assistant already ships it")
-            items.append(line(name, facts, marks))
+            items.append(line(name, facts, m))
         if n > PACKAGES_LISTED:
             items.append(f"<li>and {n - PACKAGES_LISTED:,} more</li>")
         out.append(f'<h3 class="kindh">Python packages ({n:,})</h3>'
                    f'<p class="sub">{text}</p>{_checked_line(report, "osv-python")}'
                    f'<div class="libs">{_zone_list(items)}</div>')  # fmt: skip
-    if npm:
-        npm.sort(key=lambda x: x[0])
+    listed = {name.lower() for name, _a, _m in npm}
+    # (0.15, his report) a card's lock file brings along packages its package.json doesn't
+    # name; the ones with a known bug or a malware warning are listed too
+    along = sorted((m for (eco, key), m in marks.items() if eco == "npm" and key not in listed),
+                   key=lambda m: (*first(m), m["name"]))  # fmt: skip
+    if npm or along:
+        npm.sort(key=lambda x: (*first(x[2]), x[0]))
         n = len(npm)
-        items = [line(name, [str(a["spec"])] if a.get("spec") else [], marks)
-                 for name, a, marks in npm[:PACKAGES_LISTED]]  # fmt: skip
+        items = [line(name, [str(a["spec"])] if a.get("spec") else [], m)
+                 for name, a, m in npm[:PACKAGES_LISTED]]  # fmt: skip
         if n > PACKAGES_LISTED:
             items.append(f"<li>and {n - PACKAGES_LISTED:,} more</li>")
+        more = [
+            line(m["name"], [", ".join(m["versions"][:6])] * bool(m["versions"])
+                 + ["only used to build it" if m["build"] else "comes along through the lock file"],
+                 m)
+            for m in along[:PACKAGES_LISTED]
+        ]  # fmt: skip
         out.append(f'<h3 class="kindh">npm packages it is built from ({n:,})</h3>'
                    f'<p class="sub">Its <code>package.json</code> lists '
                    f"{_count(n, 'npm package', 'npm packages')}, with the versions it accepts. "
                    "The developer builds them into the file you install.</p>"
                    f"{_checked_line(report, 'osv-npm')}"
-                   f'<div class="libs">{_zone_list(items)}</div>')  # fmt: skip
+                   + (f'<div class="libs">{_zone_list(items)}</div>' if items else "")
+                   + (f'<p class="sub">Its lock file brings along '
+                      f"{_count(len(along), 'more package', 'more packages')} with a known bug or "
+                      "a malware warning. The rest of the lock file's packages aren't listed "
+                      f'here.</p><div class="libs">{_zone_list(more, 25)}</div>'
+                      if more else ""))  # fmt: skip
     return "".join(out)
 
 
@@ -3476,11 +3627,12 @@ def all_green(h: Any) -> bool:
     # (0.14.1) a scanner counts when it runs in CI: a workflow, or pre-commit run by one
     ci = [
         x for x in h.get("scanners") or []
-        if isinstance(x, dict) and (not x.get("via") or x.get("ci"))
+        if isinstance(x, dict) and (not x.get("via") or x.get("ci") or x.get("via") == "github")
     ]  # fmt: skip
     return (
         bool(ci)
-        and (h.get("dependabot") is not None or bool(h.get("renovate")))
+        and (h.get("dependabot") is not None or bool(h.get("renovate"))
+             or bool(h.get("dependabot_updates")))
         and bool(h.get("security_policy"))
         and isinstance(iss, dict)
         and not iss.get("off")

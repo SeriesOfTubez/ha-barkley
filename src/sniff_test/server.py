@@ -606,13 +606,41 @@ def _diff_link(r: Row) -> str:
     return ""
 
 
-def not_installed_cards_html(base: str, cards: list[ui.Card]) -> str:
-    """The "Sniffed, not installed" section under the installed list."""
+def not_installed_cards_html(
+    base: str, cards: list[ui.Card], v: ui.View | None = None, token: str = ""
+) -> str:
+    """The "Sniffed, not installed" section under the installed list: its own pages, and
+    one button for the apps last sniffed with earlier rules."""
     if not cards:
         return ""
+    v = v or ui.View()
+    per = ui.PER_PAGE[v.view]
+    pages = max(1, -(-len(cards) // per))
+    v = replace(v, pg2=min(v.pg2, pages))
+    window = cards[(v.pg2 - 1) * per : v.pg2 * per]
+    stale = sum(1 for c in cards if c.stale and not c.busy)
+    again = ""
+    if stale and token:
+        again = (
+            f'<form method=post action="{base}/not-installed-again">'
+            f'<input type=hidden name=token value="{token}">'
+            f'<input type=hidden name=back value="{v.qs()}">'
+            f"<button>Sniff {stale} again with the current rules</button></form>"
+        )
+    page = f'<span class="muted small">Page {v.pg2} of {pages}</span>' if pages > 1 else ""
+    bar = f'<div class="bar"><span class="lead">{again}{page}</span></div>' if again or page else ""
+    if v.view == "table":
+        body = (
+            '<div class="box tablebox"><table class="apps"><tr><th>Readings</th><th>App</th>'
+            "<th>Notes</th><th></th></tr>"
+            + "".join(ui.card_row(base, c) for c in window)
+            + "</table></div>"
+        )
+    else:
+        body = '<div class="grid">' + "".join(ui.card_html(base, c) for c in window) + "</div>"
     return (
-        f"<h2>Sniffed, not installed ({len(cards)})</h2>"
-        '<div class="grid">' + "".join(ui.card_html(base, c) for c in cards) + "</div>"
+        f'<h2 id="not-installed">Sniffed, not installed ({len(cards)})</h2>{bar}{body}'
+        + ui._pager(base, v, pages, "pg2", "#not-installed")
     )
 
 
@@ -1118,6 +1146,13 @@ def render_settings(
               "a link to show them.",
               sel("show_minor", "1" if s.show_minor else "0",
                   [("0", "Hide (default)"), ("1", "Show")]))
+        + row("Quiet projects", "An app's page and card say when nothing has been pushed to "
+              "its project on GitHub for this long. It changes no reading.",
+              sel("quiet_months", s.quiet_months,
+                  [(n, ("Never say it" if n == 0 else
+                        f"{n} months" if n < 24 else f"{n // 12} years")
+                    + (" (default)" if n == defaults.quiet_months else ""))
+                   for n in settings_mod.CHOICES["quiet_months"]]))
     )  # fmt: skip
     check_rows = ""
     if watcher is not None:
@@ -2476,14 +2511,35 @@ class Panel:
             out.update({it.repo.lower(): it.name for it in self.installed().items})
         return out
 
-    def not_installed_html(self, base: str, installed: set[str]) -> str:
+    def not_installed_scans(self, installed: set[str]) -> dict[str, ScanRow]:
+        """Newest complete scan per repo of the apps that aren't installed (lower-case
+        repo). A scan made with earlier rules still counts: an update of Barkley re-sniffs
+        installed apps only, and an app sniffed from search must not vanish with it."""
+        out: dict[str, ScanRow] = {}
+        for r in self.store.history(limit=10000):
+            if r.repo and r.complete and r.repo.lower() not in installed:
+                out.setdefault(r.repo.lower(), r)
+        return out
+
+    def not_installed_html(self, base: str, installed: set[str], v: ui.View | None = None) -> str:
         """Cards for apps sniffed from search (or by name) that aren't installed."""
+        v = v or ui.View()
         names = {c.repo.lower(): c.name for c in self.catalog()[0]} if self.catalog_fn else {}
         busy = self.busy()
+        tv = self.worker.tool_version
         cards = []
-        for repo, scan in self.current_scans().items():
-            if repo in installed:
-                continue
+        for repo, scan in self.not_installed_scans(installed).items():
+            stale = scan.tool_version != tv
+            action = ""
+            if stale and scan.repo and scan.ref:
+                action = (
+                    f'<form method=post action="{base}/scan">'
+                    f'<input type=hidden name=token value="{self.token}">'
+                    f'<input type=hidden name=back value="{v.qs()}">'
+                    f'<input type=hidden name=repo value="{e(scan.repo)}">'
+                    f'<input type=hidden name=ref value="{e(scan.ref)}">'
+                    "<button>Sniff again</button></form>"
+                )
             cards.append(
                 ui.Card(
                     repo=scan.repo or repo,
@@ -2494,12 +2550,14 @@ class Panel:
                     scan=scan,
                     report=self.shown_report(scan.id),
                     busy=busy.get(repo, ""),
+                    action=action,
+                    stale=stale,
                 )
             )
         if not cards:
             return ""
         cards.sort(key=ui._sort_key)
-        return not_installed_cards_html(base, cards)
+        return not_installed_cards_html(base, cards, v, self.token)
 
     def ai_choices(self, refresh: bool = False) -> tuple[list[tuple[str, str]] | None, str]:
         """AI Task entities for the picker (None outside an add-on), cached 5 minutes."""
@@ -2557,7 +2615,8 @@ class Panel:
 
     def view(self, rep: dict[str, Any], show_minor: bool = False) -> dict[str, Any]:
         s = self._inputs().settings
-        return shown_mod.view(rep, network=s.network, show_minor=show_minor, always=s.show_minor)
+        return shown_mod.view(rep, network=s.network, show_minor=show_minor,
+                              always=s.show_minor, quiet_months=s.quiet_months)  # fmt: skip
 
     def overlay_rows(self, rows: list[ScanRow]) -> list[ScanRow]:
         """Index rows with their readings (Store.overlay), from the store's findings index:
@@ -2644,7 +2703,7 @@ class Panel:
         st, rows = self.rows(refresh)
         html = render_installed(base, st, rows, self.token, self.shown_report, v)
         if not st.error:
-            html += self.not_installed_html(base, {r.item.repo.lower() for r in rows})
+            html += self.not_installed_html(base, {r.item.repo.lower() for r in rows}, v)
         return html
 
     def handler(self) -> type[BaseHTTPRequestHandler]:
@@ -3047,6 +3106,15 @@ class Panel:
                         if it.repo.lower() not in busy:
                             panel.worker.submit("scan", it.repo, it.installed)
                     return self._redirect(home)
+                if path == "/not-installed-again":
+                    # the apps sniffed from search whose newest scan has earlier rules
+                    here = {it.repo.lower() for it in panel.installed().items}
+                    busy = panel.busy()
+                    tv = panel.worker.tool_version
+                    for repo, row in panel.not_installed_scans(here).items():
+                        if row.tool_version != tv and repo not in busy and row.repo and row.ref:
+                            panel.worker.submit("scan", row.repo, row.ref)
+                    return self._redirect(f"{home}#not-installed")
                 if path == "/recheck":
                     if not get("scan").isdigit():
                         return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)

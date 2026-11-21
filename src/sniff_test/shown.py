@@ -24,6 +24,7 @@ def view(
     network: str = "home",
     show_minor: bool = False,
     always: bool = False,
+    quiet_months: int = 12,
 ) -> dict[str, Any]:
     """Keys added: `readings` (readings.compute on the stored findings, all of them) and
     `shown` (the minor items, whether they're shown: for this page, or `always` by the
@@ -45,5 +46,6 @@ def view(
             "minor": [str(f["rule_id"]) for f in minor],
             "show_minor": show_minor,
             "always": always,
+            "quiet_months": quiet_months,
         },
     }

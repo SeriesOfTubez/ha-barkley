@@ -697,6 +697,116 @@ def supervisor_presence_only(f: Finding, res: Resolver) -> bool:
     return all(tested(n) for n in reads)
 
 
+# --- (0.15) sent to the Supervisor on this box, not off it --------------------------------
+
+# The methods `ha-exfil-taint` counts as sending (rules/python/exfil-taint.yaml)
+_SEND = frozenset(
+    {"get", "post", "put", "patch", "delete", "head", "request", "ws_connect", "urlopen"}
+)
+# The Supervisor's own name inside Home Assistant's network, and its old one. The slash
+# makes the host certain: "http://supervisor.example/" must not pass.
+_SUPERVISOR_URL = re.compile(r"^http://(supervisor|hassio)/")
+
+
+def supervisor_only(f: Finding, res: Resolver) -> str | None:
+    """`ha-exfil-taint` whose every sending call on that line names the Supervisor as a
+    literal address (`session.get("http://supervisor/addons", headers=…)`): the data
+    goes to the Supervisor on the same box, the party the Supervisor's key is meant for,
+    so nothing leaves the box. Returns the certain start of the address, else None. An
+    address held in a variable Barkley can't resolve keeps the finding."""
+    if f.rule_id != "ha-exfil-taint" or not f.file or not f.line:
+        return None
+    tree = res.tree(f.file)
+    if tree is None:
+        return None
+    urls: list[str] = []
+    for n in ast.walk(tree):
+        if not (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr in _SEND
+            and n.lineno <= f.line <= (n.end_lineno or n.lineno)
+        ):
+            continue
+        start = _to_supervisor(res, f.file, n)
+        if not start:
+            return None
+        urls.append(start)
+    return urls[0] if urls else None
+
+
+LOCAL_RULE = "ha-supervisor-token-local"
+
+
+def _to_supervisor(res: Resolver, rel: str, call: ast.Call) -> str:
+    """The certain start of a sending call's address when it names the Supervisor."""
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr in _SEND):
+        return ""
+    addr = next((k.value for k in call.keywords if k.arg == "url"), None)
+    if addr is None and call.args:
+        addr = call.args[1] if call.func.attr == "request" and len(call.args) > 1 else call.args[0]
+    start = _prefix(res, rel, addr) if addr is not None else ""
+    return start if _SUPERVISOR_URL.match(start) else ""
+
+
+def supervisor_token_stays(f: Finding, res: Resolver) -> str | None:
+    """`ha-supervisor-token` whose value never leaves the function that reads it, except
+    to the Supervisor: it is kept in one local name, and every use of that name is a test
+    of whether it is set, or sits inside a sending call whose literal address is the
+    Supervisor. Returns that address, else None (returned, stored, passed to another
+    function or sent anywhere else: None)."""
+    if f.rule_id != "ha-supervisor-token" or not f.file or not f.line:
+        return None
+    tree = res.tree(f.file)
+    if tree is None:
+        return None
+    up = parents(tree)
+    stmts = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Assign) and n.lineno <= f.line <= (n.end_lineno or n.lineno)
+        and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+        and any(_env_read(c) for c in ast.walk(n.value))
+    ]  # fmt: skip
+    if len(stmts) != 1 or (func := _enclosing(stmts[0], up)) is None:
+        return None
+    name = stmts[0].targets[0].id  # type: ignore[attr-defined]
+    stores = [n for n in ast.walk(func) if isinstance(n, ast.Name) and n.id == name
+              and not isinstance(n.ctx, ast.Load)]  # fmt: skip
+    if len(stores) != 1:
+        return None  # assigned again somewhere: not certain what it holds
+    url = ""
+    for n in ast.walk(func):
+        if not (isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Load)):
+            continue
+        if _none_test(n, up):
+            continue
+        p, hit = up.get(n), ""
+        while p is not None and p is not func and not hit:
+            if isinstance(p, ast.Call):
+                hit = _to_supervisor(res, f.file, p)
+                if not hit and not (isinstance(p.func, ast.Name) and p.func.id in ("str", "dict")):
+                    return None  # handed to some other call
+            p = up.get(p)
+        if not hit:
+            return None
+        url = url or hit
+    return url or None
+
+
+def sent_to_supervisor(f: Finding, url: str) -> Finding:
+    """The Supervisor's key, used only to ask the Supervisor on the same box."""
+    return dataclasses.replace(
+        f,
+        rule_id=LOCAL_RULE,
+        title="Asks the Supervisor with the Supervisor's key",
+        message=(
+            "Reads the Supervisor API token from the environment and sends it to the "
+            f"Supervisor on this box ({url}), which is who the key is for. In the function "
+            "that reads it, Barkley saw it go nowhere else."
+        ),
+    )
+
+
 # --- (0.14.1, #21) checking a login token sent to the app --------------------------------
 
 CHECK_RULE = "ha-auth-token-check"
