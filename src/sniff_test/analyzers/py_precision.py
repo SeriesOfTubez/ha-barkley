@@ -29,6 +29,7 @@ import dataclasses
 import functools
 import json
 import re
+from collections.abc import Callable
 from importlib import resources
 from pathlib import Path
 
@@ -581,8 +582,20 @@ def _looks_like_test(rel: str) -> bool:
     )
 
 
-def test_only_files(res: Resolver) -> frozenset[str]:
-    """Python files that look like tests (a test folder, test_*.py, conftest.py) and that
+_SCRIPT_DIRS = frozenset({"scripts", "script", "tools", "examples", "example", "dev"})
+
+
+def looks_like_a_script(rel: str) -> bool:
+    """(0.15) A developer's own helper: a file in a scripts/tools/examples folder, or
+    named like a test without the underscore (`TestLogin.py`)."""
+    p = Path(rel)
+    return bool(_SCRIPT_DIRS & set(p.parts[:-1])) or p.name.lower().startswith("test")
+
+
+def test_only_files(res: Resolver, also: Callable[[str], bool] | None = None) -> frozenset[str]:
+    """`also`: a wider test for "looks like a test" (the requests list also sets
+    developer scripts aside; findings keep the narrow test).
+    Python files that look like tests (a test folder, test_*.py, conftest.py) and that
     no other module of the app imports or names. Home Assistant imports an integration's
     package and its platforms; a test file nothing imports is never loaded by it."""
     files = sorted(
@@ -590,7 +603,7 @@ def test_only_files(res: Resolver) -> frozenset[str]:
         for p in res.root.rglob("*.py")
         if p.is_file() and not p.is_symlink()
     )[:5000]
-    tests = {r for r in files if _looks_like_test(r)}
+    tests = {r for r in files if _looks_like_test(r) or (also is not None and also(r))}
     if not tests:
         return frozenset()
     used: set[str] = set()

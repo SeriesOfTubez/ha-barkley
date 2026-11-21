@@ -185,10 +185,9 @@ def _group(rows: list[tuple[str | None, str, int]]) -> tuple[list[dict[str, Any]
 
 
 def summary(uses: list[tuple[str, str | None, str, int]]) -> dict[str, Any] | None:
-    """The report's `environment` section, or None when the code doesn't touch the
-    environment. Names are untrusted text (plain names only)."""
-    if not uses:
-        return None
+    """The report's `environment` section. A section with nothing in it means the code was
+    read and doesn't touch the environment (so the page can say so; a report without the
+    section wasn't checked). Names are untrusted text (plain names only)."""
     reads, unnamed_reads = _group([(n, f, ln) for w, n, f, ln in uses if w == "read"])
     writes, unnamed_writes = _group([(n, f, ln) for w, n, f, ln in uses if w == "write"])
     own = {d["name"] for d in writes}

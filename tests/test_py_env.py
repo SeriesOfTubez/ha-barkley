@@ -87,7 +87,8 @@ def test_other_things_called_environ_are_not_the_environment(tmp_path):
         "class C:\n    environ = {}\n    def f(self):\n        return self.environ['TZ']\n"
     )
     assert py_env.uses_in(tmp_path) == []
-    assert py_env.summary([]) is None
+    none = py_env.summary([])  # read, and nothing found: an empty section, not a missing one
+    assert none["reads"] == [] and none["writes"] == [] and not none["whole"].get("count")
 
 
 def test_only_plain_names_are_kept(tmp_path):

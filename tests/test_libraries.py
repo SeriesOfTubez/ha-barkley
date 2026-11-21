@@ -389,3 +389,55 @@ def test_a_long_library_list_shows_five_then_folds_the_rest():
     html = ui.libraries_html({"libraries": libs})
     assert html.count('<details class="site">') == 9 and "<summary>4 more</summary>" in html
     assert html.split('<details class="more">')[0].count('<details class="site">') == 5
+
+
+# --- (0.15) what an unrecognised file says it is, in its own first lines ----------------------
+
+
+@pytest.mark.parametrize(
+    ("head", "want"),
+    [
+        ("/*!\n  Chartlib.js v11.11.1 (git: 08cb242e7d)\n  License: BSD-3-Clause\n */\nvar a;",
+         ("Chartlib.js", "11.11.1")),
+        ("// docview 4.10.38\nvar a;", ("docview", "4.10.38")),
+        ("/* @license version 2.0.0 */", None),  # a word that isn't a name
+        ('var x = "Chartlib.js v11.11.1";', None),  # not in a comment at the very start
+        ("/* nothing here */ var a = 1;", None),
+    ],
+)  # fmt: skip
+def test_a_files_own_header_is_read_as_a_claim(tmp_path, head, want):
+    p = tmp_path / "x.js"
+    p.write_text(head)
+    assert libraries.header_claim(p) == want
+
+
+def test_the_header_pattern_is_linear_on_hostile_input(tmp_path):
+    import time
+
+    p = tmp_path / "x.js"
+    p.write_text("/*" + "a " * 200_000 + "v1.")
+    started = time.monotonic()
+    assert libraries.header_claim(p) is None
+    assert time.monotonic() - started < 1
+
+
+def test_an_unrecognised_files_claim_is_a_note_never_a_finding(tmp_path, net, monkeypatch):
+    """The developer shipped that text: OSV's answer for the name is kept beside the claim,
+    the file is read as code, and no finding comes from it."""
+    from sniff_test import ui
+
+    js = "/*! Chartlib.js v4.10.38 */\n" + _js(7)
+    vulns = {"chartlib.js": {"GHSA-xxxx": {"id": "GHSA-xxxx"}}}
+    monkeypatch.setattr(osv, "scan_lockfile", _osv(vulns=vulns))
+    _t, _w, res = _recognise(tmp_path, {"www/chart.min.js": js})
+    assert res.aside == {} and res.analyzer.findings == []
+    assert res.lookups["headers"] == [
+        {"file": "www/chart.min.js", "says": "Chartlib.js", "version": "4.10.38", "advisories": 1}
+    ]
+    html = ui.libraries_html({"library_lookups": libraries.lookups_json(res.lookups)})
+    assert "says in its first lines that it is <b>Chartlib.js 4.10.38</b>" in html
+    assert "If that is right, 1 known security problem is listed" in html
+    assert "counts nothing from this" in html and 'class="src dev"' in html
+    found = {"library_lookups": libraries.lookups_json(res.lookups),
+             "readings": {"threat_level": "found"}}  # fmt: skip
+    assert "Chartlib" not in ui.libraries_html(found)

@@ -132,5 +132,7 @@ def annotate(findings: list[Finding], root: Path) -> list[Finding]:
     for f in findings:
         cls = classes.get(f.file or "", {}).get(f.line or -1) if f.rule_id == RULE else None
         page = _page(cls, f.file or "", consts) if cls is not None else None
-        out.append(dataclasses.replace(f, page=page) if page is not None else f)
+        doc = " ".join((ast.get_docstring(cls) or "").split())[:_MAX] if cls is not None else ""
+        out.append(dataclasses.replace(f, page=page, page_note=doc or None)
+                   if page is not None else f)  # fmt: skip
     return out

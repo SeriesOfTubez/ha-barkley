@@ -2407,9 +2407,16 @@ def request_line(shape: dict[str, Any], here: bool = True, parts: bool = False) 
             if key == "headers" and len(v) > 1:
                 text = text.replace("the header ", "the headers ")
             out.append(text)
+    via = shape.get("via")
+    if isinstance(via, str) and via:  # (0.15) read at a call of the app's own wrapper
+        out.insert(1, f"It goes through the app's own function <code>{e(via, 60)}</code>.")
+    by = shape.get("body_by")
+    if isinstance(by, str) and by:
+        out.append(f"The body is built by the app's function <code>{e(by, 60)}</code>.")
     addr = shape.get("address")
     if isinstance(addr, list) and addr:
-        out.append(f"Into the address itself it puts {_names(addr)}.")
+        out.append(f"Into the address itself it puts {_names(addr)}." if here else
+                   f"The address is made from {_names(addr)}.")  # fmt: skip
     if shape.get("auth"):
         out.append("It passes a login for the site (<code>auth</code>).")
     if shape.get("more"):
@@ -2463,13 +2470,27 @@ def site_requests(report: dict[str, Any]) -> dict[str, Any]:
     return sites if isinstance(sites, dict) else {}
 
 
+def _test_requests(r: Any) -> str:
+    """Requests in the developer's own test scripts, which Home Assistant never loads:
+    counted, not listed as the app's."""
+    t = r.get("test_code") if isinstance(r, dict) else None
+    if not isinstance(t, dict) or not isinstance(t.get("count"), int) or t["count"] < 1:
+        return ""
+    files = ", ".join(f"<code>{e(f, 120)}</code>" for f in t.get("files") or []
+                      if isinstance(f, str))  # fmt: skip
+    return (f'<div class="zs mt2">{_count(t["count"], "more request is", "more requests are")} '
+            "in the developer's test scripts, which Home Assistant never loads"
+            f"{f' ({files})' if files else ''}. They aren't listed here.</div>")  # fmt: skip
+
+
 def requests_elsewhere_html(report: dict[str, Any]) -> str:
     """Requests whose address isn't in the code: counted apart, under the sites."""
     r = report.get("requests")
     shapes = [x for x in (r.get("elsewhere") if isinstance(r, dict) else None) or []
               if isinstance(x, dict)]  # fmt: skip
     if not shapes:
-        return ""
+        note = _test_requests(r)
+        return f'<div class="zone">{note}</div>' if note else ""
     by: dict[str, int] = {}
     for x in shapes:
         m = str(x.get("method") or "")
@@ -2488,7 +2509,7 @@ def requests_elsewhere_html(report: dict[str, Any]) -> str:
         f"only works out while the app runs ({e(kinds)}), for example from a device or a server "
         "you entered during setup. Barkley can't say where they go.</div>"
         f'<details class="more"><summary>Where in the code</summary><div class="in">{blocks}'
-        "</div></details></div>"
+        f"</div></details>{_test_requests(r)}</div>"
     )
 
 
@@ -2562,7 +2583,11 @@ def _zone_list(items: list[str]) -> str:
 
 
 def zones_html(
-    report: dict[str, Any], deep: DeepFn | None = None, open_id: str = "", dev_words: bool = True
+    report: dict[str, Any],
+    deep: DeepFn | None = None,
+    open_id: str = "",
+    dev_words: bool = True,
+    part: str = "",
 ) -> str:
     near = threat_destinations(report)
     """`deep(edge_id, part=)` adds "Explain in context" to an address or port: the button
@@ -2573,6 +2598,18 @@ def zones_html(
     reqs = site_requests(report)
     elsewhere = requests_elsewhere_html(report)
     read = isinstance(report.get("requests"), dict)  # the scan read the requests
+    # (0.15, his decision 2026-11-21) `part`: "connects" = the sites Barkley read a request
+    # to (and any site with a threat item, so none is ever tucked away), the ports and the
+    # requests without a site; "mentioned" = every other address in the code. "" = all.
+    if part == "connects":
+        hs = [h for h in hs if h.name in reqs or h.flagged or h.name in near]
+        if not hs and not pts and not elsewhere:
+            return '<p class="muted">Barkley read no request to a site named in the code.</p>'
+    elif part == "mentioned":
+        hs = [h for h in hs if not (h.name in reqs or h.flagged or h.name in near)]
+        pts, elsewhere, read = [], "", False
+        if not hs:
+            return ""
     if not hs and not pts:
         none = '<p class="muted">Its code names no sites, IP addresses or ports.</p>'
         return none + (f'<div class="zones">{elsewhere}</div>' if elsewhere else "")
@@ -2766,7 +2803,10 @@ def libraries_html(report: dict[str, Any], inner: bool = False) -> str:
     libs = [x for x in report.get("libraries") or [] if isinstance(x, dict)]
     lk = report.get("library_lookups") if isinstance(report.get("library_lookups"), dict) else {}
     read = [x for x in lk.get("read") or [] if isinstance(x, dict)]
-    if not libs and not read:
+    said = [x for x in lk.get("headers") or [] if isinstance(x, dict) and x.get("says")]
+    if (report.get("readings") or {}).get("threat_level") == "found":
+        said = []  # the developer's text is never shown beside a found threat
+    if not libs and not read and not said:
         return ""
 
     def line(lib: dict[str, Any], was_read: bool) -> str:
@@ -2813,6 +2853,22 @@ def libraries_html(report: dict[str, Any], inner: bool = False) -> str:
             counts.append(one if n == 1 else many.format(n))
     rest = (f'<p class="sub mt2">{". ".join(counts)}. Barkley read all of those as code.</p>'
             if counts else "")  # fmt: skip
+    if said:  # (0.15) what an unrecognised file says it is: the developer's text, a note
+        rows = []
+        for x in said[:10]:
+            n = x.get("advisories")
+            osv_says = ""
+            if isinstance(n, int) and not isinstance(n, bool):
+                osv_says = (" If that is right, no known security problems are listed for that "
+                            "version." if n == 0 else
+                            f" If that is right, {n} known security problem{'s are' if n != 1 else ' is'}"
+                            " listed for that version.")  # fmt: skip
+            rows.append(f"<li><code>{e(x.get('file'), 200)}</code> says in its first lines that "
+                        f"it is <b>{e(x.get('says'), 60)} {e(x.get('version'), 30)}</b>."
+                        f"{osv_says}</li>")  # fmt: skip
+        rest += (f'<p class="sub mt2">{src_tag("dev")} Barkley can\'t confirm what these files '
+                 "say about themselves, so it read them as code and counts nothing from this.</p>"
+                 f'<ul class="plain">{"".join(rows)}</ul>')  # fmt: skip
     intro = (
         "These "
         "files are exact copies of files that npm packages publish. Barkley doesn't read a "
@@ -2871,7 +2927,11 @@ def environment_html(report: dict[str, Any]) -> str:
         li.append("Uses all of them at once, for example to copy them or hand them to another "
                   f"program.{at(whole)}")  # fmt: skip
     if not li:
-        return ""
+        if not isinstance(env.get("reads"), list) or not isinstance(env.get("writes"), list):
+            return ""
+        return ('<section class="box"><h2>Environment variables it uses</h2><p>'
+                f'{icon("check", 14, "ok")} This app neither reads nor sets any environment '
+                "variables.</p></section>")  # fmt: skip
     items = [f'<li><span class="u">{x}</span></li>' for x in li]
     return (
         '<section class="box"><h2>Environment variables it uses</h2><p class="sub">These are '
@@ -3674,7 +3734,10 @@ def login_free_pages(report: dict[str, Any]) -> str:
             name = f"<code>{e(m[1])}</code>" if m else "A page"
             if page == "":
                 check += " · its address is built while the app runs"
-        items.append(f'<li>{name} <span class="u">{e(where, 300)}{e(check)}</span></li>')
+        said = f.get("page_note")  # (0.15) the view class's docstring: the developer's words
+        note = (f'<span class="u">{src_tag("dev")} {e(said, 300)}</span>'
+                if isinstance(said, str) and said and notes_allowed(report, f) else "")  # fmt: skip
+        items.append(f'<li>{name} <span class="u">{e(where, 300)}{e(check)}</span>{note}</li>')
     n = len(fs)
     return (f'<p class="small mt2">The {"page" if n == 1 else f"{n} pages"}:</p>'
             '<div class="libs">'
@@ -3887,15 +3950,37 @@ def render_app(
         f"{flow_svg(report, title)}</section>"
     )
     tag = with_tag
+    # an integration whose requests the scan read: proven sites and mentioned ones apart
+    split = isinstance(report.get("requests"), dict)
+    dev_ok = rd.get("threat_level") != "found"
     parts.append(
         f'<section class="box"><h2>Where it connects{" " + src_tag("scan")}</h2>'
-        '<p class="sub">This lists every site, IP address '
-        "and port in the shipped code, grouped by where it is. A site is listed because the code "
-        "mentions it. That doesn't mean Barkley saw it connect. Web addresses are cut off at the "
-        f"<code>?</code>, because what comes after it can hold keys.{requests_note(report)}</p>"
-        f"{zones_html(report, zdeep if deep else None, open_item, rd.get('threat_level') != 'found')}"
-        "</section>"
+        + (
+            '<p class="sub">These are the sites Barkley read a request to in the code, the '
+            "ports it uses, and requests whose address the app works out while it runs. Web "
+            "addresses are cut off at the <code>?</code>, because what comes after it can hold "
+            f"keys.{requests_note(report)}</p>"
+            if split else
+            '<p class="sub">This lists every site, IP address '
+            "and port in the shipped code, grouped by where it is. A site is listed because the "
+            "code mentions it. That doesn't mean Barkley saw it connect. Web addresses are cut "
+            "off at the <code>?</code>, because what comes after it can hold keys.</p>"
+        )
+        + zones_html(report, zdeep if deep else None, open_item, dev_ok,
+                     "connects" if split else "")
+        + "</section>"
+    )  # fmt: skip
+    other = (
+        zones_html(report, zdeep if deep else None, open_item, dev_ok, "mentioned") if split else ""
     )
+    if other:
+        parts.append(
+            f'<section class="box"><h2>Other addresses in its code {src_tag("scan")}</h2>'
+            '<p class="sub">The code mentions these, but Barkley saw no request that names '
+            "them. Many are only links, such as a help page or a donation page. If the app "
+            "sends requests to addresses it works out while it runs, it may still reach one "
+            f"of them.</p>{other}</section>"
+        )
     parts.append(tag(supply_html(report)))
     parts.append(tag(environment_html(report)))
     parts.append(tag(hygiene_html(report)))

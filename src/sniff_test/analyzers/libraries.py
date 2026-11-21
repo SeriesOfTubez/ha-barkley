@@ -102,6 +102,39 @@ class Result:
     lookups: dict[str, Any] | None = None
 
 
+# (0.15, his pick 2026-11-21) What a file that matched no well-known package says it is, in
+# its own first lines ("/*! Chartlib.js v4.2.0 …"). The app's developer shipped that
+# text, so it proves nothing: it is kept as a note with OSV's count for that name, the file
+# is read as code like any other, and nothing is concluded from it.
+HEADER_BYTES = 600
+MAX_HEADERS = 10
+_HEADER = re.compile(
+    r"(?:^|[\s*!@(])([A-Za-z][A-Za-z0-9._-]{1,40})[ \t]{1,3}v?"
+    r"([0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4})(?![0-9A-Za-z.])"
+)
+_NOT_A_NAME = frozenset(
+    "version license licence copyright build release date rev revision since http https "
+    "es ecmascript node npm".split()
+)
+
+
+def header_claim(path: Path) -> tuple[str, str] | None:
+    """(name, version) a JavaScript file states in a comment at its very start, or None.
+    Text only: at most HEADER_BYTES are read and nothing is parsed or run."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(HEADER_BYTES).decode("utf-8", "replace")
+    except OSError:
+        return None
+    head = head.lstrip("\ufeff \t\r\n")
+    if not head.startswith(("/*", "//")):
+        return None
+    for m in _HEADER.finditer(head):
+        if m[1].lower() not in _NOT_A_NAME:
+            return m[1], m[2]
+    return None
+
+
 def _off(detail: str) -> Result:
     return Result(AnalyzerResult(NAME, AnalyzerState.NOT_APPLICABLE, detail=detail))
 
@@ -281,13 +314,26 @@ def recognise(
         else:
             passing[(name, version)] = lib
 
+    # what the unrecognised files say they are, in their own first lines
+    recognised_files = {rel for lib in passing.values() for rel in lib.files}
+    claims: list[dict[str, Any]] = []
+    for rel, _digest in files:
+        if rel in recognised_files or len(claims) >= MAX_HEADERS:
+            continue
+        got = header_claim(target.root / rel)
+        if got:
+            claims.append({"file": rel, "says": got[0], "version": got[1]})
+    asked = {(c["says"].lower(), c["version"]) for c in claims
+             if _NPM_NAME.match(c["says"].lower()) and _VERSION.match(c["version"])}  # fmt: skip
+
     findings: list[Finding] = []
     note = ""
-    if passing or read:
+    header_counts: dict[tuple[str, str], int] = {}
+    if passing or read or asked:
         exe = shutil.which("osv-scanner")
         pkgs = None
         if exe:
-            lock = _lockfile(sorted({*passing, *read}), work / "libraries-osv")
+            lock = _lockfile(sorted({*passing, *read, *asked}), work / "libraries-osv")
             pkgs, err = osv.scan_lockfile(exe, lock, work)
             note = f"; advisory check failed ({err[:120]})" if pkgs is None else ""
         else:
@@ -298,6 +344,7 @@ def recognise(
             passing = {}
         else:
             counts = {(p.name, p.version): len(p.vulns) for p in pkgs}
+            header_counts = {k: counts.get(k, 0) for k in asked}
             bad = {
                 (p.name, p.version)
                 for p in pkgs
@@ -341,6 +388,12 @@ def recognise(
         "not_npm": not_npm,
         "read": sorted(read.values(), key=lambda lib: (lib.name, lib.version)),
     }
+    for c in claims:  # OSV's count for the name the file states, when OSV could be asked
+        key = (c["says"].lower(), c["version"])
+        if key in header_counts and key not in passing:
+            c["advisories"] = header_counts[key]
+    if claims:
+        lookups["headers"] = claims
     return Result(result, aside, libs, lookups)
 
 

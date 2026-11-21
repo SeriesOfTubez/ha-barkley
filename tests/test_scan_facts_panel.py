@@ -104,7 +104,8 @@ def test_environment_variables_are_listed_by_name():
     assert "Uses all of them at once" in html and "run.py:5, run.py:9" in html
     assert ui.environment_html({}) == "" and ui.environment_html({"environment": "x"}) == ""
     empty = dict(ENV, reads=[], writes=[], unnamed_reads=0, whole={"count": 0, "at": []})
-    assert ui.environment_html({"environment": empty}) == ""
+    none = ui.environment_html({"environment": empty})  # checked, none used: said plainly
+    assert "This app neither reads nor sets any environment variables." in none
     bad = dict(ENV, reads=[{"name": "<img src=x>", "count": 1, "at": ["<i>"]}])
     out = ui.environment_html({"environment": bad})
     assert "<img" not in out and "<i>" not in out
@@ -180,3 +181,32 @@ def test_packages_say_what_was_checked_and_what_came_back():
     assert "<b>1</b> with known bugs" in ui.supply_html(rep)
     rep["analyzers"][0]["state"] = "error"
     assert "check these packages" in ui.supply_html(rep) and "<b>0</b>" not in ui.supply_html(rep)
+
+
+def test_a_login_free_page_shows_its_own_description_as_the_developers_words():
+    f = {"id": "a", "rule_id": "ha-unauth-view", "file": "views.py", "line": 3,
+         "evidence": "class PanelView(HomeAssistantView):", "page": "/acme/panel",
+         "page_note": "Serve the <b>panel</b> page."}  # fmt: skip
+    html = ui.login_free_pages({"findings": [f]})
+    assert "Serve the &lt;b&gt;panel&lt;/b&gt; page." in html and 'class="src dev"' in html
+    threat = {"findings": [f], "readings": {"threat_level": "found"}}
+    assert "Serve the" not in ui.login_free_pages(threat)  # never beside a found threat
+
+
+def test_sites_with_a_request_and_sites_only_mentioned_are_listed_apart():
+    rep = _graph_report([("api.acme.invalid", "undeclared", ["https"], [], []),
+                         ("docs.acme.invalid", "undeclared", ["https"], [], []),
+                         ("bad.acme.invalid", "undeclared", ["https"], [], [])])  # fmt: skip
+    rep["graph"]["edges"][2]["finding_ids"] = ["t1"]  # a site with a threat item
+    rep["requests"] = {"sites": {"api.acme.invalid": [SHAPES[0]]}, "elsewhere": []}
+    proven = ui.zones_html(rep, part="connects")
+    other = ui.zones_html(rep, part="mentioned")
+    assert "api.acme.invalid" in proven and "docs.acme.invalid" not in proven
+    assert "docs.acme.invalid" in other and "api.acme.invalid" not in other
+    # a site with a threat item is never moved to the quieter list
+    assert "bad.acme.invalid" in proven and "bad.acme.invalid" not in other
+    assert "saw no request" not in other  # the box's own text says it once
+    rep["requests"]["sites"] = {}
+    rep["graph"]["edges"][2]["finding_ids"] = []
+    assert "Barkley read no request to a site named in the code." in ui.zones_html(
+        rep, part="connects")  # fmt: skip

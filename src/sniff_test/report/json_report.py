@@ -104,6 +104,7 @@ def finding_json(f: Finding) -> dict[str, Any]:
         **({"addresses": list(f.addresses)} if f.addresses else {}),
         **({"fingerprint": f.fingerprint} if f.fingerprint else {}),
         **({"page": sanitize_untrusted(f.page, 200)} if f.page is not None else {}),
+        **({"page_note": sanitize_untrusted(f.page_note, 300)} if f.page_note else {}),
     }
 
 

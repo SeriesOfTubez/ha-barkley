@@ -190,6 +190,9 @@ class Finding:
     # (0.15) ha-unauth-view: the address the page answers on, as the code writes it ("" when
     # it's built while the app runs; None when not looked up). Untrusted text (py_pages.py)
     page: str | None = None
+    # (0.15) ha-unauth-view: the first lines of the view class's docstring, the developer's
+    # own description of the page. Untrusted text; shown as theirs, never beside a threat.
+    page_note: str | None = None
 
     @property
     def id(self) -> str:

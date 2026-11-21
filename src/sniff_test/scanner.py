@@ -250,7 +250,10 @@ def scan(
         result.graph = graph.build(result)
         if target.kind is TargetKind.INTEGRATION:
             say("web requests")  # (0.15) the method and what each call carries; never scored
-            result.requests = py_requests.summary(py_requests.requests_in(target.root))
+            tests = py_precision.test_only_files(
+                Resolver(target.root), also=py_precision.looks_like_a_script
+            )
+            result.requests = py_requests.summary(py_requests.requests_in(target.root), tests)
             # (0.15) which environment variables it reads and sets, by name
             result.environment = py_env.summary(py_env.uses_in(target.root))
         result.inputs = recheck.capture(target, resolution) if not offline else None

@@ -33,12 +33,12 @@ from sniff_test.analyzers.correlate import CREDENTIAL_SOURCES
 from sniff_test.report import ai_context, context, explain
 
 TASK_NAME = "Barkley: what the developer says"
-MAX_SAYS = 6
+MAX_SAYS = 4  # two real runs with six and 14,000 characters timed out at 180 s
 MAX_SAY = 320  # characters of one sentence that are shown
 MAX_ITEMS = 20  # of Barkley's own items listed for the `about` fields
-MAX_DOCS = 12  # docstrings sent
+MAX_DOCS = 6  # docstrings sent
 MAX_DOC_LINES = 30
-MAX_CHARS = 14_000  # of developer text in one request
+MAX_CHARS = 6_000  # of developer text in one request
 MIN_SHARED = 3
 # A verdict of the AI's own. Narrower than the README opinion's list (ai_context._VERDICT):
 # "approved" and "expected" are words developers use about their own features ("once an

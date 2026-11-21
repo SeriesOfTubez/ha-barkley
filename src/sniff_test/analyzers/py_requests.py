@@ -30,6 +30,7 @@ Parse only: `ast.parse` of the app's files; nothing is imported or run.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -78,6 +79,10 @@ class Request:
     more: bool = False  # `**kwargs`: the caller can add a body, headers or anything else
     scheme: str = ""
     port: int | None = None
+    # (0.15, his report) the app's own function the call goes through (`_post(url, json)`
+    # holding the one real `requests.post`): the request is read at each call of it
+    via: str = ""
+    body_by: str = ""  # the app's own function that returns the body
 
     @property
     def shape(self) -> tuple:
@@ -89,6 +94,8 @@ class Request:
             self.address,
             self.auth,
             self.more,
+            self.via,
+            self.body_by,
         )
 
 
@@ -96,7 +103,10 @@ Piece = str | tuple[str]  # text, or (name,) for a piece filled in while running
 
 
 def _label(node: ast.AST) -> str:
-    """A short name for an expression that can't be followed: `user_id`, `self.token`."""
+    """A short name for an expression that can't be followed: `user_id`, `self.token`; for
+    a function, its name."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return node.name if _PLAIN.match(node.name) else ""
     try:
         text = ast.unparse(node)
     except (ValueError, RecursionError, AttributeError):
@@ -406,15 +416,65 @@ def _site(pieces: list[Piece]) -> tuple[str | None, str, int | None, tuple[str, 
     return host, m[1].lower(), port, tuple(names[:_MAX_NAMES])
 
 
-def _field_names(expr: ast.expr | None, sc: _Scope) -> tuple[str, ...] | None:
-    """Keys of a dict literal (also `dict(a=…)`, or a local name assigned one): the names
-    of what is sent. () when something is sent but its names aren't in the code here."""
+def _functions(scope: ast.AST | None) -> dict[str, ast.AST]:
+    """The functions defined directly in a class or a module, by name."""
+    return {n.name: n for n in getattr(scope, "body", [])
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}  # fmt: skip
+
+
+def _own_function(call: ast.expr | None, sc: _Scope, reader: Reader) -> ast.AST | None:
+    """The app's own function a call names, in the same file: `self.f(…)` / `cls.f(…)` in
+    the class the call stands in, or a plain `f(…)` defined at the top of the module."""
+    f = getattr(call, "func", None) if isinstance(call, ast.Call) else None
+    if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+        if f.value.id in ("self", "cls") and sc.cls is not None:
+            return _functions(sc.cls).get(f.attr)
+        return None
+    if isinstance(f, ast.Name):
+        return _functions(reader.module(sc.rel).tree).get(f.id)
+    return None
+
+
+def _resolved(expr: ast.expr | None, sc: _Scope, reader: Reader | None) -> ast.expr | None:
+    """A name's one value where the call stands: a local assigned once, else (a script's
+    top-level code, or a name the function doesn't assign) the module's own assignment."""
+    if not isinstance(expr, ast.Name):
+        return expr
+    if sc.func is not None:
+        value = sc.local(expr.id)
+        if value is not None or _is_param(sc.func, expr.id):
+            return value if not isinstance(value, ast.Name) else None
+    return reader.module(sc.rel).assigns.get(expr.id) if reader is not None else None
+
+
+def _built_by(expr: ast.expr | None, sc: _Scope, reader: Reader) -> tuple[tuple[str, ...], str]:
+    """(field names, function name) when the value comes from a call of the app's own
+    function in the same file: the keys of the dict literals it returns. ((), "") when it
+    doesn't; ((), name) when it does but returns nothing Barkley can name."""
+    value = _resolved(expr, sc, reader) if isinstance(expr, ast.Name) else expr
+    fn = _own_function(value, sc, reader)
+    if fn is None:
+        return (), ""
+    inner = _Scope(sc.rel, fn, sc.cls)
+    names: list[str] = []
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Return) and node.value is not None:
+            names += [n for n in _field_names(node.value, inner, reader) or () if n not in names]
+    return tuple(names[:_MAX_NAMES]), _label(fn)
+
+
+def _field_names(
+    expr: ast.expr | None, sc: _Scope, reader: Reader | None = None
+) -> tuple[str, ...] | None:
+    """Keys of a dict literal (also `dict(a=…)`, or a name assigned one, in the function or
+    at the top of the file): the names of what is sent. () when something is sent but its
+    names aren't in the code here."""
     if expr is None or (isinstance(expr, ast.Constant) and expr.value is None):
         return None
-    if isinstance(expr, ast.Name) and sc.func is not None:
-        value = sc.local(expr.id)
+    if isinstance(expr, ast.Name):
+        value = _resolved(expr, sc, reader)
         if value is not None and not isinstance(value, ast.Name):
-            return _field_names(value, sc)
+            return _field_names(value, sc, reader)
         return ()
     names: list[str] = []
     if isinstance(expr, ast.Dict):
@@ -508,6 +568,7 @@ class _Visitor(ScopeVisitor):
     def __init__(self, reader: Reader, rel: str):
         super().__init__(reader, rel)
         self.out: list[Request] = []
+        self.wrappers: list[_Wrapper] = []
 
     def visit_Call(self, node: ast.Call) -> None:
         self.generic_visit(node)
@@ -539,7 +600,7 @@ class _Visitor(ScopeVisitor):
                 url = inner.args[0] if inner.args else _kw(inner, "url")
                 body_kw = body_kw or (inner.args[1] if len(inner.args) > 1 else _kw(inner, "data"))
             m = _method_of(_kw(kws, "method"), self.reader, sc)
-            method = m or ("POST" if _field_names(body_kw, sc) is not None else "GET")
+            method = m or ("POST" if _field_names(body_kw, sc, self.reader) is not None else "GET")
         else:
             return
         if url is None:
@@ -547,29 +608,154 @@ class _Visitor(ScopeVisitor):
         host, scheme, port, address = _site(self.reader.address(url, sc))
         if host is None and name != "urlopen" and not _looks_like_request(node, url):
             return
-        body = None
-        for k in _BODY_KW:
-            got = _field_names(_kw(kws, k), sc)
-            if got is not None:
-                body = tuple(dict.fromkeys((body or ()) + got))[:_MAX_NAMES]
+        body, body_by = None, ""
+        sent = [_kw(kws, k) for k in _BODY_KW]
         if name == "urlopen" and body_kw is not None:
-            body = _field_names(body_kw, sc)
-        self.out.append(
-            Request(
-                host=host,
-                method=method,
-                file=self.rel,
-                line=node.lineno,
-                body=body,
-                headers=_field_names(_kw(kws, "headers"), sc),
-                query=_field_names(_kw(kws, "params"), sc),
-                address=address,
-                auth=_kw(kws, "auth") is not None,
-                more=any(k.arg is None for k in kws),
-                scheme=scheme,
-                port=port,
-            )
+            sent = [body_kw]
+        for expr in sent:
+            got = _field_names(expr, sc, self.reader)
+            if got is not None:
+                if not got and not body_by:  # not a dict here: built by the app's own function?
+                    got, body_by = _built_by(expr, sc, self.reader)
+                body = tuple(dict.fromkeys((body or ()) + got))[:_MAX_NAMES]
+        req = Request(
+            host=host,
+            method=method,
+            file=self.rel,
+            line=node.lineno,
+            body=body,
+            headers=_field_names(_kw(kws, "headers"), sc, self.reader),
+            query=_field_names(_kw(kws, "params"), sc, self.reader),
+            address=address,
+            auth=_kw(kws, "auth") is not None,
+            more=any(k.arg is None for k in kws),
+            scheme=scheme,
+            port=port,
+            body_by=body_by,
         )
+        self.out.append(req)
+        # The address is a parameter of the function the call stands in: that function is a
+        # wrapper, and the real requests are the calls of it (read in `_Callers`).
+        # Also when the address is a local worked out from a parameter (a real wrapper:
+        # `url = get_url(which, self._region) + suffix`): the site stays unknown there, but
+        # what each call sends is read where the call stands.
+        fn = sc.func
+        from_param = ""
+        if (
+            host is None
+            and isinstance(url, ast.Name)
+            and isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ):
+            if _is_param(fn, url.id):
+                from_param = url.id
+            elif (v := sc.local(url.id)) is not None:
+                first = _first_param(fn, v)
+                from_param = first
+        if from_param:
+            parts = {}
+            for part, exprs in (("body", sent), ("headers", [_kw(kws, "headers")]),
+                                ("query", [_kw(kws, "params")])):  # fmt: skip
+                for expr in exprs:
+                    if isinstance(expr, ast.Name) and _is_param(fn, expr.id):
+                        parts[part] = expr.id
+            direct = _is_param(fn, url.id)
+            self.wrappers.append(_Wrapper(fn, self.cls, from_param, parts, req, direct))
+
+
+def _first_param(func: ast.AST, value: ast.expr) -> str:
+    """The first parameter (not self/cls) an expression mentions, or ""."""
+    named = {n.id for n in ast.walk(value) if isinstance(n, ast.Name)}
+    a = func.args  # type: ignore[attr-defined]
+    for x in [*a.posonlyargs, *a.args, *a.kwonlyargs]:  # in the order the function lists them
+        if x.arg in named and x.arg not in ("self", "cls"):
+            return x.arg
+    return ""
+
+
+@dataclass
+class _Wrapper:
+    func: ast.AST  # the app's function holding the request call
+    cls: ast.ClassDef | None
+    url: str  # the parameter the address comes in through
+    parts: dict[str, str]  # "body" / "headers" / "query" -> the parameter it comes in through
+    inner: Request  # the request read inside the wrapper
+    direct: bool = True  # the parameter is the address itself (else: the address is made from it)
+
+
+def _bound(func: ast.AST, call: ast.Call, method: bool) -> dict[str, ast.expr]:
+    """parameter name -> the expression a call passes for it (plain positional and keyword
+    arguments; `*args` ends the positional ones)."""
+    a = func.args  # type: ignore[attr-defined]
+    params = [x.arg for x in [*a.posonlyargs, *a.args]]
+    if method and params:
+        params = params[1:]  # self / cls
+    out: dict[str, ast.expr] = {}
+    for name, value in zip(params, call.args, strict=False):
+        if isinstance(value, ast.Starred):
+            break
+        out[name] = value
+    for k in call.keywords:
+        if k.arg:
+            out[k.arg] = k.value
+    return out
+
+
+_MAX_CALLERS = 400  # calls of wrappers read per file
+
+
+class _Callers(ScopeVisitor):
+    """One hop back from a wrapper: each call of it in the same file is the request, with
+    the address and the field names read where the call stands. A call that passes the
+    address on from its own caller stays "address not in the code"."""
+
+    def __init__(self, reader: Reader, rel: str, wrappers: list[_Wrapper]):
+        super().__init__(reader, rel)
+        self.wrappers = wrappers
+        self.out: list[Request] = []
+        self.used: set[int] = set()  # id() of the inner requests that were replaced
+
+    def visit_Call(self, node: ast.Call) -> None:
+        self.generic_visit(node)
+        if len(self.out) >= _MAX_CALLERS:
+            return
+        sc = self._scope()
+        done: set[tuple[int, str]] = set()  # a wrapper with several send calls counts once
+        for w in self.wrappers:
+            if (id(w.func), w.inner.method) in done:
+                self.used.add(id(w.inner))
+                continue
+            if sc.func is w.func or _own_function(node, _Scope(self.rel, None, w.cls),
+                                                  self.reader) is not w.func:  # fmt: skip
+                continue
+            if w.cls is not None and self.cls is not w.cls:
+                continue
+            bound = _bound(w.func, node, method=w.cls is not None)
+            url = bound.get(w.url)
+            if url is None:
+                continue
+            if w.direct:
+                host, scheme, port, address = _site(self.reader.address(url, sc))
+            else:  # the wrapper makes the address from this value: only its name is known
+                host, scheme, port = None, "", None
+                address = tuple(x for x in [_label(url)] if x)
+            got: dict[str, tuple[str, ...] | None] = {}
+            body_by = w.inner.body_by
+            for part in ("body", "headers", "query"):
+                expr = bound.get(w.parts.get(part, ""))
+                if expr is None:  # not passed here: what the wrapper itself sends
+                    got[part] = getattr(w.inner, part)
+                    continue
+                names = _field_names(expr, sc, self.reader)
+                if part == "body" and names == ():
+                    names, body_by = _built_by(expr, sc, self.reader)
+                got[part] = names
+            self.used.add(id(w.inner))
+            done.add((id(w.func), w.inner.method))
+            self.out.append(dataclasses.replace(
+                w.inner, host=host, scheme=scheme, port=port, address=address,
+                file=self.rel, line=node.lineno, body=got["body"], headers=got["headers"],
+                query=got["query"], via=_label(w.func), body_by=body_by,
+            ))  # fmt: skip
 
 
 def requests_in(root: Path) -> list[Request]:
@@ -593,7 +779,15 @@ def requests_in(root: Path) -> list[Request]:
             v.visit(tree)
         except RecursionError:
             continue
-        out += v.out
+        found = v.out
+        if v.wrappers:
+            c = _Callers(reader, rel, v.wrappers)
+            try:
+                c.visit(tree)
+            except RecursionError:
+                c.out, c.used = [], set()
+            found = [r for r in found if id(r) not in c.used] + c.out
+        out += found
     return sorted(out, key=lambda r: (r.file, r.line, r.method))
 
 
@@ -618,6 +812,8 @@ def _shapes(reqs: list[Request]) -> list[dict[str, Any]]:
                 "address": list(r.address),
                 "auth": r.auth,
                 "more": r.more,
+                **({"via": r.via} if r.via else {}),
+                **({"body_by": r.body_by} if r.body_by else {}),
                 "count": 0,
                 "at": [],
             }
@@ -627,12 +823,16 @@ def _shapes(reqs: list[Request]) -> list[dict[str, Any]]:
     return list(by.values())
 
 
-def summary(reqs: list[Request]) -> dict[str, Any] | None:
+def summary(reqs: list[Request], tests: frozenset[str] = frozenset()) -> dict[str, Any] | None:
     """The report's `requests` section, or None when the code makes no request Barkley
     can read. `sites`: host -> shapes; `elsewhere`: shapes of requests whose address is
-    built while the app runs. Field names and address names are untrusted text."""
+    built while the app runs. Field names and address names are untrusted text.
+    `tests`: files Home Assistant never loads (test scripts no runtime module imports):
+    their requests aren't the app's, so they are only counted (`test_code`)."""
     if not reqs:
         return None
+    aside = [r for r in reqs if r.file in tests]
+    reqs = [r for r in reqs if r.file not in tests]
     sites: dict[str, list[Request]] = {}
     for r in reqs:
         if r.host is not None and (r.host in sites or len(sites) < _MAX_SITES):
@@ -642,4 +842,6 @@ def summary(reqs: list[Request]) -> dict[str, Any] | None:
         "sites": {h: _shapes(rs) for h, rs in sorted(sites.items())},
         "elsewhere": _shapes([r for r in reqs if r.host is None]),
         "total": len(reqs),
-    }
+        **({"test_code": {"count": len(aside),
+                          "files": sorted({r.file for r in aside})[:_MAX_AT]}} if aside else {}),
+    }  # fmt: skip

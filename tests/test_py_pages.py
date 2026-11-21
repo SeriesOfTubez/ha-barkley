@@ -56,3 +56,16 @@ def test_names_are_followed_without_looping(tmp_path):
 def test_a_file_that_does_not_parse_leaves_findings_unchanged(tmp_path):
     (tmp_path / "views.py").write_text("class (:\n")
     assert py_pages.annotate([_f(1)], tmp_path)[0].page is None
+
+
+def test_the_view_class_docstring_is_kept_as_the_pages_note(tmp_path):
+    from sniff_test.analyzers import py_pages as pp
+    from sniff_test.models import Category, Finding, Severity
+
+    (tmp_path / "views.py").write_text(
+        'class PanelView(HomeAssistantView):\n    """Serve the panel   page.\n\n    More."""\n'
+        '    url = "/acme/panel"\n    requires_auth = False\n'
+    )
+    f = Finding("ha-unauth-view", "t", Severity.LOW, Category.INBOUND, "m", "views.py", 1)
+    (out,) = pp.annotate([f], tmp_path)
+    assert out.page == "/acme/panel" and out.page_note == "Serve the panel page. More."

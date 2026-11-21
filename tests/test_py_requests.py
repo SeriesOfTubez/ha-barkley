@@ -178,3 +178,96 @@ def test_names_that_fan_out_are_cut_off_by_the_budget(tmp_path):
     t0 = time.monotonic()
     reqs = py_requests.requests_in(tmp_path)
     assert len(reqs) == 1 and time.monotonic() - t0 < 5
+
+
+# --- (0.15) wrappers, file-level names, builder functions, test scripts ----------------------
+
+
+def _reqs_in(tmp_path, files):
+    for rel, text in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+    return py_requests.requests_in(tmp_path)
+
+
+WRAPPED = """
+import requests
+BASE = "https://api.acme.invalid"
+
+class Cloud:
+    def _post(self, url, json=None, headers={}):
+        if self.fast:
+            return fast.post(url, json=json, headers=headers)
+        return requests.post(url, json=json, headers=headers)
+
+    def _get(self, which, suffix=""):
+        url = lookup(which, self.region) + suffix
+        return requests.get(url, headers=self._headers())
+
+    def login(self, user, password):
+        data = {"account": user, "password": password}
+        return self._post(BASE + "/login", json=data)
+
+    def code(self):
+        return self._post(f"{BASE}/code", self._body(), headers={"X-Key": self.key})
+
+    def _body(self):
+        return {"email": self.email, "type": "codeLogin"}
+
+    def tasks(self):
+        return self._get(Url.TASKS)
+"""
+
+
+def test_a_wrapper_is_read_at_each_call_of_it(tmp_path):
+    """A real integration keeps its one `requests.post` in `_post(url, json, headers)`:
+    the requests are the calls of `_post`, with the address and the fields from there."""
+    reqs = _reqs_in(tmp_path, {"cloud.py": WRAPPED})
+    got = {(r.line, r.method, r.host, r.via, r.body, r.headers, r.body_by) for r in reqs}
+    assert (17, "POST", "api.acme.invalid", "_post", ("account", "password"), (), "") in got
+    assert (20, "POST", "api.acme.invalid", "_post", ("email", "type"), ("X-Key",),
+            "_body") in got  # fmt: skip
+    # the address is made from a parameter inside the wrapper: the site stays unknown,
+    # the name it is made from is kept
+    assert (26, "GET", None, "_get", None, (), "") in got
+    assert next(r.address for r in reqs if r.line == 26) == ("Url.TASKS",)
+    # the wrapper's own send calls are replaced, and its two branches count once
+    assert len(reqs) == 3 and not [r for r in reqs if r.line in (8, 9, 13)]
+
+
+def test_a_wrapper_nobody_calls_stays_as_it_was(tmp_path):
+    reqs = _reqs_in(
+        tmp_path, {"a.py": "def send(url, json):\n    return session.post(url, json=json)\n"}
+    )
+    assert [(r.method, r.host, r.via, r.body) for r in reqs] == [("POST", None, "", ())]
+
+
+def test_names_at_the_top_of_a_file_are_followed(tmp_path):
+    src = ('import requests\npayload = {"account": A, "password": B}\n'
+           'r = requests.post("https://api.acme.invalid/login", json=payload)\n')  # fmt: skip
+    (r,) = _reqs_in(tmp_path, {"tool.py": src})
+    assert r.body == ("account", "password") and r.host == "api.acme.invalid"
+
+
+def test_requests_in_test_scripts_are_counted_apart():
+    r1 = py_requests.Request("api.acme.invalid", "POST", "cloud.py", 3)
+    r2 = py_requests.Request("api.acme.invalid", "GET", "scripts/TestLogin.py", 9)
+    s = py_requests.summary([r1, r2], frozenset({"scripts/TestLogin.py"}))
+    assert s["total"] == 1 and s["test_code"] == {"count": 1, "files": ["scripts/TestLogin.py"]}
+    assert [x["method"] for x in s["sites"]["api.acme.invalid"]] == ["POST"]
+    assert "test_code" not in py_requests.summary([r1])
+
+
+def test_many_callers_of_a_wrapper_stay_cheap(tmp_path):
+    """Hostile input: thousands of calls of a wrapper are cut off, in linear time."""
+    import time
+
+    calls = "".join(f"    def m{i}(self):\n        return self._post(U{i}, json=d{i})\n"
+                    for i in range(3000))  # fmt: skip
+    src = ("class C:\n    def _post(self, url, json=None):\n"
+           "        return requests.post(url, json=json)\n" + calls)  # fmt: skip
+    started = time.monotonic()
+    reqs = _reqs_in(tmp_path, {"big.py": src})
+    assert time.monotonic() - started < 10
+    assert len(reqs) == py_requests._MAX_CALLERS
