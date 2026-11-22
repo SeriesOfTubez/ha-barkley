@@ -71,8 +71,24 @@ rules:
           - pattern-not: importlib.import_module(f"{__package__}...")
           - pattern-not: importlib.import_module(f"{__name__}...")
           # HA's own platform loading idiom: import_module(f".{platform}", __name__)
-      - pattern: importlib.util.spec_from_file_location(...)
-      - pattern: $SPEC.loader.exec_module(...)
+      # (0.15, issue #14) Loading one of its own files by a fixed name, next to this
+      # file (a fallback for running a module on its own), is not a computed import.
+      - patterns:
+          - pattern-either:
+              - pattern: importlib.util.spec_from_file_location(...)
+              - pattern: $SPEC.loader.exec_module(...)
+          - pattern-not: importlib.util.spec_from_file_location($N, $P.with_name("..."))
+          - pattern-not: importlib.util.spec_from_file_location($N, $P.parent / "...")
+          - pattern-not: importlib.util.spec_from_file_location($N, os.path.join(os.path.dirname(__file__), "..."))
+          - pattern-not-inside: |
+              $SPEC = importlib.util.spec_from_file_location($N, $P.with_name("..."))
+              ...
+          - pattern-not-inside: |
+              $SPEC = importlib.util.spec_from_file_location($N, $P.parent / "...")
+              ...
+          - pattern-not-inside: |
+              $SPEC = importlib.util.spec_from_file_location($N, os.path.join(os.path.dirname(__file__), "..."))
+              ...
       - pattern: importlib.machinery.SourceFileLoader(...)
 
   - id: py-runtime-pip

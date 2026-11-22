@@ -123,3 +123,34 @@ def installs(self, run_cmd):
     subprocess.run(["sh", "-c", "pip install evil-pkg"])
     # ruleid: py-runtime-pip
     raise RuntimeError(run_cmd("pip install evil-pkg"))
+
+
+def own_file_fallback():
+    import importlib.util
+    import os
+    from pathlib import Path
+
+    try:
+        from . import const
+    except ImportError:
+        # ok: py-dynamic-import
+        spec = importlib.util.spec_from_file_location("_c", Path(__file__).with_name("const.py"))
+        const = importlib.util.module_from_spec(spec)
+        # ok: py-dynamic-import
+        spec.loader.exec_module(const)
+    # ok: py-dynamic-import
+    s2 = importlib.util.spec_from_file_location("_d", Path(__file__).parent / "data.py")
+    # ok: py-dynamic-import
+    s3 = importlib.util.spec_from_file_location("_e", os.path.join(os.path.dirname(__file__), "x.py"))
+    return const, s2, s3
+
+
+def loads_what_it_is_told(path, name):
+    import importlib.util
+
+    # ruleid: py-dynamic-import
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    # ruleid: py-dynamic-import
+    spec.loader.exec_module(mod)
+    return mod
