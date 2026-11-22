@@ -479,12 +479,14 @@ def _text_safe(arg: str, index: _Index, path: Path) -> bool:
 #  const o = `${a.replace(/\/$/, "")}/api/upload`; fetch(o, {headers: {Authorization: …}})`.
 # A URL is HA's own when every way it can be built starts with HA's origin (or is
 # relative) and anything appended after an origin starts with "/", "?" or "#" (an origin
-# followed by "@evil.example" would move the host). Names are followed back only to one
-# assignment inside the block that encloses the use, never past a parameter of the same
-# name; anything unclear keeps the finding. Every scan is bounded by `_HA_WINDOW` and
-# `_HA_DEPTH`, and walks the text once per step (no backtracking pattern).
+# followed by "@evil.example" would move the host). Names are followed back only to their
+# assignments inside the block that encloses the use, never past a parameter of the same
+# name, and only when every value it is given is HA's own; anything unclear keeps the
+# finding. Every scan is bounded (`_HA_WINDOW`, `_HA_SEARCH`, `_HA_DEPTH`, `_HA_STEPS`).
 
-_HA_WINDOW = 4000
+_HA_WINDOW = 4000  # longest expression read
+_HA_SEARCH = 60000  # how far back a name's assignments are looked for
+_HA_DEFS = 8  # more assignments to one name than this: not proven
 _HA_DEPTH = 10
 _HA_STEPS = 200  # name lookups and splits per URL, so a chain of names can't blow up
 _LOC = r"(?:(?:window|self|globalThis|document)\.)?location"
@@ -592,42 +594,63 @@ class _HaContext:
         self.steps = 0
 
 
-def _assignment(name: str, ctx: _HaContext) -> str | None:
-    """The one value `name` was given before `ctx.at`, in a block that encloses the use;
-    None when there are none, several, or a parameter of that name shadows it."""
+def _assignments(name: str, ctx: _HaContext) -> list[str] | None:
+    """Every value `name` is given before `ctx.at`, in a block that encloses the use; None
+    when there is none, when it is also changed another way (`+=`, `++`), or when a
+    parameter of that name shadows it."""
     if not _IDENT.match(name) or name in ("window", "location", "document", "self"):
         return None
-    lo = max(0, ctx.at - _HA_WINDOW)
+    lo = max(0, ctx.at - _HA_SEARCH)
+    esc = re.escape(name)
     if ctx.fn is not None:
-        lo = max(lo, ctx.fn[0])
-        if re.search(rf"(?<![\w$]){re.escape(name)}(?![\w$])", ctx.fn[2]):
-            return None  # a parameter of the enclosing function
+        # the name may come from around the function (a closure): any parameter of that
+        # name in between is refused below, and every other assignment must be HA's too
+        if re.search(rf"(?<![\w$]){esc}(?![\w$])", ctx.fn[2]):
+            # a parameter of the enclosing function, unless a block around the use
+            # declares its own (`let e = "";` inside a `try`): read from there
+            inner = max(lo, ctx.fn[0])
+            decl = list(re.finditer(rf"(?<![\w$.])(?:let|const|var)\s++{esc}\s*+=(?![=>])",
+                                    ctx.text[inner : ctx.at]))  # fmt: skip
+            if not decl:
+                return None
+            lo = inner + decl[-1].start()
     window = ctx.text[lo : ctx.at]
-    defs = [m for m in re.finditer(rf"(?<![\w$.]){re.escape(name)}\s*+=(?![=>])", window)]
-    if len(defs) != 1:
-        return None
-    start = defs[0].end()
-    between = window[defs[0].start() :]
-    # a parameter of a function defined between the assignment and the use
     if re.search(
-        rf"(?<![\w$.]){re.escape(name)}\s*+=>|[(,]\s*+{re.escape(name)}\s*+[,)][^;{{]{{0,200}}?=>"
-        rf"|function\b[^(]{{0,80}}\([^)]{{0,200}}(?<![\w$]){re.escape(name)}(?![\w$])",
+        rf"(?<![\w$.]){esc}\s*+(?:[-+*/%&|^]|\*\*|<<|>>>?|&&|\|\||\?\?)=|\+\+\s*+{esc}(?![\w$])"
+        rf"|(?<![\w$.]){esc}\s*+\+\+",
+        window,
+    ):
+        return None
+    defs = list(re.finditer(rf"(?<![\w$.]){esc}\s*+=(?![=>])", window))
+    if not defs or len(defs) > _HA_DEFS:
+        return None
+    first = defs[0].start()
+    between = window[first:]
+    # a parameter of a function defined between the first assignment and the use
+    if re.search(
+        rf"(?<![\w$.]){esc}\s*+=>|[(,]\s*+{esc}\s*+[,)][^;{{]{{0,200}}?=>"
+        rf"|function\b[^(]{{0,80}}\([^)]{{0,200}}(?<![\w$]){esc}(?![\w$])",
         between,
     ):
         return None
-    # the block that holds the assignment must still be open at the use
+    # the block that holds the first assignment must still be open at the use
     depth = 0
-    for c in window[defs[0].start() :]:
+    for c in between:
         if c == "{":
             depth += 1
         elif c == "}":
             depth -= 1
             if depth < 0:
                 return None
-    rhs = window[start:]
-    ends = sorted(_scan_top(rhs, ",") + _scan_top(rhs, ";"))
-    value = rhs[: ends[0]] if ends else rhs
-    return value.strip() or None
+    values = []
+    for d in defs:
+        rhs = window[d.end() : d.end() + _HA_WINDOW]
+        ends = sorted(_scan_top(rhs, ",") + _scan_top(rhs, ";"))
+        value = (rhs[: ends[0]] if ends else rhs).strip()
+        if not value:
+            return None
+        values.append(value)
+    return values
 
 
 def _ha_url(expr: str, ctx: _HaContext, depth: int = 0) -> bool:
@@ -693,8 +716,8 @@ def _ha_base(expr: str, ctx: _HaContext, depth: int) -> bool:
     if (m := _ORIGIN_TEMPLATE.match(expr)) is not None:
         return _path_after_origin(expr[m.end() :])
     if _IDENT.match(expr):
-        value = _assignment(expr, ctx)
-        return value is not None and _ha_url(value, ctx, depth + 1)
+        values = _assignments(expr, ctx)
+        return values is not None and all(_ha_url(v, ctx, depth + 1) for v in values)
     return _ha_url(expr, ctx, depth + 1)
 
 

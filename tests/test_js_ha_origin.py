@@ -40,6 +40,10 @@ def _check(code: str, fn: tuple[int, int, str] | None = None) -> bool:
         "fetch(window.location.origin + '/api/x', {headers: h})",
         'fetch(cond ? "/api/a" : "/api/b", {headers: h})',
         'fetch("", {headers: h})',
+        # set empty first, then to HA's address (every value it gets is HA's own)
+        'async function up(e,t){let a="";a=e.connection?e.connection.options.url.replace(/^ws/,'
+        '"http"):`${window.location.protocol}//${window.location.host}`;const o=`${a}/api/x`;'
+        "await fetch(o,{headers:h})}",
     ],
 )
 def test_home_assistants_own_address_is_proven(code):
@@ -58,6 +62,7 @@ def test_home_assistants_own_address_is_proven(code):
         'fetch(a || "https://collect.example.invalid/c", {headers: h})',
         # a name given two values, or held in a block that closed before the use
         "let o=location.origin;o=u;fetch(o,{headers:h})",
+        "let o=location.origin;o+=u;fetch(o,{headers:h})",
         "{const o=location.origin}fetch(o,{headers:h})",
         # a name never given a value here
         "fetch(o,{headers:h})",
@@ -76,6 +81,17 @@ def test_a_parameter_of_the_same_name_shadows_an_earlier_value():
     assert not _check(code, (fn_start, len(code), "o"))
     code = "const o=location.origin;const send=o=>fetch(o,{headers:h})"
     assert not _check(code)
+
+
+def test_a_block_declaration_shadows_a_parameter_of_the_same_name():
+    code = (
+        'async function up(e,t){try{let e="";e=t.hassUrl();const o=`${e}/api/x`;'
+        "await fetch(o,{headers:h})}catch(x){}}"
+    )
+    assert _check(code, (0, len(code), "e,t"))
+    # without its own declaration, the parameter (whatever the caller passed) is used
+    code = "async function up(e,t){try{e=t.hassUrl();await fetch(`${e}/x`,{headers:h})}catch(x){}}"
+    assert not _check(code, (0, len(code), "e,t"))
 
 
 def test_the_camera_proxy_token_goes_to_ha_as_an_image_source():
