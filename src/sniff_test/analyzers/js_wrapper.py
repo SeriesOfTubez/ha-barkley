@@ -602,18 +602,17 @@ def _assignments(name: str, ctx: _HaContext) -> list[str] | None:
         return None
     lo = max(0, ctx.at - _HA_SEARCH)
     esc = re.escape(name)
-    if ctx.fn is not None:
-        # the name may come from around the function (a closure): any parameter of that
-        # name in between is refused below, and every other assignment must be HA's too
-        if re.search(rf"(?<![\w$]){esc}(?![\w$])", ctx.fn[2]):
-            # a parameter of the enclosing function, unless a block around the use
-            # declares its own (`let e = "";` inside a `try`): read from there
-            inner = max(lo, ctx.fn[0])
-            decl = list(re.finditer(rf"(?<![\w$.])(?:let|const|var)\s++{esc}\s*+=(?![=>])",
-                                    ctx.text[inner : ctx.at]))  # fmt: skip
-            if not decl:
-                return None
-            lo = inner + decl[-1].start()
+    if ctx.fn is not None and re.search(rf"(?<![\w$]){esc}(?![\w$])", ctx.fn[2]):
+        # A parameter of the enclosing function, unless a block around the use declares
+        # its own (`let e = "";` inside a `try`): read from there. (A name from around
+        # the function, a closure, is fine: any parameter of that name in between is
+        # refused below, and every other assignment must be HA's too.)
+        inner = max(lo, ctx.fn[0])
+        decl = list(re.finditer(rf"(?<![\w$.])(?:let|const|var)\s++{esc}\s*+=(?![=>])",
+                                ctx.text[inner : ctx.at]))  # fmt: skip
+        if not decl:
+            return None
+        lo = inner + decl[-1].start()
     window = ctx.text[lo : ctx.at]
     if re.search(
         rf"(?<![\w$.]){esc}\s*+(?:[-+*/%&|^]|\*\*|<<|>>>?|&&|\|\||\?\?)=|\+\+\s*+{esc}(?![\w$])"
@@ -626,8 +625,9 @@ def _assignments(name: str, ctx: _HaContext) -> list[str] | None:
         return None
     first = defs[0].start()
     between = window[first:]
-    # a parameter of a function defined between the first assignment and the use
-    if re.search(
+    # a parameter of a function defined between the first assignment and the use, or
+    # the name taken out of an array or object (`const [C] = p`, `({ C }) => …`)
+    if re.search(rf"(?:\[|(?<!\$)\{{|,)\s*+(?:\.\.\.)?{esc}\s*+[,\]}}]", between) or re.search(
         rf"(?<![\w$.]){esc}\s*+=>|[(,]\s*+{esc}\s*+[,)][^;{{]{{0,200}}?=>"
         rf"|function\b[^(]{{0,80}}\([^)]{{0,200}}(?<![\w$]){esc}(?![\w$])",
         between,
