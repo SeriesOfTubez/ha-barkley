@@ -595,7 +595,115 @@ def _key_path(r: dict[str, Any]) -> str:
     return str(Path(str(r.get("path", ""))).resolve())
 
 
+# (0.15) Python 3.14 (PEP 758) lets `except A, B, C:` drop the parentheses. Semgrep
+# 1.185 and 1.186 fail on that clause when something else in the file (a `match`, a PEP
+# 695 `type` alias or generic) sends it to its fallback parser, which takes one comma
+# only (upstream issue 12079), and skip the rules for that part of the file: 6 of 360
+# real integrations. Semgrep reads the files with the parentheses added (every line stays
+# where it was), and the original bytes are put back as soon as it is done.
+_BARE_EXCEPT = re.compile(r"^[ \t]*+except\*?[ \t]++[^(\s:#][^:\n,]*+,", re.M)
+_MAX_PY_BYTES = 5_000_000
+
+
+def _parenthesize_excepts(text: str) -> str | None:
+    """`text` with each bare multi-name `except` clause in parentheses; None when the
+    tokenizer can't read it. Tokenizing only reads the text, it never runs it."""
+    import io
+    import tokenize
+
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, SyntaxError, ValueError):
+        return None
+    edits: list[tuple[int, int, int]] = []  # (row, col of first name, col of ":")
+    starts_line = True
+    i, n = 0, len(toks)
+    while i < n:
+        t = toks[i]
+        if t.type in (tokenize.NL, tokenize.COMMENT):
+            i += 1
+            continue
+        if starts_line and t.type == tokenize.NAME and t.string == "except":
+            j = i + 1
+            if j < n and toks[j].type == tokenize.OP and toks[j].string == "*":
+                j += 1
+            first = toks[j] if j < n else None
+            depth, comma, named, k = 0, False, False, j
+            while k < n:
+                u = toks[k]
+                if u.type == tokenize.OP and u.string in "([{":
+                    depth += 1
+                elif u.type == tokenize.OP and u.string in ")]}":
+                    depth -= 1
+                elif depth == 0 and u.type == tokenize.OP and u.string == ",":
+                    comma = True
+                elif depth == 0 and u.type == tokenize.NAME and u.string == "as":
+                    named = True
+                elif u.type == tokenize.NEWLINE or (
+                    depth == 0 and u.type == tokenize.OP and u.string == ":"
+                ):
+                    break
+                k += 1
+            if (
+                k < n
+                and first is not None
+                and comma
+                and not named
+                and toks[k].string == ":"
+                and not (first.type == tokenize.OP and first.string == "(")
+                and first.start[0] == toks[k].start[0]
+            ):
+                edits.append((first.start[0], first.start[1], toks[k].start[1]))
+            i = k
+        starts_line = t.type in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT)
+        i += 1
+    if not edits:
+        return text
+    lines = text.splitlines(keepends=True)
+    for row, a, b in sorted(edits, reverse=True):
+        line = lines[row - 1]
+        lines[row - 1] = line[:a] + "(" + line[a:b].rstrip() + ")" + line[b:]
+    return "".join(lines)
+
+
+def normalize_py(root: Path) -> dict[Path, bytes]:
+    """Parenthesize bare multi-name `except` clauses for Semgrep (see _BARE_EXCEPT).
+    Returns the original bytes of each file it changed, to be put back."""
+    saved: dict[Path, bytes] = {}
+    for p in root.rglob("*.py"):
+        if not p.is_file() or p.is_symlink():
+            continue
+        try:
+            data = p.read_bytes()
+        except OSError:
+            continue
+        if len(data) > _MAX_PY_BYTES:
+            continue
+        text = data.decode("utf-8", errors="surrogateescape")
+        if not _BARE_EXCEPT.search(text):
+            continue
+        new = _parenthesize_excepts(text)
+        if new is not None and new != text:
+            saved[p] = data
+            p.write_text(new, encoding="utf-8", errors="surrogateescape")
+    return saved
+
+
 def run(
+    target: Target,
+    work: Path,
+    jobs: int | None = None,
+    cache: scancache.Cache | None = None,
+) -> AnalyzerResult:
+    saved = normalize_py(target.root.resolve())
+    try:
+        return _run(target, work, jobs, cache)
+    finally:
+        for path, data in saved.items():
+            path.write_bytes(data)
+
+
+def _run(
     target: Target,
     work: Path,
     jobs: int | None = None,
