@@ -19,8 +19,10 @@ mock-ups and his yes to items 1-4 of round 4):
   full, each further page a quarter); a login token the app may
   hand out (non-admin 1, administrator 3, times a lifetime factor); a library bug (medium
   1, high 3, critical 5). Times 1.25 on a shared or work network, 1.5 when Home Assistant
-  is reachable from the internet. Under 2 low, under 5 medium, 5 and up high. A found
-  threat is exposure 10: the app itself sends your data out.
+  is reachable from the internet. (0.15) Plus code a card loads from another site while it
+  runs (5 when the version is decided then, 2 for a fixed one; not raised by the network).
+  Under 2 low, under 5 medium, 5 and up high. A found threat is exposure 10: the app
+  itself sends your data out.
 
 Preview limits, said on the page: the stored finding for token code keeps one line per
 function, so Barkley can't yet tell whether a token leaves Home Assistant, whose it is or
@@ -55,6 +57,11 @@ TOKEN_ADMIN = 3.0
 LIFETIME = ((1, 0.0), (30, 0.5), (180, 0.75), (366, 1.0))  # (under N days, factor)
 LIFETIME_LONG = 1.25  # over a year, or not known
 LIB_BUG = {"critical": 5.0, "high": 3.0, "medium": 1.0}
+# (0.15, his decision 2026-11-21) Code a card loads from another site while it runs:
+# 5 when which version it gets is only decided then, 2 for one fixed version. The
+# strongest counts in full, each further one a quarter. Not raised by the network setting:
+# who can reach Home Assistant doesn't change who publishes that code.
+REMOTE_CODE = {"card-remote-script": 5.0, "card-remote-pinned": 2.0}
 NETWORK = {"home": 1.0, "shared": 1.25}
 PUBLIC = 1.5
 EXPOSURE_MAX = 10.0
@@ -200,12 +207,27 @@ def compute(report: dict[str, Any], network: str = "home") -> Readings:
         pts += bug_pts
         reasons.append(_plural(len(bugs), "library it uses has", "libraries it uses have")
                        + " published security bugs.")  # fmt: skip
+    remote = sorted((REMOTE_CODE[str(f.get("rule_id"))] for f in findings
+                     if str(f.get("rule_id")) in REMOTE_CODE), reverse=True)  # fmt: skip
+    remote_pts = remote[0] + REPEAT * sum(remote[1:]) if remote else 0.0
+    loose = sum(1 for x in remote if x == REMOTE_CODE["card-remote-script"])
+    fixed = len(remote) - loose
+    if loose:
+        reasons.append(("It loads code from another site while it runs" if loose == 1 else
+                        f"It loads code from {loose} other sites or packages while it runs")
+                       + ". Which version it gets is only decided then, so whoever publishes "
+                       "that code decides what runs in your dashboard, with your login. "
+                       "Barkley never read it.")  # fmt: skip
+    if fixed:
+        reasons.append(("It loads one fixed version of code from another site" if fixed == 1
+                        else f"It loads fixed versions of code from {fixed} other sites or "
+                        "packages") + " while it runs. Barkley never read that code.")  # fmt: skip
     factor = PUBLIC if public else NETWORK.get(where, 1.0)
     if pts and factor != 1.0:
         reasons.append("Barkley counts this higher because Home Assistant is "
                        + ("reachable from the internet." if public
                           else "on a shared or work network."))  # fmt: skip
-    exposure = round(min(EXPOSURE_MAX, pts * factor), 2)
+    exposure = round(min(EXPOSURE_MAX, pts * factor + remote_pts), 2)
     if t_level == "possible" and phrase:
         reasons.insert(0, f"This may be a sign of malicious behavior. It {phrase}.")
     return Readings(threat, t_level, exposure, level(exposure), phrase, reasons, complete,

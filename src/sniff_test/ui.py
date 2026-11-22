@@ -3031,6 +3031,7 @@ RUNTIME_CODE_RULES = (  # code that arrives some other way than the release Bark
     "py-runtime-pip",
     "py-runtime-pip-listed",
     "card-remote-script",
+    "card-remote-pinned",
     "card-eval-remote",
     "dep-vcs-or-url-requirement",
 )
@@ -3245,6 +3246,22 @@ def _mark_html(m: dict[str, Any] | None) -> str:
     return out
 
 
+def behind_facts(b: Any) -> list[str]:
+    """(0.15) ["newest 2.0.0 (2026-05-01), 3 releases newer", "held here by Home
+    Assistant's pin"]: context on a package line, from the scan (pypi_meta / npm_meta).
+    Versions come from the package index: escaped by the caller."""
+    if not isinstance(b, dict) or not isinstance(b.get("newest"), str):
+        return []
+    n = b.get("newer")
+    if n == 0:
+        return ["the newest release"]
+    date = f" ({b['newest_date']})" if isinstance(b.get("newest_date"), str) else ""
+    text = f"newest {b['newest']}{date}"
+    if isinstance(n, int) and n > 0:
+        text += f", {n} release{'s' * (n != 1)} newer"
+    return [text] + (["held here by Home Assistant's own pin"] if b.get("held_by_ha") else [])
+
+
 def _supply_packages(report: dict[str, Any]) -> str:
     """Every package the app is installed or built with: for an integration what Home
     Assistant would install (worked out by uv during the scan, the packages those bring
@@ -3254,6 +3271,12 @@ def _supply_packages(report: dict[str, Any]) -> str:
     package index: escaped."""
     g, nodes = _graph(report)
     marks = _package_marks(report)
+    pv = report.get("package_versions") if isinstance(report.get("package_versions"), dict) else {}
+
+    def behind(eco: str, name: str) -> list[str]:
+        known = pv.get(eco) if isinstance(pv.get(eco), dict) else {}
+        return behind_facts(known.get(name) or known.get(name.lower()))
+
     py, npm = [], []
     for edge in g.get("edges", []):
         if edge.get("source") != g.get("subject"):
@@ -3303,6 +3326,7 @@ def _supply_packages(report: dict[str, Any]) -> str:
             facts.append("the app asks for it" if a.get("direct") else "comes along")
             if a.get("ha_provided"):
                 facts.append("Home Assistant already ships it")
+            facts += behind("pypi", name)
             items.append(line(name, facts, m))
         if n > PACKAGES_LISTED:
             items.append(f"<li>and {n - PACKAGES_LISTED:,} more</li>")
@@ -3317,7 +3341,8 @@ def _supply_packages(report: dict[str, Any]) -> str:
     if npm or along:
         npm.sort(key=lambda x: (*first(x[2]), x[0]))
         n = len(npm)
-        items = [line(name, [str(a["spec"])] if a.get("spec") else [], m)
+        items = [line(name, ([str(a["spec"])] if a.get("spec") else [])
+                      + behind("npm", name), m)
                  for name, a, m in npm[:PACKAGES_LISTED]]  # fmt: skip
         if n > PACKAGES_LISTED:
             items.append(f"<li>and {n - PACKAGES_LISTED:,} more</li>")

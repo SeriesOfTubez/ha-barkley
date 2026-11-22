@@ -350,10 +350,20 @@ RULES: dict[str, Explanation] = {
     ),
     "card-remote-script": _E(
         "Its dashboard card loads code from the internet",
-        "While it runs, the card downloads extra code from a website. That code runs with "
-        "your Home Assistant login, and Barkley never saw it.",
-        "Check it. Whoever controls that website controls what runs in your dashboard.",
+        "While it runs, the card downloads extra code from a website. Which version it gets "
+        "is only decided then. That code runs with your Home Assistant login, and Barkley "
+        "never saw it.",
+        "Check it. Whoever controls that website, or can publish that package, controls what "
+        "runs in your dashboard, now and after every new release.",
         "Loads code from the web",
+    ),
+    "card-remote-pinned": _E(
+        "Its dashboard card loads a fixed version of code from the internet",
+        "While it runs, the card downloads one fixed version of extra code from a website. "
+        "That code can't change under you, but it runs with your Home Assistant login, and "
+        "Barkley never saw it.",
+        "Worth knowing. The card depends on that website being up and serving the same file.",
+        "Loads fixed web code",
     ),
     "card-html-comment-token": _E(
         "Its dashboard card uses a trick that hides code from scanners",

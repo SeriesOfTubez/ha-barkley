@@ -175,3 +175,39 @@ def test_a_collection_day_api_is_not_telemetry(tmp_path):
             """
     }
     assert _run(tmp_path, files).findings == []
+
+
+def _coordinator(call: str) -> dict[str, str]:
+    return {
+        "__init__.py": f"""\
+            from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+
+            async def async_setup_entry(hass, entry):
+                session = async_get_clientsession(hass)
+                await {call}
+                return True
+            """
+    }
+
+
+def test_reading_statistics_from_the_apps_own_service_is_not_usage_reporting(tmp_path):
+    """(0.15, batch 2026-11-21) A real integration GETs a game API's `/v2/stats/…` for the
+    player statistics it shows: `stats` names what it reads, not what it reports."""
+    for i, call in enumerate((
+        'session.get("https://api.game.invalid/v2/stats/br/v2", params={"name": "p"})',
+        'session.get("https://parcels.invalid/track/123")',
+        'session.request("GET", "https://api.game.invalid/v2/stats")',
+    )):  # fmt: skip
+        got = _run(tmp_path / str(i), _coordinator(call))
+        assert got.findings == [], call
+
+
+def test_statistics_sent_to_a_service_still_count(tmp_path):
+    for i, call in enumerate((
+        'session.post("https://api.acme.invalid/v1/stats", json={"installs": 1})',
+        'session.request("POST", "https://api.acme.invalid/track", json={})',
+        'session.get("https://api.acme.invalid/v1/telemetry")',
+    )):  # fmt: skip
+        got = _run(tmp_path / str(i), _coordinator(call))
+        assert [f.rule_id for f in got.findings] == ["telemetry-shadow"], call

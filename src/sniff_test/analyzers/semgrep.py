@@ -193,12 +193,17 @@ def _evidence(path: Path, start: int, end: int) -> str:
 
 
 def _evidence_at(path: Path, line: int, col: int) -> str:
-    """For minified files a 'line' can be megabytes; take a window around the match."""
+    """For minified files a 'line' can be megabytes; take a window around the match.
+    (0.15) Semgrep's column counts bytes: each character of more than one byte before the
+    match (`…`, `°`, an emoji in a bundled label) would push a window cut by characters
+    to the right of it, so the column is turned into a character index first."""
     try:
-        with path.open(encoding="utf-8", errors="replace") as fh:
-            for i, ln in enumerate(fh, 1):
+        with path.open("rb") as fh:
+            for i, raw in enumerate(fh, 1):
                 if i == line:
-                    lo = max(0, col - 1 - 80)
+                    at = len(raw[: max(0, col - 1)].decode("utf-8", "replace"))
+                    ln = raw.decode("utf-8", "replace")
+                    lo = max(0, at - 80)
                     snippet = ln[lo : lo + _EVIDENCE_MAX].strip()
                     return ("…" if lo else "") + snippet
     except OSError:

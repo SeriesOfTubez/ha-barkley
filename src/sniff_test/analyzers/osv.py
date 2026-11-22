@@ -273,22 +273,34 @@ def latest_release(
 ) -> tuple[str | None, str | None, int | None]:
     """(newest final release, its date, final releases newer than `version`) from PyPI or
     the npm registry. Raises http.HttpError."""
-    have = version_key(ecosystem, version)
     if ecosystem == "PyPI":
         meta = http.get_json(f"https://pypi.org/pypi/{name}/json")
-        latest = str((meta.get("info") or {}).get("version") or "") or None
-        dates: dict[str, str] = {}
-        for v, files in (meta.get("releases") or {}).items():
-            live = [f for f in files or [] if not f.get("yanked")]
-            if live:
-                dates[v] = min(str(f.get("upload_time_iso_8601", "")) for f in live)
     elif ecosystem == "npm":
         meta = http.get_json("https://registry.npmjs.org/" + name.replace("/", "%2F"))
-        latest = str((meta.get("dist-tags") or {}).get("latest") or "") or None
-        times = meta.get("time") or {}
-        dates = {v: str(times.get(v, "")) for v in (meta.get("versions") or {})}
     else:
         return None, None, None
+    return latest_from_meta(meta, ecosystem, version)
+
+
+def latest_from_meta(
+    meta: Any, ecosystem: str, version: str
+) -> tuple[str | None, str | None, int | None]:
+    """latest_release's answer from a package's PyPI JSON or npm registry document that
+    is already in hand (pypi_meta reads every Python package's anyway)."""
+    if not isinstance(meta, dict):
+        return None, None, None
+    have = version_key(ecosystem, version)
+    dates: dict[str, str] = {}
+    if ecosystem == "PyPI":
+        latest = str((meta.get("info") or {}).get("version") or "") or None
+        for v, files in list((meta.get("releases") or {}).items())[:10000]:
+            live = [f for f in files or [] if isinstance(f, dict) and not f.get("yanked")]
+            if live:
+                dates[v] = min(str(f.get("upload_time_iso_8601", "")) for f in live)
+    else:
+        latest = str((meta.get("dist-tags") or {}).get("latest") or "") or None
+        times = meta.get("time") if isinstance(meta.get("time"), dict) else {}
+        dates = {v: str(times.get(v, "")) for v in list(meta.get("versions") or {})[:10000]}
     if latest is None:
         return None, None, None
     top = version_key(ecosystem, latest)

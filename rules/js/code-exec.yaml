@@ -177,6 +177,24 @@ rules:
           # Bundler shim: Function('return require("' + name + '")')
           - pattern-not: Function("=~/^return require\(/" + $M + "...")
           - pattern-not: new Function("=~/^return require\(/" + $M + "...")
+          # (0.15, batch 2026-11-21) Bundled polyfills that build no code a card chooses:
+          # a validation library's probe whether the page allows eval at all (empty code);
+          - pattern-not: Function(``)
+          - pattern-not: new Function(``)
+          # a setImmediate polyfill's path for a string callback (it builds code only from
+          # what a caller hands it; card-eval-remote and card-eval-config still follow
+          # downloaded or configured text into it);
+          - pattern-not-inside: '"function" == typeof $T ? $T : $F'
+          - pattern-not-inside: 'typeof $T == "function" ? $T : $F'
+          - pattern-not-inside: '"function" === typeof $T ? $T : $F'
+          - pattern-not-inside: 'typeof $T === "function" ? $T : $F'
+          - pattern-not-inside: '"function" != typeof $T && ($T = $F)'
+          - pattern-not-inside: 'typeof $T != "function" && ($T = $F)'
+          - pattern-not-inside: '"function" !== typeof $T && ($T = $F)'
+          - pattern-not-inside: 'typeof $T !== "function" && ($T = $F)'
+          # an old-engine Function.prototype.bind shim: `new F(a[0],a[1],…)` from constants
+          - pattern-not: Function("...", "return new F(" + $R.join(",") + ")")
+          - pattern-not: new Function("...", "return new F(" + $R.join(",") + ")")
       # setTimeout/setInterval only count when handed a *string* to evaluate.
       - pattern: setTimeout("..." + $Y, ...)
       - pattern: setTimeout($Y + "...", ...)
@@ -232,6 +250,9 @@ rules:
     pattern-either:
       - pattern: import("=~/^(https?:)?\/\//")
       - pattern: importScripts("=~/^(https?:)?\/\//")
+      # (0.15) a Web Worker started from a remote address
+      - pattern: new Worker("=~/^(https?:)?\/\//", ...)
+      - pattern: new SharedWorker("=~/^(https?:)?\/\//", ...)
       - patterns:
           - pattern-inside: |
               $S = document.createElement("script");

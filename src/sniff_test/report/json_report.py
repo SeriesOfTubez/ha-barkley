@@ -75,6 +75,9 @@ class ScanResult:
     requests: dict[str, Any] | None = None
     # (0.15) environment variables read and set, by name (analyzers/py_env.summary)
     environment: dict[str, Any] | None = None
+    # (0.15) how far behind each package is: {"pypi": {name: …}, "npm": {name: …}}
+    # (pypi_meta.versions_behind, npm_meta.lookup); context on the package lines only
+    package_versions: dict[str, Any] | None = None
 
 
 def sanitize_untrusted(text: str | None, limit: int = _UNTRUSTED_MAX) -> str:
@@ -216,6 +219,9 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
         "requests": scan.requests,
         # (0.15) environment variables read and set; names are plain names from the code
         "environment": scan.environment,
+        # (0.15) newest release of each package and how many are newer; versions come
+        # from PyPI and npm (untrusted text, escaped in the panel)
+        "package_versions": scan.package_versions,
         "ai_brief": ai_brief(scan, findings),
         # Code from the scanned repo (untrusted), for "Explain in context". Not in ai_brief.
         "context": scan.context,

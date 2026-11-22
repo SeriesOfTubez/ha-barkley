@@ -62,6 +62,8 @@ class ResolvedPackage:
     direct: bool = False
     ha_provided: bool = False
     sdist_only: bool = False
+    # (0.15) pypi_meta.versions_behind: newest, newest_date, newer, held_by_ha
+    behind: dict | None = None
 
 
 @dataclass

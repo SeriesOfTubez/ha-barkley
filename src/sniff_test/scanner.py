@@ -11,8 +11,10 @@ from sniff_test.analyzers import (
     bytecode,
     correlate,
     endpoints,
+    js_remote,
     js_requests,
     libraries,
+    npm_meta,
     osv,
     py_env,
     py_group,
@@ -28,6 +30,7 @@ from sniff_test.analyzers import (
 )
 from sniff_test.analyzers.py_resolve import Resolver
 from sniff_test.deps import ha_env
+from sniff_test.deps.reqs import normalize as pep503
 from sniff_test.fetch.hacs import fetch
 from sniff_test.models import (
     AnalyzerResult,
@@ -235,6 +238,8 @@ def scan(
         if any(r.host is None for r in reqs):
             called = None
         findings += correlate.correlate(findings, facts, target.root, called)
+        if target.kind is TargetKind.PLUGIN:  # (0.15) code it loads from a code CDN
+            findings = js_remote.merge(findings, js_remote.loads_in(target.root))
         if target.kind is TargetKind.INTEGRATION:
             findings = _label_test_code(findings, target)
         findings = apply_exposure(_dedupe(findings), exposure)
@@ -270,6 +275,15 @@ def scan(
                 else None
             ),
         )
+        # (0.15) how far behind each package is: context on the package lines; never scored
+        if target.kind is TargetKind.PLUGIN and not offline:
+            say("package versions")
+            npm = npm_meta.lookup(target.source_root)
+            result.package_versions = {"npm": npm} if npm else None
+        elif resolution is not None:
+            py = {pep503(p.name): p.behind
+                  for p in resolution.packages.values() if p.behind}  # fmt: skip
+            result.package_versions = {"pypi": py} if py else None
         # Built while the workspace still exists: it reads manifests and parses files.
         result.graph = graph.build(result)
         if target.kind is TargetKind.INTEGRATION:
