@@ -79,6 +79,9 @@ _MAGIC = (
     (b"\x30\x81", "a key or certificate"),
     (b"\x30\x59\x30\x13", "a key"),
     (b"%PDF", "a PDF"),
+    # tables a camera stream puts in front of each picture (JPEG segments)
+    (b"\xff\xc4", "part of a JPEG picture"),
+    (b"\xff\xdb", "part of a JPEG picture"),
 )
 
 
@@ -326,6 +329,10 @@ def notes(u: Unpacked, domain: str | None) -> list[Finding]:
 
 
 _RUNS = frozenset({"exec", "eval", "compile", "__import__"})
+# decoders imported by name (`from base64 import b64decode`)
+_DECODERS = frozenset({"b64decode", "urlsafe_b64decode", "standard_b64decode", "b32decode",
+                       "b16decode", "a85decode", "b85decode", "decodebytes", "unhexlify",
+                       "a2b_base64", "a2b_hex"})  # fmt: skip
 _LOADS = frozenset({"marshal", "pickle", "dill", "cloudpickle"})
 
 
@@ -361,8 +368,8 @@ def explained(f: Finding, root: Path, u: Unpacked) -> bool:
     consts = {
         t.id: n.value.lineno
         for n in tree.body
-        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
-        for t in n.targets
+        if isinstance(n, (ast.Assign, ast.AnnAssign)) and isinstance(n.value, ast.Constant)
+        for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
         if isinstance(t, ast.Name)
     }
     parents: dict[int, ast.AST] = {}
@@ -372,9 +379,10 @@ def explained(f: Finding, root: Path, u: Unpacked) -> bool:
     calls = [
         n for n in ast.walk(tree)
         if isinstance(n, ast.Call) and n.lineno <= f.line <= (n.end_lineno or n.lineno) and n.args
-        and isinstance(n.func, ast.Attribute)
-        and (n.func.attr == "fromhex" or (isinstance(n.func.value, ast.Name)
-                                          and n.func.value.id in ("base64", "binascii")))
+        and ((isinstance(n.func, ast.Attribute)
+              and (n.func.attr == "fromhex" or (isinstance(n.func.value, ast.Name)
+                                                and n.func.value.id in ("base64", "binascii"))))
+             or (isinstance(n.func, ast.Name) and n.func.id in _DECODERS))
     ]  # fmt: skip
     if not calls:
         return False

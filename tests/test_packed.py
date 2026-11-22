@@ -129,3 +129,23 @@ def test_what_is_inside_is_read_like_the_apps_own_files(tmp_path):
         found = semgrep.run(target, work).findings
     hits = {f.rule_id for f in found if (f.file or "").startswith(packed.FOLDER)}
     assert "card-token-exfil" in hits
+
+
+def test_typed_constants_decoders_by_name_and_jpeg_tables(tmp_path):
+    """(0.15) three shapes from the run: `X: bytes = b64decode(...)`, `from base64 import
+    b64decode`, and a camera stream's JPEG table written in hex."""
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + NOISE).decode()
+    dht = (b"\xff\xc4\x01\xa2" + NOISE).hex()
+    code = (
+        "from base64 import b64decode\n"
+        f'EMPTY: bytes = "{png}"\n'
+        f'_DHT = "{dht}"\n'
+        "def a():\n"
+        "    return b64decode(EMPTY)\n"
+        "def b():\n"
+        "    return bytes.fromhex(_DHT)\n"
+    )
+    (tmp_path / "a.py").write_text(code)
+    u = packed.unpack(tmp_path)
+    assert packed.explained(_ob("a.py", 5), tmp_path, u)
+    assert packed.explained(_ob("a.py", 7), tmp_path, u)

@@ -170,6 +170,12 @@ namespace schemas.microsoft.com
 namespace purl.org
 namespace xmlns.com
 namespace ns.adobe.com
+# (0.15) the XML namespaces of camera and device standards (ONVIF, OASIS web
+# services, UPnP): identifiers in SOAP messages, never fetched
+namespace onvif.org
+namespace docs.oasis-open.org
+namespace schemas-upnp-org
+namespace upnp.org
 namespace example.com
 namespace example.org
 namespace example.net

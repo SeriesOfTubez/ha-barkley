@@ -103,7 +103,9 @@ def test_classification(tmp_path, monkeypatch):
         'F = "https://telemetry.weather-cdn.invalid/c"\n'
         'G = "http://www.w3.org/2000/svg"\n'
         'H = "8.8.8.8"\n'
-        'I = "https://stats.someone.workers.dev"\n',
+        'I = "https://stats.someone.workers.dev"\n'
+        'J = "239.255.255.250"\n'  # (0.15) multicast: device discovery on the home network
+        'K = "http://www.onvif.org/ver10/device/wsdl"\n',  # (0.15) a standard's namespace
     )
     hosts = _hosts(endpoints.run(_target(root, repo="acme/acme-weather")))
     assert hosts == {
@@ -115,7 +117,8 @@ def test_classification(tmp_path, monkeypatch):
         "telemetry.weather-cdn.invalid": "undeclared",
         "8.8.8.8": "resolver",
         "stats.someone.workers.dev": "developer_hosted",
-    }  # w3.org (a namespace) is dropped entirely
+        "239.255.255.250": "local",
+    }  # w3.org and onvif.org (namespaces) are dropped entirely
 
 
 def test_exfil_service_table_is_a_finding(tmp_path, monkeypatch):

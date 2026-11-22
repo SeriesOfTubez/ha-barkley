@@ -71,6 +71,13 @@ def obfuscated(xs, data):
     text = "".join(chr(b) for b in data)
     # ok: py-obfuscation
     text = "".join(map(chr, xs))
+    # (0.15) bytes read from a device, not numbers written in the code
+    # ok: py-obfuscation
+    ascii_chars = "".join([chr(byte) for byte in [byte1, byte2]])
+    # ok: py-obfuscation
+    ascii_chars = "".join(chr(byte) for byte in [byte1, byte2])
+    # ruleid: py-obfuscation
+    s = "".join(chr(c) for c in [0x65, 0x76, 0x61, 0x6C])
     # ok: py-obfuscation
     f = getattr(__builtins__, s)
     return f

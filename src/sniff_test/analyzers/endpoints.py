@@ -739,7 +739,8 @@ def classify(host: str, declared: Declared) -> str:
     except ValueError:
         ip = None
     if ip is not None:
-        if not ip.is_global:
+        # (0.15) multicast (device discovery, 239.255.255.250) stays on the home network
+        if not ip.is_global or ip.is_multicast:
             return "local"
         return "resolver" if str(ip) in _KNOWN_RESOLVERS else "public_ip"
     if "." not in host or host == "localhost" or host.endswith(_LOCAL_SUFFIXES):
