@@ -76,13 +76,33 @@ RULE_ROOM: dict[str, tuple[str, str, str]] = {
 FLOW_ROOM = {"auth": "users", "data:secrets.yaml": "files", "data:.storage files": "files",
              "data:auth and credential storage": "users",
              "data:other integrations' credentials": "apps"}  # fmt: skip
-# ways in: rule -> (who, what they can do)
+# ways in: rule -> what someone can do. Who that someone is, and so whether the door is
+# inside your home or outside it, follows where Home Assistant can be reached from
+# (Settings → Where Home Assistant runs; his rule 2026-11-22: it has to be accurate).
+NETWORK_WHO = {"home": "Anyone on your home network",
+               "shared": "Anyone on your shared or work network",
+               "internet": "Anyone on the internet"}  # fmt: skip
 DOORS = {
-    "ha-unauth-view": ("Anyone on your network", "can open one of its pages without logging in"),
-    "ha-webhook-remote": ("Anyone on the internet", "can send it messages"),
-    "ha-cors-allowed": ("Other websites", "can call one of its pages from your browser"),
-    "card-eval-address": ("Anyone who sends you a link", "can make it run code in your dashboard"),
-}
+    # reachable by whoever can reach Home Assistant
+    "ha-unauth-view": (None, "can open one of its pages without logging in"),
+    "ha-webhook-remote": (None, "who knows its secret address can send it messages"),
+    # always someone outside: a site you visit, a link someone sends you
+    "ha-cors-allowed": ("Other websites you visit", "can call one of its pages from your "
+                        "browser"),
+    "card-eval-address": ("Anyone who sends you a link", "can make it run code in your "
+                          "dashboard"),
+}  # fmt: skip
+
+
+def door(rule: str, network: str) -> tuple[str, str, bool]:
+    """(who, what they can do, inside your home?) for a way in."""
+    who, what = DOORS[rule]
+    if who is None:
+        where = network if network in NETWORK_WHO else "home"
+        return NETWORK_WHO[where], what, where != "internet"
+    return who, what, False
+
+
 SITES_SHOWN = 6
 OFF_BOX = "Off your Home Assistant machine"
 WRAP = 40  # characters per room line
@@ -104,7 +124,7 @@ class Model:
     sites: list[tuple[str, list[str], str]] = field(default_factory=list)  # host, lines, how
     more_sites: int = 0
     paths: list[tuple[str, int, str]] = field(default_factory=list)  # room, site index, how
-    doors: list[tuple[str, str]] = field(default_factory=list)
+    doors: list[tuple[str, str, bool]] = field(default_factory=list)  # who, what, inside
     bugs: int = 0
     browser: bool = False
     elsewhere: int = 0  # requests whose address the code works out while it runs
@@ -133,6 +153,8 @@ def build(report: dict[str, Any], name: str) -> Model:
     t = report.get("target") or {}
     card = str(t.get("kind")) == "plugin"
     m = Model(name, "Dashboard card" if card else "Integration", browser=card)
+    rd = report.get("readings") if isinstance(report.get("readings"), dict) else {}
+    network = str(rd.get("network") or "home")
     findings = [f for f in report.get("findings") or [] if isinstance(f, dict)]
     seen: set[tuple[str, str]] = set()
     for f in findings:
@@ -144,8 +166,8 @@ def build(report: dict[str, Any], name: str) -> Model:
                 m.use.setdefault(room, []).append((glyph, text))
             if kinds.is_threat(rule):
                 m.bad_rooms.add(room)
-        if rule in DOORS and DOORS[rule] not in m.doors:
-            m.doors.append(DOORS[rule])
+        if rule in DOORS and (d := door(rule, network)) not in m.doors:
+            m.doors.append(d)
         if rule == readings.DEP_VULN:
             m.bugs += 1
     hs = ui.hosts(report)
@@ -262,6 +284,14 @@ def wide(m: Model, key: str = "d") -> str:
     top = 60
     height = top + sum(hs) + GAP * (len(hs) - 1) + 24
     cy = top + (height - top - 24) / 2
+    inside = [d for d in m.doors if d[2]]
+    outside = [d for d in m.doors if not d[2]]
+    in_h = [36 + 16 * len(textwrap.wrap(what, IN_WRAP)) for _w, what, _i in inside]
+    if inside:  # the app moves down far enough for its doors and their arrow above it
+        need = top + sum(in_h) + 12 * (len(in_h) - 1) + 44 + APP_H / 2 + 20 * m.browser
+        cy = max(cy, need)
+    bug_h = (12 + 16 * len(textwrap.wrap(_bug_note(m.bugs), 20)) + 8) if m.bugs else 0
+    height = max(height, cy + APP_H / 2 + bug_h + 40)
     p = [f'<svg class="flow does" viewBox="0 0 {W} {height:.0f}" role="img" '
          f'aria-label="What {e(m.name, 80)} does">',
          f'<defs><marker id="g-{key}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
@@ -279,7 +309,7 @@ def wide(m: Model, key: str = "d") -> str:
          f'<g class="hdr">{_icon("globe", YARD_X + 4, 21, 16)}<text x="{YARD_X + 26}" y="34">'
          "Outside your home</text></g>"]  # fmt: skip
     # doors take the top of the yard; sites go below them
-    door_h = [36 + 16 * len(textwrap.wrap(what, 32)) for _who, what in m.doors]
+    door_h = [36 + 16 * len(textwrap.wrap(what, 32)) for _who, what, _i in outside]
     sites_top = top + sum(h + 12 for h in door_h)
     sh = [28 + 16 * max(1, len(lines)) for _h, lines, _how in m.sites]
     total = sum(sh) + 12 * max(len(sh) - 1, 0)
@@ -347,7 +377,7 @@ def wide(m: Model, key: str = "d") -> str:
                      f'marker-end="url(#{mk}-{key})"/>')  # fmt: skip
     if smid:
         bad = any(how == "bad" for *_x, how in m.paths)
-        ly = min(smid[0], cy) - 24
+        ly = min(_curve_y(cy, mid, WALL - 60) for mid in smid) - 8
         lines.append(f'<text class="cross{" bad" if bad else ""}" x="{WALL - 8}" '
                      f'y="{ly:.0f}" text-anchor="end">leaves your home</text>')  # fmt: skip
     app = [f'<g class="app"><rect x="{APP_X}" y="{cy - APP_H / 2:.0f}" width="{APP_W}" '
@@ -367,22 +397,50 @@ def wide(m: Model, key: str = "d") -> str:
                    "</g>" + "".join(f'<text x="{APP_X + 28}" y="{by + 18 + 16 * j:.0f}">'
                                     f"{e(t)}</text>" for j, t in enumerate(note))
                    + "</g>")  # fmt: skip
-    for i, (who, what) in enumerate(m.doors):
+    for i, (who, what, _in) in enumerate(outside):  # outside: crosses the wall, from above
         dy = top + sum(door_h[:i]) + 12 * i
-        body = textwrap.wrap(what, 32)
-        app.append(f'<g class="door"><rect x="{YARD_X}" y="{dy:.0f}" width="{SITE_W}" '
-                   f'height="{door_h[i]}" rx="8"/><g class="di">'
-                   f'{_icon("door", YARD_X + 10, dy + 10, 14)}</g><text class="nt" '
-                   f'x="{YARD_X + 32}" y="{dy + 22:.0f}">{e(who)}</text>'
-                   + "".join(f'<text class="ns" x="{YARD_X + 32}" y="{dy + 40 + 16 * j:.0f}">'
-                             f"{e(t)}</text>" for j, t in enumerate(body)) + "</g>")  # fmt: skip
+        app.append(_door_box(YARD_X, dy, SITE_W, door_h[i], who, what, 32))
         y1 = dy + 30
-        app.append(f'<path class="inbound" d="M{YARD_X - 2} {y1:.0f} C {WALL - 10} {y1:.0f}, '
-                   f'{APP_X + APP_W + 50} {cy - 22:.0f}, {APP_X + APP_W + 2} {cy - 22:.0f}" '
-                   f'marker-end="url(#o-{key})"/><text class="cross in" x="{WALL - 8}" '
-                   f'y="{y1 + 4:.0f}" text-anchor="end">comes in</text>')  # fmt: skip
+        ax = APP_X + APP_W - 16
+        app.append(f'<path class="inbound" d="M{YARD_X - 2} {y1:.0f} C {WALL - 30} {y1:.0f}, '
+                   f'{ax} {y1:.0f}, {ax} {cy - APP_H / 2 - 2:.0f}" marker-end="url(#o-{key})"/>'
+                   f'<text class="cross in" x="{WALL - 8}" y="{y1 - 6:.0f}" '
+                   'text-anchor="end">comes in</text>')  # fmt: skip
+    dy = float(top)
+    for i, (who, what, _in) in enumerate(inside):  # inside your home: no wall to cross
+        app.append(_door_box(IN_X, dy, IN_W, in_h[i], who, what, IN_WRAP))
+        dy += in_h[i] + 12
+    if inside:
+        mx = APP_X + 24
+        end = cy - APP_H / 2 - 2 - (20 if m.browser else 0)
+        app.append(f'<path class="inbound" d="M{mx} {dy - 10:.0f} L {mx} {end:.0f}" '
+                   f'marker-end="url(#o-{key})"/><text class="cross in" x="{mx + 8}" '
+                   f'y="{(dy - 10 + end) / 2 + 4:.0f}">comes in</text>')  # fmt: skip
     p += lines + rooms + app + yard + ["</svg>"]
     return "".join(p)
+
+
+IN_X, IN_W, IN_WRAP = APP_X - 16, WALL - 16 - (APP_X - 16), 34  # a door inside your home
+
+
+def _door_box(x: float, y: float, w: float, h: float, who: str, what: str, wrap: int) -> str:
+    body = textwrap.wrap(what, wrap)
+    return (f'<g class="door"><rect x="{x:.0f}" y="{y:.0f}" width="{w:.0f}" height="{h}" '
+            f'rx="8"/><g class="di">{_icon("door", x + 10, y + 10, 14)}</g><text class="nt" '
+            f'x="{x + 32:.0f}" y="{y + 22:.0f}">{e(who)}</text>'
+            + "".join(f'<text class="ns" x="{x + 32:.0f}" y="{y + 40 + 16 * j:.0f}">{e(t)}</text>'
+                      for j, t in enumerate(body)) + "</g>")  # fmt: skip
+
+
+def _curve_y(cy: float, mid: float, x: float) -> float:
+    """Where an outgoing line (the app's right edge at cy to a site's middle) is at `x`."""
+    x0, x1, x2, x3 = APP_X + APP_W, WALL - 20, YARD_X - 40, YARD_X - 2
+    lo, hi, t = 0.0, 1.0, 0.5
+    for _ in range(30):  # bisection on the curve's x
+        t = (lo + hi) / 2
+        xt = (1 - t) ** 3 * x0 + 3 * (1 - t) ** 2 * t * x1 + 3 * (1 - t) * t**2 * x2 + t**3 * x3
+        lo, hi = (t, hi) if xt < x else (lo, t)
+    return (1 - t) ** 3 * cy + 3 * (1 - t) ** 2 * t * cy + 3 * (1 - t) * t**2 * mid + t**3 * mid
 
 
 def _bug_note(n: int) -> str:
@@ -407,11 +465,13 @@ def narrow(m: Model) -> str:
         extra += f'<span class="nbug">{_ic("bug")}{e(_bug_note(m.bugs))}</span>'
     app = (f'<div class="napp"><b>{e(m.name, 60)}</b><span class="ns2">{e(m.kind)}</span>'
            f"{extra}</div>")  # fmt: skip
-    doors = "".join(
-        f'<div class="ndoor">{_ic("door")}<span><b>{e(who)}</b> {e(what)}</span>'
-        '<span class="arrow-in">comes in</span></div>'
-        for who, what in m.doors
-    )
+
+    def ndoor(who: str, what: str) -> str:
+        return (f'<div class="ndoor">{_ic("door")}<span><b>{e(who)}</b> {e(what)}</span>'
+                '<span class="arrow-in">comes in</span></div>')  # fmt: skip
+
+    in_doors = "".join(ndoor(w, t) for w, t, inside in m.doors if inside)
+    doors = "".join(ndoor(w, t) for w, t, inside in m.doors if not inside)
     sites = "".join(
         f'<div class="nsite{" bad" if how == "bad" else ""}">'
         + (f"<b>{e(host)}</b>" if host == OFF_BOX else f"<code>{e(host, 60)}</code>")
@@ -424,7 +484,7 @@ def narrow(m: Model) -> str:
         sites += '<p class="ns2">Nothing leaves: no request in its code.</p>'
     return (
         f'<div class="narrow"><div class="hdr2">{_ic("home")}Inside your Home Assistant</div>'
-        f'<div class="nrooms">{"".join(rooms)}{app}</div>'
+        f'<div class="nrooms">{"".join(rooms)}{in_doors}{app}</div>'
         f'<div class="hdr2">{_ic("globe")}Outside your home</div>{doors}{sites}</div>'
     )
 

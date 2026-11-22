@@ -68,9 +68,38 @@ def test_an_unknown_destination_is_said_plainly():
 def test_ways_in_are_orange_doors_and_a_bug_strip():
     r = rep([fnd(1, "ha-unauth-view", "medium"), fnd(2, "dep-vuln", "high", file="manifest.json")])
     m = does.build(shown.view(r), "Acme")
-    assert m.doors == [does.DOORS["ha-unauth-view"]] and m.bugs == 1
+    assert (
+        m.doors
+        == [("Anyone on your home network", "can open one of its pages without logging in", True)]
+        and m.bugs == 1
+    )
     svg = does.wide(m)
     assert 'class="door"' in svg and "comes in" in svg and "known security bugs" in svg
+
+
+def test_a_door_is_drawn_where_the_people_who_can_use_it_are():
+    """(his rule 2026-11-22: it has to be accurate) A login-free page or a webhook can be
+    used by whoever can reach Home Assistant: inside your home on a home or work network,
+    outside only when it's reachable from the internet. A site you visit or a link someone
+    sends you is always someone outside."""
+    rules = [fnd(1, "ha-unauth-view", "medium"), fnd(2, "ha-webhook-remote", "low"),
+             fnd(3, "ha-cors-allowed", "low")]  # fmt: skip
+    home = does.build(shown.view(rep(rules)), "Acme").doors
+    assert [(who, inside) for who, _w, inside in home] == [
+        ("Anyone on your home network", True), ("Anyone on your home network", True),
+        ("Other websites you visit", False)]  # fmt: skip
+    work = does.build(shown.view(rep(rules), network="shared"), "Acme").doors
+    assert work[0][:1] == ("Anyone on your shared or work network",) and work[0][2]
+    public = does.build(shown.view(rep(rules, exposure="public")), "Acme").doors
+    assert public[0][0] == "Anyone on the internet" and not public[0][2]
+    # inside: drawn in the house, no arrow across the wall; outside: in the yard
+    m = does.build(shown.view(rep(rules[:1])), "Acme")
+    svg = does.wide(m)
+    x = re.search(r'<g class="door"><rect x="(\d+)"', svg)
+    assert int(x[1]) < does.WALL
+    m = does.build(shown.view(rep(rules[:1], exposure="public")), "Acme")
+    x = re.search(r'<g class="door"><rect x="(\d+)"', does.wide(m))
+    assert int(x[1]) > does.WALL
 
 
 def test_a_card_runs_in_your_browser_session():

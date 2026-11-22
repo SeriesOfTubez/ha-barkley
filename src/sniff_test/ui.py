@@ -513,6 +513,7 @@ svg.does .inbound { fill:none; stroke:var(--orange); stroke-width:2; stroke-dash
   padding:8px 12px; display:grid; grid-template-columns:auto 1fr; gap:4px 8px;
   align-items:start; overflow-wrap:anywhere; }
 .ndoor .dic, .expo .dic { color:var(--orange); }
+.nrooms .ndoor { grid-column:1 / -1; }
 .ndoor .arrow-in { grid-column:1 / -1; color:var(--orange); font-size:var(--t-xs); font-weight:600; }
 .expo { margin:0 0 8px; padding:8px 12px; border-radius:8px; background:var(--orange-bg);
   border:1px solid var(--orange-edge); display:flex; gap:8px; align-items:flex-start;
