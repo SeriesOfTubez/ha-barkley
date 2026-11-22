@@ -208,7 +208,19 @@ def scan(
         for r in results:
             findings.extend(r.findings)
             facts.extend(r.facts)
-        findings += correlate.correlate(findings, facts, target.root)
+        # (0.15) the requests are read first: a pairing needs a site the code really calls
+        # (an address it couldn't read may be any host the code names: then every one counts)
+        if target.kind is TargetKind.INTEGRATION:
+            py_reqs = py_requests.requests_in(target.root)
+            reqs = py_reqs
+            called: set[str] | None = {r.host for r in py_reqs if r.host}
+        else:
+            js_reqs = js_requests.requests_in(target.root)
+            reqs = js_reqs[0]
+            called = {r.host for r in js_reqs[0] if r.host} | set(js_reqs[1])
+        if any(r.host is None for r in reqs):
+            called = None
+        findings += correlate.correlate(findings, facts, target.root, called)
         if target.kind is TargetKind.INTEGRATION:
             findings = _label_test_code(findings, target)
         findings = apply_exposure(_dedupe(findings), exposure)
@@ -251,12 +263,12 @@ def scan(
             tests = py_precision.test_only_files(
                 Resolver(target.root), also=py_precision.looks_like_a_script
             )
-            result.requests = py_requests.summary(py_requests.requests_in(target.root), tests)
+            result.requests = py_requests.summary(py_reqs, tests)
             # (0.15) which environment variables it reads and sets, by name
             result.environment = py_env.summary(py_env.uses_in(target.root))
         else:
             say("web requests")  # (0.15) a card's built file: fetch calls and map-tile sites
-            result.requests = js_requests.summary(*js_requests.requests_in(target.root))
+            result.requests = js_requests.summary(*js_reqs)
         result.inputs = recheck.capture(target, resolution) if not offline else None
         result.context = context.build(
             target.root,

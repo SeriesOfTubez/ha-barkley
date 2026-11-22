@@ -20,6 +20,7 @@ A source counts as explained when a taint finding sits in the same Python functi
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -122,7 +123,30 @@ def _and(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
-def correlate(findings: list[Finding], facts: list[Fact], root: Path) -> list[Finding]:
+# (0.15) `entry.data.get("user_id")` of another integration is its data, not a credential:
+# only a field named like one (or the whole `.data`) is something to steal.
+_FIELD = re.compile(r"""\.data\s*+(?:\.get\s*+\(\s*+|\[\s*+)(["'])([\w.-]{1,64})\1""")
+_CREDENTIAL_FIELD = re.compile(
+    r"pass|token|secret|key|auth|cred|cookie|session|private|pin|otp|irk|api|cert|sig",
+    re.I,
+)
+
+
+def _credential_read(f: Finding) -> bool:
+    if f.rule_id != "ha-foreign-entry-data":
+        return True
+    names = [m.group(2) for m in _FIELD.finditer(f.evidence or "")]
+    return not names or any(_CREDENTIAL_FIELD.search(n) for n in names)
+
+
+def correlate(
+    findings: list[Finding], facts: list[Fact], root: Path, called: set[str] | None = None
+) -> list[Finding]:
+    """`called`: (0.15) the sites the app's code was read sending a request to, when every
+    request's address could be read (None otherwise: then any host the code names may be
+    where one goes). When given, only those count as somewhere to send a credential: on
+    600 real apps every pairing with a host the code merely names (a link in a bundled
+    library, a site in a list of sources) was wrong."""
     explained = explained_by_taint(findings, root)
     sources = [
         f
@@ -130,6 +154,7 @@ def correlate(findings: list[Finding], facts: list[Fact], root: Path) -> list[Fi
         if f.category is Category.SENSITIVE_ACCESS
         and f.severity >= Severity.HIGH
         and f.rule_id in CREDENTIAL_SOURCES
+        and _credential_read(f)
         and f.id not in explained
     ]
     outbound = [f for f in facts if f.attrs.get("outbound")]
@@ -142,6 +167,7 @@ def correlate(findings: list[Finding], facts: list[Fact], root: Path) -> list[Fi
             if f.kind in ("host", "ip")
             and f.attrs.get("class") in UNEXPLAINED
             and not f.attrs.get("redirect_only")
+            and (called is None or f.key in called)
         }
     )
     dest_findings = [f for f in findings if f.rule_id in _DESTINATION_RULES]
