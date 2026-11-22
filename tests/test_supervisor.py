@@ -559,3 +559,20 @@ def test_idle_turns_come_although_events_keep_arriving():
     sub.close()
     assert len(seen) > 1 and seen[-1] is None and all(e is not None for e in seen[:-1])
     assert took < 1.0
+
+
+def test_a_pre_release_is_not_offered_the_older_stable_release():
+    """(0.15, #27) On a pre-release track the Marketplace may offer the older stable
+    release: that isn't an update. A newer version is."""
+    from sniff_test.supervisor import Installed
+
+    def it(installed, available):
+        return Installed("acme/card", "card", "Card", installed, available, False)
+
+    assert not it("v2.0.0-beta.3", "v1.9.5").update
+    assert it("v2.0.0-beta.3", "v1.9.5").prerelease
+    assert it("v2.0.0b1", "v2.0.0").update  # the final release of the same version
+    assert it("v2.0.0-beta.3", "v2.1.0").update
+    assert it("1.2.0", "1.3.0").update and not it("1.2.0", "1.3.0").prerelease
+    assert not it("1.3.0", "1.3.0").update
+    assert it("a1b2c3d", "v1.0.0").update  # a commit: today's rule (different = offered)

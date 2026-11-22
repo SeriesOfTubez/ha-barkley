@@ -129,8 +129,11 @@ def snapshot_changes(old: dict[str, Any] | None, new: dict[str, Any]) -> list[Ch
 
 def snapshot_of(items: Iterable[Installed]) -> dict[str, dict[str, str]]:
     return {
+        # (0.15, #27) an offer counts only when it's newer (Installed.update): on a
+        # pre-release track the older stable release isn't one
         it.repo.lower(): {"repo": it.repo, "kind": it.kind, "version": it.installed,
-                          "available": it.available}
+                          "available": it.available
+                          if it.update or it.available == it.installed else ""}
         for it in items
     }  # fmt: skip
 
@@ -167,6 +170,22 @@ def change_summary(d: dict[str, Any]) -> str:
 _LIGHT = {"none": "🟢", "low": "🟢", "possible": "🟡", "medium": "🟡", "found": "🔴",
           "high": "🔴"}  # fmt: skip
 _T_WORDS = {"none": "none", "possible": "possible", "found": "found"}
+
+
+_LEVELS = {"low": 0, "medium": 1, "high": 2}
+
+
+def worth_notifying(entry: dict[str, Any], when: str) -> bool:
+    """(0.15, #29) Settings → Notify when. A sniff that didn't finish always notifies,
+    and so does any sign of malicious behavior; otherwise Exposure must reach the level."""
+    if when not in ("medium", "high", "threat") or not entry.get("complete", True):
+        return True
+    rd = entry.get("readings") or {}
+    if rd.get("threat_level") in ("possible", "found"):
+        return True
+    if when == "threat":
+        return False
+    return _LEVELS.get(str(rd.get("exposure_level")), 0) >= _LEVELS[when]
 
 
 def readings_line(rd: dict[str, Any], was: dict[str, Any] | None = None) -> str:
@@ -348,6 +367,7 @@ class Watcher:
         # (0.14.0) the report as the panel shows it (the scoring settings, the readings);
         # set by server.serve
         self.view_fn: Callable[[dict[str, Any]], dict[str, Any]] = shown.view
+        self.notify_when_fn: Callable[[], str] = lambda: "all"  # (0.15, #29) Notify when
         self.worker = worker
         self.installed_fn = installed_fn
         self.subscribe_fn = subscribe_fn
@@ -844,6 +864,11 @@ class Watcher:
             entry["complete"] = bool(report.get("complete", True))
             entry["changes"] = change_summary(d) if d is not None else ""
         self._log(entry)
+        if report is not None and not worth_notifying(entry, self.notify_when_fn()):
+            rd = entry.get("readings") or {}
+            print(f"auto-sniff: {c.repo} {c.version} sniffed: {readings_line(rd)}; not notified "
+                  "(Notify when in Settings)", file=sys.stderr, flush=True)  # fmt: skip
+            return
         if report is not None:
             title, md, plain = notification(entry, report, d, self.panel_path())
         else:

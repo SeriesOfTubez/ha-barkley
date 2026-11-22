@@ -669,6 +669,7 @@ class Card:
     diff_link: str = ""  # "old=..&new=.." when an update check exists
     action: str = ""  # rendered form/button HTML (built by the server)
     stale: bool = False  # sniffed with earlier rules (an app that isn't installed)
+    prerelease: bool = False  # (0.15, #27) the installed version is a pre-release
 
     @property
     def readings(self) -> dict[str, Any] | None:
@@ -769,6 +770,8 @@ def card_chips(c: Card) -> list[tuple[str, str]]:
     chips: list[tuple[str, str]] = []
     if c.stale:
         chips.append(("", "Sniffed with earlier rules"))
+    if c.prerelease:  # (0.15, #27) a pre-release installed on purpose: said, not "update"
+        chips.append(("", "Pre-release"))
     if c.report and (gone := quiet(c.report)[0]):
         chips.append(("", gone))
     # colour means a threat: a threat is red, the rest are neutral (his note 2026-11-20).
@@ -2866,7 +2869,7 @@ def hygiene_html(report: dict[str, Any]) -> str:
     star = (f'<p class="aplus">{icon("star", 16)} A+ security habits</p>'
             if all_green(h) else "")  # fmt: skip
     return (
-        '<section class="box"><h2>The developer\'s security habits</h2>'
+        '<section class="box" id="habits"><h2>The developer\'s security habits</h2>'
         + star
         + '<p class="sub">This is what the '
         "app's own repository shows about how it's kept safe. It never changes "
@@ -3481,7 +3484,15 @@ def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow
     prev: ScanRow | None = None
     for r in ordered:
         what = f'<a href="{base}/scan/{r.id}">{e(r.ref or "?", 40)}</a>'
-        score = f"{r.score}" + ("" if r.complete else " (unfinished)")
+        # (0.15) the readings, not the 0-100 capability score (that's the technical report)
+        rd = r.readings or {}
+        if rd:
+            t, x = str(rd.get("threat_level")), str(rd.get("exposure_level"))
+            score = f"Threat {_T_WORD.get(t, t).lower()}, Exposure {_E_WORD.get(x, x).lower()}"
+        else:
+            score = ""
+        score = " · ".join(x for x in (score, "" if r.complete else "unfinished") if x)
+        score = f" · {score}" if score else ""
         if prev is None:
             cause = "first check"
         elif prev.ref == r.ref and prev.tool_version != r.tool_version:
@@ -3504,7 +3515,7 @@ def history_html(base: str, sid: int, report: dict[str, Any], rows: list[ScanRow
                 cause = f"update {e(prev.ref or '?', 40)} → {e(r.ref or '?', 40)} · {link}"
         here = " <b>(this page)</b>" if r.id == sid else ""
         items.append(
-            f"<li><b>{what}</b> · {score} · {cause} · "
+            f"<li><b>{what}</b>{score} · {cause} · "
             f'<span class="muted">{e(r.scanned_at[:10])}, rules version {e(rules_label(r.tool_version))}'
             f"</span>{here}</li>"
         )
@@ -3585,6 +3596,12 @@ def facts_line(report: dict[str, Any]) -> str:
     if pushed := _day(prov.get("pushed_at")):
         parts.append('<span title="The last push to the project on GitHub, when Barkley '
                      f'sniffed it">{icon("clock")} Last push {pushed}</span>')  # fmt: skip
+    # (0.15, his decision 2026-11-21: the "Track record" facts) how old the project is,
+    # and where its security habits are; facts only, never a reading
+    if since := _day(prov.get("created_at")):
+        parts.append(f"<span>Project since {e(since[:4])}</span>")
+    if report.get("hygiene") and hygiene_html(report):
+        parts.append('<a href="#habits">Security habits</a>')
     chip, why = quiet(report)
     if chip:
         parts.append(f'<span class="chip" title="{e(why, 300)}">{e(chip)}</span>')

@@ -225,6 +225,7 @@ class Worker:
         self.recheck_fn = recheck_fn
         self.parallel = max(1, min(int(parallel), PARALLEL_MAX))
         self.memory_gb_fn: Callable[[], int] = lambda: 0  # (0.14.0) Memory for scans
+        self.floor_fn: Callable[[], int] = lambda: memory.REFUSE_BELOW  # (0.15) Low memory
         self.store = store
         self.scan_fn = scan_fn
         self.tool_version = tool_version
@@ -264,13 +265,14 @@ class Worker:
         mem = self.memory_fn()
         if mem.available is None:
             return "waiting: Barkley can't tell how much memory is free, so scans run one at a time"
+        floor = self.floor_fn()
         n = len(self._running)
         gb = self.memory_gb_fn()
         if gb:
             budget = gb * memory.GIB
             if mem.limited and mem.total:
                 budget = min(budget, mem.total)
-            need = memory.REFUSE_BELOW + PER_SCAN * n
+            need = floor + PER_SCAN * n
             if PER_SCAN * (n + 1) > budget:
                 fits = max(1, int(budget // PER_SCAN))
                 return (f"waiting for a running scan to finish. {gb} GB (Memory for scans "
@@ -332,8 +334,11 @@ class Worker:
         """Block until the queue is empty (tests)."""
         self._q.join()
 
+    def _mem(self) -> memory.Memory:
+        return self.memory_fn().with_floor(self.floor_fn())
+
     def _scan(self, repo: str, ref: str | None) -> int:
-        mem = self.memory_fn()
+        mem = self._mem()
         if mem.refuse:
             raise MemoryRefused(mem.message())
         return self.store.save(self.scan_fn(repo, ref))
@@ -374,8 +379,8 @@ class Worker:
         if inputs is None:
             job.message = "not re-checked: this scan saved no package list"
             return
-        if self.memory_fn().refuse:
-            raise MemoryRefused(self.memory_fn().message())
+        if (mem := self._mem()).refuse:
+            raise MemoryRefused(mem.message())
         report = self.store.report(sid)
         was = report.get("recheck") if isinstance(report.get("recheck"), dict) else {}
         try:
@@ -699,6 +704,7 @@ def render_installed(
             kind=r.item.kind,
             installed=r.item.installed,
             available=r.item.available if r.item.update else None,
+            prerelease=r.item.prerelease,
             scan=r.installed_scan,
             report=report_fn(r.installed_scan.id) if r.installed_scan else None,
             group=r.group,
@@ -1054,6 +1060,12 @@ SETTING_HELP = {
         "phone, to get it there too. A notification carries the app's name, its version, "
         "the readings and counts, never text from the app's code."
     ),
+    "Notify when": (
+        "Every auto-sniff is listed under Auto-sniff activity and on the app's page either "
+        "way. This only decides which ones also notify you. Signs of malicious behavior "
+        "always notify, and so does a sniff that didn't finish or couldn't run, because "
+        "then Barkley can't say the app is fine."
+    ),
     "AI": (
         "Explanations go through the Home Assistant AI Task entity you pick, so they use the "
         "AI provider you set up in Home Assistant. Nothing is sent until you click Explain. "
@@ -1091,6 +1103,13 @@ SETTING_HELP = {
         "many scans as fit in it (two in 4 GB). It never goes past a container's limit, and "
         "never runs with under 1 GB really free. If a scan runs out of memory, the system "
         "stops it and it shows as Incomplete."
+    ),
+    "Low memory": (
+        "Before each scan Barkley checks how much memory is free. At the default it doesn't "
+        "start a scan with less than 1 GB free. Lower or off, a big scan can use the "
+        "memory Home Assistant needs: Home Assistant may slow down, and the system may stop "
+        "the scan, or another program, to free memory. A stopped scan shows as Incomplete. "
+        "Memory for scans still decides how many scans run at once."
     ),
     "Token rotation": (
         "Barkley uses its current token to make a new one, checks that it works, saves it, "
@@ -1199,8 +1218,16 @@ def render_settings(
                 f'<input type=hidden name=token value="{token}">'
                 "<button>Send a test notification</button></form>")  # fmt: skip
         check_rows += row("Notify", "Choose where results go. Notifications carry only app "
-                          "names, versions, counts, scores and Barkley's own fixed words.",
+                          "names, versions, counts, readings and Barkley's own fixed words.",
                           sel("notify_target", chosen, opts) + test)  # fmt: skip
+        check_rows += row("Notify when", "Which results reach the bell and your notify "
+                          "service. A sniff that didn't finish always does.",
+                          sel("notify_when", s.notify_when, [
+                              ("all", "Every result (default)"),
+                              ("medium", "Exposure medium or high, or signs of malicious "
+                                         "behavior"),
+                              ("high", "Exposure high, or signs of malicious behavior"),
+                              ("threat", "Only signs of malicious behavior")]))  # fmt: skip
         check_rows += (
             f'<div class="setrow"><div><b>Auto-sniff activity</b>'
             f"{render_auto_activity(base, watcher)}</div><div></div></div>"
@@ -1259,6 +1286,12 @@ def render_settings(
                       sel("memory_gb", s.memory_gb,
                           [(n, "Auto (default)" if n == 0 else f"{n} GB")
                            for n in settings_mod.CHOICES["memory_gb"]]) + now_free)  # fmt: skip
+    check_rows += row("Low memory", "Scans don't start when less than this is free, so a "
+                      "scan can't push Home Assistant out of memory. Lower it only if you "
+                      "accept that risk, for example on a machine with 2 GB.",
+                      sel("memory_floor_mb", s.memory_floor_mb,
+                          [(1024, "1 GB free (default)"), (512, "0.5 GB free"),
+                           (0, "Scan anyway")]))  # fmt: skip
     hidden = f'<input type=hidden name=token value="{token}">'
     have = {"settings": "Set here", "option": "Set in the app's options",
             "file": "Set by GITHUB_TOKEN_FILE"}.get(token_source, "")  # fmt: skip
@@ -2890,7 +2923,7 @@ class Panel:
                         auto = ""  # (0.14.0) auto-sniff lives on Settings
                         body = render_index(
                             base, panel.store, jobs, panel.token,
-                            panel.installed_html(base, refresh, v), panel.memory_fn(),
+                            panel.installed_html(base, refresh, v), panel.worker._mem(),
                             panel.worker.github_wait, panel.worker.ha_fn(),
                             panel.worker.parallel, panel.catalog_fn is not None,
                             status_html(base, jobs, panel.names(), v.qs()), v.qs(), auto,
@@ -2996,6 +3029,7 @@ class Panel:
                             if panel.standalone else ""))  # fmt: skip
                     if url.path == "/doctor":
                         # Never waits for the tools: the run goes on in its own thread.
+                        doctor.memory_floor = panel.settings.memory_floor_mb * 1024 * 1024
                         if "again=1" in url.query:
                             panel.diagnostics.start(force=True)
                             return self._redirect(f"{base}/doctor")
@@ -3289,6 +3323,7 @@ def serve(
     )  # fmt: skip
     panel = Panel(store, worker, allow, installed_fn, memory_fn)
     worker.memory_gb_fn = lambda: panel.settings.memory_gb
+    worker.floor_fn = lambda: panel.settings.memory_floor_mb * 1024 * 1024
     panel.login = login_cfg
     if login_cfg is not None:
         panel.csp = csp_with_login(login_cfg.ha_url)
@@ -3314,6 +3349,7 @@ def serve(
         watcher.worker = worker
         watcher.on_list = panel.set_installed
         watcher.view_fn = panel.view
+        watcher.notify_when_fn = lambda: panel.settings.notify_when
         worker.on_done.append(watcher.on_job_done)
     httpd = PanelServer((host, port), panel.handler())
     httpd.panel = panel

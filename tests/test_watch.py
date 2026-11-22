@@ -371,7 +371,7 @@ def test_worker_hooks_never_break_the_worker(tmp_path):
     worker.submit("scan", "acme/a", "v1")
     worker.submit("scan", "acme/b", "v1")
     worker.wait()
-    assert seen == [1, 2] and all(j.state == "done" for j in worker.jobs)
+    assert sorted(seen) == [1, 2] and all(j.state == "done" for j in worker.jobs)
 
 
 def test_watcher_thread_starts_and_catches_up(ctx):
@@ -447,3 +447,32 @@ def test_a_failed_job_says_a_fixed_sentence_never_the_projects_text():
     assert "x.invalid" not in msg and "[" not in msg and "won't unpack" in msg
     assert "app log" in failure_message(RuntimeError("anything at all"))
     assert "anything" not in failure_message(RuntimeError("anything at all"))
+
+
+def test_notify_when_setting():
+    """(0.15, #29) A clean result needn't notify; signs of malicious behavior and a sniff
+    that didn't finish always do."""
+    from sniff_test.watch import worth_notifying
+
+    def entry(threat="none", level="low", complete=True):
+        return {"readings": {"threat_level": threat, "exposure_level": level},
+                "complete": complete}  # fmt: skip
+
+    assert worth_notifying(entry(), "all")
+    for when in ("medium", "high", "threat"):
+        assert not worth_notifying(entry(), when)
+        assert worth_notifying(entry(threat="possible"), when)
+        assert worth_notifying(entry(complete=False), when)
+    assert worth_notifying(entry(level="medium"), "medium")
+    assert not worth_notifying(entry(level="medium"), "high")
+    assert worth_notifying(entry(level="high"), "high")
+    assert not worth_notifying(entry(level="high"), "threat")
+
+
+def test_an_older_stable_release_offered_on_a_pre_release_isnt_sniffed():
+    """(0.15, #27)"""
+    old = watch.snapshot_of([Installed("acme/c", "card", "C", "v2.0.0-beta.3", "", False)])
+    new = watch.snapshot_of([Installed("acme/c", "card", "C", "v2.0.0-beta.3", "v1.9.5", False)])
+    assert watch.snapshot_changes(old, new) == []
+    newer = watch.snapshot_of([Installed("acme/c", "card", "C", "v2.0.0-beta.3", "v2.0.0", False)])
+    assert [c.action for c in watch.snapshot_changes(old, newer)] == ["available"]

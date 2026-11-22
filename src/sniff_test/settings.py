@@ -39,6 +39,8 @@ class Settings:
     jobs: int = 1
     # (0.14.0) memory Barkley may give scans, in GB; 0 is Auto (what's free, less a reserve)
     memory_gb: int = 0
+    # (0.15, #20) scans don't start with less free than this, in MB; 0: never refused
+    memory_floor_mb: int = 1024
     # (0.14.1) analyzers/libraries.py: unchanged published npm files aren't read as code
     libraries: bool = True
     # (0.14.1) disk for answers about code already read (scancache), in MB; 0: off
@@ -52,6 +54,10 @@ class Settings:
     # (0.15, his report) months without a push after which an app's page and card say the
     # project has gone quiet; 0: never say it. Context only, never a reading.
     quiet_months: int = 12
+    # (0.15, #29) which auto-sniff results notify: all | medium | high | threat (Exposure
+    # at or above that level, or any sign of malicious behavior). A sniff that didn't
+    # finish or couldn't run always notifies.
+    notify_when: str = "all"
 
     @property
     def where(self) -> str:
@@ -72,7 +78,15 @@ DEFAULTS = Settings()
 # "Reset to defaults" per section of the page
 PARTS = {
     "readings": ("exposure", "network", "show_minor", "quiet_months"),
-    "checking": ("parallel", "jobs", "memory_gb", "libraries", "cache_mb", "token_days"),
+    "checking": (
+        "parallel",
+        "jobs",
+        "memory_gb",
+        "memory_floor_mb",
+        "libraries",
+        "cache_mb",
+        "token_days",
+    ),
 }
 
 
@@ -88,9 +102,11 @@ CHOICES: dict[str, tuple[Any, ...]] = {
     "parallel": (1, 2, 3, 4),
     "jobs": (1, 2, 3, 4),
     "memory_gb": (0, 2, 3, 4, 6, 8, 12, 16),
+    "memory_floor_mb": (1024, 512, 0),
     "cache_mb": (0, 512, 1024, 2048, 4096),
     "token_days": (30, 60, 90, 180),
     "quiet_months": (0, 6, 12, 24, 36),
+    "notify_when": ("all", "medium", "high", "threat"),
 }
 
 

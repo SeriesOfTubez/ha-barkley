@@ -166,9 +166,13 @@ def cpu_check(missing: list[str] | bool | None = False) -> Check:
     return Check("CPU", False, f"missing {', '.join(gap)}. {cpu.FIX}")
 
 
+# (0.15, #20) Settings → Low memory; the panel sets it before Diagnostics runs
+memory_floor: int = memory.REFUSE_BELOW
+
+
 def memory_check(mem: memory.Memory | None = None) -> Check:
-    """The scan guard: warn under ~2 GB available, refuse under ~1 GB."""
-    mem = mem or memory.check()
+    """The scan guard: warn under ~2 GB available, refuse under the Low memory floor."""
+    mem = (mem or memory.check()).with_floor(memory_floor)
     label = {"ok": "ok", "warn": "LOW", "refuse": "TOO LOW", "unknown": "unknown"}[mem.level]
     return Check(f"memory guard ({label})", not mem.refuse, mem.message())
 

@@ -78,3 +78,17 @@ def test_osv_scanner_is_checked_on_a_lockfile_not_only_by_version(monkeypatch):
 def test_osv_sample_check_passes_with_the_real_tool(tmp_path):
     check = doctor._osv_scan(tmp_path, tmp_path)
     assert check.ok, (check.summary, check.stderr)
+
+
+def test_the_low_memory_setting_moves_the_floor(monkeypatch):
+    """(0.15, #20) Settings → Low memory: 1 GB (default), 0.5 GB or never refuse."""
+    from sniff_test import memory
+
+    m = memory.Memory("refuse", int(0.6 * memory.GIB), 2 * memory.GIB)
+    assert m.with_floor(memory.REFUSE_BELOW).refuse
+    assert not m.with_floor(512 * 1024 * 1024).refuse
+    assert m.with_floor(512 * 1024 * 1024).level == "warn"
+    assert not m.with_floor(0).refuse
+    assert "change Low memory in Settings" in m.with_floor(memory.REFUSE_BELOW).message()
+    monkeypatch.setattr(doctor, "memory_floor", 0)
+    assert doctor.memory_check(m).ok

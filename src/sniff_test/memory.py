@@ -7,6 +7,8 @@ figure, since no cgroup limit applies) and:
 - warn under ~2 GB available: the scan runs, the panel and Diagnostics say why it may
   be slow or get killed;
 - refuse under ~1 GB: the scan doesn't start, so it can't push HA itself out of memory.
+  (0.15, #20) Settings → Low memory lowers that floor to 0.5 GB or turns it off, for a
+  2 GB machine whose owner accepts the risk (his promise on the issue).
 
 Standalone (a container next to HA or on another machine) the container may have a
 memory limit (`docker run --memory`, compose `mem_limit`), and /proc/meminfo inside it
@@ -19,7 +21,7 @@ The guard never touches a score: a refused scan simply doesn't exist.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 GIB = 1024**3
@@ -41,9 +43,17 @@ class Memory:
     total: int | None
     limited: bool = False  # `total` is the container's limit, not the machine's
 
+    floor: int = REFUSE_BELOW  # (0.15, #20) the Settings floor; 0: scans are never refused
+
     @property
     def refuse(self) -> bool:
         return self.level == "refuse"
+
+    def with_floor(self, floor: int) -> Memory:
+        """The same reading judged against the Low memory setting (0: never refuse)."""
+        if self.available is None:
+            return replace(self, floor=floor)
+        return replace(self, level=_level(self.available, floor), floor=floor)
 
     def message(self) -> str:
         if self.available is None:
@@ -57,8 +67,8 @@ class Memory:
                 else "to keep Home Assistant itself safe. Free some memory"
             )
             return (
-                f"{have}: under {REFUSE_BELOW / GIB:.0f} GB, so scans are refused {why} "
-                "and try again."
+                f"{have}: under {_gb(self.floor)}, so scans are refused {why} "
+                "and try again, or change Low memory in Settings."
             )
         if self.level == "warn":
             return (
@@ -82,8 +92,12 @@ def parse(text: str) -> Memory:
     return Memory(_level(avail), avail, vals.get("MemTotal"))
 
 
-def _level(avail: int) -> str:
-    return "refuse" if avail < REFUSE_BELOW else "warn" if avail < WARN_BELOW else "ok"
+def _gb(n: int) -> str:
+    return f"{n / GIB:.0f} GB" if n % GIB == 0 else f"{n / GIB:.1f} GB"
+
+
+def _level(avail: int, floor: int = REFUSE_BELOW) -> str:
+    return "refuse" if avail < floor else "warn" if avail < WARN_BELOW else "ok"
 
 
 def _read_int(path: Path) -> int | None:

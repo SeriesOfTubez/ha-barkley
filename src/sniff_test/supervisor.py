@@ -871,7 +871,26 @@ class Installed:
 
     @property
     def update(self) -> bool:
-        return bool(self.available) and self.available != self.installed
+        """(0.15, #27) Only a newer version is an update: on a pre-release track the
+        Marketplace can offer the older stable release, which isn't one."""
+        if not self.available or self.available == self.installed:
+            return False
+        have, offer = _vkey(self.installed), _vkey(self.available)
+        if have[0] and offer[0]:  # both are versions (a commit hash isn't)
+            return offer > have
+        return True
+
+    @property
+    def prerelease(self) -> bool:
+        """(0.15, #27) The installed version is a pre-release (`2.0.0-beta.3`, `2.0.0b1`)."""
+        nums, final = _vkey(self.installed)
+        return bool(nums) and not final
+
+
+def _vkey(version: str) -> tuple:
+    from sniff_test.models import version_key
+
+    return version_key("PyPI", version)
 
 
 def parse_installed(result: Any) -> tuple[list[Installed], dict[str, int]]:

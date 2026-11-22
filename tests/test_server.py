@@ -432,6 +432,19 @@ def test_memory_guard_warns_and_refuses(addon):
     assert scan_fn.calls == []
 
 
+def test_low_memory_off_lets_a_scan_run_under_1_gb(addon):
+    """(0.15, #20) Settings → Low memory: Scan anyway."""
+    _, scan_fn, base, httpd, state = addon
+    state["mem"] = _mem(0.5)
+    _worker(httpd).floor_fn = lambda: 0
+    _, _, page = get(base + "/")
+    assert "scans are refused" not in page
+    post(base + "/scan", {"repo": "acme/acme", "ref": "v1", "token": token(base)})
+    _worker(httpd).wait()
+    assert _worker(httpd).jobs[0].state == "done"
+    assert scan_fn.calls
+
+
 def test_no_installed_section_outside_an_addon(panel):
     _, _, base, _ = panel
     _, _, page = get(base + "/")
