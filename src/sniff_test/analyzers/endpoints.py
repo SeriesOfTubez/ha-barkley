@@ -370,6 +370,41 @@ def _bare_ref(value: str, rel: str, line: int) -> HostRef | None:
     return HostRef(v, rel, line, None, None)
 
 
+_MAX_JSON = 2 * 1024 * 1024
+_MAX_JSON_FILES = 400
+
+
+def _json_keys(root: Path) -> set[str]:
+    """(0.15, issue #14) Dotted keys in the app's own JSON files (translation catalogs):
+    `i18n.Msg("timeline.when.at")` names a key of `frontend/i18n/.../nl.json`, not a site
+    in Austria. Parsed only; bounded by size and count."""
+    import json
+
+    keys: set[str] = set()
+    seen = 0
+    for p in sorted(root.rglob("*.json")):
+        if seen >= _MAX_JSON_FILES or not p.is_file() or p.is_symlink():
+            continue
+        seen += 1
+        try:
+            if p.stat().st_size > _MAX_JSON:
+                continue
+            data = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, ValueError, RecursionError):
+            continue
+        stack = [data]
+        while stack and len(keys) < 200_000:
+            node = stack.pop()
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if isinstance(k, str) and "." in k:
+                        keys.add(k.strip().lower())
+                    stack.append(v)
+            elif isinstance(node, list):
+                stack.extend(node)
+    return keys
+
+
 def extract(root: Path) -> tuple[list[HostRef], list[tuple[str, int]]]:
     """All host references under root, plus (file, line) of Telegram bot-token literals."""
     refs: list[HostRef] = []
@@ -398,6 +433,9 @@ def extract(root: Path) -> tuple[list[HostRef], list[tuple[str, int]]]:
                 for q in re.finditer(r"[\"'`](\d{1,3}(?:\.\d{1,3}){3})[\"'`]", chunk):
                     if bare := _bare_ref(q[1], rel, line):
                         refs.append(bare)
+    if any(r.url is None for r in refs):
+        keys = _json_keys(root)
+        refs = [r for r in refs if r.url is not None or r.host not in keys]
     return refs, tokens
 
 

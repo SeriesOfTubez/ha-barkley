@@ -315,3 +315,20 @@ def test_anyone_else_s_path_on_shared_hosting_is_not(tmp_path):
                   "https://gitlab.com/acme2/x")  # fmt: skip
     assert got == {"github.com": "infrastructure", "raw.githubusercontent.com": "infrastructure",
                    "gitlab.com": "infrastructure"}  # fmt: skip
+
+
+def test_a_translation_key_is_not_a_site(tmp_path):
+    """(0.15, issue #14 bug 4) `Msg("timeline.when.at")` names a key of the app's own
+    translation catalog; a scheme-less name that is no JSON key stays a site."""
+    root = _write(
+        tmp_path / "acme_weather",
+        "views.py",
+        'def at(i18n, t):\n    return i18n.Msg("timeline.when.at", t=t)\n\n'
+        'BACKUP = "api.acme-weather.at"\n',
+    )
+    i18n = root / "frontend" / "i18n"
+    i18n.mkdir(parents=True)
+    (i18n / "nl.json").write_text('{"timeline.when.at": "{t}", "timeline": {"x.y": 1}}')
+    hosts = {f.key for f in endpoints.run(_target(root)).facts if f.kind == "host"}
+    assert "timeline.when.at" not in hosts
+    assert "api.acme-weather.at" in hosts
