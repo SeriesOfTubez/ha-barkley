@@ -275,6 +275,30 @@ def test_storage_levels(tmp_path):
     }
 
 
+ABSOLUTE_STORAGE = {
+    "const.py": 'DOMAIN = "acme_power"\n',
+    "store.py": """\
+        from custom_components.acme_power.const import DOMAIN
+        from custom_components.other_app.const import DOMAIN as OTHER
+
+
+        def paths(hass):
+            a = hass.config.path(f".storage/{DOMAIN}.json")
+            b = hass.config.path(f".storage/{OTHER}.json")
+            return a, b
+        """,
+}
+
+
+@needs_semgrep
+def test_its_own_package_imported_absolutely_is_its_own(tmp_path):
+    """(0.15) `from custom_components.<its folder>.const import DOMAIN` (4 wrong findings
+    on the 600-app batch); another package's constant stays unknown."""
+    result, _ = _run(tmp_path, ABSOLUTE_STORAGE)
+    got = {(f.line, f.rule_id) for f in result.findings if "storage" in f.rule_id}
+    assert got == {(6, "ha-own-storage-path"), (7, "ha-raw-storage-access")}
+
+
 # --- change 9: runtime installs from a fixed list -------------------------------------
 
 PIP = {

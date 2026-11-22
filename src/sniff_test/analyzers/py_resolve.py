@@ -72,7 +72,17 @@ class Resolver:
     def _module_file(self, rel: str, level: int, module: str | None) -> str | None:
         """`from <level dots><module> import x` in file `rel` -> that module's file."""
         if level == 0:
-            return None  # absolute imports: another package, never resolved
+            # (0.15) `from custom_components.<this folder>.const import DOMAIN` is the app's
+            # own module, written absolutely (4 wrong findings on the 600-app batch);
+            # any other absolute import is another package, never resolved.
+            parts = module.split(".") if module else []
+            if parts[:2] != ["custom_components", self.root.name]:
+                return None
+            stem = Path(*parts[2:]) if parts[2:] else Path()
+            for cand in (stem.with_suffix(".py") if parts[2:] else None, stem / "__init__.py"):
+                if cand is not None and self.tree(cand.as_posix()) is not None:
+                    return cand.as_posix()
+            return None
         base = Path(rel).parent
         for _ in range(level - 1):
             if base == Path():
