@@ -63,6 +63,8 @@ def test_home_assistants_own_address_is_proven(code):
         # a name given two values, or held in a block that closed before the use
         "let o=location.origin;o=u;fetch(o,{headers:h})",
         "let o=location.origin;o+=u;fetch(o,{headers:h})",
+        "let o=location.origin;if(c){o=u}fetch(o,{headers:h})",
+        "let o=location.origin;function x(){o=u}fetch(o,{headers:h})",
         "{const o=location.origin}fetch(o,{headers:h})",
         # a name never given a value here
         "fetch(o,{headers:h})",

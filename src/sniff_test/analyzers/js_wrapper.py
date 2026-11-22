@@ -27,6 +27,7 @@ Home Assistant's own origin; anything unclear keeps it.
 from __future__ import annotations
 
 import bisect
+import itertools
 import json
 import re
 import subprocess
@@ -486,6 +487,7 @@ def _text_safe(arg: str, index: _Index, path: Path) -> bool:
 
 _HA_WINDOW = 4000  # longest expression read
 _HA_SEARCH = 60000  # how far back a name's assignments are looked for
+_HA_SEEN = 64  # assignment-like matches of one name in the window
 _HA_DEFS = 8  # more assignments to one name than this: not proven
 _HA_DEPTH = 10
 _HA_STEPS = 200  # name lookups and splits per URL, so a chain of names can't blow up
@@ -592,6 +594,26 @@ class _HaContext:
     def __init__(self, text: str, at: int, fn: tuple[int, int, str] | None) -> None:
         self.text, self.at, self.fn = text, at, fn
         self.steps = 0
+        self._base = -1
+        self._depth: list[int] = []
+        self._floor: list[int] = []
+
+    def encloses(self, pos: int) -> bool:
+        """Is the block that holds offset `pos` still open at the use? (Counted once per
+        URL over the search window: depth at each offset, and the lowest depth after it.)"""
+        if self._base < 0:
+            self._base = max(0, self.at - _HA_SEARCH)
+            depth, out = 0, []
+            for c in self.text[self._base : self.at]:
+                depth += (c == "{") - (c == "}")
+                out.append(depth)
+            floor, low = [0] * len(out), depth
+            for i in range(len(out) - 1, -1, -1):
+                low = min(low, out[i])
+                floor[i] = low
+            self._depth, self._floor = out, floor
+        i = pos - self._base
+        return 0 <= i < len(self._depth) and self._floor[i] >= self._depth[i]
 
 
 def _assignments(name: str, ctx: _HaContext) -> list[str] | None:
@@ -614,16 +636,44 @@ def _assignments(name: str, ctx: _HaContext) -> list[str] | None:
             return None
         lo = inner + decl[-1].start()
     window = ctx.text[lo : ctx.at]
+    # The assignments that can set the value used: those in a block still open at the use
+    # (not another function's), and, after the first of them, any plain assignment in a
+    # block that has closed since (`if (c) { o = u }` still changes o); only a fresh
+    # `let`/`const` in a closed block is a different variable.
+    found = list(
+        itertools.islice(re.finditer(rf"(?<![\w$.]){esc}\s*+=(?![=>])", window), _HA_SEEN + 1)
+    )
+    if len(found) > _HA_SEEN:
+        return None  # a name assigned this often in reach isn't worth proving
+    open_ = [d for d in found if ctx.encloses(lo + d.start())]
+    # the innermost declaration still open at the use shadows every one before it
+    decls = [
+        d
+        for d in open_
+        if re.search(r"(?:let|const|var)\s++$", window[max(0, d.start() - 12) : d.start()])
+    ]
+    if decls:
+        open_ = [d for d in open_ if d.start() >= decls[-1].start()]
+    if not open_:
+        return None
+    first = open_[0].start()
     if re.search(
         rf"(?<![\w$.]){esc}\s*+(?:[-+*/%&|^]|\*\*|<<|>>>?|&&|\|\||\?\?)=|\+\+\s*+{esc}(?![\w$])"
         rf"|(?<![\w$.]){esc}\s*+\+\+",
-        window,
+        window[first:],
     ):
         return None
-    defs = list(re.finditer(rf"(?<![\w$.]){esc}\s*+=(?![=>])", window))
-    if not defs or len(defs) > _HA_DEFS:
+    defs = [
+        d
+        for d in found
+        if d in open_
+        or (
+            d.start() > first
+            and not re.search(r"(?:let|const)\s++$", window[max(0, d.start() - 12) : d.start()])
+        )
+    ]
+    if len(defs) > _HA_DEFS:
         return None
-    first = defs[0].start()
     between = window[first:]
     # a parameter of a function defined between the first assignment and the use, or
     # the name taken out of an array or object (`const [C] = p`, `({ C }) => …`)
@@ -633,15 +683,6 @@ def _assignments(name: str, ctx: _HaContext) -> list[str] | None:
         between,
     ):
         return None
-    # the block that holds the first assignment must still be open at the use
-    depth = 0
-    for c in between:
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth < 0:
-                return None
     values = []
     for d in defs:
         rhs = window[d.end() : d.end() + _HA_WINDOW]
