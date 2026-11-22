@@ -71,6 +71,11 @@ PUBLIC = 1.5
 EXPOSURE_MAX = 10.0
 LOW, MEDIUM = 2.0, 5.0
 
+# (0.15, his decision 2026-11-22) A build tool known to be malware: Threat 2.5 by default
+# ("possible"), 2 or 3 in Settings (settings.build_tool_points)
+BUILD_RULE = "dep-malicious-build"
+BUILD_TOOL = 2.5
+
 UNAUTH_VIEW = "ha-unauth-view"
 TOKEN_CHECK = "ha-auth-token-check"  # noqa: S105 - a rule id
 AUTH_INTERNALS = "ha-auth-internals"
@@ -94,6 +99,7 @@ _THREAT_PHRASE = {
     ),
     "endpoint-exfil-host": "sends data to a site used for collecting data",
     "dep-malicious": "includes a package known to be malware",
+    "dep-malicious-build": "is built with a tool known to be malware",
     "py-b64-exec": "decodes hidden code and runs it",
     "card-b64-eval": "decodes hidden code and runs it",
     "card-eval-remote": "runs code it downloads or receives",
@@ -143,14 +149,18 @@ def _is_threat(rule_id: str) -> bool:
     return kinds.is_threat(rule_id) or rule_id in EXTRA_THREAT_RULES
 
 
-def _threat(findings: list[dict[str, Any]]) -> tuple[float, str]:
+def _threat(findings: list[dict[str, Any]], build_tool: float = BUILD_TOOL) -> tuple[float, str]:
     by_rule: dict[str, list[str]] = defaultdict(list)
     for f in findings:
         if _is_threat(str(f.get("rule_id"))):
             by_rule[str(f["rule_id"])].append(str(f.get("severity") or "info"))
     total = 0.0
     critical = False
-    for sevs in by_rule.values():
+    for rule, sevs in by_rule.items():
+        if rule == BUILD_RULE:  # the user's setting, whatever the stored severity
+            pts = [build_tool] * len(sevs)
+            total += pts[0] + REPEAT * sum(pts[1:])
+            continue
         pts = sorted((THREAT_POINTS.get(s, 0.0) for s in sevs), reverse=True)
         total += pts[0] + REPEAT * sum(pts[1:])
         critical = critical or "critical" in sevs
@@ -165,14 +175,17 @@ def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
-def compute(report: dict[str, Any], network: str = "home") -> Readings:
+def compute(
+    report: dict[str, Any], network: str = "home", build_tool: float = BUILD_TOOL
+) -> Readings:
     """`report`: a stored scan (or the panel's view of one). `network`: the preview's
-    setting (home | shared); a scan made with exposure "public" counts as on the internet."""
+    setting (home | shared); a scan made with exposure "public" counts as on the internet.
+    `build_tool`: Threat points for a build tool known to be malware (Settings)."""
     findings = [f for f in report.get("findings") or [] if not in_test_script(f)]
     complete = bool(report.get("complete", True))
     public = str(report.get("exposure") or "local") == "public"
     where = "internet" if public else (network if network in NETWORK else "home")
-    threat, phrase = _threat(findings)
+    threat, phrase = _threat(findings, build_tool)
     t_level = "none" if threat == 0 else "found" if threat >= FOUND else "possible"
     if t_level == "found":
         return Readings(threat, t_level, EXPOSURE_MAX, "high", phrase,

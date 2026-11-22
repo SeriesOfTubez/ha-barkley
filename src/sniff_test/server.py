@@ -1205,6 +1205,12 @@ def render_settings(
               sel("exposure_bar", s.exposure_bar,
                   [("medium", "Medium and high (default)"), ("high", "High only"),
                    ("always", "Always")]))
+        + row("Build tool known to be malware", "A tool the developer used to build the "
+              "app is listed as malware. It runs on their machine, not in your home, but it "
+              "could change what ships. How much it counts toward Threat: 7 and up is "
+              "found, anything under is possible.",
+              sel("build_tool_points", s.build_tool_points,
+                  [("2", "2"), ("2.5", "2.5 (default)"), ("3", "3")]))
         + row("Quiet projects", "An app's page and card say when nothing has been pushed to "
               "its project on GitHub for this long. It changes no reading.",
               sel("quiet_months", s.quiet_months,
@@ -2700,12 +2706,14 @@ class Panel:
         s = self._inputs().settings
         return shown_mod.view(rep, network=s.network, show_minor=show_minor,
                               always=s.show_minor, quiet_months=s.quiet_months,
-                              exposure_bar=s.exposure_bar)  # fmt: skip
+                              exposure_bar=s.exposure_bar,
+                              build_tool=float(s.build_tool_points))  # fmt: skip
 
     def overlay_rows(self, rows: list[ScanRow]) -> list[ScanRow]:
         """Index rows with their readings (Store.overlay), from the store's findings index:
         no report is parsed. Kept until an input changes."""
         network = self._inputs().settings.network
+        build_tool = float(self._inputs().settings.build_tool_points)
         got = {r.id: self._rows[r.id] for r in rows if r.id in self._rows}
         missing = [r.id for r in rows if r.id not in got]
         if missing:
@@ -2714,7 +2722,7 @@ class Panel:
                 if r.id in found and r.id not in got:
                     idx = {"findings": found[r.id], "complete": r.complete,
                            "exposure": r.exposure}  # fmt: skip
-                    got[r.id] = readings.compute(idx, network).to_dict()
+                    got[r.id] = readings.compute(idx, network, build_tool).to_dict()
             if len(self._rows) < 20000:
                 self._rows.update(got)
         return [replace(r, readings=got.get(r.id)) for r in rows]

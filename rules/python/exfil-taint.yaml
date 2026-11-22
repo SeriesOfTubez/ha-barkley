@@ -35,6 +35,8 @@ rules:
               - pattern: $HASS.config_entries.async_entries($D)
           - pattern-not: $HASS.config_entries.async_entries(DOMAIN)
           - pattern-not: $HASS.config_entries.async_entries(self.domain)
+          # (0.15) a flow's own handler: its domain, or in an options flow its entry id
+          - pattern-not: $HASS.config_entries.async_entries(self.handler)
       # Location of people and devices.
       - pattern: $HASS.states.get("=~/^(person|device_tracker)\./")
       - pattern: $HASS.states.async_all("=~/^(person|device_tracker)$/")
@@ -42,6 +44,32 @@ rules:
       # Process environment (SUPERVISOR_TOKEN lives here on HA OS / Supervised).
       - pattern: os.environ
       - pattern: os.getenv(...)
+    # (0.15) What a request returns is the other side's answer, not what was sent: a real
+    # integration sent the Supervisor's key to the Supervisor and then used the port it
+    # answered with to call its own add-on, which read as the key going there.
+    pattern-sanitizers:
+      # the name the response is held in (the call itself is a sink: not this)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  async with $OBJ.$METHOD(...) as $R:
+                    ...
+              - pattern-inside: |
+                  with $OBJ.$METHOD(...) as $R:
+                    ...
+              - pattern-inside: |
+                  $R = await $OBJ.$METHOD(...)
+                  ...
+              - pattern-inside: |
+                  $R = $OBJ.$METHOD(...)
+                  ...
+          - pattern: $R
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(get|post|put|patch|delete|head|request|urlopen)$
+          - metavariable-regex:
+              metavariable: $OBJ
+              regex: (?i)(session|requests|httpx|aiohttp|urllib|client)
     pattern-sinks:
       # HTTP / websocket clients (receiver name heuristics; arguments only).
       - patterns:

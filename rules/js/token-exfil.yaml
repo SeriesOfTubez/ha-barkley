@@ -40,6 +40,13 @@ rules:
       - pattern: $X.refresh_token
       - pattern: document.cookie
       - pattern: $G.document.cookie
+    # (0.15) A blob: address made in the browser never leaves it: opening or showing
+    # one sends nothing anywhere (a real panel opened a document it had fetched
+    # from HA with the token).
+    pattern-sanitizers:
+      - pattern: URL.createObjectURL(...)
+      - pattern: $G.URL.createObjectURL(...)
+
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -86,21 +93,30 @@ rules:
                       - pattern: new $G.WebSocket($URL, ...)
                       - pattern: new $G.EventSource($URL, ...)
                       - pattern: $G.open($URL, ...)
-          # Relative URLs and hass-built URLs stay on the HA origin. A relative URL
+          # Relative URLs and hass-built URLs stay on the HA origin. (0.15)
+          # `hassUrl(path)` is HA's address with `path` appended, so only a
+          # path that starts with "/", "?" or "#" (or none) counts:
+          # `hassUrl("@other.host/x")` would move the host. A relative URL
           # starts with "/" and then neither "/" nor "\\" (browsers read "/\\h" as
           # "//h"); anything appended after such a prefix can't change the origin.
           - pattern-not: fetch("=~/^\/[^\/\\]/", ...)
           - pattern-not: fetch("=~/^\/[^\/\\]/".concat(...), ...)
           - pattern-not: fetch("=~/^\/[^\/\\]/" + $Y, ...)
-          - pattern-not: fetch($H.hassUrl(...), ...)
+          - pattern-not: fetch($H.hassUrl(), ...)
+          - pattern-not: fetch($H.hassUrl("=~/^[\/?#]/"), ...)
+          - pattern-not: fetch($H.hassUrl("=~/^[\/?#]/" + $Y), ...)
           - pattern-not: $G.fetch("=~/^\/[^\/\\]/", ...)
           - pattern-not: $G.fetch("=~/^\/[^\/\\]/".concat(...), ...)
           - pattern-not: $G.fetch("=~/^\/[^\/\\]/" + $Y, ...)
-          - pattern-not: $G.fetch($H.hassUrl(...), ...)
+          - pattern-not: $G.fetch($H.hassUrl(), ...)
+          - pattern-not: $G.fetch($H.hassUrl("=~/^[\/?#]/"), ...)
+          - pattern-not: $G.fetch($H.hassUrl("=~/^[\/?#]/" + $Y), ...)
           - pattern-not: $XHR.open($M, "=~/^\/[^\/\\]/", ...)
           - pattern-not: $XHR.open($M, "=~/^\/[^\/\\]/".concat(...), ...)
           - pattern-not: $XHR.open($M, "=~/^\/[^\/\\]/" + $Y, ...)
-          - pattern-not: new WebSocket($H.hassUrl(...), ...)
+          - pattern-not: new WebSocket($H.hassUrl(), ...)
+          - pattern-not: new WebSocket($H.hassUrl("=~/^[\/?#]/"), ...)
+          - pattern-not: new WebSocket($H.hassUrl("=~/^[\/?#]/" + $Y), ...)
       - patterns:
           # Anything sent over an already-open XHR / socket.
           - pattern-either:

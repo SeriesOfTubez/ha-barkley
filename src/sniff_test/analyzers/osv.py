@@ -9,8 +9,11 @@ card lockfiles are almost entirely build tooling:
   network-vector (AV:N) CVEs are tagged inbound, so --exposure public raises them.
 - Cards: dev-only packages (build tools; never in the shipped .js) get no dep-vuln;
   bundled packages are capped at medium, with no inbound tag (browser code).
-- dep-malicious is critical everywhere, dev packages included: a malicious build tool
-  can inject code into the bundle (the event-stream attack).
+- dep-malicious is critical for anything that ships. (0.15, his decision 2026-11-22) A
+  malicious package only used to build (dev-only, or a known build tool) is
+  dep-malicious-build: high, Threat "possible" (points set in Settings), since it runs on
+  the developer's machine and could still change the bundle (the event-stream attack).
+- npm's empty "0.0.1-security" stand-in is an info note (dep-npm-standin).
 
 A scanned repo can ship an `osv-scanner.toml` that ignores advisories (e.g. hides a
 MAL- entry). So lockfiles are copied alone into an empty directory of ours, and we always
@@ -443,6 +446,76 @@ def facts_sentence(d: DepFacts) -> str:
     return out
 
 
+BUILD_RULE = "dep-malicious-build"
+STANDIN_RULE = "dep-npm-standin"
+_SUMMARY_MAX = 240
+_OS_NAMES = {"darwin": "Macs", "linux": "Linux", "win32": "Windows"}
+
+
+def _summary(p: _Pkg, ids: list[str]) -> str:
+    """The advisory's own one-line summary (OSV's text, not the scanned app's)."""
+    for vid in ids:
+        text = str((p.vulns.get(vid) or {}).get("summary") or "").strip()
+        if text:
+            text = " ".join(text.split())[:_SUMMARY_MAX]
+            return text if text.endswith(".") else text + "."
+    return ""
+
+
+def _malicious_build(p: _Pkg, mal: list[str], file: str | None, os_: list[str] | None) -> Finding:
+    """(0.15, his decision 2026-11-22) Malware in a package only used to build: it runs on
+    the developer's machine, not in your home, but it could change what ships. Threat
+    "possible" (high; the points are a Setting), with what the advisory says."""
+    said = _summary(p, mal)
+    only = [o for o in (os_ or []) if not o.startswith("!")]
+    where = (
+        f" It only installs on {' and '.join(_OS_NAMES.get(o, o) for o in only[:3])}."
+        if only
+        else ""
+    )
+    return Finding(
+        rule_id=BUILD_RULE,
+        title="Built with a tool known to be malware",
+        severity=Severity.HIGH,
+        category=Category.DEPENDENCY,
+        message=(
+            f"{p.name} {p.version} is used to build the app and is listed as malicious "
+            f"({_ids_text(mal)}).{(' ' + said) if said else ''}{where} A build tool runs on "
+            "the developer's machine while the app is built, not in your home, but it could "
+            "change what ships. Barkley read the shipped files themselves; anything found "
+            "there is listed on its own. The developer should update or remove this tool."
+        ),
+        file=file,
+        evidence=f"{p.name}@{p.version} ({p.ecosystem}): {_ids_text(mal)}",
+        tags=frozenset({Tag.MALWARE, Tag.POSSIBLE}),
+        analyzer=NAME,
+        platforms=frozenset(p.platforms),
+    )
+
+
+def standin_note(p: _Pkg, file: str | None, history: Callable[[str], str] | None) -> Finding:
+    """(0.15, his decision 2026-11-22) npm's empty stand-in for a package it removed as
+    malware ("0.0.1-security"): no code, so nothing installed with it, but a dependency
+    nobody needed. `history` says, when it can, whether an earlier version may have been
+    installed on the developer's machine."""
+    told = history(p.name) if history is not None else ""
+    return Finding(
+        rule_id=STANDIN_RULE,
+        title="Lists an empty package npm put in place of removed malware",
+        severity=Severity.INFO,
+        category=Category.DEPENDENCY,
+        message=(
+            f"{p.name} {p.version} is the empty package npm publishes after it removes a "
+            "malicious one, so the name can't be taken again. It has no code: nothing from "
+            "it is installed or ships with the app. The app doesn't need it."
+            + (f" {told}" if told else "")
+        ),
+        file=file,
+        evidence=f"{p.name}@{p.version} ({p.ecosystem})",
+        analyzer=NAME,
+    )
+
+
 def to_findings(
     pkgs: list[_Pkg],
     file: str | None,
@@ -452,6 +525,8 @@ def to_findings(
     direct: set[str] | None = None,
     lookup: Lookup | None = None,
     build_tool: Callable[[str], bool] | None = None,
+    os_of: dict[tuple[str, str], list[str]] | None = None,
+    standin_history: Callable[[str], str] | None = None,
 ) -> list[Finding]:
     """skip_vulns: names whose CVEs aren't ours to report (HA-provided).
     dev_only: (name, version) of build-only packages: malware is reported, CVEs aren't.
@@ -462,8 +537,13 @@ def to_findings(
         evidence_base = f"{p.name}@{p.version} ({p.ecosystem})"
         plats = frozenset(p.platforms)
         if npm_standin(p.ecosystem, p.version):
+            out.append(standin_note(p, file, standin_history))
             continue
         mal = sorted(v for v, data in p.vulns.items() if is_malicious(data))
+        builds = (p.name, p.version) in dev_only or (build_tool is not None and build_tool(p.name))
+        if mal and builds:
+            out.append(_malicious_build(p, mal, file, (os_of or {}).get((p.name, p.version))))
+            continue
         if mal:
             out.append(
                 Finding(
@@ -644,6 +724,29 @@ def check_python(
     if errors:
         detail += "; " + " | ".join(errors)
     return AnalyzerResult(name, state, findings, detail, tool_version=osv_version())
+
+
+def npm_os(lockfile: Path) -> dict[tuple[str, str], list[str]]:
+    """(name, version) -> the systems a package-lock.json (v2/v3) says it installs on
+    (`"os": ["darwin"]`); empty for other lockfiles, which don't record it."""
+    if lockfile.name != "package-lock.json":
+        return {}
+    try:
+        if lockfile.stat().st_size > 64 * 1024 * 1024:
+            return {}
+        doc = json.loads(lockfile.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError, RecursionError):
+        return {}
+    out: dict[tuple[str, str], list[str]] = {}
+    pkgs = doc.get("packages") if isinstance(doc, dict) else None
+    for key, meta in (pkgs or {}).items() if isinstance(pkgs, dict) else ():
+        if not isinstance(meta, dict) or not isinstance(meta.get("os"), list):
+            continue
+        name = str(key).rsplit("node_modules/", 1)[-1]
+        version = meta.get("version")
+        if name and isinstance(version, str):
+            out[(name, version)] = [str(o)[:20] for o in meta["os"][:5]]
+    return out
 
 
 def npm_dev_only(lockfile: Path) -> set[tuple[str, str]]:
@@ -1039,14 +1142,16 @@ def npm_lockfiles(root: Path) -> list[Path]:
     return [root / n for n in NPM_LOCKFILES if (root / n).is_file() and not (root / n).is_symlink()]
 
 
-def run_npm(target: Target, work: Path) -> AnalyzerResult:
+def run_npm(target: Target, work: Path, gh: Any = None) -> AnalyzerResult:
     root = target.source_root
     if target.kind is not TargetKind.PLUGIN or root is None:
         return AnalyzerResult(f"{NAME}-npm", AnalyzerState.NOT_APPLICABLE)
-    return check_npm(root, work)
+    from sniff_test.analyzers import npm_meta
+
+    return check_npm(root, work, npm_meta.standin_history(target.repo, gh))
 
 
-def check_npm(root: Path, work: Path) -> AnalyzerResult:
+def check_npm(root: Path, work: Path, history: Any = None) -> AnalyzerResult:
     """The card's lockfiles (and package.json) under `root`: the source tree at the
     scanned ref, or the copies a stored scan saved (recheck.py)."""
     name = f"{NAME}-npm"
@@ -1093,6 +1198,8 @@ def check_npm(root: Path, work: Path) -> AnalyzerResult:
             direct=_npm_direct(root),
             lookup=latest_release,
             build_tool=is_build_tool,
+            os_of=npm_os(lf),
+            standin_history=history(lf.relative_to(root).as_posix()) if history else None,
         )
     state = AnalyzerState.ERROR if errors else AnalyzerState.OK
     detail = ", ".join(lf.name for lf in lockfiles) + (f"; {' | '.join(errors)}" if errors else "")

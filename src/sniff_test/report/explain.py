@@ -94,6 +94,22 @@ RULES: dict[str, Explanation] = {
         "Yes, unless the app is built to manage your configuration and you trust it.",
         "Reads your secrets",
     ),
+    "py-pickle-stored": _E(
+        "Unpickles data it stored",
+        "Pickle is a Python format that can run code while it loads. The app decodes data "
+        "it saved or was given (a cookie, an id) and loads it with pickle. That's only "
+        "safe while nobody else can change that data.",
+        "Usually not. It's a habit worth fixing, not a sign of hidden code.",
+        "Loads saved data with pickle",
+    ),
+    "ha-read-own-secret": _E(
+        "Reads one named entry from your secrets file",
+        "secrets.yaml holds the passwords and keys for your whole Home Assistant. This app "
+        "opens it and reads one entry by name, usually a setting you put there for this "
+        "app. Barkley saw no other entry used where the file is opened.",
+        "Usually not, if you put that entry there for this app.",
+        "Reads one secret by name",
+    ),
     "ha-read-auth-storage": _E(
         "Opens Home Assistant's login and password storage",
         "These files hold scrambled copies of your passwords (hashes), login tokens and "
@@ -323,6 +339,15 @@ RULES: dict[str, Explanation] = {
         "Yes. Find out why the card hides the name before you install it.",
         "Hides a name",
     ),
+    "card-code-loader": _E(
+        "Can run code from an address it is given",
+        "Part of its code downloads JavaScript from an address it is handed and runs it, "
+        "often a library's way of adding plugins. Barkley lists any script address it sees "
+        "written in the app as code the app may load. If nothing hands it an address, it "
+        "loads nothing.",
+        "Usually not on its own. Check the code the app loads from other sites, if any.",
+        "Code loader",
+    ),
     "card-eval-remote": _E(
         "Its dashboard card runs code it gets from outside",
         "The card takes text from a download, a message, the page address or browser "
@@ -412,6 +437,25 @@ RULES: dict[str, Explanation] = {
         "Yes. Don't install it.",
         "Malware library",
     ),
+    "dep-malicious-build": _E(
+        "Built with a tool known to be malware",
+        "A tool the developer used to build this app is on a public list of known malicious "
+        "packages. It runs on the developer's machine while the app is built, not in your "
+        "home, but it could change the files that ship. Barkley read the shipped files "
+        "themselves, and anything found in them is listed on its own. The developer should "
+        "update or remove the tool.",
+        "Maybe. Check what Barkley found in the shipped files, and whether the project is "
+        "still looked after.",
+        "Malware build tool",
+    ),
+    "dep-npm-standin": _E(
+        "Lists an empty package npm put in place of removed malware",
+        "When npm removes a malicious package, it publishes an empty one under the same "
+        "name so nobody can take it again. This app's lock file lists that empty package. "
+        "It has no code, so nothing from it is installed or ships with the app.",
+        "No. It's a dependency the app doesn't need.",
+        "Empty stand-in package",
+    ),
     "dep-vuln": _E(
         "Uses a code library with known security bugs",
         "One of the code libraries this app uses has publicly known security bugs. A newer "
@@ -453,6 +497,14 @@ RULES: dict[str, Explanation] = {
         "No. The bugs are in the developer's build step, not in what you install. Barkley "
         "shows this for information and doesn't score it.",
         "Build tool bugs",
+    ),
+    "dep-lookalike-own": _E(
+        "Uses its owner's own library with a name close to a popular one",
+        "One of its libraries has a name one typo away from a well-known package. PyPI's "
+        "record of how it was published names a GitHub workflow in this app owner's "
+        "account, so it is the owner's own library, not an imitation.",
+        "No.",
+        "Owner's own library",
     ),
     "dep-typosquat": _E(
         "Uses a code library with a name one typo away from a popular one",

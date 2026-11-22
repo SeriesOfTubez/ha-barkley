@@ -3191,6 +3191,24 @@ def quiet(report: dict[str, Any], today: date | None = None) -> tuple[str, str]:
             f"GitHub was on {day}, {over}{span} ago.")  # fmt: skip
 
 
+def build_tool_upkeep(report: dict[str, Any], f: dict[str, Any]) -> str:
+    """(0.15, his ask 2026-11-22) Beside a build tool known to be malware: when the project
+    last changed, a hint whether the developer is likely to update it. From GitHub's
+    record as it was when the scan ran."""
+    if f.get("rule_id") != "dep-malicious-build":
+        return ""
+    prov = report.get("provenance") if isinstance(report.get("provenance"), dict) else {}
+    _chip, gone = quiet(report)
+    if gone:
+        said = gone + " A fix for this is less likely."
+    elif day := _day(prov.get("pushed_at")):
+        said = (f"When Barkley sniffed it, the last push to the project on GitHub was on {day}."
+                " The developer is still making changes, so a fix is possible.")  # fmt: skip
+    else:
+        return ""
+    return f"<dt>Will it be fixed?</dt><dd>{e(said, 400)}</dd>"
+
+
 def _count(n: int, one: str, many: str) -> str:
     return f"one {one}" if n == 1 else f"{n:,} {many}"
 
@@ -4352,7 +4370,8 @@ def render_app(
             next(
                 (patch_html(items[x["id"]].get("patch")) for x in fs if x["id"] in items),
                 "",
-            ),
+            )
+            + build_tool_upkeep(report, f),
             next(
                 (
                     explain.patch_means(items[x["id"]].get("patch"))

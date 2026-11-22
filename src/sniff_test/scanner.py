@@ -17,6 +17,7 @@ from sniff_test.analyzers import (
     libraries,
     npm_meta,
     osv,
+    packed,
     py_env,
     py_group,
     py_pages,
@@ -89,7 +90,9 @@ def _dependency_analyzers(
         say("osv (npm)")
         if offline:
             return [AnalyzerResult("osv-npm", AnalyzerState.SKIPPED, detail="offline")], None, None
-        return [osv.run_npm(target, ws)], None, None
+        from sniff_test.fetch.github import GitHub
+
+        return [osv.run_npm(target, ws, GitHub.from_env())], None, None
 
     env, env_error = None, "offline"
     if not offline:
@@ -106,7 +109,16 @@ def _dependency_analyzers(
         deps_result.detail = f"HA {env.version}, Python {env.python_version}: {deps_result.detail}"
     requirements = resolution.requirements if resolution else []
     say("package metadata")
-    results = [deps_result, pypi_meta.run(requirements, resolution, env, online=not offline)]
+    results = [
+        deps_result,
+        pypi_meta.run(
+            requirements,
+            resolution,
+            env,
+            online=not offline,
+            owner=(target.repo or "").split("/", 1)[0] or None,
+        ),
+    ]
     if resolution and resolution.lockfiles:
         say("osv (python)")
         results.append(osv.run_python(resolution, ws))
@@ -196,7 +208,11 @@ def scan(
         else:
             say("published libraries")
             libs = libraries.recognise(target, ws, enabled=recognise_libraries)
-        with libraries.set_aside(target.root, libs.aside, ws):
+        # (0.15) packed text unpacked next to the app's files while they are read
+        with (
+            libraries.set_aside(target.root, libs.aside, ws),
+            packed.unpacked(target.root) as unpacked,
+        ):
             say("semgrep")
             # (0.14.1) answers for code already read (scancache); 0 MB: off
             cache = scancache.Cache(logic.key(), cache_mb) if cache_mb > 0 else None
@@ -205,7 +221,18 @@ def scan(
                 cache.prune()
             say("endpoints")
             results.append(endpoints.run(target))
+            for r in results:  # a decode Barkley unpacked and read, or a picture or key
+                r.findings = [f for f in r.findings
+                              if not packed.explained(f, target.root, unpacked)]  # fmt: skip
         results.append(libs.analyzer)
+        results.append(
+            AnalyzerResult(
+                packed.NAME,
+                AnalyzerState.OK,
+                packed.notes(unpacked, target.domain),
+                detail=f"{len(unpacked.files)} unpacked",
+            )
+        )
         say("repo signals")
         repo_result, provenance = repo_signals.run(target)
         results.append(repo_result)
@@ -236,9 +263,12 @@ def scan(
             js_reqs = js_requests.requests_in(target.root)
             reqs = js_reqs[0]
             called = {r.host for r in js_reqs[0] if r.host} | set(js_reqs[1])
+        addressed = None
         if any(r.host is None for r in reqs):
             called = None
-        findings += correlate.correlate(findings, facts, target.root, called)
+            if target.kind is TargetKind.INTEGRATION:
+                addressed = endpoints.addressed_hosts(target.root)
+        findings += correlate.correlate(findings, facts, target.root, called, addressed)
         if target.kind is TargetKind.PLUGIN:  # (0.15) code it loads from a code CDN
             findings = js_remote.merge(findings, js_remote.loads_in(target.root))
             findings = js_address.add(findings, target.root)  # settings from the address

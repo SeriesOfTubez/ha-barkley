@@ -82,3 +82,65 @@ def lookup(source_root: Path | None) -> dict[str, dict[str, Any]]:
             out[name] = {"newest": newest[:40], "newer": newer, "installed": version,
                          **({"newest_date": date} if date else {})}  # fmt: skip
     return out
+
+
+# --- (0.15, his decision 2026-11-22) npm's empty stand-in, with its history -----------------
+
+STANDIN = "0.0.1-security"
+
+
+def standin_history(repo: str | None, gh: Any) -> Any:
+    """For osv.standin_note: given the lockfile's path in the repo, a function telling,
+    for one package name, whether the app's lockfile held that name before npm emptied it
+    (an earlier, malicious version may then have been installed on the developer's
+    machine) or only got it after (only the empty package was ever installed). Three
+    public reads: npm's date for the empty version, the lockfile's last commit before it,
+    the lockfile at that commit. Anything that fails says nothing: never a result."""
+    if not repo or "/" not in repo or gh is None:
+        return None
+    owner, name = repo.split("/", 1)
+
+    def for_lockfile(lock: str) -> Any:
+        seen: dict[str, str] = {}
+
+        def tell(pkg: str) -> str:
+            if pkg in seen:
+                return seen[pkg]
+            seen[pkg] = ""
+            if not _NAME.fullmatch(pkg) or not re.fullmatch(r"[\w./-]{1,200}", lock):
+                return ""
+            try:
+                doc = http.lookup_json("https://registry.npmjs.org/" + pkg.replace("/", "%2F"),
+                                       TIMEOUT)  # fmt: skip
+                emptied = str(((doc or {}).get("time") or {}).get(STANDIN) or "")
+                if not re.fullmatch(r"\d{4}-\d\d-\d\dT[\d:.]+Z", emptied):
+                    return ""
+                day = emptied[:10]
+                commits = gh.get_json(
+                    f"/repos/{owner}/{name}/commits?path={lock}&until={emptied}&per_page=1"
+                )
+                if not commits:
+                    said = (f"npm emptied it on {day}, before the app's lockfile existed, so "
+                            "only the empty package was ever installed.")  # fmt: skip
+                else:
+                    text = gh.file_at(owner, name, lock, str(commits[0].get("sha") or ""))
+                    if text is None:
+                        return ""
+                    held = any(k in text for k in (f'"{pkg}"', f"\n{pkg}@", f'"{pkg}@',
+                                                   f"node_modules/{pkg}\""))  # fmt: skip
+                    said = (
+                        f"It was already in the app's lockfile before npm emptied it on {day}, "
+                        "so an earlier version may have been installed on the developer's "
+                        "machine."
+                        if held
+                        else f"It was added to the app's lockfile after npm emptied it on "
+                        f"{day}, so only the empty package was ever installed."
+                    )
+            except Exception:  # a lookup that fails only leaves the note plain
+                return ""
+            seen[pkg] = said
+            return said
+
+        return tell
+
+    return for_lockfile

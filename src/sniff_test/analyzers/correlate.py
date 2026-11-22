@@ -35,6 +35,7 @@ _MAX_LISTED = 5
 # Sensitive-access rule -> (graph node kind, node key). Shared with report.graph.
 SENSITIVE_NODES: dict[str, tuple[str, str]] = {
     "ha-read-secrets": ("data", "secrets.yaml"),
+    "ha-read-own-secret": ("data", "one entry of secrets.yaml"),
     "ha-read-auth-storage": ("data", "auth and credential storage"),
     "ha-raw-storage-access": ("data", ".storage files"),
     "ha-auth-internals": ("auth", "login tokens"),
@@ -125,28 +126,61 @@ def _and(items: list[str]) -> str:
 
 # (0.15) `entry.data.get("user_id")` of another integration is its data, not a credential:
 # only a field named like one (or the whole `.data`) is something to steal.
-_FIELD = re.compile(r"""\.data\s*+(?:\.get\s*+\(\s*+|\[\s*+)(["'])([\w.-]{1,64})\1""")
+_FIELD = re.compile(
+    r"""\.data\s*+(?:or\s*+\{\s*+\}\s*+\)\s*+)?(?:\.get\s*+\(\s*+|\[\s*+)"""
+    r"""(?:(["'])([\w.-]{1,64})\1|([A-Z][A-Z0-9_]{1,63})(?![\w.(]))"""
+)
 _CREDENTIAL_FIELD = re.compile(
     r"pass|token|secret|key|auth|cred|cookie|session|private|pin|otp|irk|api|cert|sig",
     re.I,
 )
 
 
+# (0.15) Home Assistant's login internals: a line that only counts, looks up, checks or
+# removes tokens hands no token value on (9 real "data leaving" pairings did that); one
+# that creates a token or reads its value (`.token`, `.jwt_key`) does.
+_TOKEN_VALUE = re.compile(
+    r"create_(?:access|refresh)_token|\.token(?![\w$])|\[\s*+[\"']token[\"']\s*+\]|jwt_key"
+    r"|\.(?:access|refresh)_token(?![\w$])|\[\s*+[\"'](?:access|refresh)_token[\"']\s*+\]"
+)
+_WHOLE_DATA = re.compile(r"\.data(?!\s*+(?:or\s*+\{\s*+\}\s*+\)\s*+)?(?:\.get\s*+\(|\[))")
+
+
+def _field(m: re.Match[str]) -> str:
+    """The field a `.data.get(…)` reads: the literal, or a constant's name without its
+    `CONF_` prefix (`CONF_ADDRESS` -> "address", HA's own naming)."""
+    if m.group(2):
+        return m.group(2)
+    return m.group(3).removeprefix("CONF_").lower()
+
+
 def _credential_read(f: Finding) -> bool:
+    if f.rule_id == "ha-auth-internals":
+        # no line to read: it may hand a token on (counts)
+        return not f.evidence or bool(_TOKEN_VALUE.search(f.evidence))
     if f.rule_id != "ha-foreign-entry-data":
         return True
-    names = [m.group(2) for m in _FIELD.finditer(f.evidence or "")]
-    return not names or any(_CREDENTIAL_FIELD.search(n) for n in names)
+    ev = f.evidence or ""
+    names = [_field(m) for m in _FIELD.finditer(ev)]
+    if not names or _WHOLE_DATA.search(_FIELD.sub("", ev)):
+        return True  # the whole `.data`, or something not read field by field
+    return any(_CREDENTIAL_FIELD.search(n) for n in names)
 
 
 def correlate(
-    findings: list[Finding], facts: list[Fact], root: Path, called: set[str] | None = None
+    findings: list[Finding],
+    facts: list[Fact],
+    root: Path,
+    called: set[str] | None = None,
+    addressed: set[str] | None = None,
 ) -> list[Finding]:
     """`called`: (0.15) the sites the app's code was read sending a request to, when every
     request's address could be read (None otherwise: then any host the code names may be
     where one goes). When given, only those count as somewhere to send a credential: on
     600 real apps every pairing with a host the code merely names (a link in a bundled
-    library, a site in a list of sources) was wrong."""
+    library, a site in a list of sources) was wrong. `addressed`: (0.15) when `called` is
+    None, the hosts some string uses like an address (endpoints.addressed_hosts); a link
+    in a message, an XML namespace or a dotted key then doesn't count either."""
     explained = explained_by_taint(findings, root)
     sources = [
         f
@@ -168,6 +202,7 @@ def correlate(
             and f.attrs.get("class") in UNEXPLAINED
             and not f.attrs.get("redirect_only")
             and (called is None or f.key in called)
+            and (called is not None or addressed is None or f.key in addressed)
         }
     )
     dest_findings = [f for f in findings if f.rule_id in _DESTINATION_RULES]

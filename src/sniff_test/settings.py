@@ -61,6 +61,10 @@ class Settings:
     # (0.15, his decision 2026-11-21) the Exposure bar above "What it does": from medium
     # (default), high only, or always
     exposure_bar: str = "medium"
+    # (0.15, his decision 2026-11-22) Threat points for a build tool known to be malware
+    # (it runs on the developer's machine while building and could change what ships):
+    # 2.5 is "possible", like any high sign
+    build_tool_points: str = "2.5"
 
     @property
     def where(self) -> str:
@@ -80,7 +84,14 @@ def where_values(where: str) -> dict[str, str]:
 DEFAULTS = Settings()
 # "Reset to defaults" per section of the page
 PARTS = {
-    "readings": ("exposure", "network", "show_minor", "quiet_months", "exposure_bar"),
+    "readings": (
+        "exposure",
+        "network",
+        "show_minor",
+        "quiet_months",
+        "exposure_bar",
+        "build_tool_points",
+    ),
     "checking": (
         "parallel",
         "jobs",
@@ -111,6 +122,7 @@ CHOICES: dict[str, tuple[Any, ...]] = {
     "quiet_months": (0, 6, 12, 24, 36),
     "notify_when": ("all", "medium", "high", "threat"),
     "exposure_bar": ("medium", "high", "always"),
+    "build_tool_points": ("2", "2.5", "3"),
 }
 
 

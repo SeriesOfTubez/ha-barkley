@@ -439,6 +439,132 @@ def extract(root: Path) -> tuple[list[HostRef], list[tuple[str, int]]]:
     return refs, tokens
 
 
+# --- (0.15) hosts used like an address -------------------------------------------------------
+#
+# From the full Marketplace run: when some request's address can't be read, any host the
+# code names could be where it goes, and 12 of 36 "data leaving" pairings named a host that
+# is never an address: a link in a message, an XML namespace, an Android app's package name
+# (`com.google.android.youtube.tv`) or a dotted key (`container.disk.io`). A host counts
+# as a possible destination then only when some string in the Python code uses it like an
+# address: a URL standing alone (formatting allowed), or a bare host under a name that
+# says so (`HOST =`, `{"server": …}`, `host=`), or handed straight to a sending call. Not:
+# a URL inside prose, in a log or message call, in Clark notation (`{http://…}tag`) or
+# under a namespace name (`NS = {…}`), a docstring. Read with `ast.parse`; nothing runs.
+
+_ADDRESS_NAME = re.compile(
+    r"(?i)host|url|uri|server|domain|endpoint|broker|addr|base|api|fqdn|gateway|remote|cloud"
+)
+_NAMESPACE_NAME = re.compile(r"(?i)(?:^|_)(?:ns|nsmap|namespaces?|xmlns|schemas?)(?:_|$|\d)")
+_MESSAGE_CALLS = frozenset(
+    {"debug", "info", "warning", "warn", "error", "exception", "critical", "log", "print",
+     "async_create", "create_issue", "async_create_issue", "persistent_notification",
+     "_", "gettext", "async_show_form", "async_abort", "async_show_menu"}
+)  # fmt: skip
+_MESSAGE_KEYWORDS = frozenset(
+    {"description_placeholders", "learn_more_url", "documentation", "issue_tracker",
+     "translation_placeholders", "message", "title", "description", "help"}
+)  # fmt: skip
+_MAX_ADDR_FILES = 2000
+
+
+def _context_names(node: ast.AST, parents: dict[int, ast.AST]) -> tuple[list[str], str | None]:
+    """The names a string sits under (assignment targets, dict keys, keyword names), and
+    the name of the call it is an argument of (None when not in one), walking up through
+    f-strings, `+`, `%`, `.format()`, tuples and lists."""
+    names: list[str] = []
+    call: str | None = None
+    cur = node
+    for _ in range(12):
+        par = parents.get(id(cur))
+        if par is None:
+            break
+        if isinstance(par, ast.Dict):
+            for k, v in zip(par.keys, par.values, strict=False):
+                if v is cur and isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    names.append(k.value)
+        elif isinstance(par, ast.keyword) and par.arg:
+            names.append(par.arg)
+        elif isinstance(par, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = par.targets if isinstance(par, ast.Assign) else [par.target]
+            for t in targets:
+                if isinstance(t, ast.Name):
+                    names.append(t.id)
+                elif isinstance(t, ast.Attribute):
+                    names.append(t.attr)
+            break
+        elif isinstance(par, ast.Call):
+            if cur is not par.func and call is None:
+                f = par.func
+                call = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "") or ""
+                if call == "format" and isinstance(f, ast.Attribute):
+                    call = None  # "https://{}/x".format(h) builds the address
+                    cur = par
+                    continue
+            if call is not None:
+                break
+        elif isinstance(par, (ast.Expr, ast.Return, ast.FunctionDef, ast.AsyncFunctionDef,
+                              ast.ClassDef, ast.Module)):  # fmt: skip
+            break
+        cur = par
+    return names, call
+
+
+def addressed_hosts(root: Path) -> set[str]:
+    """Hosts some Python string under `root` uses like an address (see above)."""
+    out: set[str] = set()
+    for n, p in enumerate(sorted(root.rglob("*.py"))):
+        if n >= _MAX_ADDR_FILES or not p.is_file() or p.is_symlink():
+            continue
+        try:
+            if p.stat().st_size > _MAX_FILE:
+                continue
+            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
+            continue
+        parents: dict[int, ast.AST] = {}
+        docs: set[int] = set()
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[id(child)] = node
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+                docs.add(id(node.value))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            value = node.value
+            if id(node) in docs or len(value) > 4000 or "." not in value:
+                continue
+            names, call = _context_names(node, parents)
+            if call and call.lower() in _MESSAGE_CALLS:
+                continue
+            if any(k in _MESSAGE_KEYWORDS for k in names):
+                continue
+            if any(_NAMESPACE_NAME.search(k) for k in names):
+                continue
+            stripped = value.strip()
+            if stripped.startswith("{") and "}" in stripped:
+                continue  # an XML tag in Clark notation
+            urls = list(_URL.finditer(value))
+            if urls:
+                prose = re.search(r"\s", stripped) is not None or re.search(
+                    r"(?i)href\s*=|\]\(|<a\s", value
+                )
+                if prose:
+                    continue
+                for m in urls:
+                    if _host_ok(m["host"].lower()):
+                        out.add(m["host"].lower())
+                continue
+            bare = _bare_ref(value, "", 0)
+            if bare is None:
+                continue
+            if any(_ADDRESS_NAME.search(k) for k in names) or (
+                call is not None and call.lower() in _SEND_CALLS
+            ):
+                out.add(bare.host)
+    return out
+
+
 # --- OAuth return addresses (0.15, issue #26) ---------------------------------------------
 
 # Both must hold, so a send to a path merely named /callback still counts as a destination.

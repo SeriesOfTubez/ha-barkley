@@ -6,6 +6,7 @@ PyPI (yet, or any more), so it can't depend on resolution or the PyPI API.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from functools import cache
 from importlib import resources
@@ -134,12 +135,88 @@ def _f(rule: str, title: str, sev: Severity, msg: str, evidence: str, **kw) -> F
     )
 
 
+_GITHUB_OWNER = re.compile(r"^https?://(?:www\.)?github\.com/([A-Za-z0-9-]{1,39})(?:/|$)", re.I)
+_PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}")
+
+
+def owner_tie(name: str, version: str | None, owner: str | None) -> str | None:
+    """(0.15, his decision 2026-11-22) How a package is tied to the app's owner on GitHub:
+    "attested" when PyPI's provenance record for one of its files names a GitHub workflow
+    in that owner's account (PyPI checks it when the file is uploaded), "link" when only
+    the project's own links point there (anyone can type a link), else None. Lookups that
+    fail say nothing (never a result)."""
+    if not owner or not _PROJECT.fullmatch(name):
+        return None
+    try:
+        meta = http.lookup_json(PYPI_JSON.format(name=name), 10.0)
+    except http.HttpError:
+        return None
+    if not isinstance(meta, dict):
+        return None
+    info = meta.get("info") if isinstance(meta.get("info"), dict) else {}
+    ver = version if version and version in (meta.get("releases") or {}) else info.get("version")
+    files = ((meta.get("releases") or {}).get(ver) or []) if ver else []
+    want = owner.lower()
+    for f in [x for x in files if isinstance(x, dict)][:4]:
+        fname = str(f.get("filename") or "")
+        if not _PROJECT.fullmatch(fname):
+            continue
+        try:
+            prov = http.lookup_json(
+                f"https://pypi.org/integrity/{name}/{ver}/{fname}/provenance", 10.0
+            )
+        except http.HttpError:
+            continue
+        for b in (prov or {}).get("attestation_bundles") or []:
+            pub = b.get("publisher") if isinstance(b, dict) else None
+            repo = str((pub or {}).get("repository") or "")
+            if (pub or {}).get("kind") == "GitHub" and repo.split("/", 1)[0].lower() == want:
+                return "attested"
+    links = [str(v) for v in (info.get("project_urls") or {}).values()] + [
+        str(info.get("home_page") or "")
+    ]
+    if any((m := _GITHUB_OWNER.match(u)) and m.group(1).lower() == want for u in links):
+        return "link"
+    return None
+
+
+TIED_RULE = "dep-lookalike-own"
+
+
+def _tied(name: str, target: str, tie: str, owner: str, plats: set[str]) -> Finding:
+    """A lookalike name tied to the app's owner: a note when PyPI's provenance says the
+    owner's GitHub published it; medium when only a link says so."""
+    if tie == "attested":
+        return _f(
+            TIED_RULE,
+            "Package name close to a popular one, published by this app's owner",
+            Severity.INFO,
+            f"'{name}' is one typo away from the popular package '{target}'. PyPI's record "
+            f"of how it was published names a GitHub workflow in {owner[:39]}'s account, the "
+            "owner of this app, so it's their own library, not an imitation.",
+            f"{name} ~ {target}",
+            platforms=frozenset(plats),
+        )
+    return _f(
+        "dep-typosquat",
+        "Possible typosquat of a popular package",
+        Severity.MEDIUM,
+        f"'{name}' is one typo away from the popular package '{target}'. Its PyPI page links "
+        f"to {owner[:39]}'s GitHub account, the owner of this app. Anyone can type a link, "
+        "so that doesn't prove who published it.",
+        f"{name} ~ {target}",
+        tags=frozenset({Tag.POSSIBLE}),
+        platforms=frozenset(plats),
+    )
+
+
 def run(
     requirements: list[reqs.Requirement],
     resolution: Resolution | None,
     env: HAEnv | None,
     online: bool = True,
     now: datetime | None = None,
+    owner: str | None = None,
 ) -> AnalyzerResult:
     if not requirements:
         return AnalyzerResult(NAME, AnalyzerState.NOT_APPLICABLE)
@@ -186,8 +263,13 @@ def run(
     if resolution:
         for p in resolution.third_party():
             names.setdefault(p.name, set()).update(p.platforms)
+    versions = {p.name: p.version for p in resolution.third_party()} if resolution else {}
     for name, plats in sorted(names.items()):
         if (target := typosquat_target(name, known, ha_targets)) is not None:
+            tie = owner_tie(name, versions.get(name), owner) if online else None
+            if tie is not None:
+                findings.append(_tied(name, target, tie, owner or "", plats))
+                continue
             findings.append(
                 _f(
                     "dep-typosquat",

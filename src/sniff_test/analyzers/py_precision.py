@@ -88,6 +88,10 @@ def _own_domain(res: Resolver, rel: str, call: ast.Call, domain: str | None) -> 
     )
     if arg is None:
         return False  # every integration's entries
+    # (0.15) a flow's own `self.handler`: the domain in a config flow, the entry's id in an
+    # options flow (which matches no domain), never another integration's
+    if _dotted(arg) == "self.handler":
+        return True
     value = res.value(rel, arg)
     if value is not None:
         return value in own_domains(res, domain)
@@ -566,6 +570,187 @@ def secrets_dropped(f: Finding, res: Resolver) -> bool:
     return all(_prose(c, up) or (own_copy and _own_copy(c, up, depth)) for c in hits)
 
 
+# --- (0.15) one named entry of secrets.yaml -------------------------------------------------
+
+ONE_ENTRY_RULE = "ha-read-own-secret"
+
+
+def own_secret_key(f: Finding, res: Resolver) -> str | None:
+    """`ha-read-secrets` where the loaded file is held in one name, and every use of that
+    name in the function is a lookup of one fixed key (`secrets.get(KEY_NAME)`,
+    `secrets["x"]`, the key a constant Barkley can read) or a test of it (`if not
+    secrets`, `isinstance(secrets, dict)`). The other entries never leave the function.
+    Returns the key, else None. (5 real "data leaving" pairings read the app's own key,
+    such as an encryption key the user set for it.)"""
+    if f.rule_id != "ha-read-secrets" or not f.file or not f.line:
+        return None
+    tree = res.tree(f.file)
+    if tree is None:
+        return None
+    up = parents(tree)
+    stmts = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Assign) and n.lineno <= f.line <= (n.end_lineno or n.lineno)
+        and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+    ]  # fmt: skip
+    if len(stmts) != 1 or (func := _enclosing(stmts[0], up)) is None:
+        return None
+    name = stmts[0].targets[0].id  # type: ignore[attr-defined]
+    stores = [n for n in ast.walk(func) if isinstance(n, ast.Name) and n.id == name
+              and not isinstance(n.ctx, ast.Load)]  # fmt: skip
+    if len(stores) != 1:
+        return None
+    keys: set[str] = set()
+    for n in ast.walk(func):
+        if not (isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Load)):
+            continue
+        p = up.get(n)
+        if _none_test(n, up):
+            continue
+        if (
+            isinstance(p, ast.Call)
+            and isinstance(p.func, ast.Name)
+            and p.func.id == "isinstance"
+            and p.args
+            and p.args[0] is n
+        ):
+            continue
+        key_node: ast.expr | None = None
+        if isinstance(p, ast.Subscript) and p.value is n:
+            key_node = p.slice
+        elif isinstance(p, ast.Attribute) and p.value is n and p.attr == "get":
+            call = up.get(p)
+            if isinstance(call, ast.Call) and call.func is p and call.args and not call.keywords:
+                key_node = call.args[0]
+        key = res.value(f.file, key_node) if key_node is not None else None
+        if not isinstance(key, str) or not key:
+            return None
+        keys.add(key)
+    return next(iter(keys)) if len(keys) == 1 else None
+
+
+def reads_own_secret(f: Finding, key: str) -> Finding:
+    return dataclasses.replace(
+        f,
+        rule_id=ONE_ENTRY_RULE,
+        title="Reads one named entry from your secrets file",
+        severity=Severity.MEDIUM,
+        message=(
+            f"Opens secrets.yaml and reads only the entry named {key[:60]!r}. In the "
+            "function that opens it, Barkley saw no other entry used."
+        ),
+    )
+
+
+# --- (0.15) unpickling data the app stored ------------------------------------------------
+
+PICKLE_RULE = "py-pickle-stored"
+_DECODE_MODULES = frozenset({"base64", "binascii", "zlib", "lzma", "bz2", "gzip", "codecs"})
+_DECODE_METHODS = frozenset({"encode", "decode", "fromhex"})
+
+
+def _stored_origin(node: ast.expr, func: ast.AST, res: Resolver, rel: str, depth: int = 0) -> bool:
+    """The encoded data at `node` comes from a parameter of `func` (or `self`), through
+    decoding steps and names given one value: data the app was handed or kept, not text
+    written in it. A constant, a file read or anything else Barkley can't follow: False."""
+    if depth > 8:
+        return False
+    if res.value(rel, node) is not None or isinstance(node, ast.Constant):
+        return False  # written in the app
+    if isinstance(node, ast.Call):
+        f = node.func
+        mod = f.value.id if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) else ""
+        if mod in _DECODE_MODULES or (isinstance(f, ast.Name) and f.id in ("bytes", "str")):
+            return bool(node.args) and _stored_origin(node.args[0], func, res, rel, depth + 1)
+        if isinstance(f, ast.Attribute) and f.attr in _DECODE_METHODS:
+            inner = node.args[0] if f.attr == "fromhex" and node.args else f.value
+            return _stored_origin(inner, func, res, rel, depth + 1)
+        return False
+    if isinstance(node, ast.Subscript):
+        return _stored_origin(node.value, func, res, rel, depth + 1)
+    if isinstance(node, ast.Attribute):
+        if isinstance(node.value, ast.Name) and node.value.id == "self":
+            # `self.blob`: not when the file gives that attribute a value written in it
+            tree = res.tree(rel)
+            for n in ast.walk(tree) if tree is not None else ():
+                if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None:
+                    targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                    if any((isinstance(t, ast.Attribute) and t.attr == node.attr)
+                           or (isinstance(t, ast.Name) and t.id == node.attr)
+                           for t in targets) and _written(n.value, res, rel):  # fmt: skip
+                        return False
+        return _stored_origin(node.value, func, res, rel, depth + 1)
+    if isinstance(node, ast.Name):
+        args = func.args  # type: ignore[attr-defined]
+        params = {a.arg for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]}
+        stores = [n for n in ast.walk(func) if isinstance(n, ast.Name) and n.id == node.id
+                  and not isinstance(n.ctx, ast.Load)]  # fmt: skip
+        if node.id in params:
+            # the value it was handed, never replaced, and no encoded default
+            defaults = [*args.defaults, *(d for d in args.kw_defaults if d is not None)]
+            return not stores and not any(_written(d, res, rel) for d in defaults)
+        if node.id == "self":
+            return True
+        if len(stores) != 1:
+            return False
+        up = parents(func)
+        assign = up.get(stores[0])
+        if isinstance(assign, ast.Assign) and len(assign.targets) == 1:
+            return _stored_origin(assign.value, func, res, rel, depth + 1)
+        return False
+    return False
+
+
+def _written(node: ast.expr, res: Resolver, rel: str) -> bool:
+    """Text or bytes written in the app (a literal anywhere inside, or a constant)."""
+    return any(
+        (isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)) and len(n.value) > 16)
+        or (isinstance(n, (ast.Name, ast.Attribute)) and res.value(rel, n) is not None)
+        for n in ast.walk(node)
+    )
+
+
+def pickle_of_stored(f: Finding, res: Resolver) -> bool:
+    """`py-b64-exec` whose every sink on the line is `pickle.loads` of data that came from
+    a parameter or the object itself (a cookie jar the app saved, a unique id it built):
+    unsafe to unpickle if someone else can change that data, but not hidden code. Code
+    written in the app as encoded text, or read from a file it ships, keeps the finding."""
+    if f.rule_id != "py-b64-exec" or not f.file or not f.line:
+        return False
+    tree = res.tree(f.file)
+    if tree is None:
+        return False
+    up = parents(tree)
+    sinks = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and n.lineno <= f.line <= (n.end_lineno or n.lineno)
+        and isinstance(n.func, ast.Attribute) and n.func.attr in ("loads", "load")
+        and isinstance(n.func.value, ast.Name) and n.func.value.id in ("pickle", "marshal")
+    ]  # fmt: skip
+    if not sinks or any(n.func.value.id != "pickle" or not n.args for n in sinks):  # type: ignore[attr-defined]
+        return False
+    for n in sinks:
+        func = _enclosing(n, up)
+        if func is None or not _stored_origin(n.args[0], func, res, f.file):
+            return False
+    return True
+
+
+def stored_pickle(f: Finding) -> Finding:
+    return dataclasses.replace(
+        f,
+        rule_id=PICKLE_RULE,
+        title="Unpickles data it stored",
+        severity=Severity.MEDIUM,
+        tags=frozenset(),
+        message=(
+            "Decodes data it was handed or kept and loads it with pickle. Pickle can run "
+            "code while loading, so whoever can change that data could run code in Home "
+            "Assistant. The data isn't written in the app, so this is not hidden code."
+        ),
+    )
+
+
 # --- test code no runtime module imports ---------------------------------------------
 
 _TEST_DIRS = frozenset({"test", "tests", "testing"})
@@ -724,11 +909,11 @@ def supervisor_only(f: Finding, res: Resolver) -> str | None:
         if not (
             isinstance(n, ast.Call)
             and isinstance(n.func, ast.Attribute)
-            and n.func.attr in _SEND
+            and n.func.attr in (*_SEND, "Request")
             and n.lineno <= f.line <= (n.end_lineno or n.lineno)
         ):
             continue
-        start = _to_supervisor(res, f.file, n)
+        start = _to_supervisor(res, f.file, n, tree)
         if not start:
             return None
         urls.append(start)
@@ -738,15 +923,55 @@ def supervisor_only(f: Finding, res: Resolver) -> str | None:
 LOCAL_RULE = "ha-supervisor-token-local"
 
 
-def _to_supervisor(res: Resolver, rel: str, call: ast.Call) -> str:
-    """The certain start of a sending call's address when it names the Supervisor."""
-    if not (isinstance(call.func, ast.Attribute) and call.func.attr in _SEND):
+def _to_supervisor(
+    res: Resolver, rel: str, call: ast.Call, tree: ast.AST | None = None, depth: int = 0
+) -> str:
+    """The certain start of a sending call's address when it names the Supervisor.
+    (0.15) `urllib.request.Request("http://supervisor/…", …)` counts, and so does
+    `urlopen(request)` where `request` is given exactly one value in the function, such a
+    `Request(…)` (a real integration announced itself to the Supervisor that way)."""
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr in (*_SEND, "Request")):
         return ""
     addr = next((k.value for k in call.keywords if k.arg == "url"), None)
     if addr is None and call.args:
         addr = call.args[1] if call.func.attr == "request" and len(call.args) > 1 else call.args[0]
+    if (
+        isinstance(addr, ast.Name)
+        and call.func.attr == "urlopen"
+        and tree is not None
+        and depth == 0
+        and (req := _single_request(tree, call, addr.id)) is not None
+    ):
+        return _to_supervisor(res, rel, req, tree, 1)
     start = _prefix(res, rel, addr) if addr is not None else ""
     return start if _SUPERVISOR_URL.match(start) else ""
+
+
+def _single_request(tree: ast.AST, call: ast.Call, name: str) -> ast.Call | None:
+    """The `Request(…)` that `name` holds at `call`: the only value it is given in the
+    function around the call (any other assignment, or none: None)."""
+    up = parents(tree)
+    func = _enclosing(call, up)
+    if func is None:
+        return None
+    stores = [
+        n
+        for n in ast.walk(func)
+        if isinstance(n, ast.Name) and n.id == name and not isinstance(n.ctx, ast.Load)
+    ]
+    if len(stores) != 1:
+        return None
+    assign = up.get(stores[0])
+    if not (isinstance(assign, ast.Assign) and len(assign.targets) == 1):
+        return None
+    value = assign.value
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr == "Request"
+    ):
+        return value
+    return None
 
 
 def supervisor_token_stays(f: Finding, res: Resolver) -> str | None:

@@ -48,6 +48,7 @@ RULE_ROOM: dict[str, tuple[str, str, str]] = {
     "ha-foreign-entry-options": ("apps", READS, "reads other apps' settings"),
     "ha-bulk-location-read": ("devices", READS, "reads where the people in your home are"),
     "ha-read-secrets": ("files", READS, "reads your secrets file"),
+    "ha-read-own-secret": ("files", READS, "reads one named entry of your secrets file"),
     "ha-raw-storage-access": ("files", READS, "looks inside the private storage folder"),
     "ha-own-storage-path": ("files", CHANGES, "keeps its own file in the storage folder"),
     "py-write-outside-own-dir": ("files", CHANGES, "writes or deletes files outside its folder"),
@@ -68,6 +69,7 @@ RULE_ROOM: dict[str, tuple[str, str, str]] = {
     # signs of malicious behavior: red in the room they come from
     "card-token-exfil": ("browser", OUT, "may send your login to another site"),
     "card-eval-remote": ("browser", CHANGES, "runs code it gets from outside"),
+    "card-code-loader": ("browser", CHANGES, "can run code from an address it is given"),
     "card-b64-eval": ("browser", CHANGES, "hides code and then runs it"),
     "py-b64-exec": ("programs", CHANGES, "hides code and then runs it"),
     "py-obfuscation": ("programs", CHANGES, "uses tricks that hide what its code does"),

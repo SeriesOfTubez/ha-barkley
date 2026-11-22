@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from sniff_test import scancache
-from sniff_test.analyzers import _proc, js_fold, js_wrapper, py_precision, py_tamper
+from sniff_test.analyzers import _proc, js_fold, js_loader, js_wrapper, py_precision, py_tamper
 from sniff_test.analyzers.py_resolve import Resolver
 from sniff_test.models import (
     RULE_FILE_NOT_CHECKED,
@@ -383,6 +383,12 @@ def _precise(findings: list[Finding], root: Path, target: Target) -> list[Findin
         if py_precision.entry_finding_dropped(f, res, target.domain):
             continue
         if py_precision.secrets_dropped(f, res):
+            continue
+        if py_precision.pickle_of_stored(f, res):
+            out.append(py_precision.stored_pickle(f))  # (0.15) a habit, not hidden code
+            continue
+        if (key := py_precision.own_secret_key(f, res)) is not None:
+            out.append(py_precision.reads_own_secret(f, key))  # (0.15) one named entry
             continue
         if py_precision.supervisor_presence_only(f, res):
             continue
@@ -942,6 +948,7 @@ def _run(
     findings: list[Finding] = []
     facts: list[Fact] = []
     token_hits: list[js_wrapper.Hit] = []
+    eval_hits: list[js_loader.Hit] = []
     for r in data.get("results", []):
         if (fact := to_fact(r, root, target.domain)) is not None:
             facts.append(fact)
@@ -957,12 +964,21 @@ def _run(
                 )
                 if f.rule_id == js_wrapper.RULE:
                     token_hits.append(js_wrapper.Hit(f, root / f.file, start, end))
+                elif f.rule_id == "card-eval-remote":
+                    eval_hits.append(js_loader.Hit(f, root / f.file, start))
             findings.append(f)
     if token_hits:  # (0.14.0) same-origin URLs the rule can't prove (js_wrapper)
         runner = js_wrapper.semgrep_runner(exe, root, run_dir, _tool_env(), _proc.run)
         card = target.kind is TargetKind.PLUGIN
         same_origin = _precise_cached(token_hits, root, runner, card, cache)
         findings = [f for f in findings if id(f) not in same_origin]
+    if eval_hits:  # (0.15) a loader: a door graded by the addresses it can be handed
+        loader_ids = js_loader.loaders(eval_hits, root)
+        if loader_ids:
+            findings = [js_loader.as_note(f) if id(f) in loader_ids else f for f in findings]
+            remote = ("card-remote-script", "card-remote-pinned")
+            known = {f.evidence for f in findings if f.rule_id in remote}
+            findings += [f for f in js_loader.script_addresses(root) if f.evidence not in known]
     findings += fold.findings
     trees: dict[str, Any] = {}
     findings = [f for f in findings if not _only_rebinds_names(f, root, trees)]
