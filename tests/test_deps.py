@@ -1,4 +1,4 @@
-"""Dependency analysis: unit tests with mocked uv / OSV / GuardDog / PyPI output."""
+"""Dependency analysis: unit tests with mocked uv / OSV / PyPI output."""
 
 import json
 import subprocess
@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from sniff_test.analyzers import guarddog, osv, pypi_meta, python_deps
+from sniff_test.analyzers import osv, pypi_meta, python_deps
 from sniff_test.deps import ha_env, reqs
 from sniff_test.deps.ha_env import HAEnv
-from sniff_test.deps.uv import Artifact, parse_pylock
+from sniff_test.deps.uv import parse_pylock
 from sniff_test.models import AnalyzerState, Severity, Tag, Target, TargetKind
 
 # --- requirement parsing ------------------------------------------------------------
@@ -361,44 +361,6 @@ def test_card_without_npm_deps_is_not_applicable(tmp_path):
 # --- GuardDog -------------------------------------------------------------------------------
 
 
-def test_guarddog_mapping_keeps_threats_only():
-    data = {
-        "results": {
-            "capability-network-outbound": [{"location": "a.py:1", "match": "requests.post"}],
-            "threat-runtime-environment-read": [{"location": "a.py:2", "match": "os.environ"}],
-            "threat-network-exfil-messenger": [
-                {"location": "a.py:3", "match": "discord.com/api/webhooks/1/", "message": "m"},
-                {"location": "b.py:9", "match": "discord.com/api/webhooks/2/"},
-            ],
-            "threat-runtime-obfuscation-base64exec": [{"location": "a.py:4", "match": "b64"}],
-            "threat-brand-new-rule": [{"location": "a.py:5", "match": "?"}],
-            "threat-filesystem-read": {},
-        }
-    }
-    pkg = python_deps.ResolvedPackage("evil", "1.0", {"x86_64", "aarch64"})
-    art = Artifact("https://x", "evil-1.0-cp314-cp314-musllinux_1_2_x86_64.whl", None, "wheel")
-    found = {f.rule_id: f for f in guarddog.to_findings(data, pkg, art)}
-    assert set(found) == {
-        "dep-guarddog-network-exfil-messenger",
-        "dep-guarddog-runtime-obfuscation-base64exec",
-        "dep-guarddog-brand-new-rule",
-    }
-    exfil = found["dep-guarddog-network-exfil-messenger"]
-    assert exfil.severity is Severity.HIGH and Tag.POSSIBLE in exfil.tags
-    assert exfil.platforms == {"x86_64"}  # arch-specific wheel
-    assert "and 1 more" in exfil.message
-    assert found["dep-guarddog-brand-new-rule"].severity is Severity.LOW
-    assert all(f.severity < Severity.CRITICAL for f in found.values())
-
-
-def test_guarddog_skips_ha_provided_packages(tmp_path):
-    res = python_deps.Resolution()
-    res.packages[("aiohttp", "3.14.5")] = python_deps.ResolvedPackage(
-        "aiohttp", "3.14.5", {"x86_64"}, ha_provided=True
-    )
-    assert guarddog.run(res, tmp_path).state is AnalyzerState.NOT_APPLICABLE
-
-
 # --- dep-vuln policy (decided 2026-11-08) ---------------------------------------------------
 
 _CRIT = [{"id": "C", "severity": [{"score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}]}]
@@ -466,23 +428,6 @@ def test_npm_dev_only_from_lockfile_v3_and_v1(tmp_path):
     yarn = tmp_path / "yarn.lock"
     yarn.write_text("# yarn\n")
     assert osv.npm_dev_only(yarn) == set()
-
-
-def test_guarddog_medium_heuristics_drop_to_low_in_popular_packages():
-    data = {
-        "results": {
-            "threat-filesystem-autostart": [{"location": "typer/x.py:1", "match": ".bashrc"}],
-            "threat-network-exfil-messenger": [{"location": "typer/y.py:2", "match": "discord"}],
-        }
-    }
-    art = Artifact("https://x", "typer-0.15.2-py3-none-any.whl", None, "wheel")
-    popular = python_deps.ResolvedPackage("typer", "0.15.2", {"x86_64"})
-    sev = {f.rule_id: f.severity for f in guarddog.to_findings(data, popular, art)}
-    assert sev["dep-guarddog-filesystem-autostart"] is Severity.LOW
-    assert sev["dep-guarddog-network-exfil-messenger"] is Severity.HIGH  # hijack still loud
-    obscure = python_deps.ResolvedPackage("zzz-obscure-lib", "1.0", {"x86_64"})
-    sev = {f.rule_id: f.severity for f in guarddog.to_findings(data, obscure, art)}
-    assert sev["dep-guarddog-filesystem-autostart"] is Severity.MEDIUM
 
 
 # --- HA's shipped set as of its release ---------------------------------------------------

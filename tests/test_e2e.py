@@ -271,8 +271,8 @@ def test_own_storage_access_is_not_flagged(tmp_path, fixtures):
 # --- full scans: need network (GitHub for HA constraints, PyPI, OSV) and all tools -----
 
 needs_tools = pytest.mark.skipif(
-    not all(shutil.which(t) for t in ("uv", "osv-scanner", "guarddog")),
-    reason="uv / osv-scanner / guarddog not installed",
+    not all(shutil.which(t) for t in ("uv", "osv-scanner")),
+    reason="uv / osv-scanner not installed",
 )
 
 

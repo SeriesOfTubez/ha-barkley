@@ -9,8 +9,7 @@ from email.message import Message
 
 import pytest
 
-from sniff_test.analyzers import guarddog, python_deps
-from sniff_test.analyzers.python_deps import Resolution, ResolvedPackage
+from sniff_test.analyzers import python_deps
 from sniff_test.deps.uv import Artifact
 from sniff_test.fetch import github, http, retry
 
@@ -156,34 +155,6 @@ def test_fetch_artifact_keeps_the_reason(tmp_path, monkeypatch, waits):
     assert art.failure["source"] == "files.pythonhosted.org"
     assert "Connection refused" in retry.plain(art.failure)
     assert not list((tmp_path / "dists").glob("*.whl"))  # no partial file left
-
-
-def test_guarddog_makes_a_last_pass_and_reports_what_still_failed(tmp_path, monkeypatch):
-    flaky = Artifact("https://files.pythonhosted.org/f.whl", "f.whl", "1" * 64, "wheel")
-    dead = Artifact("https://files.pythonhosted.org/d.whl", "d.whl", "2" * 64, "wheel")
-    tries = {"f.whl": 0, "d.whl": 0}
-
-    def fake_fetch(art, work):
-        tries[art.filename] += 1
-        if art.filename == "f.whl" and tries["f.whl"] > 1:
-            return tmp_path
-        art.failure = {"file": art.filename, "source": "files.pythonhosted.org", "tries": 3,
-                       "seconds": 9.0, "kind": "timeout", "error": "timed out"}  # fmt: skip
-        return None
-
-    monkeypatch.setattr(guarddog, "fetch_artifact", fake_fetch)
-    monkeypatch.setattr(guarddog.shutil, "which", lambda _x: "/bin/guarddog")
-    monkeypatch.setattr(guarddog, "tool_env", lambda _exe: {})
-    monkeypatch.setattr(guarddog, "guarddog_version", lambda: "test")
-    monkeypatch.setattr(guarddog, "neutralize_ignores", lambda _p: None)
-    monkeypatch.setattr(guarddog, "_scan", lambda *a, **k: ({"results": {}}, "", True))
-    res = Resolution()
-    for name, art in (("f", flaky), ("d", dead)):
-        res.packages[(name, "1")] = ResolvedPackage(name, "1", artifacts={art.filename: art})
-    out = guarddog.run(res, tmp_path)
-    assert tries == {"f.whl": 2, "d.whl": 2}  # the last pass reached both
-    assert [p["file"] for p in out.problems] == ["d.whl"]
-    assert str(out.state) == "error"
 
 
 # --- GitHub: transient errors retried, never the rate limit --------------------------

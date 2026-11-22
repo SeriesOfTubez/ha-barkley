@@ -12,8 +12,7 @@ Agreed with the user (2026-11-17), checked on 21 real findings across 6 version 
   (whitespace and comments dropped, local names replaced by placeholders in order of
   appearance, because minifiers rename them between builds). Property names, keywords and
   strings stay.
-- Dependencies: the package, its version and the advisory ids; a GuardDog hit hashes
-  the flagged file's content (guarddog.py).
+- Dependencies: the package, its version and the advisory ids.
 - Anything else: the rule and its evidence.
 The file path is never part of the hash: moving code doesn't reopen a finding. Every
 choice errs toward a new fingerprint (reopen) rather than keeping a changed one.

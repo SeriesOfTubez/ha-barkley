@@ -1075,11 +1075,10 @@ SETTING_HELP = {
         "shows as Incomplete."
     ),
     "Semgrep jobs": (
-        "Inside one scan, Semgrep (the code checker) reads this many files at once. GuardDog "
-        "uses the same number for an integration's libraries. A higher number helps apps "
-        "with many files, such as cards split into chunks. It doesn't help with one big file, "
-        "and Barkley's own checks of the code still run one after another. Downloading the "
-        "app takes the same time either way. Each extra job needs its own memory. With 1 "
+        "Inside one scan, Semgrep (the code checker) reads this many files at once. A "
+        "higher number helps apps with many files, such as cards split into chunks. It "
+        "doesn't help with one big file, and Barkley's own checks of the code still run "
+        "one after another. Downloading the app takes the same time either way. Each extra job needs its own memory. With 1 "
         "parallel scan, set this to the number of cores. With more, keep Parallel scans "
         "times this at or below the number of cores."
     ),

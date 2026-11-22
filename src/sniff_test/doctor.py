@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from sniff_test import memory, supervisor
-from sniff_test.analyzers import _proc, guarddog
+from sniff_test.analyzers import _proc
 from sniff_test.analyzers.semgrep import _tool_env as semgrep_env
 from sniff_test.analyzers.semgrep import rules_const_dir, rules_dir
 from sniff_test.fetch.github import GitHub, RateLimit
@@ -47,7 +47,6 @@ def _tail(text: str) -> str:
 _TOOLS: dict[str, tuple[Callable[[], tuple[Path, ...]], Callable[[], tuple[Path, ...]]]] = {
     "semgrep": (lambda: (), lambda: (rules_dir(), rules_const_dir())),
     "osv-scanner": (lambda: (), lambda: ()),
-    "guarddog": (lambda: guarddog._cache_dirs(), lambda: ()),
     "uv": (lambda: (), lambda: ()),
 }
 
@@ -255,25 +254,6 @@ def _semgrep_scan(sample: Path, run_dir: Path) -> Check:
     return sg
 
 
-def _guarddog_env() -> dict[str, str]:
-    gd_exe = shutil.which("guarddog")
-    return guarddog.tool_env(gd_exe) if gd_exe else _proc.tool_env()  # lists cached under /data
-
-
-def _guarddog_scan(sample: Path, run_dir: Path) -> Check:
-    gd_env = _guarddog_env()
-    gd_cmd = ["guarddog", "pypi", "scan", str(sample), "--output-format", "json"]
-    gd = _run("guarddog scan (one-line sample)", gd_cmd, run_dir, gd_env)
-    if not gd.ok and "sandbox" in gd.stderr.lower():
-        # What the analyzer does too: GuardDog only parses; the container is the
-        # outer sandbox. Reported, not hidden.
-        retry = _run("guarddog scan (one-line sample)", [*gd_cmd, "--no-sandbox"], run_dir,
-                     gd_env)  # fmt: skip
-        retry.summary += "; kernel sandbox unavailable here, ran with --no-sandbox"
-        gd = retry
-    return gd
-
-
 _OSV_SAMPLE = "osv-scanner scan (empty sample lockfile)"
 
 
@@ -329,9 +309,6 @@ def steps(addon: bool = False) -> list[Step]:
          lambda s, r: _run("osv-scanner --version", ["osv-scanner", "--version"], r,
                            _proc.tool_env())),
         (_OSV_SAMPLE, _osv_scan),
-        ("guarddog --version",
-         lambda s, r: _run("guarddog --version", ["guarddog", "--version"], r, _guarddog_env())),
-        ("guarddog scan (one-line sample)", _guarddog_scan),
         ("uv --version", lambda s, r: _run("uv --version", ["uv", "--version"], r,
                                            _proc.tool_env())),
     ]  # fmt: skip

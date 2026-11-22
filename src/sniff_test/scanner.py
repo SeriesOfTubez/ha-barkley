@@ -11,7 +11,6 @@ from sniff_test.analyzers import (
     bytecode,
     correlate,
     endpoints,
-    guarddog,
     js_requests,
     libraries,
     osv,
@@ -107,8 +106,6 @@ def _dependency_analyzers(
     if resolution and resolution.lockfiles:
         say("osv (python)")
         results.append(osv.run_python(resolution, ws))
-        say("guarddog")
-        results.append(guarddog.run(resolution, ws, jobs=jobs))
     return results, resolution, env
 
 
@@ -126,7 +123,7 @@ _DEP_RULES = ("dep-vuln", "dep-malicious", "dep-build-tool-vuln")
 
 def _fingerprints(findings: list[Finding], target: Target) -> list[Finding]:
     """(0.14.0) report/fingerprint.py, for every finding that doesn't have one yet (the
-    JavaScript ones come from semgrep.py, GuardDog's from guarddog.py)."""
+    JavaScript ones come from semgrep.py)."""
     texts: dict[str, str | None] = {}
     out = []
     for f in findings:

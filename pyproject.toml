@@ -54,6 +54,6 @@ ignore = [
 testpaths = ["tests"]
 markers = [
     "network: hits GitHub/PyPI (deselect with -m 'not network')",
-    "tools: requires external scanners (semgrep, osv-scanner, guarddog)",
+    "tools: requires external scanners (semgrep, osv-scanner)",
 ]
 addopts = "-m 'not network'"

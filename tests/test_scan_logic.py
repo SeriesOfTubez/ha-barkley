@@ -43,7 +43,7 @@ def _tree(tmp_path: Path) -> tuple[Path, Path]:
     return pkg, rules
 
 
-TOOLS = {"semgrep": "1.185.0", "osv-scanner": "2.7.1", "guarddog": "3.2.0", "uv": "0.13.7"}
+TOOLS = {"semgrep": "1.185.0", "osv-scanner": "2.7.1", "uv": "0.13.7"}
 
 
 def test_the_key_follows_what_a_scan_finds(tmp_path):

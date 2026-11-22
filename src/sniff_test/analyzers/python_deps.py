@@ -168,7 +168,7 @@ def fetch_artifact(art: Artifact, work: Path) -> Path | None:
 
 def discard_artifact(art: Artifact, work: Path) -> None:
     """(0.14.1, #22) Delete an archive and its unpacked copy once nothing reads them any
-    more (GuardDog is the last reader), so a scan keeps a few in the temp folder at a
+    more, so a scan keeps a few in the temp folder at a
     time instead of all of them (one real integration peaked at 354 MB)."""
     dl = work / "dists"
     key = (art.sha256 or re.sub(r"[^A-Za-z0-9]", "_", art.filename))[:32]
@@ -316,7 +316,7 @@ def run(target: Target, work: Path, env: HAEnv | None) -> tuple[AnalyzerResult, 
                 key = (culprit.name, culprit.reason)
                 culprits.setdefault(key, (culprit, set()))[1].add(plat)
                 continue
-            # sdist only: fetch it (never build) for GuardDog, and resolve what it declares.
+            # sdist only: fetch it (never build) and resolve what it declares.
             pinned = next((r.pinned for r in plain if r.name == culprit.name), None)
             got = _pypi_sdist(culprit.name, culprit.version or pinned)
             if got is None:

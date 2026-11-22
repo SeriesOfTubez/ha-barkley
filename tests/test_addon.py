@@ -159,7 +159,7 @@ def test_panel_only_trusts_the_supervisor_by_default():
 def test_image_installs_tools_from_wheels_and_pinned_binaries():
     df = (ADDON / "Dockerfile").read_text()
     assert "FROM ghcr.io/home-assistant/base-debian:trixie" in df
-    assert df.count("--no-build") >= 3  # semgrep, guarddog, the scanner's deps
+    assert df.count("--no-build") >= 2  # semgrep, the scanner's deps
     # uv and osv-scanner both go through get(), which always checks the sha256 pin,
     # whichever URL (release download, or the API asset fallback) served the bytes.
     assert df.count("sha256sum -c") == 1

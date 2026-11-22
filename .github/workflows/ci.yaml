@@ -1,7 +1,7 @@
 # The offline checks from the README's Development section, on every push and pull
 # request. No secrets, read-only token. Semgrep is pinned to the version the image
 # ships, so the rule tests run on the engine users get. The tests that need
-# osv-scanner and GuardDog skip themselves here; the network tests are opt-in.
+# osv-scanner skips itself here; the network tests are opt-in.
 #
 # tests/fixtures and tests/rules hold deliberately malicious sample code. Nothing here
 # runs it: the tests parse it, the same way the scanner does.

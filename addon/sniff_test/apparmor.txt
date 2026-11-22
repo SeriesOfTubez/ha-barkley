@@ -2,7 +2,7 @@
 # is installed or updated (never on Rebuild) and rewrites the profile name below to the
 # app's id (local_sniff_test here; <repository hash>_sniff_test from a store). It takes
 # the security rating from 7 to 8, but the point is the scanner: it parses hostile code
-# with Semgrep, GuardDog, osv-scanner and uv, and a hole in one of those parsers must not
+# with Semgrep, osv-scanner and uv, and a hole in one of those parsers must not
 # be able to do more than this file allows. Barkley, s6 and bashio run under the main
 # profile; on a kernel without Landlock (HA OS) every scanner tool runs in the child
 # profile `tools` at the end of this file.
@@ -17,7 +17,7 @@
 #   tools' venvs, uv and osv-scanner. Nothing under /tmp, /data or HOME is executable.
 # - Write only under /data (the store, options.json, the caches; HOME is moved to
 #   /data/cache/home by the run script so Semgrep's settings and log and uv's credential
-#   store land there; GuardDog's typosquat lists refresh into /data/cache/guarddog), /tmp
+#   store land there), /tmp
 #   (one workspace per scan), and s6-overlay's own folders under /run and /etc (HA's
 #   example profile's rules, which s6 needs to start the service). /opt and /usr are
 #   never written.
@@ -126,7 +126,7 @@ profile sniff_test flags=(attach_disconnected,mediate_deleted) {
   /{usr/,}lib/@{multiarch}/ld-linux-*.so* ix,
 
   # The store (SQLite needs locks), options.json, the caches (HA's constraints, uv,
-  # GuardDog's lists), HOME; and one temp workspace per scan. Never executable.
+  # and Semgrep's settings), HOME; and one temp workspace per scan. Never executable.
   /data/{,**} rwk,
   /tmp/{,**} rwk,
   # osv-scanner 2.7.1 reaches a lockfile by opening `/` as a directory and walking down
@@ -159,7 +159,7 @@ profile sniff_test flags=(attach_disconnected,mediate_deleted) {
   @{sys}/devices/system/cpu/{,**} r,
   @{sys}/kernel/mm/transparent_hugepage/{,*} r,
 
-  # --- the scanner tools without Landlock (Semgrep, GuardDog, osv-scanner, uv) ---
+  # --- the scanner tools without Landlock (Semgrep, osv-scanner, uv) ---
   # Entered through /usr/lib/barkley/tool. Everything a scan needs, nothing that holds a
   # credential. The deny lines repeat what the missing allow rules already mean, so a
   # later allow rule can't open them by accident. (Child profiles are indented: the
@@ -199,7 +199,7 @@ profile sniff_test flags=(attach_disconnected,mediate_deleted) {
     # Barkley's own Semgrep rules (read only; the rest of Barkley stays out of reach)
     /opt/sniff-test/lib/python3*/site-packages/sniff_test/{rules,rules_const}/{,**} r,
 
-    # the caches (uv's packages, HA's constraints, GuardDog's lists) and the workspaces;
+    # the caches (uv's packages, HA's constraints) and the workspaces;
     # HOME and TMPDIR are moved inside the scan's workspace. Never executable.
     /data/cache/{,**} rwk,
     /tmp/{,**} rwk,

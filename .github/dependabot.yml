@@ -1,6 +1,6 @@
 # Update pull requests for what this repository pins: the workflows' actions (pinned
 # to commits) and the scanner's locked Python dependencies. The tools in the image
-# (Semgrep, GuardDog, osv-scanner, uv) are pinned by hand in the Dockerfile, with
+# (Semgrep, osv-scanner, uv) are pinned by hand in the Dockerfile, with
 # checksums, and upgraded deliberately: a new Semgrep can change what the rules see.
 # The security workflow's tools (Gitleaks, Hadolint, Checkov) are hand-pinned too.
 # Cooldown: a release must be a week old before a pull request offers it, so a

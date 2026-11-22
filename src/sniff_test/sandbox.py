@@ -1,6 +1,6 @@
 """Landlock: every scanner tool runs in a sandbox Barkley sets up itself.
 
-Semgrep, GuardDog, osv-scanner and uv parse hostile files. If one of them is exploited,
+Semgrep, osv-scanner and uv parse hostile files. If one of them is exploited,
 it must not be able to read Home Assistant's token or the scan store, change other
 scans, run what it downloaded, or call home on any port. In the add-on the AppArmor
 profile does part of this; standalone (plain Docker, maybe no AppArmor at all) nothing
@@ -19,10 +19,9 @@ What a tool gets (`policy_for`):
 - read and execute: the system and the image (/usr, /bin, /lib, /opt, ...);
 - read only: /etc, /proc, /sys, /dev; read and write /dev/null and /dev/shm;
 - read and write, nothing executable: its own scan's workspace (HOME and TMPDIR are
-  moved inside it), plus per tool: uv its package cache (read-only HA constraints),
-  GuardDog its list cache;
+  moved inside it), plus per tool: uv its package cache (read-only HA constraints);
 - osv-scanner only: folder listings from / down (it opens / first), no file contents;
-- TCP (Landlock ABI 4+): connect to port 443 only (uv, osv-scanner, GuardDog), nothing
+- TCP (Landlock ABI 4+): connect to port 443 only (uv, osv-scanner), nothing
   at all for Semgrep; no listening. DNS is UDP, which Landlock doesn't cover;
 - signals and abstract unix sockets scoped (ABI 6+): it can't signal or connect to
   anything outside its own sandbox;
@@ -245,7 +244,7 @@ def policy_for(
     write: tuple[Path, ...] = (),
     read: tuple[Path, ...] = (),
 ) -> Policy:
-    """The policy for one run of `tool` (semgrep | uv | osv-scanner | guarddog) from `cwd`."""
+    """The policy for one run of `tool` (semgrep | uv | osv-scanner) from `cwd`."""
     ws = workspace_of(cwd)
     home, tmp = ws / ".tool-home", ws / ".tool-tmp"
     # Landlock can only grant a folder that exists, and a tool can't create its own cache

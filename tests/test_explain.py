@@ -5,7 +5,6 @@ from pathlib import Path
 
 import yaml
 
-from sniff_test.analyzers import guarddog
 from sniff_test.report import explain
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,15 +35,6 @@ def test_every_rule_has_plain_text():
     assert len(ids) > 50
     missing = sorted(i for i in ids if i not in explain.RULES)
     assert missing == []
-
-
-def test_every_kept_guarddog_rule_has_plain_text():
-    kept = [r.removeprefix("threat-") for r, sev in guarddog.SEVERITY.items() if sev]
-    assert sorted(r for r in kept if r not in explain.GUARDDOG_WHAT) == []
-    e = explain.explain("dep-guarddog-filesystem-autostart")
-    assert e.title == "One of its code libraries sets something up to start automatically"
-    new = explain.explain("dep-guarddog-something-new")
-    assert new.title.startswith("One of its code libraries")
 
 
 def test_text_is_plain_and_complete():

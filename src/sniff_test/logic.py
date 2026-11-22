@@ -78,14 +78,13 @@ def fingerprint(package: Path, rules: Path, tools: dict[str, str | None]) -> str
 
 def tool_versions() -> dict[str, str | None]:
     """Each scanner tool's --version, through the same helpers the scan and Diagnostics
-    use (sandboxed; GuardDog with its own environment)."""
-    from sniff_test.analyzers import guarddog, osv, python_deps, semgrep
+    use (sandboxed)."""
+    from sniff_test.analyzers import osv, python_deps, semgrep
 
     exe = shutil.which("semgrep")
     return {
         "semgrep": semgrep._version(exe) if exe else None,
         "osv-scanner": osv.osv_version(),
-        "guarddog": guarddog.guarddog_version(),
         "uv": python_deps.uv_version(),
     }
 
