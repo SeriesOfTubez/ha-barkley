@@ -1272,8 +1272,9 @@ def _links_html(links: tuple[tuple[str, str], ...]) -> str:
 
 
 _DEP_ACTION = {
-    "npm": "The library is built into the card's JavaScript, so you can't update it yourself. "
-    "If the bug matters for how the card uses it, open an issue on the developer's "
+    "npm": "If the card uses this library, it's built into the card's JavaScript, so you "
+    "can't update it yourself. If the bug matters for how the card uses it, open an issue "
+    "on the developer's "
     "repository and ask them to update, patch or replace it. Before you switch to a "
     "replacement library someone suggests online, check who publishes it.",
     "PyPI": "Home Assistant installs the version the integration asks for, so if you change it "

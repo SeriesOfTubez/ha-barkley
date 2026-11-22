@@ -377,7 +377,7 @@ def test_bundled_npm_cve_is_capped_at_high_without_inbound():
     p = _pkg("acme-yaml-parser", _CRIT, [{"ids": ["C"], "max_severity": "9.8"}], "npm")
     [f] = osv.to_findings([p], "package-lock.json", set(), osv.NPM_POLICY)
     assert f.severity is Severity.HIGH and Tag.INBOUND not in f.tags
-    assert "bundled into the card" in f.message
+    assert "listed as one of the card's run-time packages" in f.message
 
 
 def test_dev_only_npm_packages_report_malware_but_not_cves():

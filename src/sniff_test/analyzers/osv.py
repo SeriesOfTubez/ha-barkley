@@ -164,7 +164,12 @@ PYTHON_POLICY = VulnPolicy(Severity.HIGH, True, "installed into Home Assistant's
 # label, else CVSS, at most high), because a panel's or card's JavaScript runs on Home
 # Assistant's own origin, where a code-execution or XSS bug can reach the user's token;
 # availability-only advisories at most medium. Was capped at medium (2026-11-08).
-NPM_POLICY = VulnPolicy(Severity.HIGH, False, "bundled into the card's JavaScript", Severity.MEDIUM)
+# (0.15) "listed", not "bundled": a lockfile says the card's build uses a package, not that
+# its code is in the file the browser loads (on the 600-app batch most card findings
+# were build tools listed as run-time packages).
+NPM_POLICY = VulnPolicy(
+    Severity.HIGH, False, "listed as one of the card's run-time packages", Severity.MEDIUM
+)
 # An unchanged published library an integration ships (analyzers/libraries.py).
 VENDORED_POLICY = VulnPolicy(
     Severity.HIGH, False, "shipped unchanged in the app's web files", Severity.MEDIUM
@@ -189,6 +194,30 @@ NPM_BUILD_TOOLS = frozenset(
         "@babel/core",
         "@babel/parser",
         "@babel/preset-env",
+        # (0.15) Developer-machine tooling that cards often list under `dependencies`, or
+        # in a lockfile with no dev marks: file matching and watching, spawning shells,
+        # unpacking, test helpers. On the 600-app batch, 41 of 67 card findings were
+        # these, and none of the 11 cards' shipped files held a trace of them (their
+        # names, their error texts, `require("fs")` or `child_process`).
+        "braces",
+        "picomatch",
+        "micromatch",
+        "minimatch",
+        "brace-expansion",
+        "glob",
+        "fill-range",
+        "to-regex-range",
+        "anymatch",
+        "chokidar",
+        "readdirp",
+        "watchpack",
+        "cross-spawn",
+        "tar",
+        "get-func-name",
+        "pathval",
+        "chai",
+        "mocha",
+        "jest",
     }
 )
 
