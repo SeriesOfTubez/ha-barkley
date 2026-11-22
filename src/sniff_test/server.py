@@ -48,7 +48,7 @@ from sniff_test import settings as settings_mod
 from sniff_test import shown as shown_mod
 from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
 from sniff_test.diff import diff as diff_reports
-from sniff_test.fetch.github import GitHubError, RateLimit, RateLimitError
+from sniff_test.fetch.github import GitHubError, NotFoundError, RateLimit, RateLimitError
 from sniff_test.releases import ReleasesError
 from sniff_test.report import ai as report_ai
 from sniff_test.report import ai_context, ai_words, context
@@ -173,6 +173,13 @@ def failure_message(ex: BaseException) -> str:
     from sniff_test.workspace import UnsafeArchiveError
 
     kinds: tuple[tuple[type[BaseException], str], ...] = (
+        # (0.15) before GitHubError: the full run's three gone repositories read "GitHub
+        # didn't answer"
+        (
+            NotFoundError,
+            "GitHub has no such repository or release any more: it may have "
+            "been deleted or made private",
+        ),
         (UnsafeArchiveError, "the release archive has a file Barkley won't unpack"),
         (RecheckError, "the advisory check couldn't run"),
         (ReleasesError, "Barkley couldn't find that release"),

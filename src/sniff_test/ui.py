@@ -12,7 +12,6 @@ from __future__ import annotations
 import base64
 import html
 import re
-import textwrap
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -229,7 +228,8 @@ table.apps td.actcell .act { flex-wrap:nowrap; }
 .again form { margin:0; }
 .status { display:flex; flex-direction:column; gap:var(--s1); }
 .status .row { display:flex; flex-wrap:wrap; gap:var(--s1) var(--s2); align-items:baseline; }
-.filters { display:flex; flex-wrap:wrap; gap:var(--s1); }
+.filters { display:flex; flex-wrap:wrap; gap:var(--s1); align-items:center; }
+.filters .gap { flex:0 0 var(--s2); }
 .pill { font-size:var(--t-xs); line-height:16px; padding:var(--s1) var(--s3);
   border-radius:var(--r2); border:1px solid var(--line); background:var(--card);
   color:var(--fg); white-space:nowrap; text-decoration:none; }
@@ -451,12 +451,9 @@ details.tests > :not(summary) { margin-top:var(--s1); max-width:72ch; }
 .lock { font-size:var(--t-xs); white-space:nowrap; } .lock.ok { color:var(--green); }
 .lock.no { color:var(--orange); }
 .flowwrap { overflow-x:auto; }
-.flow-h svg { display:block; max-width:700px; margin:0 auto; }
 .flow text { fill:var(--fg); font:var(--t-xs) var(--font); }
 .flow .sm { fill:var(--muted); }
 .flow .nm { font-weight:600; }
-.flow-v { display:none; }
-@media (max-width:560px) { .flow-h { display:none; } .flow-v { display:block; } }
 /* (0.15) "What it does" (does.py): rooms, paths and ways in */
 svg.does { width:100%; height:auto; display:block; min-width:720px; }
 svg.does .inside { fill:var(--soft); stroke:var(--line); }
@@ -900,12 +897,18 @@ def card_html(base: str, c: Card) -> str:
 FILTERS = {
     "all": "All",
     "look": "Needs a look",
+    # (0.15) by reading: any sign of malicious behavior; Exposure medium or high
+    "threat": "Signs of a threat",
+    "exposure": "Exposure medium or high",
     "fine": "No concerns found",
     "privacy": "Privacy notes",
     "updates": "Updates",
     "unchecked": "Not checked",
 }
 VIEWS = ("cards", "table")
+# (0.15) how the list is ordered: most concern first (the default), or by one reading
+SORTS = {"concern": "Most concern first", "threat": "Threat", "exposure": "Exposure",
+         "name": "Name"}  # fmt: skip
 PER_PAGE = {"cards": 12, "table": 25}
 
 
@@ -917,6 +920,7 @@ class View:
     view: str = "cards"
     pg: int = 1
     pg2: int = 1  # the page of "Sniffed, not installed", under the installed list
+    sort: str = "concern"
 
     @classmethod
     def parse(cls, q: dict[str, list[str]], default_view: str = "cards") -> View:
@@ -929,11 +933,13 @@ class View:
             except ValueError:
                 return 1
 
+        sort = (q.get("sort") or ["concern"])[0]
         return cls(
             f if f in FILTERS else "all",
             view if view in VIEWS else "cards",
             num("page"),
             num("page2"),
+            sort if sort in SORTS else "concern",
         )
 
     def qs(self, sep: str = "&amp;", **kw: Any) -> str:
@@ -948,6 +954,8 @@ class View:
             parts.append(f"page={v.pg}")
         if v.pg2 > 1:
             parts.append(f"page2={v.pg2}")
+        if v.sort != "concern":
+            parts.append(f"sort={v.sort}")
         return sep.join(parts)
 
 
@@ -955,6 +963,8 @@ def _keep(c: Card, f: str) -> bool:
     return {
         "all": True,
         "look": c.worth_a_look,
+        "threat": (c.readings or {}).get("threat_level") in ("possible", "found"),
+        "exposure": (c.readings or {}).get("exposure_level") in ("medium", "high"),
         "fine": c.band == "green" and not c.worth_a_look,
         "privacy": bool(c.notes()),
         "updates": bool(c.available),
@@ -968,6 +978,23 @@ def _sort_key(c: Card) -> tuple[Any, ...]:
     rd = c.readings or {}
     return (c.band != "grey", not c.worth_a_look, -float(rd.get("threat") or 0),
             -float(rd.get("exposure") or 0), c.name.lower())  # fmt: skip
+
+
+def _sort_by(sort: str):
+    """(0.15) The list's order: `_sort_key`, or by one reading (highest first; not checked
+    last), or by name."""
+    if sort == "name":
+        return lambda c: c.name.lower()
+    if sort in ("threat", "exposure"):
+        other = "exposure" if sort == "threat" else "threat"
+
+        def key(c: Card) -> tuple[Any, ...]:
+            rd = c.readings or {}
+            return (c.band == "grey", -float(rd.get(sort) or 0), -float(rd.get(other) or 0),
+                    c.name.lower())  # fmt: skip
+
+        return key
+    return _sort_key
 
 
 def _readings_cell(c: Card) -> str:
@@ -1047,6 +1074,10 @@ def render_grid(base: str, cards: list[Card], v: View | None = None, lead: str =
         summary.append(item("look", "need a look" if counts["look"] != 1 else "needs a look",
                             "yellow"))  # fmt: skip
     summary.append(item("fine", "no concerns found", "green"))
+    if counts["threat"]:
+        summary.append(item("threat", "with signs of a threat", "red"))
+    if counts["exposure"]:
+        summary.append(item("exposure", "with medium or high Exposure", "orange"))
     if counts["privacy"]:
         summary.append(item("privacy", "with privacy notes", "priv"))
     summary.append(item("updates", f"update{'s' * (ups != 1)} waiting"))
@@ -1057,7 +1088,13 @@ def render_grid(base: str, cards: list[Card], v: View | None = None, lead: str =
         f"{label}</a>"
         for k, label in (("cards", f"{icon('grid')} Cards"), ("table", f"{icon('list')} Table"))
     )
-    shown = sorted((c for c in cards if _keep(c, v.f)), key=_sort_key)
+    sorts = "".join(
+        f'<a class="pill{" on" if v.sort == k else ""}" href="{base}/?{v.qs(sort=k, pg=1)}">'
+        f"{e(label)}</a>"
+        for k, label in SORTS.items()
+    )
+    views = f'<span class="muted small">Order</span>{sorts}<span class="gap"></span>{views}'
+    shown = sorted((c for c in cards if _keep(c, v.f)), key=_sort_by(v.sort))
     per = PER_PAGE[v.view]
     pages = max(1, -(-len(shown) // per))
     v = replace(v, pg=min(v.pg, pages))
@@ -2024,391 +2061,6 @@ def change_line(c: dict[str, Any]) -> tuple[str, str, str]:
     if why and why.lower() not in html.unescape(re.sub(r"<[^>]+>", "", out)).lower():
         out += f". Barkley flagged it for: {e(why, 300)}"
     return lead, out, text
-
-
-# --- data-flow diagram -------------------------------------------------------------------------
-
-
-def _clip(s: str, n: int = 26) -> str:
-    s = sanitize_untrusted(s, 200)
-    return s if len(s) <= n else s[: n - 1] + "…"
-
-
-@dataclass
-class _Flow:
-    """What the diagram shows, laid out two ways (wide and narrow screens)."""
-
-    rd: list[tuple[str, str, bool]]  # (node id, label, sensitive) the app reads
-    right: list[tuple[str, str, str, str]]  # (key, title, subtitle, style) it can reach
-    fl: list[dict[str, Any]]  # flows_to edges
-    extra: int  # flow destinations beyond the three drawn
-    port_dirs: set[str | None]
-    kind: str
-    flow_src: set[str]
-
-
-def _flow_data(report: dict[str, Any]) -> _Flow | None:
-    rd = reads(report)[:6]
-    fl = flows(report)
-    hs = hosts(report)
-    pts = ports(report)
-    _g, nodes = _graph(report)
-    right: list[tuple[str, str, str, str]] = []
-    flow_targets = []
-    for x in fl:
-        if x["target"] not in flow_targets:
-            flow_targets.append(x["target"])
-    for t in flow_targets[:3]:
-        n = nodes.get(t, {})
-        if n.get("kind") == "network":
-            right.append((t, "Off your HA machine", "the code doesn't show where", "bad"))
-        else:
-            right.append((t, str(n.get("label", t)), "site Barkley can't explain", "bad"))
-    extra = len(flow_targets) - 3
-    home = [h for h in hs if h.cls == "local"]
-    if home:
-        right.append(
-            ("home", "Your own network", f"{len(home)} address{'es' * (len(home) != 1)}", "")
-        )
-    if pts:
-        dirs = {p.direction for p in pts}
-        if dirs == {"in"}:
-            title = (
-                f"Listens on port {pts[0].port}"
-                if len(pts) == 1
-                else f"Listens on {len(pts)} ports"
-            )
-            sub = "others connect to this machine"
-        elif len(pts) == 1:
-            known = WELL_KNOWN_PORTS.get(pts[0].port)
-            title = (
-                f"{known[0]} server, port {pts[0].port}"
-                if known
-                else f"A server on port {pts[0].port}"
-            )
-            sub = "its address isn't in the code"
-        else:
-            title = f"{len(pts)} servers or devices"
-            nums = ", ".join(str(p.port) for p in pts[:4]) + (" …" if len(pts) > 4 else "")
-            sub = f"{nums} · address unknown"
-        right.append(("ports", title, sub, ""))
-    flowing = {nodes.get(t, {}).get("label") for t in flow_targets}
-    net = [h for h in internet(hs) if h.name not in flowing]
-    dev = [h for h in net if h.cls in ("developer_hosted", "analytics")]
-    if dev:
-        kinds = {h.cls for h in dev}
-        if len(dev) == 1:
-            title = (
-                "Server the developer runs" if "developer_hosted" in kinds else "Analytics service"
-            )
-        elif kinds == {"developer_hosted"}:
-            title = f"{len(dev)} servers the developer runs"
-        elif kinds == {"analytics"}:
-            title = f"{len(dev)} analytics services"
-        else:
-            title = f"{len(dev)} developer or analytics servers"
-        right.append(("dev", title, dev[0].name, "priv"))
-    rest = [h for h in net if h not in dev]
-    if rest:
-        own = sum(1 for h in rest if h.cls == "declared")
-        sub = f"{own} of them the app's own" if own else "none of them the app's own"
-        label = "Other internet sites" if dev else "Internet sites"
-        right.append(("net", f"{label}: {len(rest)}", sub, ""))
-    if not rd and not right:
-        return None
-    return _Flow(
-        rd,
-        right,
-        fl,
-        extra,
-        {p.direction for p in pts},
-        KIND.get(str(report.get("target", {}).get("kind")), ""),
-        {x["source"] for x in fl},
-    )
-
-
-_BOX_STYLE = {"bad": ("var(--card)", "var(--red)"), "priv": ("var(--priv-bg)", "var(--priv)")}
-
-
-def _flow_defs(suffix: str) -> str:
-    return (
-        f'<defs><marker id="arr{suffix}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
-        'markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
-        'fill="var(--red)"/></marker>'
-        f'<marker id="arrg{suffix}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" '
-        'markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
-        'fill="var(--muted)"/></marker></defs>'
-    )
-
-
-_CHAR_PX = 6.6  # 12 px Geist, about this wide per character on average
-_MAX_LINES = 3  # per part of a label; longer text (untrusted, up to 253) ends in "…"
-
-
-def _wrap(text: str, chars: int, most: int = _MAX_LINES) -> list[str]:
-    """(0.15, his report: labels cut to fit a fixed box were lost, with no hover on a phone)
-    A label in as many lines as it needs, breaking long names anywhere."""
-    text = sanitize_untrusted(text, 300)
-    lines = textwrap.wrap(text, max(chars, 8), break_long_words=True,
-                          break_on_hyphens=False) or [""]  # fmt: skip
-    if len(lines) > most:
-        lines = [*lines[: most - 1], _clip(lines[most - 1] + "…", chars)]
-    return lines
-
-
-def _label_lines(title: str, sub: str, w: int) -> list[tuple[str, bool]]:
-    """(text, small) lines for a box `w` wide. A second line that only repeats the first
-    ("Home Assistant's environment variables" / "environment variables") is left out."""
-    chars = int((w - 24) / _CHAR_PX)
-    out = [(x, False) for x in _wrap(title, chars)]
-    if sub and sub.strip().lower() not in title.lower():
-        out += [(x, True) for x in _wrap(sub, chars)]
-    return out
-
-
-def _read_lines(item: tuple[str, str, bool], w: int) -> list[tuple[str, bool]]:
-    _nid, label, _sens = item
-    return _label_lines(explain.data_label(label), label, w)
-
-
-def _dest_lines(item: tuple[str, str, str, str], w: int) -> list[tuple[str, bool]]:
-    return _label_lines(item[1], item[2], w)
-
-
-def _box_h(d: _Flow, rw: int, dw: int) -> int:
-    """One height for every box in a diagram: the tallest label's (at least two lines)."""
-    n = max([2] + [len(_read_lines(x, rw)) for x in d.rd]
-            + [len(_dest_lines(x, dw)) for x in d.right])  # fmt: skip
-    return 12 + 16 * n
-
-
-def _box(lines: list[tuple[str, bool]], x: int, y: float, w: int, h: int, fill: str,
-         stroke: str) -> str:  # fmt: skip
-    text = "".join(
-        f'<text{' class="sm"' if small else ""} x="{x + 12}" y="{y + 19 + 16 * i:.0f}">'
-        f"{e(t, 300)}</text>"
-        for i, (t, small) in enumerate(lines)
-    )
-    return (f'<rect x="{x}" y="{y:.0f}" width="{w}" height="{h}" rx="6" fill="{fill}" '
-            f'stroke="{stroke}"/>{text}')  # fmt: skip
-
-
-def _read_box(d: _Flow, item: tuple[str, str, bool], x: int, y: float, w: int, h: int) -> str:
-    nid, _label, sens = item
-    fill, stroke = (
-        ("var(--red-bg)", "var(--red)")
-        if nid in d.flow_src
-        else (("var(--yellow-bg)", "var(--yellow)") if sens else ("var(--soft)", "var(--line)"))
-    )
-    return _box(_read_lines(item, w), x, y, w, h, fill, stroke)
-
-
-def _dest_box(item: tuple[str, str, str, str], x: int, y: float, w: int, h: int) -> str:
-    fill, stroke = _BOX_STYLE.get(item[3], ("var(--soft)", "var(--line)"))
-    return _box(_dest_lines(item, w), x, y, w, h, fill, stroke)
-
-
-def _app_box(d: _Flow, name: str, x: int, cy: float) -> str:
-    # 12 px semibold Geist is about 7 px per character; the box has 154 px for text
-    names = _wrap(name, 21, 2)
-    top = cy - 3 - 7 * (len(names) - 1)
-    text = "".join(f'<text class="nm" x="{x + 85}" y="{top + 14 * i:.0f}" '
-                   f'text-anchor="middle">{e(t, 300)}</text>' for i, t in enumerate(names))  # fmt: skip
-    return (
-        f'<rect x="{x}" y="{cy - 28:.0f}" width="170" height="56" rx="8" fill="var(--card)" '
-        f'stroke="var(--fg)" stroke-width="1.5"/>{text}'
-        f'<text class="sm" x="{x + 85}" y="{top + 14 * len(names) + 2:.0f}" '
-        f'text-anchor="middle">{e(d.kind)}</text>'
-    )
-
-
-def _flow_way(d: _Flow, key: str) -> str | None:
-    """Who opens the connection: "out" to a site or server, "in" for a port it listens on,
-    None when the code doesn't make the direction clear."""
-    if key != "ports":
-        return "out"
-    return next(iter(d.port_dirs)) if len(d.port_dirs) == 1 else None
-
-
-def _flow_caption(d: _Flow) -> list[str]:
-    if d.fl:
-        cap = ["Solid line: Barkley traced it in the code.",
-               "Dashed line: it reads the data and can reach a site Barkley can't explain, but "
-               "the path isn't proven."]  # fmt: skip
-        if d.extra > 0:
-            cap.append(f"{d.extra} more place{'s' * (d.extra != 1)} your data may go "
-                       f"{'are' if d.extra != 1 else 'is'} listed below.")  # fmt: skip
-        return cap
-    return ["Arrows show which way the connection goes.", "Barkley found no path from your data "
-            "to the internet."]  # fmt: skip
-
-
-def _flow_wide(d: _Flow, name: str) -> str:
-    """Left: reads. Middle: the app. Right: destinations. Red lines left to right."""
-    top, w = 16, 700
-    bh = _box_h(d, 176, 194)
-    mid_y, row_h = bh / 2, bh + 12
-    rows = max(len(d.rd), len(d.right), 2)
-    caption = [ln for part in _flow_caption(d) for ln in textwrap.wrap(part, 110)]
-    height = top * 2 + rows * row_h + 22 + 14 * (len(caption) - 1)
-    cy = top + rows * row_h / 2
-    parts = [
-        f'<svg class="flow" viewBox="0 0 {w} {height:.0f}" width="100%" style="min-width:560px" '
-        f'role="img" aria-label="Data flow for {e(name, 80)}">',
-        _flow_defs(""),
-    ]
-
-    def ys(n: int) -> list[float]:
-        start = cy - n * row_h / 2
-        return [start + i * row_h + 6 for i in range(n)]
-
-    lpos: dict[str, float] = {}
-    for item, y in zip(d.rd, ys(len(d.rd)), strict=False):
-        parts.append(_read_box(d, item, 6, y, 176, bh))
-        parts.append(
-            f'<line x1="182" y1="{y + mid_y:.0f}" x2="258" y2="{cy:.0f}" '
-            'stroke="var(--muted)" stroke-dasharray="3 3" marker-end="url(#arrg)"/>'
-        )
-        lpos[item[0]] = y + mid_y
-    if not d.rd:
-        parts.append(
-            f'<text class="sm" x="6" y="{cy + 4:.0f}">Reads none of your private data</text>'
-        )
-    center_at = len(parts)
-    parts.append(_app_box(d, name, 260, cy))
-    rpos: dict[str, float] = {}
-    for item, y in zip(d.right, ys(len(d.right)), strict=False):
-        parts.append(_dest_box(item, w - 200, y, 194, bh))
-        way = _flow_way(d, item[0])
-        if way == "in":
-            parts.append(
-                f'<line x1="{w - 200}" y1="{y + mid_y:.0f}" x2="432" y2="{cy:.0f}" '
-                'stroke="var(--muted)" marker-end="url(#arrg)"/>'
-            )
-        else:
-            mark = ' marker-end="url(#arrg)"' if way == "out" else ""
-            x2 = w - 202 if way == "out" else w - 200
-            parts.append(
-                f'<line x1="430" y1="{cy:.0f}" x2="{x2}" y2="{y + mid_y:.0f}" '
-                f'stroke="var(--muted)"{mark}/>'
-            )
-        rpos[item[0]] = y + mid_y
-    lines: list[str] = []
-    for x in d.fl:
-        y1, y2 = lpos.get(x["source"]), rpos.get(x["target"])
-        if y1 is None or y2 is None:
-            continue
-        dash = "" if x["evidence"] == "proven" else ' stroke-dasharray="6 4"'
-        width = "2.4" if x["evidence"] == "proven" else "1.6"
-        lines.append(
-            f'<path d="M182 {y1:.0f} C 330 {y1:.0f}, 380 {y2:.0f}, {w - 202} {y2:.0f}" fill="none" '
-            f'stroke="var(--red)" stroke-width="{width}"{dash} marker-end="url(#arr)"/>'
-        )
-    parts[center_at:center_at] = lines  # under the app's box, so its name stays readable
-    for i, line in enumerate(caption):  # one sentence per line: they don't fit on one
-        y = height - 8 - 14 * (len(caption) - 1 - i)
-        parts.append(f'<text class="sm" x="6" y="{y:.0f}">{e(line)}</text>')
-    parts.append("</svg>")
-    return "".join(parts)
-
-
-def _flow_narrow(d: _Flow, name: str) -> str:
-    """The same picture stacked for a phone: reads on top, the app, then destinations.
-    Grey connectors run as one spine down the right margin (so no line crosses a box);
-    red data paths run down the left margin."""
-    top, w, bx, bw = 12, 360, 40, 280
-    bh = _box_h(d, bw, bw)
-    m, row_h = bh // 2, bh + 8
-    spine, red_x = w - 20, 12
-    n_r, n_d = len(d.rd), len(d.right)
-    y_reads = top
-    reads_end = y_reads + n_r * row_h if n_r else y_reads + 24
-    cy = reads_end + 56  # app box centre: 28 of gap, 28 of half height
-    y_dest = cy + 28 + 28
-    caption = [ln for part in _flow_caption(d) for ln in textwrap.wrap(part, 46)]
-    height = y_dest + max(n_d, 1) * row_h + 14 * len(caption) + 6
-    mid = w / 2
-    parts = [
-        f'<svg class="flow" viewBox="0 0 {w} {height:.0f}" width="100%" '
-        f'role="img" aria-label="Data flow for {e(name, 80)}">',
-        _flow_defs("v"),
-    ]
-    lpos: dict[str, float] = {}
-    for i, item in enumerate(d.rd):
-        y = y_reads + i * row_h
-        parts.append(_read_box(d, item, bx, y, bw, bh))
-        parts.append(
-            f'<line x1="{bx + bw}" y1="{y + m}" x2="{spine}" y2="{y + m}" '
-            'stroke="var(--muted)" stroke-dasharray="3 3"/>'
-        )
-        lpos[item[0]] = y + m
-    if d.rd:
-        y0, y1 = y_reads + m, cy - 44
-        parts.append(
-            f'<path d="M{spine} {y0} V{y1} H{mid:.0f} V{cy - 30:.0f}" fill="none" '
-            'stroke="var(--muted)" stroke-dasharray="3 3" marker-end="url(#arrgv)"/>'
-        )
-    else:
-        parts.append(
-            f'<text class="sm" x="{bx}" y="{y_reads + 14}">Reads none of your private data</text>'
-        )
-    center_at = len(parts)
-    parts.append(_app_box(d, name, int(mid - 85), cy))
-    rpos: dict[str, float] = {}
-    if d.right:
-        last = y_dest + (n_d - 1) * row_h + m
-        parts.append(
-            f'<path d="M{mid:.0f} {cy + 28:.0f} V{cy + 44:.0f} H{spine} V{last}" fill="none" '
-            'stroke="var(--muted)"/>'
-        )
-    for i, item in enumerate(d.right):
-        y = y_dest + i * row_h
-        parts.append(_dest_box(item, bx, y, bw, bh))
-        way = _flow_way(d, item[0])
-        if way == "in":  # others connect in: the arrow points from the box to the spine
-            parts.append(
-                f'<line x1="{bx + bw}" y1="{y + m}" x2="{spine - 1}" y2="{y + m}" '
-                'stroke="var(--muted)" marker-end="url(#arrgv)"/>'
-            )
-        else:
-            mark = ' marker-end="url(#arrgv)"' if way == "out" else ""
-            x2 = bx + bw + 2 if way == "out" else bx + bw
-            parts.append(
-                f'<line x1="{spine}" y1="{y + m}" x2="{x2}" y2="{y + m}" '
-                f'stroke="var(--muted)"{mark}/>'
-            )
-        rpos[item[0]] = y + m
-    lines: list[str] = []
-    for x in d.fl:
-        y1, y2 = lpos.get(x["source"]), rpos.get(x["target"])
-        if y1 is None or y2 is None:
-            continue
-        dash = "" if x["evidence"] == "proven" else ' stroke-dasharray="6 4"'
-        width = "2.4" if x["evidence"] == "proven" else "1.6"
-        lines.append(
-            f'<path d="M{bx} {y1:.0f} C {red_x} {y1:.0f}, {red_x} {y2:.0f}, {bx - 2} {y2:.0f}" '
-            f'fill="none" stroke="var(--red)" stroke-width="{width}"{dash} '
-            'marker-end="url(#arrv)"/>'
-        )
-    parts[center_at:center_at] = lines
-    for i, line in enumerate(caption):
-        y = height - 6 - 14 * (len(caption) - 1 - i)
-        parts.append(f'<text class="sm" x="{bx}" y="{y:.0f}">{e(line)}</text>')
-    parts.append("</svg>")
-    return "".join(parts)
-
-
-def flow_svg(report: dict[str, Any], name: str) -> str:
-    """Left: what it reads. Middle: the app. Right: where it can connect. Lines between
-    left and right only for flows the scanner found (proven solid, possible dashed). Drawn
-    twice: side by side for wide screens, stacked for narrow ones (CSS shows one)."""
-    d = _flow_data(report)
-    if d is None:
-        return '<p class="muted">It reads none of your private data, and its code names no network addresses.</p>'
-    return (
-        f'<div class="flowwrap"><div class="flow-h">{_flow_wide(d, name)}</div>'
-        f'<div class="flow-v">{_flow_narrow(d, name)}</div></div>'
-    )
 
 
 # --- where it connects -------------------------------------------------------------------------
@@ -4073,15 +3725,26 @@ def devnote_html(n: devnote.Note | None, title: str = "The developer's note") ->
 
 
 def _lines(cites: Any) -> str:
-    """`README.md lines 123-129, api.py line 40` (with a dash) from checked citations."""
-    out = []
+    """`README.md lines 123-129, api.py line 40` (with a dash) from checked citations.
+    (0.15, his report) one file is named once: "README.md lines 16 and 18", not
+    "README.md line 16, README.md line 18"."""
+    by_file: dict[str, list[tuple[int, int]]] = {}
     for c in cites or []:
         try:
             f, a, b = str(c[0]), int(c[1]), int(c[2])
         except (TypeError, ValueError, IndexError):
             continue
-        out.append(f"{f} line {a}" if a == b else f"{f} lines {a}–{b}")
-    return ", ".join(out[:4])
+        spans = by_file.setdefault(f, [])
+        if (a, b) not in spans:
+            spans.append((a, b))
+    out = []
+    for f, spans in list(by_file.items())[:4]:
+        spans = sorted(spans)[:6]
+        parts = [str(a) if a == b else f"{a}–{b}" for a, b in spans]
+        one = len(spans) == 1 and spans[0][0] == spans[0][1]
+        listed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+        out.append(f"{f} {'line' if one else 'lines'} {listed}")
+    return ", ".join(out)
 
 
 # (his report 2026-11-21: four sentences that each start "The README says" read like a

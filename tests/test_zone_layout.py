@@ -113,33 +113,6 @@ def test_history_is_newest_first():
     assert "first check" in html.rsplit("<li>", 1)[1]
 
 
-def test_the_map_wraps_long_labels_instead_of_cutting_them():
-    """(0.15, his report) "its address isn't in the c…", "Home Assistant's envi…": text
-    cut to fit a fixed box was lost, with no hover on a phone."""
-    from sniff_test import ui
-
-    long = "a-very-long-host-name-that-goes-on.example.invalid"
-    reads = [("data:env", "environment variables", False)]
-    right = [("dev", "Server the developer runs", long, "priv")]
-    d = ui._Flow(reads, right, [], 0, set(), "", set())
-    for html in (ui._flow_wide(d, "acme"), ui._flow_narrow(d, "acme")):
-        texts = [x.split(">", 1)[1].split("</text>", 1)[0] for x in html.split("<text")[1:]]
-        assert not any("…" in t for t in texts)
-        assert long in "".join(texts)  # broken over lines, every character kept
-        # the second line only repeated the first: left out
-        assert texts.count("environment variables") <= 1  # the title's own second line
-    assert [
-        t
-        for t, small in ui._label_lines(
-            "Home Assistant's environment variables", "environment variables", 176
-        )
-        if small
-    ] == []
-    lines = ui._label_lines("Server the developer runs", long, 194)
-    assert "".join(t for t, small in lines if small) == long
-    assert all(len(t) <= 26 for t, _ in lines)
-
-
 def test_the_exposure_box_lists_the_login_free_pages():
     from sniff_test import ui
 

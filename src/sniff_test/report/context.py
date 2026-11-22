@@ -187,7 +187,9 @@ def build(
                                 "line": first["start"], "snippet": sid}  # fmt: skip
         else:
             out_items[it.id] = {"kind": it.kind, "file": it.file, "line": it.line, "snippet": sid}
-            if (doc := docstring(tree, it.file, it.line)) is not None:
+            if (
+                doc := docstring(tree, it.file, it.line) or js_comment(tree, it.file, it.line)
+            ) is not None:
                 out_items[it.id]["doc"] = doc  # (0.15) the developer's own words, in full
             if it.kind == "finding" and it.id in patches:
                 fact, repl = _patch(tree, it.file, it.line)
@@ -400,6 +402,74 @@ def docstring(tree: _Tree, rel: str, line: int) -> dict[str, Any] | None:
         doc = _doc_of(py, node, DOC_LINES)
         if doc is not None:
             doc["of"] = _clean(node.name)[:80]
+            return doc
+    # (0.15, his ask 2026-11-21) no docstring: the comment block right above the innermost
+    # function or class (above its decorators) is the developer's description too
+    for node in sorted(around, key=lambda n: -n.lineno):
+        first = min([node.lineno, *(d.lineno for d in getattr(node, "decorator_list", []))])
+        doc = _comment_above(py.lines, first, py.rel, ("#",))
+        if doc is not None:
+            doc["of"] = _clean(node.name)[:80]
+            return doc
+    return None
+
+
+_JS_HEAD = re.compile(
+    r"^\s*(?:export\s+)?(?:async\s+)?(?:function\b|(?:static\s+|async\s+|get\s+|set\s+)*"
+    r"[A-Za-z_$][\w$]{0,80}\s*\([^()]{0,200}\)\s*\{|(?:const|let|var)\s+[A-Za-z_$][\w$]{0,80}"
+    r"\s*=\s*(?:async\s*)?(?:function\b|\([^()]{0,200}\)\s*=>))"
+)
+_JS_LOOK_UP = 80  # lines above an item searched for its function's head
+_JS_MAX_LINE = 400  # a longer line is minified code: no comments are read from it
+
+
+def _comment_above(lines: list[str], first: int, rel: str, marks: tuple[str, ...]):
+    """The run of comment lines (starting with one of `marks`) right above line `first`
+    (1-based), or a `/* … */` block ending there: the developer's words, untrusted."""
+    i = first - 2
+    block: list[str] = []
+    if i >= 0 and lines[i].rstrip().endswith("*/") and "/*" in marks:
+        j = i
+        while j >= 0 and "/*" not in lines[j] and i - j < DOC_LINES:
+            j -= 1
+        if j < 0 or "/*" not in lines[j]:
+            return None
+        block = lines[j : i + 1]
+        start = j + 1
+    else:
+        while i >= 0 and lines[i].lstrip().startswith(marks) and len(block) < DOC_LINES:
+            block.insert(0, lines[i])
+            i -= 1
+        start = i + 2
+    code, chars = [], 0
+    for raw in block:
+        line = _clean(raw).rstrip()[:README_LINE]
+        if len(raw) > _JS_MAX_LINE or chars + len(line) > DOC_CHARS:
+            return None
+        chars += len(line) + 1
+        code.append(line)
+    words = re.sub(r"[#/*\s]+", " ", " ".join(code)).strip()
+    if len(words) < 12:  # a lone lint marker or "//" says nothing
+        return None
+    return {"file": rel, "start": start, "code": code, "cut": False, "comment": True}
+
+
+def js_comment(tree: _Tree, rel: str, line: int) -> dict[str, Any] | None:
+    """(0.15) For a card's code: the comment block above the function around `line`,
+    found by reading up to the nearest function head. Minified code has none."""
+    if not rel.endswith((".js", ".mjs", ".ts")):
+        return None
+    text = tree.text(rel)
+    if not text:
+        return None
+    lines = text.splitlines()
+    if not 0 < line <= len(lines) or len(lines[line - 1]) > _JS_MAX_LINE:
+        return None
+    for k in range(line - 1, max(-1, line - 1 - _JS_LOOK_UP), -1):
+        if len(lines[k]) > _JS_MAX_LINE:
+            return None
+        if _JS_HEAD.match(lines[k]):
+            doc = _comment_above(lines, k + 1, rel, ("//", "/*", "*"))
             return doc
     return None
 

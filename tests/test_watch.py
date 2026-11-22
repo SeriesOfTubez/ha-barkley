@@ -447,6 +447,12 @@ def test_a_failed_job_says_a_fixed_sentence_never_the_projects_text():
     assert "x.invalid" not in msg and "[" not in msg and "won't unpack" in msg
     assert "app log" in failure_message(RuntimeError("anything at all"))
     assert "anything" not in failure_message(RuntimeError("anything at all"))
+    # (0.15) a repository that is gone says so (it read "GitHub didn't answer")
+    from sniff_test.fetch.github import GitHubError, NotFoundError
+
+    gone = failure_message(NotFoundError("https://api.github.com/repos/a/b"))
+    assert "deleted or made private" in gone and "api.github.com" not in gone
+    assert "didn't answer" in failure_message(GitHubError("503"))
 
 
 def test_notify_when_setting():

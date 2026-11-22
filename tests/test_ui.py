@@ -45,29 +45,6 @@ def test_hostile_text_is_escaped_in_every_section():
     assert "&lt;script&gt;" in page
 
 
-def test_no_flow_lines_without_flows():
-    svg = ui.flow_svg(report(), "acme")
-    assert "<path d=" not in svg.replace('<path d="M0,0', "")
-    assert "No path found" in svg or "names no network addresses" in svg
-
-
-def test_flow_lines_follow_the_graph():
-    src, off = "data:secrets.yaml", "network:off-box (destination not visible statically)"
-    rep = _with(
-        report(),
-        nodes=[
-            {"id": src, "kind": "data", "label": "secrets.yaml"},
-            {"id": off, "kind": "network", "label": "off-box (destination not visible statically)"},
-        ],
-        edges=[_edge("reads", src), _edge("flows_to", off, evidence="proven", source=src)],
-    )
-    svg = ui.flow_svg(rep, "acme")
-    assert svg.count('marker-end="url(#arr)"') == 1  # the wide layout
-    assert svg.count('marker-end="url(#arrv)"') == 1  # the stacked one for phones
-    assert "Off your HA machine" in svg and "Your secrets file" in svg
-    assert 'stroke-dasharray="6 4"' not in svg  # proven: solid
-
-
 def test_ports_alone_never_claim_a_home_network():
     rep = _with(
         report(),

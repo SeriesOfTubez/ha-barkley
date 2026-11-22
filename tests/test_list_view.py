@@ -100,3 +100,31 @@ def test_finished_time_is_set(tmp_path):
     w.submit("scan", "acme/x", "v1")
     w.wait()
     assert w.jobs[0].finished > 0
+
+
+def test_filters_and_order_by_reading():
+    """(0.15) Filter by signs of a threat or by Exposure medium or high, and order the
+    list by either reading or by name; all of it kept in the address."""
+
+    def card(i: int, threat: float, t_level: str, exp: float, e_level: str) -> ui.Card:
+        rd = {"threat": threat, "threat_level": t_level, "exposure": exp,
+              "exposure_level": e_level, "complete": True}  # fmt: skip
+        return ui.Card(repo=f"a/r{i}", name=f"App {i}", kind="integration", installed="v1",
+                       available=None, scan=None, report={"readings": rd})  # fmt: skip
+
+    cards = [card(1, 0, "none", 6.0, "high"), card(2, 2.5, "possible", 0, "low"),
+             card(3, 0, "none", 3.0, "medium"), card(4, 0, "none", 0, "low")]  # fmt: skip
+    assert [c.name for c in cards if ui._keep(c, "threat")] == ["App 2"]
+    assert [c.name for c in cards if ui._keep(c, "exposure")] == ["App 1", "App 3"]
+    by_exp = sorted(cards, key=ui._sort_by("exposure"))
+    assert [c.name for c in by_exp] == ["App 1", "App 3", "App 2", "App 4"]
+    by_threat = sorted(cards, key=ui._sort_by("threat"))
+    assert by_threat[0].name == "App 2"
+    assert min(cards, key=ui._sort_by("name")).name == "App 1"
+    html = ui.render_grid("", cards, ui.View(sort="exposure"))
+    assert html.index("App 1") < html.index("App 3") < html.index("App 2")
+    assert 'href="/?view=cards&amp;sort=threat"' in html
+    assert "with signs of a threat" in html and "with medium or high Exposure" in html
+    assert ui.View.parse({"sort": ["exposure"]}).sort == "exposure"
+    assert ui.View.parse({"sort": ["<x>"]}).sort == "concern"
+    assert ui.View(f="threat", sort="name").qs("&") == "f=threat&view=cards&sort=name"

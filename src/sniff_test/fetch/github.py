@@ -168,7 +168,11 @@ class GitHub:
             return self._opener().open(req, timeout=_TIMEOUT)
         except urllib.error.HTTPError as e:
             if e.code == 404:
-                raise NotFoundError(url) from e
+                # (0.15) say what it means: a repository deleted, renamed away or made
+                # private answers 404 (the full run had three; the message was blank)
+                raise NotFoundError(
+                    f"GitHub has nothing at {url} (deleted, or made private)"
+                ) from e
             if e.code in (403, 429) and (reset := _rate_limit_reset(e)) is not None:
                 raise RateLimitError(url, reset, bool(self.token)) from e
             err = GitHubError(f"GitHub {e.code} for {url}: {e.reason}")

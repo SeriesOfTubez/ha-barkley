@@ -203,3 +203,41 @@ def test_the_box_is_one_paragraph_with_numbered_notes_for_the_lines():
 def test_the_request_asks_for_a_paragraph_not_for_a_lead_in_on_every_sentence():
     rules = ai_words._RULES
     assert "read together as that paragraph" in rules and "do not start them with" in rules
+
+
+def test_the_readme_leaves_room_for_the_codes_own_words():
+    """(0.15, his decision 2026-11-21) With descriptions in the code to send, the README
+    gets at most about 60% of the budget; comments are sent too, and named as comments."""
+    rep = _report()
+    long = [f"line {i} about the lights and the tokens and the cloud" for i in range(400)]
+    rep["context"]["readme_topics"] = {
+        "file": "README.md",
+        "passages": [{"start": 1 + 40 * k, "code": long[40 * k : 40 * (k + 1)]} for k in range(10)],
+    }
+    said = ["# Sends the reading to the vendor cloud."]
+    rep["context"]["items"]["f1"]["doc"] = {"file": "api.py", "start": 1, "comment": True,
+                                            "code": said}  # fmt: skip
+    snip = ai_words.sent(rep)
+    readme = sum(
+        sum(len(x) + 1 for x in s["code"]) for s in snip["segments"] if s["kind"] == "readme"
+    )
+    assert readme <= ai_words.MAX_CHARS * ai_words.README_SHARE
+    docs = [s for s in snip["segments"] if s["kind"] == "doc"]
+    assert docs and docs[0].get("comment") is True
+    instructions, _ = ai_words.build_request(rep)
+    assert "=== comment in the code: api.py" in instructions
+    assert "base at least one sentence on them" in instructions
+    # no description in the code: the README may use the whole budget
+    del rep["context"]["items"]["f1"]["doc"]
+    del rep["context"]["module_docs"]
+    snip = ai_words.sent(rep)
+    full = sum(
+        sum(len(x) + 1 for x in s["code"]) for s in snip["segments"] if s["kind"] == "readme"
+    )
+    assert full > ai_words.MAX_CHARS * ai_words.README_SHARE
+
+
+def test_one_file_is_named_once_in_the_note():
+    assert ui._lines([["README.md", 16, 16], ["README.md", 18, 18]]) == "README.md lines 16 and 18"
+    assert (ui._lines([["README.md", 16, 16], ["README.md", 18, 20], ["api.py", 40, 40]])
+            == "README.md lines 16 and 18–20, api.py line 40")  # fmt: skip  # noqa: RUF001
