@@ -58,6 +58,9 @@ class Settings:
     # at or above that level, or any sign of malicious behavior). A sniff that didn't
     # finish or couldn't run always notifies.
     notify_when: str = "all"
+    # (0.15, his decision 2026-11-21) the Exposure bar above "What it does": from medium
+    # (default), high only, or always
+    exposure_bar: str = "medium"
 
     @property
     def where(self) -> str:
@@ -77,7 +80,7 @@ def where_values(where: str) -> dict[str, str]:
 DEFAULTS = Settings()
 # "Reset to defaults" per section of the page
 PARTS = {
-    "readings": ("exposure", "network", "show_minor", "quiet_months"),
+    "readings": ("exposure", "network", "show_minor", "quiet_months", "exposure_bar"),
     "checking": (
         "parallel",
         "jobs",
@@ -107,6 +110,7 @@ CHOICES: dict[str, tuple[Any, ...]] = {
     "token_days": (30, 60, 90, 180),
     "quiet_months": (0, 6, 12, 24, 36),
     "notify_when": ("all", "medium", "high", "threat"),
+    "exposure_bar": ("medium", "high", "always"),
 }
 
 

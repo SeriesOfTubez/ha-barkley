@@ -1196,6 +1196,11 @@ def render_settings(
               "a link to show them.",
               sel("show_minor", "1" if s.show_minor else "0",
                   [("0", "Hide (default)"), ("1", "Show")]))
+        + row("Exposure bar", "The orange strip above an app's picture with its Exposure "
+              "reading and the reasons. The doors and the bug strip in the picture always show.",
+              sel("exposure_bar", s.exposure_bar,
+                  [("medium", "Medium and high (default)"), ("high", "High only"),
+                   ("always", "Always")]))
         + row("Quiet projects", "An app's page and card say when nothing has been pushed to "
               "its project on GitHub for this long. It changes no reading.",
               sel("quiet_months", s.quiet_months,
@@ -2680,7 +2685,8 @@ class Panel:
     def view(self, rep: dict[str, Any], show_minor: bool = False) -> dict[str, Any]:
         s = self._inputs().settings
         return shown_mod.view(rep, network=s.network, show_minor=show_minor,
-                              always=s.show_minor, quiet_months=s.quiet_months)  # fmt: skip
+                              always=s.show_minor, quiet_months=s.quiet_months,
+                              exposure_bar=s.exposure_bar)  # fmt: skip
 
     def overlay_rows(self, rows: list[ScanRow]) -> list[ScanRow]:
         """Index rows with their readings (Store.overlay), from the store's findings index:

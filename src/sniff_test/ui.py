@@ -20,7 +20,7 @@ from datetime import UTC, date, datetime
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
-from sniff_test import __version__, devnote, kinds, known, readings, scancache
+from sniff_test import __version__, devnote, does, kinds, known, readings, scancache
 from sniff_test.analyzers.correlate import CREDENTIAL_SOURCES, SENSITIVE_NODES
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
 from sniff_test.fetch import retry
@@ -64,6 +64,20 @@ def e(text: Any, limit: int = 300) -> str:
 # The OS used to draw about twenty emoji and glyphs at whatever size and colour it liked.
 
 _ICONS = {
+    # (0.15) "What it does": the rooms, reads/changes/out, and the door for a way in
+    "user": '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.5-6 8-6s7 2 8 6"/>',
+    "puzzle": '<path d="M5 8h3a2 2 0 1 1 4 0h3v3a2 2 0 1 1 0 4v4H5z"/>',
+    "bulb": '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3z"/>',
+    "file": '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>',
+    "term": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M12 15h5"/>',
+    "wifi": '<path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/>'
+    '<circle cx="12" cy="19" r="1"/>',
+    "browser": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
+    "eye": '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    "pencil": '<path d="M4 20l4-1 11-11-3-3L5 16z"/>',
+    "out": '<path d="M5 12h12M13 7l5 5-5 5"/>',
+    "door": '<path d="M5 21V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v17M3 21h18"/>'
+    '<circle cx="15" cy="12" r="1"/>',
     "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     "refresh": '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
     "check": '<path d="M20 6 9 17l-5-5"/>',
@@ -443,6 +457,67 @@ details.tests > :not(summary) { margin-top:var(--s1); max-width:72ch; }
 .flow .nm { font-weight:600; }
 .flow-v { display:none; }
 @media (max-width:560px) { .flow-h { display:none; } .flow-v { display:block; } }
+/* (0.15) "What it does" (does.py): rooms, paths and ways in */
+svg.does { width:100%; height:auto; display:block; min-width:720px; }
+svg.does .inside { fill:var(--soft); stroke:var(--line); }
+svg.does .outside { fill:none; stroke:var(--line); stroke-dasharray:4 4; }
+svg.does .hdr { color:var(--muted); } svg.does .hdr text { fill:var(--muted); font-size:13px;
+  font-weight:500; }
+svg.does .room rect { fill:transparent; stroke:var(--line); stroke-dasharray:4 3; }
+svg.does .room.on rect { fill:var(--brand-bg); stroke:var(--brand); stroke-dasharray:none; }
+svg.does .room.bad rect { fill:var(--red-bg); stroke:var(--red-edge); stroke-dasharray:none; }
+svg.does .ri { color:var(--muted); } svg.does .room.on .ri, svg.does .room.bad .ri { color:var(--fg); }
+svg.does .rt { fill:var(--muted); font-size:12px; }
+svg.does .room.on .rt, svg.does .room.bad .rt { fill:var(--fg); font-weight:600; font-size:13px; }
+svg.does .rd { fill:var(--fg); font-size:12px; } svg.does .rg { color:var(--fg); }
+svg.does .app rect { fill:var(--card); stroke:var(--fg); }
+svg.does .site rect { fill:var(--card); stroke:var(--line); }
+svg.does .site.bad rect { fill:var(--red-bg); stroke:var(--red-edge); }
+svg.does .nt { fill:var(--fg); font-size:13px; font-weight:600; }
+svg.does .nt.mono { font-family:var(--mono); font-weight:500; }
+svg.does .ns { fill:var(--muted); font-size:12px; }
+svg.does .ln { fill:none; stroke:var(--muted); stroke-width:1.2; }
+svg.does .path { fill:none; stroke:var(--muted); stroke-width:1.6; stroke-dasharray:2 4; }
+svg.does .path.bad { stroke:var(--red); stroke-width:2.4; stroke-dasharray:none; }
+svg.does .mk { fill:var(--muted); } svg.does .mkr { fill:var(--red); }
+svg.does .mko { fill:var(--orange); }
+svg.does .cross { fill:var(--muted); font-size:12px; }
+svg.does .cross.bad { fill:var(--red); font-weight:600; }
+svg.does .cross.in { fill:var(--orange); font-weight:600; }
+svg.does .runs { fill:var(--brand); font-size:12px; font-weight:500; }
+svg.does .bugs rect { fill:var(--orange-bg); stroke:var(--orange-edge); }
+svg.does .bugs text { fill:var(--orange); font-size:12px; font-weight:600; }
+svg.does .bugs .bi, svg.does .door .di { color:var(--orange); }
+svg.does .door rect { fill:var(--orange-bg); stroke:var(--orange-edge); stroke-dasharray:5 3; }
+svg.does .inbound { fill:none; stroke:var(--orange); stroke-width:2; stroke-dasharray:7 4; }
+.narrow { display:none; }
+@media (max-width:760px) { .flowwrap .wide { display:none; } .narrow { display:grid; gap:8px; } }
+.hdr2 { display:flex; gap:8px; align-items:center; color:var(--muted); font-weight:500; }
+.nrooms { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.nroom { border:1px dashed var(--line); border-radius:8px; padding:8px; display:grid; gap:4px;
+  align-content:start; color:var(--muted); min-width:0; overflow-wrap:anywhere; }
+.nroom.on { background:var(--brand-bg); border:1px solid var(--brand); color:var(--fg); }
+.nroom.bad { background:var(--red-bg); border:1px solid var(--red-edge); color:var(--fg); }
+.nroom .nl { font-size:var(--t-xs); display:flex; gap:4px; align-items:center; }
+.nroom.on .nl, .nroom.bad .nl { font-weight:600; font-size:var(--t-sm); }
+.nd { font-size:var(--t-xs); display:flex; gap:4px; align-items:flex-start; }
+.napp { grid-column:1 / -1; border:1px solid var(--fg); border-radius:8px; padding:8px 12px;
+  display:grid; justify-items:center; gap:4px; background:var(--card); }
+.nsite { border:1px solid var(--line); border-radius:8px; padding:8px 12px; display:grid;
+  gap:4px; background:var(--card); overflow-wrap:anywhere; }
+.nsite.bad { background:var(--red-bg); border-color:var(--red-edge); }
+.ns2 { color:var(--muted); font-size:var(--t-xs); font-weight:400; margin:0; }
+.nbug { color:var(--orange); font-size:var(--t-xs); font-weight:600; display:flex; gap:4px;
+  align-items:center; }
+.ndoor { border:1px dashed var(--orange-edge); background:var(--orange-bg); border-radius:8px;
+  padding:8px 12px; display:grid; grid-template-columns:auto 1fr; gap:4px 8px;
+  align-items:start; overflow-wrap:anywhere; }
+.ndoor .dic, .expo .dic { color:var(--orange); }
+.ndoor .arrow-in { grid-column:1 / -1; color:var(--orange); font-size:var(--t-xs); font-weight:600; }
+.expo { margin:0 0 8px; padding:8px 12px; border-radius:8px; background:var(--orange-bg);
+  border:1px solid var(--orange-edge); display:flex; gap:8px; align-items:flex-start;
+  overflow-wrap:anywhere; }
+.expo.none { background:var(--soft); border-color:var(--line); } .expo.none .dic { color:var(--muted); }
 .privbox { border:1px solid var(--priv); background:var(--priv-bg); border-radius:var(--r4);
   padding:var(--s3) var(--s4); }
 .privbox h2 { color:var(--priv); }
@@ -4276,13 +4351,11 @@ def render_app(
     loose = [x for x in says if id(x) not in placed]
     if rd.get("threat_level") == "none":  # beside a possible threat: only the placed ones
         parts.append(said_box(loose, str(words.get("failed") or "")))
-    parts.append(
-        f'<section class="box"><h2>{"What it touches " + src_tag("scan")}</h2>'
-        '<p class="sub">On the left is what it can read. On the right is where it can connect. '
-        "A red line means Barkley found a path in the code from your data to that place. No "
-        "line means Barkley found no path.</p>"
-        f"{flow_svg(report, title)}</section>"
-    )
+    # (0.15, mock-up v5) rooms, paths and ways in (does.py); the Exposure bar on top
+    shown_opts = report.get("shown") if isinstance(report.get("shown"), dict) else {}
+    parts.append(does.section(report, title, rd, str(shown_opts.get("exposure_bar") or "medium"))
+                 .replace("<h2>What it does</h2>",
+                          f"<h2>What it does {src_tag('scan')}</h2>", 1))  # fmt: skip
     tag = with_tag
     # an integration whose requests the scan read: proven sites and mentioned ones apart
     split = isinstance(report.get("requests"), dict)
