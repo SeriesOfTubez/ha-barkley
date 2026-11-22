@@ -337,17 +337,19 @@ _LOADS = frozenset({"marshal", "pickle", "dill", "cloudpickle"})
 
 
 def _runs_code(func: ast.AST) -> bool:
+    """exec/eval/compile/__import__ (plain or `builtins.`), or marshal/pickle loads. Not
+    `re.compile`: a module-level picture next to a regular expression stayed flagged."""
     for n in ast.walk(func):
         if isinstance(n, ast.Call):
             f = n.func
             if isinstance(f, ast.Name) and f.id in _RUNS:
                 return True
-            if isinstance(f, ast.Attribute) and (
-                f.attr in _RUNS
-                or (
-                    isinstance(f.value, ast.Name)
-                    and f.value.id in _LOADS
-                    and f.attr in ("loads", "load")
+            if (
+                isinstance(f, ast.Attribute)
+                and isinstance(f.value, ast.Name)
+                and (
+                    (f.value.id in ("builtins", "__builtins__") and f.attr in _RUNS)
+                    or (f.value.id in _LOADS and f.attr in ("loads", "load"))
                 )
             ):
                 return True

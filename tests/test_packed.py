@@ -149,3 +149,16 @@ def test_typed_constants_decoders_by_name_and_jpeg_tables(tmp_path):
     u = packed.unpack(tmp_path)
     assert packed.explained(_ob("a.py", 5), tmp_path, u)
     assert packed.explained(_ob("a.py", 7), tmp_path, u)
+
+
+def test_a_regular_expression_is_not_running_code(tmp_path):
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + NOISE).decode()
+    code = (
+        "import base64, re\n"
+        "NAME = re.compile('x')\n"
+        f'EMPTY: bytes = base64.b64decode(\n    "{png}"\n)\n'
+    )
+    (tmp_path / "a.py").write_text(code)
+    assert packed.explained(_ob("a.py", 3), tmp_path, packed.unpack(tmp_path))
+    (tmp_path / "b.py").write_text(code + "builtins.exec(EMPTY)\n")
+    assert not packed.explained(_ob("b.py", 3), tmp_path, packed.unpack(tmp_path))
