@@ -158,7 +158,9 @@ def _url_arg(text: str, start: int, end: int) -> tuple[int, int] | None:
         sink,
     )
     if not m:
-        return None
+        # (0.15) `img.src = url`: the value after the "="
+        src = re.match(r"[\w$.\[\]\"']+\.src\s*+=(?!=)\s*+", sink)
+        return (start + src.end(), end) if src else None
     args = _args(text, start + m.end() - 1)
     second = m.group(1) is None and not m.group(0).startswith("new")
     want = 1 if second else 0
@@ -469,6 +471,262 @@ def _text_safe(arg: str, index: _Index, path: Path) -> bool:
     return value is not None and _relative(value)
 
 
+# --- Home Assistant's own origin (0.15, the 600-app batch) -------------------------------
+#
+# Four of 600 real cards were read as stealing the login token because the URL is built
+# from Home Assistant's own address in a way the rule can't follow in minified code:
+# `const a = cond ? hass.connection.options.url.replace(/^ws/, "http") : hass.hassUrl();
+#  const o = `${a.replace(/\/$/, "")}/api/upload`; fetch(o, {headers: {Authorization: …}})`.
+# A URL is HA's own when every way it can be built starts with HA's origin (or is
+# relative) and anything appended after an origin starts with "/", "?" or "#" (an origin
+# followed by "@evil.example" would move the host). Names are followed back only to one
+# assignment inside the block that encloses the use, never past a parameter of the same
+# name; anything unclear keeps the finding. Every scan is bounded by `_HA_WINDOW` and
+# `_HA_DEPTH`, and walks the text once per step (no backtracking pattern).
+
+_HA_WINDOW = 4000
+_HA_DEPTH = 10
+_HA_STEPS = 200  # name lookups and splits per URL, so a chain of names can't blow up
+_LOC = r"(?:(?:window|self|globalThis|document)\.)?location"
+_ORIGIN_EXPR = re.compile(
+    # dotted names: a match starts only where a name starts, each part is possessive (it
+    # ends at a "." anyway) and the parts are bounded, so nothing backtracks far
+    rf"(?<![\w$.])(?:{_LOC}\.origin|document\.baseURI"
+    r"|[\w$]++(?:\.[\w$]++){0,4}?\.connection\.options\.url"
+    r"|[\w$]++(?:\.[\w$]++){0,4}?\.config\.(?:external|internal)_url"
+    r"|[\w$]++(?:\.[\w$]++){0,4}?\.hassUrl\s*+\([^()]*+\))$"
+)
+_ORIGIN_TEMPLATE = re.compile(rf"^`\$\{{{_LOC}\.protocol\}}//\$\{{{_LOC}\.host\}}")
+_ORIGIN_CONCAT = re.compile(
+    rf"^{_LOC}\.protocol\s*+\+\s*+([\"'])//\1\s*+\+\s*+{_LOC}\.host(?![\w$.])"
+)
+# What may follow an origin and still mean that origin: trimming a trailing slash, or
+# turning HA's websocket address into its http one.
+_ORIGIN_TAIL = re.compile(
+    r"\.replace\s*+\(\s*+/(?:\\/\+?\$|\^ws|\^wss)/[gi]*+\s*+,\s*+([\"'`])(?:|http|https)\1\s*+\)$"
+)
+
+
+def _scan_top(expr: str, want: str) -> list[int]:
+    """Offsets of `want` (one of "?", ":", "||", "??", "+", ",", ";") at the top level of
+    `expr`: outside brackets, strings, templates and regex-free text. One pass."""
+    out: list[int] = []
+    stack: list[str] = []
+    i, n = 0, len(expr)
+    while i < n:
+        c = expr[i]
+        if stack and stack[-1] == "`":
+            if c == "\\":
+                i += 2
+                continue
+            if c == "`":
+                stack.pop()
+            elif expr.startswith("${", i):
+                stack.append("{")
+                i += 2
+                continue
+            i += 1
+            continue
+        if c in "\"'":
+            j = i + 1
+            while j < n and expr[j] != c:
+                j += 2 if expr[j] == "\\" else 1
+            i = j + 1
+            continue
+        if c == "`":
+            stack.append("`")
+        elif c in "([{":
+            stack.append(c)
+        elif c in ")]}":
+            if stack:
+                stack.pop()
+        elif not stack and expr.startswith(want, i):
+            out.append(i)
+            i += len(want)
+            continue
+        i += 1
+    return out
+
+
+def _unwrap(expr: str) -> str:
+    expr = expr.strip()
+    while expr.startswith("(") and expr.endswith(")") and _closing(expr, 0) == len(expr) - 1:
+        expr = expr[1:-1].strip()
+    return expr
+
+
+def _closing(expr: str, at: int) -> int:
+    """Offset of the bracket that closes the one at `at`, or -1."""
+    depth = 0
+    for i in range(at, len(expr)):
+        if expr[i] in "([{":
+            depth += 1
+        elif expr[i] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _template_parts(expr: str) -> tuple[str, str] | None:
+    """For a template literal that starts with `${X}`: (X, the text right after it)."""
+    if not expr.startswith("`${"):
+        return None
+    end = _closing(expr, 2)
+    if end < 0:
+        return None
+    return expr[3:end], expr[end + 1 :]
+
+
+def _path_after_origin(rest: str) -> bool:
+    """May `rest` follow an origin? Nothing, or text that starts with "/", "?" or "#"."""
+    rest = rest.lstrip()
+    return rest in ("", "`") or rest[0] in "/?#" or rest.startswith(("`/", "`?", "`#"))
+
+
+class _HaContext:
+    """Where a name is used: the file text, the use offset and the enclosing function."""
+
+    def __init__(self, text: str, at: int, fn: tuple[int, int, str] | None) -> None:
+        self.text, self.at, self.fn = text, at, fn
+        self.steps = 0
+
+
+def _assignment(name: str, ctx: _HaContext) -> str | None:
+    """The one value `name` was given before `ctx.at`, in a block that encloses the use;
+    None when there are none, several, or a parameter of that name shadows it."""
+    if not _IDENT.match(name) or name in ("window", "location", "document", "self"):
+        return None
+    lo = max(0, ctx.at - _HA_WINDOW)
+    if ctx.fn is not None:
+        lo = max(lo, ctx.fn[0])
+        if re.search(rf"(?<![\w$]){re.escape(name)}(?![\w$])", ctx.fn[2]):
+            return None  # a parameter of the enclosing function
+    window = ctx.text[lo : ctx.at]
+    defs = [m for m in re.finditer(rf"(?<![\w$.]){re.escape(name)}\s*+=(?![=>])", window)]
+    if len(defs) != 1:
+        return None
+    start = defs[0].end()
+    between = window[defs[0].start() :]
+    # a parameter of a function defined between the assignment and the use
+    if re.search(
+        rf"(?<![\w$.]){re.escape(name)}\s*+=>|[(,]\s*+{re.escape(name)}\s*+[,)][^;{{]{{0,200}}?=>"
+        rf"|function\b[^(]{{0,80}}\([^)]{{0,200}}(?<![\w$]){re.escape(name)}(?![\w$])",
+        between,
+    ):
+        return None
+    # the block that holds the assignment must still be open at the use
+    depth = 0
+    for c in window[defs[0].start() :]:
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth < 0:
+                return None
+    rhs = window[start:]
+    ends = sorted(_scan_top(rhs, ",") + _scan_top(rhs, ";"))
+    value = rhs[: ends[0]] if ends else rhs
+    return value.strip() or None
+
+
+def _ha_url(expr: str, ctx: _HaContext, depth: int = 0) -> bool:
+    """Does the URL `expr` stay on Home Assistant's own origin, every way it can be built?"""
+    ctx.steps += 1
+    if depth > _HA_DEPTH or len(expr) > _HA_WINDOW or ctx.steps > _HA_STEPS:
+        return False
+    expr = _unwrap(expr)
+    if expr in ('""', "''", "``") or _SAFE_START.match(expr):
+        return True
+    q = _scan_top(expr, "?")
+    if q and not expr.startswith("?", q[0] + 1) and not expr.startswith(".", q[0] + 1):
+        colon = [c for c in _scan_top(expr, ":") if c > q[0]]
+        if not colon:
+            return False
+        return _ha_url(expr[q[0] + 1 : colon[0]], ctx, depth + 1) and _ha_url(
+            expr[colon[0] + 1 :], ctx, depth + 1
+        )
+    for op in ("||", "??"):
+        parts = _scan_top(expr, op)
+        if parts:
+            starts = [0, *(p + len(op) for p in parts)]
+            ends = [*parts, len(expr)]
+            return all(
+                _ha_url(expr[a:b], ctx, depth + 1) for a, b in zip(starts, ends, strict=True)
+            )
+    if (m := _ORIGIN_TEMPLATE.match(expr)) is not None:
+        return _path_after_origin(expr[m.end() :])
+    tpl = _template_parts(expr)
+    if tpl is not None:
+        head, rest = tpl
+        return _ha_base(head, ctx, depth + 1) and _path_after_origin(rest)
+    if (m := _ORIGIN_CONCAT.match(expr)) is not None:
+        tail = expr[m.end() :].strip()
+        return tail == "" or (tail.startswith("+") and _literal_path(tail[1:]))
+    plus = _scan_top(expr, "+")
+    if plus:
+        head, rest = expr[: plus[0]], expr[plus[0] + 1 :]
+        if _SAFE_START.match(_unwrap(head)):
+            return True
+        return _ha_base(head, ctx, depth + 1) and _literal_path(rest)
+    return _ha_base(expr, ctx, depth + 1)
+
+
+def _literal_path(rest: str) -> bool:
+    """Does `rest` (what is added after an origin) start with a literal "/", "?" or "#"?"""
+    rest = rest.strip()
+    return len(rest) > 1 and rest[0] in "\"'`" and rest[1] in "/?#"
+
+
+def _ha_base(expr: str, ctx: _HaContext, depth: int) -> bool:
+    """Is `expr` Home Assistant's origin, or a URL on it (so a path may follow)?"""
+    ctx.steps += 1
+    if depth > _HA_DEPTH or ctx.steps > _HA_STEPS:
+        return False
+    expr = _unwrap(expr)
+    while (m := _ORIGIN_TAIL.search(expr)) is not None:
+        expr = _unwrap(expr[: m.start()])
+    if _ORIGIN_EXPR.match(expr):
+        return True
+    if (m := _ORIGIN_CONCAT.match(expr)) is not None and not expr[m.end() :].strip():
+        return True
+    if (m := _ORIGIN_TEMPLATE.match(expr)) is not None:
+        return _path_after_origin(expr[m.end() :])
+    if _IDENT.match(expr):
+        value = _assignment(expr, ctx)
+        return value is not None and _ha_url(value, ctx, depth + 1)
+    return _ha_url(expr, ctx, depth + 1)
+
+
+def _enclosing(res: list[dict], text: str, at: int) -> tuple[int, int, str] | None:
+    """The innermost function (with a parameter) around offset `at`: (start, end, its
+    parameter list as text)."""
+    best: tuple[int, int] | None = None
+    for r in res:
+        if _rid(r) != "fns":
+            continue
+        s, e = r["start"]["offset"], r["end"]["offset"]
+        if s <= at < e and (best is None or e - s < best[1] - best[0]):
+            best = (s, e)
+    if best is None:
+        return None
+    s, e = best
+    head = text[s : min(e, s + 400)]
+    arrow, paren = head.find("=>"), head.find("(")
+    if paren < 0 or (0 <= arrow < paren):
+        params = head[: arrow if arrow >= 0 else 0].rsplit("=", 1)[-1]
+    else:
+        close = _closing(head, paren)
+        params = head[paren + 1 : close] if close > 0 else head[paren + 1 :]
+    return s, e, params
+
+
+def ha_origin(text: str, arg: str, at: int, fn: tuple[int, int, str] | None) -> bool:
+    """The URL text `arg`, used at offset `at` (inside the function `fn`: start, end and
+    its parameter list), stays on Home Assistant's own origin."""
+    return _ha_url(arg, _HaContext(text, at, fn))
+
+
 # --- Semgrep rules, generated -----------------------------------------------------------
 
 _FNS = """
@@ -649,7 +907,11 @@ def precise(hits: list[Hit], root: Path, run: Runner, card: bool = False) -> set
         safe = index.trusted(path, arg, span[0]) and any(
             cs <= span[0] and span[1] <= ce for rid in sink_ids for cs, ce in _proven(res, rid)
         )
-        if safe or _text_safe(arg, index, path):
+        if (
+            safe
+            or _text_safe(arg, index, path)
+            or ha_origin(text, arg, span[0], _enclosing(res, text, h.start))
+        ):
             dropped.add(id(h.finding))
             continue
         if not _IDENT.match(arg):
