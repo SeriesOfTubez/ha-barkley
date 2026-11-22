@@ -45,8 +45,11 @@ class Tag(StrEnum):
     INBOUND = "inbound"  # weighted up under --exposure public
     POSSIBLE = "possible"  # heuristic correlation, not a proven path
     MALWARE = "malware"  # known-malicious package / payload pattern
-    # (0.14.0) in a test file no runtime module imports: HA never loads it. A label only;
-    # the finding stays and scores as before (hostile code can hide in tests too).
+    # (0.14.0) in a test file no runtime module imports: HA never loads it. The finding
+    # stays in the stored report and the capability score. (0.15, his decision 2026-11-21)
+    # It doesn't count toward Threat or Exposure and isn't listed under "What it can do":
+    # the panel lists it apart, as a test script Home Assistant never loads. Not set when
+    # a computed import could load the file (scanner.loadable_tests).
     TEST_CODE = "test-code"
 
 

@@ -64,6 +64,15 @@ UNAUTH_VIEW = "ha-unauth-view"
 TOKEN_CHECK = "ha-auth-token-check"  # noqa: S105 - a rule id
 AUTH_INTERNALS = "ha-auth-internals"
 DEP_VULN = "dep-vuln"
+TEST_CODE = "test-code"  # models.Tag.TEST_CODE (the readings read stored JSON)
+
+
+def in_test_script(f: dict[str, Any]) -> bool:
+    """(0.15, his decision 2026-11-21) A finding in a test script no part of the app that
+    Home Assistant loads imports (scanner.loadable_tests): it never runs in your home, so
+    it doesn't count toward either reading."""
+    return TEST_CODE in (f.get("tags") or ())
+
 
 # Fixed phrases for the banner and the reason line, by rule (no text from the scanned app)
 _THREAT_PHRASE = {
@@ -148,7 +157,7 @@ def _plural(n: int, one: str, many: str) -> str:
 def compute(report: dict[str, Any], network: str = "home") -> Readings:
     """`report`: a stored scan (or the panel's view of one). `network`: the preview's
     setting (home | shared); a scan made with exposure "public" counts as on the internet."""
-    findings = list(report.get("findings") or [])
+    findings = [f for f in report.get("findings") or [] if not in_test_script(f)]
     complete = bool(report.get("complete", True))
     public = str(report.get("exposure") or "local") == "public"
     where = "internet" if public else (network if network in NETWORK else "home")

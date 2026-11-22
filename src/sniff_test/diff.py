@@ -128,29 +128,41 @@ def _where(f: dict[str, Any]) -> str:
     return f" ({f['file']})" if f.get("file") else ""
 
 
+TEST_RANK = 20  # (0.15) a change in a test script HA never loads: listed, never a headline
+_IN_TEST = " (in a test script Home Assistant never loads)"
+
+
+def _in_test(f: dict) -> bool:
+    return "test-code" in (f.get("tags") or ())
+
+
 def _finding_changes(old: dict, new: dict) -> tuple[list[Change], dict[str, dict]]:
     pairs, added, removed = match_findings(old["findings"], new["findings"])
     out = []
     for f in added:
         sev = _SEV[f["severity"]]
+        test = _in_test(f)
         out.append(
             Change(
                 "new_finding",
-                _NEW_FINDING_RANK[sev],
+                TEST_RANK if test else _NEW_FINDING_RANK[sev],
                 "findings",
-                f"{f['title']}{_where(f)}",
+                f"{f['title']}{_where(f)}{_IN_TEST if test else ''}",
                 severity=f["severity"],
                 finding_ids=[f["id"]],
                 detail={"rule_id": f["rule_id"], "evidence": f["evidence"]},
             )
         )
     for f in removed:
+        test = _in_test(f)
         out.append(
             Change(
                 "resolved_finding",
-                _RESOLVED_RANK[_SEV[f["severity"]]],
+                min(TEST_RANK, _RESOLVED_RANK[_SEV[f["severity"]]])
+                if test
+                else _RESOLVED_RANK[_SEV[f["severity"]]],
                 "findings",
-                f"{f['title']}{_where(f)}",
+                f"{f['title']}{_where(f)}{_IN_TEST if test else ''}",
                 sign="-",
                 severity=f["severity"],
                 finding_ids=[f["id"]],
@@ -162,12 +174,14 @@ def _finding_changes(old: dict, new: dict) -> tuple[list[Change], dict[str, dict
         if sa == sb:
             continue
         up = sb > sa
+        test = _in_test(b)
         out.append(
             Change(
                 "severity_up" if up else "severity_down",
-                (80 if sb >= 3 else 50) if up else 25,
+                TEST_RANK if test else (80 if sb >= 3 else 50) if up else 25,
                 "findings",
-                f"{b['title']}{_where(b)}: {a['severity']} → {b['severity']}",
+                f"{b['title']}{_where(b)}{_IN_TEST if test else ''}: "
+                f"{a['severity']} → {b['severity']}",
                 sign="~",
                 severity=b["severity"],
                 finding_ids=[b["id"]],

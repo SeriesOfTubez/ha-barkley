@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from sniff_test.analyzers.correlate import PROVEN_RULES, SENSITIVE_NODES, explained_by_taint
 from sniff_test.analyzers.endpoints import UNEXPLAINED
-from sniff_test.models import Category, Evidence, Fact, Finding, Ring, Severity, TargetKind
+from sniff_test.models import Category, Evidence, Fact, Finding, Ring, Severity, Tag, TargetKind
 
 if TYPE_CHECKING:
     from sniff_test.report.json_report import ScanResult
@@ -373,6 +373,8 @@ def build(scan: ScanResult) -> dict[str, Any]:
             if f.kind in ("host", "ip") and f.attrs.get("class") in UNEXPLAINED
         }
     )
-    _add_findings(g, scan.findings, t.root, destinations)
+    # (0.15) a test script Home Assistant never loads draws no line: it reads nothing of yours
+    loaded = [f for f in scan.findings if Tag.TEST_CODE not in f.tags]
+    _add_findings(g, loaded, t.root, destinations)
     _add_packages(g, scan)
     return g.to_dict()

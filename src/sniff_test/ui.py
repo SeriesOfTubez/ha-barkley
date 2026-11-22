@@ -403,6 +403,7 @@ pre.code .add { color:var(--green); } pre.code .del { color:var(--red); }
 .tech { font-size:var(--t-xs); color:var(--muted); margin-top:var(--s2);
   overflow-wrap:anywhere; }
 details summary { cursor:pointer; color:var(--muted); font-size:var(--t-xs); }
+details.tests > :not(summary) { margin-top:var(--s1); max-width:72ch; }
 .ev { display:block; white-space:pre-wrap; background:var(--soft); padding:var(--s2);
   border-radius:var(--r2); margin-top:var(--s1); }
 @media (max-width:560px) { .finding { grid-template-columns:1fr; }
@@ -836,6 +837,7 @@ class View:
     def parse(cls, q: dict[str, list[str]], default_view: str = "cards") -> View:
         f = (q.get("f") or ["all"])[0]
         view = (q.get("view") or [default_view])[0]
+
         def num(key: str) -> int:
             try:
                 return max(1, min(int((q.get(key) or ["1"])[0]), 10_000))
@@ -1062,13 +1064,7 @@ def _where(fs: list[dict[str, Any]]) -> str:
     shown = ", ".join(f"<code>{e(x, 160)}</code>" for x in locs[:3])
     more = f" and {len(locs) - 3} more" if len(locs) > 3 else ""
     times = f" ({len(fs)} times)" if len(fs) > 1 and len(locs) == 1 else ""
-    test = ""
-    if all("test-code" in (f.get("tags") or []) for f in fs if f.get("file")):
-        test = (
-            '<br><span class="muted">This is test code. No part of the app that Home Assistant '
-            "loads imports this file. Barkley still shows it, because code can hide anywhere.</span>"
-        )
-    return shown + more + times + test
+    return shown + more + times
 
 
 def patch_html(patch: Any) -> str:
@@ -2537,9 +2533,11 @@ def requests_elsewhere_html(report: dict[str, Any]) -> str:
         f'<div class="zone"><h3>{icon("plug")} Requests to addresses that aren\'t in the code</h3>'
         f'<div class="zs">{_count(total, "request goes", "requests go")} to an address the code '
         f"only works out while the app runs ({e(kinds)}), "
-        + ("for example one it builds from another site's answer or from the card's settings"
-           if isinstance(r, dict) and r.get("code") == "card" else
-           "for example from a device or a server you entered during setup")
+        + (
+            "for example one it builds from another site's answer or from the card's settings"
+            if isinstance(r, dict) and r.get("code") == "card"
+            else "for example from a device or a server you entered during setup"
+        )
         + ". Barkley can't say where they go.</div>"
         f'<details class="more"><summary>Where in the code</summary><div class="in">{blocks}'
         f"</div></details>{_test_requests(r)}</div>"
@@ -3110,8 +3108,10 @@ def _supply_repo(report: dict[str, Any]) -> str:
     _chip, gone_quiet = quiet(report)
     if gone_quiet:
         bugs = any(m["bugs"] or m["malware"] for m in _package_marks(report).values())
-        li.append(f"<b>{e(gone_quiet)}</b>"
-                  + (" The known bugs in its packages are unlikely to be fixed." if bugs else ""))
+        li.append(
+            f"<b>{e(gone_quiet)}</b>"
+            + (" The known bugs in its packages are unlikely to be fixed." if bugs else "")
+        )
     elif _day(prov.get("pushed_at")):
         li.append("When Barkley sniffed it, the last push to the project on GitHub was on "
                   f"{_day(prov.get('pushed_at'))}.")  # fmt: skip
@@ -3396,6 +3396,51 @@ def cache_text(report: dict[str, Any]) -> str:
     return (
         f'<p class="muted small">{icon("check", 12, "ok")} Barkley reused {hits:,} of {files:,} '
         f"files it had already read{when}.</p>"
+    )
+
+
+TEST_FILES_SHOWN = 20  # files listed in the fold; the rest are counted
+TEST_ITEMS_SHOWN = 6  # items listed per file
+
+
+def test_scripts_html(report: dict[str, Any]) -> str:
+    """(0.15, his decision 2026-11-21) A fold in the scan details: the developer's test
+    scripts that no part of the app Home Assistant loads imports, and what Barkley saw in
+    each. They aren't in the readings or "What it can do", and they aren't listed under
+    what Barkley couldn't check: Barkley read them. File names are the scanned app's."""
+    fs = [f for f in report.get("test_scripts") or [] if isinstance(f, dict) and f.get("file")]
+    if not fs:
+        return ""
+    by: dict[str, dict[str, list[int]]] = {}
+    for f in fs:
+        lines = by.setdefault(str(f["file"]), {}).setdefault(str(f.get("rule_id")), [])
+        if isinstance(f.get("line"), int) and f["line"] not in lines:
+            lines.append(f["line"])
+    items = []
+    for path in sorted(by)[:TEST_FILES_SHOWN]:
+        seen = []
+        for rule, lines in list(by[path].items())[:TEST_ITEMS_SHOWN]:
+            at = sorted(lines)[:3]
+            where = (f" (line{'s' * (len(at) > 1)} {', '.join(str(n) for n in at)}"
+                     f"{' and more' if len(lines) > 3 else ''})") if at else ""  # fmt: skip
+            seen.append(e(explain.explain(rule).title) + where)
+        more = len(by[path]) - TEST_ITEMS_SHOWN
+        items.append(f"<li><code>{e(path, 160)}</code>: {'; '.join(seen)}"
+                     f"{f'; and {more} more' if more > 0 else ''}.</li>")  # fmt: skip
+    rest = len(by) - TEST_FILES_SHOWN
+    if rest > 0:
+        items.append(f"<li>and {_count(rest, 'more file', 'more files')}</li>")
+    n = len(by)
+    return (
+        f'<details class="tests"><summary>Ignored test scripts that aren\'t loaded '
+        f"({n} file{'s' * (n != 1)})</summary>"
+        f'<p class="small">{"This file is" if n == 1 else "These files are"} the developer\'s '
+        "tests. No part of the app that Home Assistant loads imports "
+        f"{'it' if n == 1 else 'them'}, so {'it never runs' if n == 1 else 'they never run'} "
+        "in your home. Barkley read "
+        f"{'it' if n == 1 else 'them'}, but what it saw there doesn't count toward Threat or "
+        "Exposure.</p>"
+        f'<ul class="plain small">{"".join(items)}</ul></details>'
     )
 
 
@@ -3693,8 +3738,11 @@ def all_green(h: Any) -> bool:
     ]  # fmt: skip
     return (
         bool(ci)
-        and (h.get("dependabot") is not None or bool(h.get("renovate"))
-             or bool(h.get("dependabot_updates")))
+        and (
+            h.get("dependabot") is not None
+            or bool(h.get("renovate"))
+            or bool(h.get("dependabot_updates"))
+        )
         and bool(h.get("security_policy"))
         and isinstance(iss, dict)
         and not iss.get("off")
@@ -4053,7 +4101,7 @@ def render_app(
         f'<div class="muted small">Checked with Barkley {e(report.get("tool", {}).get("version"))}. It read '
         f"{e(_SOURCE.get(str(t.get('install_source')), t.get('install_source')))}"
         f"{' (commit ' + e(commit) + ')' if commit else ''}{ha}. Scan @{sid}.</div>"
-        f"{cache_text(report)}{again}"
+        f"{cache_text(report)}{test_scripts_html(report)}{again}"
         f"{readings_dials(rd)}</div></section>"
     )
     parts = [f'<div class="stack">{head}{update}</div>' if update else head]

@@ -218,7 +218,7 @@ def _options(text: str, i: int) -> dict[str, Any]:
             out["more"] = True
         elif key == "method":
             v = _skip_ws(obj, at) if at >= 0 else -1
-            lit = _literal(obj, v) if v >= 0 and obj[v : v + 1] in ("\"", "'", "`") else None
+            lit = _literal(obj, v) if v >= 0 and obj[v : v + 1] in ('"', "'", "`") else None
             name = lit[0].upper() if lit else ""
             out["method"] = name if name in py_requests.METHODS else ""
         elif key == "body":
@@ -237,7 +237,7 @@ def _first_arg(text: str, i: int) -> tuple[str | None, int] | None:
     """The call's first argument from text[i] (just after the "("): (the address literal
     or None when it isn't one, the index after the argument). None: nothing to read."""
     i = _skip_ws(text, i)
-    if text[i : i + 1] in ("\"", "'", "`"):
+    if text[i : i + 1] in ('"', "'", "`"):
         lit = _literal(text, i)
         if lit is None:
             return None
@@ -342,7 +342,7 @@ def read(text: str, rel: str) -> tuple[list[Request], dict[str, list[int]]]:
             req = _request(arg[0], _options(text, arg[1]), rel, line_at(i))
         elif needle == ".open(":
             j = _skip_ws(text, after)
-            lit = _literal(text, j) if text[j : j + 1] in ("\"", "'", "`") else None
+            lit = _literal(text, j) if text[j : j + 1] in ('"', "'", "`") else None
             if lit is None or lit[0].upper() not in py_requests.METHODS:
                 continue  # window.open(url), db.open(name): not a request
             k = _skip_ws(text, lit[1])
@@ -370,8 +370,10 @@ def read(text: str, rel: str) -> tuple[list[Request], dict[str, list[int]]]:
             if rest.startswith("{s}."):
                 rest = rest[4:]
             site = site_of(f"{scheme}://{rest}")
-            if site and not _example(site[0]) and (
-                site[0] in tiles or len(tiles) < _MAX_TILE_SITES
+            if (
+                site
+                and not _example(site[0])
+                and (site[0] in tiles or len(tiles) < _MAX_TILE_SITES)
             ):
                 tiles.setdefault(site[0], []).append(line_at(i))
         i = text.find("{z}", i + 3)

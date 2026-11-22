@@ -254,12 +254,17 @@ def _notes(report: dict[str, Any]) -> list[Note]:
             Note(
                 "unencrypted",
                 "Partly unencrypted" if some else "Unencrypted",
-                (f"Reaches {len(plain)} of its {web} sites without encryption" if some
-                 else "Uses unencrypted web addresses on the internet"),
-                ("The code only ever reaches these sites with http:// or ws://, never the "
-                 "encrypted https:// or wss://. Anything sent that way can be read or "
-                 "changed along the route."
-                 + (" Its other sites are reached with encryption." if some else "")),
+                (
+                    f"Reaches {len(plain)} of its {web} sites without encryption"
+                    if some
+                    else "Uses unencrypted web addresses on the internet"
+                ),
+                (
+                    "The code only ever reaches these sites with http:// or ws://, never the "
+                    "encrypted https:// or wss://. Anything sent that way can be read or "
+                    "changed along the route."
+                    + (" Its other sites are reached with encryption." if some else "")
+                ),
                 "Barkley can't tell whether the app sends anything private over these "
                 "addresses, or whether the sites switch to an encrypted address.",
                 [n["label"] for _, n in plain],

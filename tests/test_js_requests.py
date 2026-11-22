@@ -12,7 +12,7 @@ from sniff_test.analyzers import js_requests
 
 CARD = (
     'const a=await fetch("https://api.radar.example.org/maps.json",{signal:e});'
-    'await fetch(`https://wms.acme-maps.io/${i}/ows?service=WMS&version=1.3.0`);'
+    "await fetch(`https://wms.acme-maps.io/${i}/ows?service=WMS&version=1.3.0`);"
     'fetch("https://api.acme-maps.io/alerts?status=actual",'
     '{method:"post",headers:{Accept:"application/json","X-Key":k},body:JSON.stringify(d)});'
     "fetch(u,{signal:t});fetch(base+e,opts);fetch(`https://${host}/x`);"

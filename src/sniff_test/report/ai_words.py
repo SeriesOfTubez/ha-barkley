@@ -174,8 +174,10 @@ def sent(report: dict[str, Any]) -> dict[str, Any]:
     if isinstance(topics, dict) and isinstance(topics.get("file"), str):
         out["readme"] = topics["file"]
         for p in topics.get("passages") or []:
-            if isinstance(p, dict) and isinstance(p.get("start"), int) and (
-                p["start"] < opening_end
+            if (
+                isinstance(p, dict)
+                and isinstance(p.get("start"), int)
+                and (p["start"] < opening_end)
             ):
                 continue  # already sent with the opening
             if isinstance(p, dict):

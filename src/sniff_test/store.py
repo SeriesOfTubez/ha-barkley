@@ -122,6 +122,13 @@ CREATE TABLE IF NOT EXISTS scan_sources (  -- (0.11.0) which stored source a sca
     scan_id INTEGER PRIMARY KEY REFERENCES scans (id) ON DELETE CASCADE,
     hash    TEXT NOT NULL
 );
+-- (0.15) findings in a test script Home Assistant never loads (tag "test-code" in the
+-- report): the list's readings leave them out, as the page does (readings.in_test_script)
+CREATE TABLE IF NOT EXISTS test_findings (
+    scan_id INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
+    id      TEXT NOT NULL,
+    PRIMARY KEY (scan_id, id)
+);
 CREATE TABLE IF NOT EXISTS edge_findings (
     scan_id    INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
     edge_id    TEXT NOT NULL,
@@ -157,6 +164,23 @@ def _remove_reviews(db: sqlite3.Connection) -> list[str]:
             gone.append("trusted addresses" if key == "trusted_addresses"
                         else "Malware check only")  # fmt: skip
     return gone
+
+
+def _has_table(db: sqlite3.Connection, name: str) -> bool:
+    return bool(db.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    ).fetchone()[0])  # fmt: skip
+
+
+# One literal query: every stored finding tagged "test-code", read from the reports
+# themselves (json_each). The reports are only read.
+_INDEX_TEST_FINDINGS = (
+    "INSERT OR IGNORE INTO test_findings (scan_id, id) "
+    "SELECT s.id, json_extract(f.value, '$.id') FROM scans s, "
+    "json_each(s.report, '$.findings') f, json_each(f.value, '$.tags') t "
+    "WHERE json_valid(s.report) AND t.value = 'test-code' "
+    "AND json_extract(f.value, '$.id') IS NOT NULL"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,8 +248,11 @@ class Store:
                 raise StoreError(
                     f"{self.path} was written by a newer sniff-test (store v{version})"
                 )
+            had_tests = _has_table(db, "test_findings")
             db.executescript(_SCHEMA)
             db.execute(f"PRAGMA user_version = {STORE_VERSION}")
+            if not had_tests:  # (0.15) once: index the scans stored before, from their reports
+                db.execute(_INDEX_TEST_FINDINGS)
             gone = _remove_reviews(db)
         if gone:
             print(f"removed what 0.14 stored for reviews: {', '.join(gone)}", file=sys.stderr,
@@ -323,6 +350,11 @@ class Store:
                      f.get("file"), f.get("line"))
                     for f in report.get("findings", [])
                 ],
+            )  # fmt: skip
+            db.executemany(
+                "INSERT OR IGNORE INTO test_findings (scan_id, id) VALUES (?,?)",
+                [(sid, f["id"]) for f in report.get("findings", [])
+                 if "test-code" in (f.get("tags") or ())],
             )  # fmt: skip
             db.executemany(
                 "INSERT OR IGNORE INTO nodes VALUES (?,?,?,?,?)",
@@ -461,7 +493,8 @@ class Store:
         return rows
 
     def findings_index(self, scan_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
-        """(0.15) Each scan's findings as the index keeps them (rule, severity, file):
+        """(0.15) Each scan's findings as the index keeps them (rule, severity, file, and
+        the "test-code" tag from test_findings):
         what readings.compute reads, without parsing any report. One literal query; the
         ids go in as one JSON parameter."""
         out: dict[int, list[dict[str, Any]]] = {int(i): [] for i in scan_ids}
@@ -469,14 +502,16 @@ class Store:
             return out
         with self._connect() as db:
             rows = db.execute(
-                "SELECT scan_id, rule_id, severity, file FROM findings "
-                "WHERE scan_id IN (SELECT value FROM json_each(?))",
+                "SELECT f.scan_id, f.rule_id, f.severity, f.file, t.id AS test FROM findings f "
+                "LEFT JOIN test_findings t ON t.scan_id = f.scan_id AND t.id = f.id "
+                "WHERE f.scan_id IN (SELECT value FROM json_each(?))",
                 (json.dumps(list(out)),),
             )
             for r in rows:
                 out[r["scan_id"]].append(
-                    {"rule_id": r["rule_id"], "severity": r["severity"], "file": r["file"]}
-                )
+                    {"rule_id": r["rule_id"], "severity": r["severity"], "file": r["file"],
+                     **({"tags": ["test-code"]} if r["test"] is not None else {})}
+                )  # fmt: skip
         return out
 
     def save_explanation(self, scan_id: int, entity_id: str, data: dict[str, Any]) -> None:

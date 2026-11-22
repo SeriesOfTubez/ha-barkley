@@ -109,9 +109,23 @@ def _dependency_analyzers(
     return results, resolution, env
 
 
+DYNAMIC_IMPORT = "py-dynamic-import"
+
+
+def loadable_tests(findings: list[Finding], tests: frozenset[str]) -> frozenset[str]:
+    """(0.15, his decision 2026-11-21) Test files stay test files only while nothing could
+    load them: a computed import in the app's own code (the module name worked out while
+    it runs, which Barkley can't follow) could name one, so then none is set aside."""
+    if any(f.rule_id == DYNAMIC_IMPORT and f.file not in tests for f in findings):
+        return frozenset()
+    return tests
+
+
 def _label_test_code(findings: list[Finding], target: Target) -> list[Finding]:
-    """(0.14.0) Tag findings in test files no runtime module imports (py_precision)."""
-    tests = py_precision.test_only_files(Resolver(target.root))
+    """(0.14.0) Tag findings in test files no runtime module imports (py_precision).
+    (0.15) A tagged finding is left out of the readings and of "What it can do"; the panel
+    lists it apart (shown.py)."""
+    tests = loadable_tests(findings, py_precision.test_only_files(Resolver(target.root)))
     return [
         dataclasses.replace(f, tags=f.tags | {Tag.TEST_CODE}) if f.file in tests else f
         for f in findings
@@ -260,9 +274,9 @@ def scan(
         result.graph = graph.build(result)
         if target.kind is TargetKind.INTEGRATION:
             say("web requests")  # (0.15) the method and what each call carries; never scored
-            tests = py_precision.test_only_files(
+            tests = loadable_tests(findings, py_precision.test_only_files(
                 Resolver(target.root), also=py_precision.looks_like_a_script
-            )
+            ))  # fmt: skip
             result.requests = py_requests.summary(py_reqs, tests)
             # (0.15) which environment variables it reads and sets, by name
             result.environment = py_env.summary(py_env.uses_in(target.root))

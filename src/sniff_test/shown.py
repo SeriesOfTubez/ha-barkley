@@ -26,11 +26,14 @@ def view(
     always: bool = False,
     quiet_months: int = 12,
 ) -> dict[str, Any]:
-    """Keys added: `readings` (readings.compute on the stored findings, all of them) and
-    `shown` (the minor items, whether they're shown: for this page, or `always` by the
-    Minor items setting)."""
+    """Keys added: `readings` (readings.compute on the stored findings, all of them but
+    those in test scripts), `shown` (the minor items, whether they're shown: for this page,
+    or `always` by the Minor items setting) and (0.15) `test_scripts`: the findings in test
+    scripts Home Assistant never loads, listed apart and nowhere else on the page."""
     show_minor = show_minor or always
-    every = list(report.get("findings", []))
+    all_ = list(report.get("findings", []))
+    tests = [f for f in all_ if readings.in_test_script(f)]
+    every = [f for f in all_ if not readings.in_test_script(f)]
     minor = [f for f in every if f["rule_id"] in kinds.MINOR]
     minor_ids = {str(f["id"]) for f in minor}
     shown = every if show_minor else [f for f in every if str(f["id"]) not in minor_ids]
@@ -42,6 +45,7 @@ def view(
         "findings": shown,
         "counts": counts,
         "readings": readings.compute(report, network).to_dict(),
+        "test_scripts": tests,
         "shown": {
             "minor": [str(f["rule_id"]) for f in minor],
             "show_minor": show_minor,
