@@ -256,7 +256,7 @@ def scan(
         # (0.15) the requests are read first: a pairing needs a site the code really calls
         # (an address it couldn't read may be any host the code names: then every one counts)
         if target.kind is TargetKind.INTEGRATION:
-            py_reqs = py_requests.requests_in(target.root)
+            py_reqs, handoffs = py_requests.read_flow(target.root)
             reqs = py_reqs
             called: set[str] | None = {r.host for r in py_reqs if r.host}
         else:
@@ -323,7 +323,7 @@ def scan(
             tests = loadable_tests(findings, py_precision.test_only_files(
                 Resolver(target.root), also=py_precision.looks_like_a_script
             ))  # fmt: skip
-            result.requests = py_requests.summary(py_reqs, tests)
+            result.requests = py_requests.summary(py_reqs, tests, handoffs)
             # (0.15) which environment variables it reads and sets, by name
             result.environment = py_env.summary(py_env.uses_in(target.root))
         else:

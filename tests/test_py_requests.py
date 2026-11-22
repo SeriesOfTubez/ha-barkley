@@ -109,7 +109,7 @@ def test_a_dictionary_get_is_not_a_request(tmp_path):
 
 def test_the_summary_groups_by_site_and_shape(tmp_path):
     s = py_requests.summary(_reqs(tmp_path))
-    assert s["version"] == 1 and s["total"] == 8
+    assert s["version"] == py_requests.VERSION and s["total"] == 8
     assert set(s["sites"]) == {
         "api.acme.invalid",
         "status.acme.invalid",

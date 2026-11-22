@@ -36,7 +36,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-VERSION = 1
+from sniff_test.analyzers import py_flow, py_resolve
+from sniff_test.analyzers.py_flow import Origin
+
+VERSION = 2  # (0.15) from / logins / tokens per shape, handoffs
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 _CALLS = {m.lower(): m for m in METHODS}
 _MAX_FILE = 5 * 1024 * 1024
@@ -83,6 +86,11 @@ class Request:
     # holding the one real `requests.post`): the request is read at each call of it
     via: str = ""
     body_by: str = ""  # the app's own function that returns the body
+    # (0.15, his yes 2026-11-22; py_flow) where an address built while running comes from,
+    # and the app's own logins (setup fields) and answer tokens the request carries
+    origins: tuple[Origin, ...] = ()
+    logins: tuple[str, ...] = ()
+    tokens: tuple[str, ...] = ()
 
     @property
     def shape(self) -> tuple:
@@ -96,6 +104,9 @@ class Request:
             self.more,
             self.via,
             self.body_by,
+            self.origins,
+            self.logins,
+            self.tokens,
         )
 
 
@@ -191,8 +202,10 @@ class Reader:
         try:
             if p.is_symlink() or not p.is_file() or p.stat().st_size > _MAX_FILE:
                 return mod
-            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+            tree = py_resolve.parse(p.read_text(encoding="utf-8", errors="replace"))
         except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
+            return mod
+        if tree is None:
             return mod
         mod.tree = tree
         here = Path(rel).parent
@@ -565,8 +578,9 @@ class ScopeVisitor(ast.NodeVisitor):
 
 
 class _Visitor(ScopeVisitor):
-    def __init__(self, reader: Reader, rel: str):
+    def __init__(self, reader: Reader, rel: str, tracer: py_flow.Tracer | None = None):
         super().__init__(reader, rel)
+        self.tracer = tracer
         self.out: list[Request] = []
         self.wrappers: list[_Wrapper] = []
 
@@ -608,6 +622,19 @@ class _Visitor(ScopeVisitor):
         host, scheme, port, address = _site(self.reader.address(url, sc))
         if host is None and name != "urlopen" and not _looks_like_request(node, url):
             return
+        # The address is a parameter of the function the call stands in (or a local made
+        # from one): that function is a wrapper, read at each call of it (`_Callers`)
+        fn = sc.func
+        from_param = ""
+        if (
+            host is None
+            and isinstance(url, ast.Name)
+            and isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ):
+            if _is_param(fn, url.id):
+                from_param = url.id
+            elif (v := sc.local(url.id)) is not None:
+                from_param = _first_param(fn, v)
         body, body_by = None, ""
         sent = [_kw(kws, k) for k in _BODY_KW]
         if name == "urlopen" and body_kw is not None:
@@ -618,6 +645,11 @@ class _Visitor(ScopeVisitor):
                 if not got and not body_by:  # not a dict here: built by the app's own function?
                     got, body_by = _built_by(expr, sc, self.reader)
                 body = tuple(dict.fromkeys((body or ()) + got))[:_MAX_NAMES]
+        flow = _flow(self.tracer, url if host is None else None,
+                     [url, *sent, *(_kw(kws, k) for k in _CARRY_KW)], sc,
+                     f.value if isinstance(f, ast.Attribute) else None,
+                     fn if from_param else None)  # fmt: skip
+        carry = flow.pop("params", ())
         req = Request(
             host=host,
             method=method,
@@ -632,25 +664,9 @@ class _Visitor(ScopeVisitor):
             scheme=scheme,
             port=port,
             body_by=body_by,
+            **flow,
         )
         self.out.append(req)
-        # The address is a parameter of the function the call stands in: that function is a
-        # wrapper, and the real requests are the calls of it (read in `_Callers`).
-        # Also when the address is a local worked out from a parameter (a real wrapper:
-        # `url = get_url(which, self._region) + suffix`): the site stays unknown there, but
-        # what each call sends is read where the call stands.
-        fn = sc.func
-        from_param = ""
-        if (
-            host is None
-            and isinstance(url, ast.Name)
-            and isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
-        ):
-            if _is_param(fn, url.id):
-                from_param = url.id
-            elif (v := sc.local(url.id)) is not None:
-                first = _first_param(fn, v)
-                from_param = first
         if from_param:
             parts = {}
             for part, exprs in (("body", sent), ("headers", [_kw(kws, "headers")]),
@@ -658,8 +674,38 @@ class _Visitor(ScopeVisitor):
                 for expr in exprs:
                     if isinstance(expr, ast.Name) and _is_param(fn, expr.id):
                         parts[part] = expr.id
-            direct = _is_param(fn, url.id)
-            self.wrappers.append(_Wrapper(fn, self.cls, from_param, parts, req, direct))
+            direct = _is_param(fn, url.id)  # type: ignore[union-attr]
+            self.wrappers.append(_Wrapper(fn, self.cls, from_param, parts, req, direct,
+                                          carry))  # fmt: skip
+
+
+_CARRY_KW = ("headers", "params", "auth", "cookies")
+
+
+def _flow(
+    tracer: py_flow.Tracer | None,
+    url: ast.expr | None,
+    carried: list[ast.expr | None],
+    sc: _Scope,
+    receiver: ast.expr | None = None,
+    wrapper: ast.AST | None = None,
+) -> dict[str, Any]:
+    """Request fields from py_flow: where the address comes from (only when the code
+    doesn't spell out the site: `url` given) and the logins and tokens it carries."""
+    if tracer is None:
+        return {}
+    out: dict[str, Any] = {}
+    if url is not None:
+        out["origins"] = tuple(tracer.address(url, sc, receiver=receiver))
+    got, params = tracer.carried_in(carried, sc, wrapper)
+    ids, tokens = py_flow.logins(got)
+    if params:
+        out["params"] = params
+    if ids:
+        out["logins"] = ids
+    if tokens:
+        out["tokens"] = tokens
+    return out
 
 
 def _first_param(func: ast.AST, value: ast.expr) -> str:
@@ -680,6 +726,7 @@ class _Wrapper:
     parts: dict[str, str]  # "body" / "headers" / "query" -> the parameter it comes in through
     inner: Request  # the request read inside the wrapper
     direct: bool = True  # the parameter is the address itself (else: the address is made from it)
+    carry: tuple[str, ...] = ()  # its parameters whose values the request carries
 
 
 def _bound(func: ast.AST, call: ast.Call, method: bool) -> dict[str, ast.expr]:
@@ -708,9 +755,16 @@ class _Callers(ScopeVisitor):
     the address and the field names read where the call stands. A call that passes the
     address on from its own caller stays "address not in the code"."""
 
-    def __init__(self, reader: Reader, rel: str, wrappers: list[_Wrapper]):
+    def __init__(
+        self,
+        reader: Reader,
+        rel: str,
+        wrappers: list[_Wrapper],
+        tracer: py_flow.Tracer | None = None,
+    ):
         super().__init__(reader, rel)
         self.wrappers = wrappers
+        self.tracer = tracer
         self.out: list[Request] = []
         self.used: set[int] = set()  # id() of the inner requests that were replaced
 
@@ -738,6 +792,18 @@ class _Callers(ScopeVisitor):
             else:  # the wrapper makes the address from this value: only its name is known
                 host, scheme, port = None, "", None
                 address = tuple(x for x in [_label(url)] if x)
+            flow = _flow(self.tracer, url if host is None else None,
+                         [url, *(bound.get(p) for p in w.carry)], sc)  # fmt: skip
+            flow.pop("params", None)
+            if host is None and (not w.direct or flow.get("origins") == (py_flow._UNK,)):
+                # the wrapper adds its own start (`self._base + path`) or the call passes a
+                # path: where the address read inside the wrapper starts says more
+                inner = w.inner.origins
+                if inner and inner != (py_flow._UNK,):
+                    flow["origins"] = inner
+            # what the wrapper sends on its own (read inside it) still goes here
+            flow["logins"] = tuple(dict.fromkeys(flow.get("logins", ()) + w.inner.logins))
+            flow["tokens"] = tuple(dict.fromkeys(flow.get("tokens", ()) + w.inner.tokens))
             got: dict[str, tuple[str, ...] | None] = {}
             body_by = w.inner.body_by
             for part in ("body", "headers", "query"):
@@ -755,12 +821,27 @@ class _Callers(ScopeVisitor):
                 w.inner, host=host, scheme=scheme, port=port, address=address,
                 file=self.rel, line=node.lineno, body=got["body"], headers=got["headers"],
                 query=got["query"], via=_label(w.func), body_by=body_by,
+                origins=flow.get("origins", ()), logins=flow["logins"], tokens=flow["tokens"],
             ))  # fmt: skip
 
 
-def requests_in(root: Path) -> list[Request]:
-    """Every web request call in the app's Python files, in file and line order."""
-    reader = Reader(root)
+def requests_in(root: Path, flow: bool = True) -> list[Request]:
+    """Every web request call in the app's Python files, in file and line order. `flow`:
+    also where run-time addresses come from and which logins each request carries."""
+    return _read(Reader(root), py_flow.Tracer if flow else None)[0]
+
+
+def read_flow(root: Path) -> tuple[list[Request], list[py_flow.Handoff]]:
+    """(0.15) The requests (with where their addresses come from and the logins they
+    carry) and the calls that hand a login or an address to a library."""
+    return _read(Reader(root), py_flow.Tracer, handoffs=True)
+
+
+def _read(
+    reader: Reader, make: type[py_flow.Tracer] | None, handoffs: bool = False
+) -> tuple[list[Request], list[py_flow.Handoff]]:
+    root = reader.root
+    tracer = make(reader) if make is not None else None
     out: list[Request] = []
     n = 0
     for p in sorted(root.rglob("*.py")):
@@ -774,21 +855,22 @@ def requests_in(root: Path) -> list[Request]:
         tree = reader.module(rel).tree
         if tree is None:
             continue
-        v = _Visitor(reader, rel)
+        v = _Visitor(reader, rel, tracer)
         try:
             v.visit(tree)
         except RecursionError:
             continue
         found = v.out
         if v.wrappers:
-            c = _Callers(reader, rel, v.wrappers)
+            c = _Callers(reader, rel, v.wrappers, tracer)
             try:
                 c.visit(tree)
             except RecursionError:
                 c.out, c.used = [], set()
             found = [r for r in found if id(r) not in c.used] + c.out
         out += found
-    return sorted(out, key=lambda r: (r.file, r.line, r.method))
+    reqs = sorted(out, key=lambda r: (r.file, r.line, r.method))
+    return reqs, (tracer.handoffs() if handoffs and tracer is not None else [])
 
 
 def _names(v: tuple[str, ...] | None) -> list[str] | None:
@@ -814,6 +896,10 @@ def _shapes(reqs: list[Request]) -> list[dict[str, Any]]:
                 "more": r.more,
                 **({"via": r.via} if r.via else {}),
                 **({"body_by": r.body_by} if r.body_by else {}),
+                # (0.15, py_flow) where a run-time address comes from; logins and tokens
+                **({"from": [o.as_dict() for o in r.origins]} if r.origins else {}),
+                **({"logins": list(r.logins)} if r.logins else {}),
+                **({"tokens": list(r.tokens)} if r.tokens else {}),
                 "count": 0,
                 "at": [],
             }
@@ -823,13 +909,20 @@ def _shapes(reqs: list[Request]) -> list[dict[str, Any]]:
     return list(by.values())
 
 
-def summary(reqs: list[Request], tests: frozenset[str] = frozenset()) -> dict[str, Any] | None:
+def summary(
+    reqs: list[Request],
+    tests: frozenset[str] = frozenset(),
+    handoffs: list[py_flow.Handoff] | None = None,
+) -> dict[str, Any] | None:
     """The report's `requests` section, or None when the code makes no request Barkley
     can read. `sites`: host -> shapes; `elsewhere`: shapes of requests whose address is
     built while the app runs. Field names and address names are untrusted text.
     `tests`: files Home Assistant never loads (test scripts no runtime module imports):
-    their requests aren't the app's, so they are only counted (`test_code`)."""
-    if not reqs:
+    their requests aren't the app's, so they are only counted (`test_code`).
+    `handoffs`: (0.15) calls that give a library a setup login or an address (py_flow);
+    an app with no request of its own still gets the section when it has one."""
+    hand = [h for h in handoffs or [] if h.at.split(":")[0] not in tests]
+    if not reqs and not hand:
         return None
     aside = [r for r in reqs if r.file in tests]
     reqs = [r for r in reqs if r.file not in tests]
@@ -842,6 +935,7 @@ def summary(reqs: list[Request], tests: frozenset[str] = frozenset()) -> dict[st
         "sites": {h: _shapes(rs) for h, rs in sorted(sites.items())},
         "elsewhere": _shapes([r for r in reqs if r.host is None]),
         "total": len(reqs),
+        **({"handoffs": [h.as_dict() for h in hand]} if hand else {}),
         **({"test_code": {"count": len(aside),
                           "files": sorted({r.file for r in aside})[:_MAX_AT]}} if aside else {}),
     }  # fmt: skip
