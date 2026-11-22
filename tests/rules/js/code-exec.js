@@ -143,8 +143,12 @@ function remoteMessage() {
 }
 
 function remoteAddress() {
-  // ruleid: card-eval-remote, card-eval
+  // ruleid: card-eval-address, card-eval
   eval(location.hash.slice(1));
+  // ruleid: card-eval-address, card-eval
+  new Function(new URLSearchParams(window.location.search).get("code"))();
+  // ruleid: card-eval-remote, card-eval
+  eval(localStorage.getItem("snippet"));
   // ruleid: card-eval-remote, card-eval
   new Function(localStorage.getItem("snippet"))();
   // ruleid: card-eval-remote, card-eval

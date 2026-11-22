@@ -65,9 +65,9 @@ rules:
     languages: [javascript, typescript]
     severity: ERROR
     message: >-
-      Runs code that comes from outside the card (a download, a message, the page
-      address or browser storage). That code was never part of what was scanned, and it
-      runs with the logged-in user's full HA access.
+      Runs code that comes from outside the card (a download, a message or browser
+      storage). That code was never part of what was scanned, and it runs with the
+      logged-in user's full HA access.
     metadata:
       sniff:
         title: Card runs code from outside the card
@@ -92,16 +92,54 @@ rules:
               - pattern-inside: $W.onmessage = ($E) => { ... }
               - pattern-inside: $W.onmessage = function ($E) { ... }
           - pattern: $E.data
-      - pattern: location
-      - pattern: $G.location
       - pattern: document.cookie
-      - pattern: document.URL
-      - pattern: document.referrer
       - patterns:
           - pattern: $LS.getItem(...)
           - metavariable-regex:
               metavariable: $LS
               regex: (localStorage|sessionStorage)$
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: eval($ARG)
+              - pattern: new Function(..., $ARG)
+              - pattern: Function(..., $ARG)
+              - pattern: setTimeout($ARG, ...)
+              - pattern: setInterval($ARG, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern: $G.eval($ARG)
+                      - pattern: $G["eval"]($ARG)
+                      - pattern: new $G.Function(..., $ARG)
+                      - pattern: $G.Function(..., $ARG)
+                  - metavariable-regex:
+                      metavariable: $G
+                      regex: ^(window|globalThis|self|top|parent|frames)$
+          - focus-metavariable: $ARG
+
+  # (0.15, his decision 2026-11-21) Code taken from the page address: anyone who gets a
+  # logged-in user to open a link can make the card run code. A door someone else can use,
+  # not a sign of malice: Exposure 5, not Threat (it was part of card-eval-remote before).
+  # analyzers/js_address.py adds the same finding when the address reaches the code
+  # through the card's settings.
+  - id: card-eval-address
+    mode: taint
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Runs code taken from the page address. Anyone who gets you to open a link to your
+      dashboard can make the card run code there, with your Home Assistant login.
+    metadata:
+      sniff:
+        title: A link can make the card run code
+        severity: high
+        category: code_exec
+        supersedes: [card-eval]
+    pattern-sources:
+      - pattern: location
+      - pattern: $G.location
+      - pattern: document.URL
+      - pattern: document.referrer
     pattern-sinks:
       - patterns:
           - pattern-either:

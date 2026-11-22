@@ -62,6 +62,10 @@ LIB_BUG = {"critical": 5.0, "high": 3.0, "medium": 1.0}
 # strongest counts in full, each further one a quarter. Not raised by the network setting:
 # who can reach Home Assistant doesn't change who publishes that code.
 REMOTE_CODE = {"card-remote-script": 5.0, "card-remote-pinned": 2.0}
+# (0.15, his decision 2026-11-21) Code taken from the page address: anyone who gets you to
+# open a link decides what runs. Counted with the remote code (same principle: someone
+# else picks the code), so the strongest of them counts in full, each further a quarter.
+LINK_CODE = {"card-eval-address": 5.0}
 NETWORK = {"home": 1.0, "shared": 1.25}
 PUBLIC = 1.5
 EXPOSURE_MAX = 10.0
@@ -207,11 +211,17 @@ def compute(report: dict[str, Any], network: str = "home") -> Readings:
         pts += bug_pts
         reasons.append(_plural(len(bugs), "library it uses has", "libraries it uses have")
                        + " published security bugs.")  # fmt: skip
-    remote = sorted((REMOTE_CODE[str(f.get("rule_id"))] for f in findings
-                     if str(f.get("rule_id")) in REMOTE_CODE), reverse=True)  # fmt: skip
+    others = REMOTE_CODE | LINK_CODE
+    remote = sorted((others[str(f.get("rule_id"))] for f in findings
+                     if str(f.get("rule_id")) in others), reverse=True)  # fmt: skip
+    links = sum(1 for f in findings if str(f.get("rule_id")) in LINK_CODE)
     remote_pts = remote[0] + REPEAT * sum(remote[1:]) if remote else 0.0
-    loose = sum(1 for x in remote if x == REMOTE_CODE["card-remote-script"])
-    fixed = len(remote) - loose
+    loose = sum(1 for f in findings if str(f.get("rule_id")) == "card-remote-script")
+    fixed = sum(1 for f in findings if str(f.get("rule_id")) == "card-remote-pinned")
+    if links:
+        reasons.append("A link can make it run code: it runs code taken from the page "
+                       "address. Anyone who gets you to open a link to your dashboard can "
+                       "run code there, with your login.")  # fmt: skip
     if loose:
         reasons.append(("It loads code from another site while it runs" if loose == 1 else
                         f"It loads code from {loose} other sites or packages while it runs")

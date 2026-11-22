@@ -357,6 +357,14 @@ RULES: dict[str, Explanation] = {
         "runs in your dashboard, now and after every new release.",
         "Loads code from the web",
     ),
+    "card-eval-address": _E(
+        "A link can make its dashboard card run code",
+        "The card runs code it takes from the page address, directly or through its "
+        "settings. Anyone who gets you to open a link to your dashboard can make it run "
+        "code there, with your Home Assistant login.",
+        "Check it. Be careful with links to your dashboard that you didn't make yourself.",
+        "A link can run code",
+    ),
     "card-remote-pinned": _E(
         "Its dashboard card loads a fixed version of code from the internet",
         "While it runs, the card downloads one fixed version of extra code from a website. "

@@ -11,6 +11,7 @@ from sniff_test.analyzers import (
     bytecode,
     correlate,
     endpoints,
+    js_address,
     js_remote,
     js_requests,
     libraries,
@@ -240,6 +241,7 @@ def scan(
         findings += correlate.correlate(findings, facts, target.root, called)
         if target.kind is TargetKind.PLUGIN:  # (0.15) code it loads from a code CDN
             findings = js_remote.merge(findings, js_remote.loads_in(target.root))
+            findings = js_address.add(findings, target.root)  # settings from the address
         if target.kind is TargetKind.INTEGRATION:
             findings = _label_test_code(findings, target)
         findings = apply_exposure(_dedupe(findings), exposure)
