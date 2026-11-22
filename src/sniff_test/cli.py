@@ -555,6 +555,9 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     httpd.panel.start_settings = start
     httpd.panel.option_token = option_token
     httpd.panel.standalone = standalone
+    from sniff_test import listings
+
+    httpd.panel.listings = listings.Listings()  # (0.15) the Marketplace's removed list
     if standalone:
         if login_cfg is not None:  # Create token: made with the login, before it's revoked
 

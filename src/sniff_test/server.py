@@ -34,6 +34,7 @@ from sniff_test import (
     __version__,
     doctor,
     ha_token,
+    listings,
     login,
     memory,
     readings,
@@ -687,6 +688,7 @@ def render_installed(
     token: str,
     report_fn: Callable[[int], dict[str, Any] | None],
     v: ui.View | None = None,
+    listing_fn: Callable[[str], dict[str, str] | None] = lambda _r: None,
 ) -> str:
     v = v or ui.View()
     back = v.qs()
@@ -705,6 +707,7 @@ def render_installed(
             installed=r.item.installed,
             available=r.item.available if r.item.update else None,
             prerelease=r.item.prerelease,
+            listing=listing_fn(r.item.repo),
             scan=r.installed_scan,
             report=report_fn(r.installed_scan.id) if r.installed_scan else None,
             group=r.group,
@@ -1684,8 +1687,10 @@ def render_scan(
     open_item: str = "",
     rechecking: bool = False,
     item_asked: dict[str, list[str]] | None = None,
+    listing: dict[str, str] | None = None,
 ) -> bytes:
     """`open_item`: the item whose AI sheet is open (`?open=`), kept open across refreshes.
+    `listing`: the Marketplace's removed list entry for this app (listings.py), if any.
     `rechecking`: an advisory re-check of this scan is queued or running (the page then
     reloads itself until it ends)."""
     repo = report.get("target", {}).get("repo")
@@ -1745,7 +1750,7 @@ def render_scan(
         report,
         rows,
         name=row.item.name if row else None,
-        update=_update_box(base, row, token),
+        update=listings.note_html(listing) + _update_box(base, row, token),
         again=_again_box(base, report, token, sid)
         + _advisory_line(base, sid, report, store, token, rechecking),
         trust=address_block,
@@ -2324,6 +2329,9 @@ class Panel:
         self._cache: _Inputs | None = None  # see _inputs()
         self._rows: dict[int, dict[str, Any]] = {}  # readings per scan for that same input
         self.standalone = False  # (0.14.0 part 4) set by `serve`: Barkley's own HA token
+        # (0.15) the Marketplace's removed list (listings.py); set by `serve` only, so tests
+        # never reach the real server
+        self.listings: listings.Listings | None = None
         self.allow = allow  # None: any address (standalone, behind the login)
         self.login: login.Login | None = None  # standalone: "log in with Home Assistant"
         self.csp = _CSP
@@ -2682,6 +2690,11 @@ class Panel:
     def settings(self) -> settings_mod.Settings:
         return self._inputs().settings
 
+    def listing(self, repo: Any) -> dict[str, str] | None:
+        if self.listings is None or not isinstance(repo, str) or not repo:
+            return None
+        return self.listings.get(repo)
+
     def view(self, rep: dict[str, Any], show_minor: bool = False) -> dict[str, Any]:
         s = self._inputs().settings
         return shown_mod.view(rep, network=s.network, show_minor=show_minor,
@@ -2771,7 +2784,7 @@ class Panel:
         if self.installed_fn is None:
             return ""
         st, rows = self.rows(refresh)
-        html = render_installed(base, st, rows, self.token, self.shown_report, v)
+        html = render_installed(base, st, rows, self.token, self.shown_report, v, self.listing)
         if not st.error:
             html += self.not_installed_html(base, {r.item.repo.lower() for r in rows}, v)
         return html
@@ -2962,6 +2975,7 @@ class Panel:
                             panel.ai_entity, state, err, choices, choices_err,
                             panel.ai_mode, panel.item_states(sid), open_item,
                             item_asked=panel.item_asked(sid),
+                            listing=panel.listing(report.get("target", {}).get("repo")),
                             rechecking=any(
                                 j.kind == "recheck" and j.scan == sid
                                 and j.state in ("queued", "running", "waiting")

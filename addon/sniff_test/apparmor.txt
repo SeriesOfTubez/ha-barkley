@@ -33,7 +33,8 @@
 #   Barkley then finds the tools unsandboxed and doesn't scan (src/sniff_test/sandbox.py).
 # - Network: TCP to GitHub, PyPI, HA's wheel index, OSV, the npm registry and its
 #   download counts, jsDelivr's hash lookup and the CVE records at cveawg.mitre.org
-#   (0.14.1), the Supervisor's API and Core proxy,
+#   (0.14.1), the Marketplace's public removed-apps list at data-v2.hacs.xyz (0.15, the
+#   panel only, once a day: listings.py), the Supervisor's API and Core proxy,
 #   and the ingress panel on 8099; UDP and netlink for DNS. No raw sockets. The rules are
 #   by socket type, not by host: the hosts are limited in Barkley's code
 #   (fetch/http.py ALLOWED_HOSTS).

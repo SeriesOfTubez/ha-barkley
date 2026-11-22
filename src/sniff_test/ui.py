@@ -745,6 +745,7 @@ class Card:
     action: str = ""  # rendered form/button HTML (built by the server)
     stale: bool = False  # sniffed with earlier rules (an app that isn't installed)
     prerelease: bool = False  # (0.15, #27) the installed version is a pre-release
+    listing: dict[str, str] | None = None  # (0.15) the Marketplace removed it (listings.py)
 
     @property
     def readings(self) -> dict[str, Any] | None:
@@ -845,6 +846,11 @@ def card_chips(c: Card) -> list[tuple[str, str]]:
     chips: list[tuple[str, str]] = []
     if c.stale:
         chips.append(("", "Sniffed with earlier rules"))
+    if c.listing:  # (0.15) the Marketplace's own word, shown as theirs
+        from sniff_test import listings
+
+        if got := listings.chip(c.listing):
+            chips.append(got)
     if c.prerelease:  # (0.15, #27) a pre-release installed on purpose: said, not "update"
         chips.append(("", "Pre-release"))
     if c.report and (gone := quiet(c.report)[0]):

@@ -37,6 +37,7 @@ PANEL_ONLY = frozenset(
         "shown.py",  # (0.15) the report as the panel shows it (review.py before)
         "readings.py",  # (preview) the proposed readings, worked out when a page is shown
         "does.py",  # (0.15) the "What it does" picture, drawn from a stored scan
+        "listings.py",  # (0.15) the Marketplace's removed list, fetched by the panel
         "devnote.py",  # (preview) the developer's note, read from stored snippets
         "diff.py",
         "releases.py",
