@@ -190,3 +190,18 @@ def test_plugin_release_asset_limits(tmp_path):
         )
         with pytest.raises(hacs.FetchError, match="name"):
             hacs.fetch_remote("owner/lovelace-my-card", d, gh=gh)
+
+
+def test_card_file_names_are_the_ones_the_marketplace_accepts():
+    """(0.15) Core's `_valid_filenames`: hacs.json's filename alone, else the name without
+    "lovelace-", the full name, and the full name .umd.js / -bundle.js. A real card whose
+    file carried its whole repository name failed to scan before."""
+    from sniff_test.fetch.hacs import plugin_filenames
+
+    assert plugin_filenames("lovelace-acme-row", {}) == [
+        "acme-row.js",
+        "lovelace-acme-row.js",
+        "lovelace-acme-row.umd.js",
+        "lovelace-acme-row-bundle.js",
+    ]
+    assert plugin_filenames("acme-card", {"filename": "dist/acme.js"}) == ["dist/acme.js"]
