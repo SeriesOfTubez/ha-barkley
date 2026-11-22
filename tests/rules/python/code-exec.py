@@ -58,9 +58,19 @@ def shell(cmd):
     os.path.join("a", "b")
 
 
-def obfuscated(xs):
+def obfuscated(xs, data):
     # ruleid: py-obfuscation
-    s = "".join(chr(c) for c in xs)
+    s = "".join(chr(c) for c in [101, 118, 97, 108])
+    # ruleid: py-obfuscation
+    s = "".join(map(chr, (101, 118, 97, 108)))
+    # ruleid: py-obfuscation
+    s = "".join(chr(c ^ 7) for c in [98, 113, 102, 107])
+    # ok: py-obfuscation
+    name = name.strip("".join(chr(value) for value in range(33)))
+    # ok: py-obfuscation
+    text = "".join(chr(b) for b in data)
+    # ok: py-obfuscation
+    text = "".join(map(chr, xs))
     # ok: py-obfuscation
     f = getattr(__builtins__, s)
     return f
