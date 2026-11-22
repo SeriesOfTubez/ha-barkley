@@ -130,3 +130,22 @@ def test_hostile_text_is_read_in_time_proportional_to_its_size(text):
     start = time.monotonic()
     js_remote.read(text, "card.js")
     assert time.monotonic() - start < 5
+
+
+def test_an_address_in_a_comment_is_not_loaded():
+    """(full Marketplace run 2026-11-22) A real card kept a debugging console's loader
+    inside `/* ... */`."""
+    text = """
+    /*
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/acme-console';
+    */
+    // import("https://unpkg.com/acme-old/x.js")
+    const r = /["']/g; // a regex with quotes doesn't start a string
+    s.src = 'https://cdn.jsdelivr.net/npm/acme-live';
+    t = `${"https://esm.sh/acme-inner@1.2.3"}`;
+    """
+    assert [a for _p, a in loads(text)] == [
+        "https://cdn.jsdelivr.net/npm/acme-live",
+        "https://esm.sh/acme-inner@1.2.3",
+    ]

@@ -1099,7 +1099,8 @@ SETTING_HELP = {
         "times this at or below the number of cores."
     ),
     "Memory for scans": (
-        "Barkley allows 1.5 GB for each scan, the most a big scan has needed. On Auto, "
+        "Barkley allows 1.5 GB for each scan. That covers almost every app: across 6,753 "
+        "Marketplace apps, 18 scans used more, the biggest about 8.5 GB. On Auto, "
         "another scan starts only when free memory covers 1.5 GB for every running scan, "
         "plus a reserve. The reserve is 2 GB on a machine Home Assistant shares, and 0.5 GB "
         "inside a container with its own memory limit. With a fixed amount, Barkley runs as "

@@ -74,38 +74,60 @@ rules:
         severity: high
         category: code_exec
         supersedes: [card-eval]
+    # (0.15, full Marketplace run 2026-11-22) Labels: any promise's value counts for eval
+    # and Function, but a timer only takes code from a download, a message or storage. A
+    # real card handed the unsubscribe function a subscription promise gives to
+    # `setTimeout(unsub, 0)`: a function, not code.
     pattern-sources:
-      - pattern: fetch(...)
-      - pattern: $G.fetch(...)
+      - label: OUTSIDE
+        pattern: fetch(...)
+      - label: OUTSIDE
+        pattern: $G.fetch(...)
       # the value a promise chain hands on: fetch(u).then(r => r.text()).then(code => …)
-      - patterns:
+      - label: OUTSIDE
+        patterns:
+          - pattern-either:
+              - pattern: $F(...).then(($T) => $B)
+              - pattern: $F(...).then(function ($T) { ... })
+          - metavariable-pattern:
+              metavariable: $F
+              pattern-either:
+                - pattern: <... fetch(...) ...>
+                - pattern: <... $G.fetch(...) ...>
+          - focus-metavariable: $T
+      - label: PROMISE
+        patterns:
           - pattern-either:
               - pattern: $F(...).then(($T) => $B)
               - pattern: $F(...).then(function ($T) { ... })
           - focus-metavariable: $T
-      - pattern: $X.responseText
-      - pattern: $X.response
-      - patterns:
+      - label: OUTSIDE
+        pattern: $X.responseText
+      - label: OUTSIDE
+        pattern: $X.response
+      - label: OUTSIDE
+        patterns:
           - pattern-either:
               - pattern-inside: $W.addEventListener("message", ($E) => { ... })
               - pattern-inside: $W.addEventListener("message", function ($E) { ... })
               - pattern-inside: $W.onmessage = ($E) => { ... }
               - pattern-inside: $W.onmessage = function ($E) { ... }
           - pattern: $E.data
-      - pattern: document.cookie
-      - patterns:
+      - label: OUTSIDE
+        pattern: document.cookie
+      - label: OUTSIDE
+        patterns:
           - pattern: $LS.getItem(...)
           - metavariable-regex:
               metavariable: $LS
               regex: (localStorage|sessionStorage)$
     pattern-sinks:
-      - patterns:
+      - requires: OUTSIDE or PROMISE
+        patterns:
           - pattern-either:
               - pattern: eval($ARG)
               - pattern: new Function(..., $ARG)
               - pattern: Function(..., $ARG)
-              - pattern: setTimeout($ARG, ...)
-              - pattern: setInterval($ARG, ...)
               - patterns:
                   - pattern-either:
                       - pattern: $G.eval($ARG)
@@ -115,6 +137,12 @@ rules:
                   - metavariable-regex:
                       metavariable: $G
                       regex: ^(window|globalThis|self|top|parent|frames)$
+          - focus-metavariable: $ARG
+      - requires: OUTSIDE
+        patterns:
+          - pattern-either:
+              - pattern: setTimeout($ARG, ...)
+              - pattern: setInterval($ARG, ...)
           - focus-metavariable: $ARG
 
   # (0.15, his decision 2026-11-21) Code taken from the page address: anyone who gets a

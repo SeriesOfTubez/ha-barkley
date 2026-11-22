@@ -84,6 +84,16 @@ def _severity_for(score: float) -> Severity:
     return Severity.LOW
 
 
+# (0.15, full Marketplace run 2026-11-22) When npm takes a malicious package down it
+# publishes an empty stand-in under the same name, version "0.0.1-security", so the name
+# can't be taken again. A real card's lockfile held that stand-in: no code, nothing to report.
+_NPM_STANDIN = re.compile(r"0\.0\.1-security(?:\.\d{1,4})?")
+
+
+def npm_standin(ecosystem: str, version: str) -> bool:
+    return ecosystem == "npm" and bool(_NPM_STANDIN.fullmatch(version))
+
+
 def is_malicious(vuln: dict[str, Any]) -> bool:
     if str(vuln.get("id", "")).startswith("MAL-"):
         return True
@@ -451,6 +461,8 @@ def to_findings(
     for p in sorted(pkgs, key=lambda p: (p.name, p.version)):
         evidence_base = f"{p.name}@{p.version} ({p.ecosystem})"
         plats = frozenset(p.platforms)
+        if npm_standin(p.ecosystem, p.version):
+            continue
         mal = sorted(v for v, data in p.vulns.items() if is_malicious(data))
         if mal:
             out.append(

@@ -23,10 +23,18 @@ Decided with him 2026-11-21 (vault: Roadmap "Decided 2026-11-21 (thirty-first se
 Never run, never parsed as a program: plain text scanning. Every host is looked for with
 `str.find`, and each hit reads fixed windows around it, so a hostile file costs time in
 proportion to its size (tests/test_js_remote.py).
+
+(0.15, full Marketplace run 2026-11-22) An address in a comment isn't loaded: a real card
+kept a debugging console's `<script>` inside `/* ... */`. When a file has any address, it
+is read once with js_fold's tokenizer (strings, templates, comments and regular
+expressions read whole, linear), and only addresses inside a string or template count.
+A mistake there could only hide an address someone could hide anyway by building it
+from pieces, which this text reading never sees.
 """
 
 from __future__ import annotations
 
+import bisect
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -229,11 +237,28 @@ def _openings(text: str) -> tuple[list[tuple[int, str, str]], int | None]:
     return [(q, *found[q]) for q in sorted(found)], past
 
 
+def _in_code(text: str, openings: list[tuple[int, str, str]]) -> list[tuple[int, str, str]]:
+    """The openings that start, or sit inside, a string or template: not in a comment."""
+    from sniff_test.analyzers import js_fold
+
+    if not openings:
+        return openings
+    spans = [(t.start, t.end) for t in js_fold.tokens(text) if t.kind in (js_fold.STR, js_fold.TPL)]
+    starts = [s for s, _e in spans]
+    out = []
+    for o in openings:
+        k = bisect.bisect_right(starts, o[0]) - 1
+        if k >= 0 and spans[k][0] <= o[0] < spans[k][1]:
+            out.append(o)
+    return out
+
+
 def read(text: str, rel: str) -> list[Load]:
     out: list[Load] = []
     consts = _Constants(text)
     line, at = 1, 0  # lines counted once, in file order
     openings, past = _openings(text)
+    openings = _in_code(text, openings)
     if past is not None:  # never a way to hide one: the rest count as one unknown load
         out.append(Load(rel, text.count("\n", 0, past) + 1,
                         "more code addresses than Barkley reads in one file", "a code CDN",

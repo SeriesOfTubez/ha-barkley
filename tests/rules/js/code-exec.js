@@ -170,3 +170,19 @@ function runCode(code) {
   // ruleid: card-eval
   eval(code);
 }
+
+function timerTakesAFunctionFromAPromise(conn) {
+  // (full Marketplace run 2026-11-22) a subscription's unsubscribe function, not code
+  // ok: card-eval-remote
+  conn.subscribeMessage(() => {}, { type: "x/subscribe" }).then((unsub) => setTimeout(unsub, 0));
+}
+
+function timerTakesDownloadedCode(u) {
+  // ruleid: card-eval-remote
+  fetch(u).then((r) => r.text()).then((code) => setTimeout(code, 0));
+}
+
+function anyPromiseIntoEval(load) {
+  // ruleid: card-eval-remote, card-eval
+  load().then((code) => eval(code));
+}

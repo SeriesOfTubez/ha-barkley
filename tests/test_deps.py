@@ -310,6 +310,17 @@ def test_osv_mal_advisory_is_critical_malware():
     assert Tag.MALWARE in f.tags
 
 
+def test_npms_empty_stand_in_for_a_removed_package_is_not_malware():
+    """(full Marketplace run 2026-11-22) npm replaces a removed malicious package with an
+    empty "0.0.1-security" version; a real card's lockfile held one."""
+    p = osv._Pkg("acme.js", "0.0.1-security", "npm", {"MAL-1": {"id": "MAL-1"}},
+                 [{"ids": ["MAL-1"]}])  # fmt: skip
+    assert osv.to_findings([p], "package-lock.json", set()) == []
+    p = osv._Pkg("acme.js", "0.0.2", "npm", {"MAL-1": {"id": "MAL-1"}}, [{"ids": ["MAL-1"]}])
+    assert osv.to_findings([p], "package-lock.json", set())[0].rule_id == "dep-malicious"
+    assert not osv.npm_standin("PyPI", "0.0.1-security")
+
+
 def test_osv_github_malware_cwe_counts_as_malicious():
     v = {"id": "GHSA-mh6f-8j2x-4483", "database_specific": {"cwe_ids": ["CWE-506"]}}
     [f] = osv.to_findings([_pkg("event-stream", [v], [{"ids": [v["id"]]}])], None, set())
