@@ -3063,6 +3063,23 @@ _LIB_WHY = {
 }
 
 
+def _places(d: dict[str, Any]) -> str:
+    """ "<code>a.py</code> line 56; <code>b.py</code> lines 277 and 596" from "file:line"
+    places (text from the scanned code: escaped), with "and N more" past the stored ones."""
+    by: dict[str, list[str]] = {}
+    for a in d.get("at") or []:
+        if isinstance(a, str) and ":" in a:
+            f, _, ln = a.rpartition(":")
+            by.setdefault(f, []).append(ln)
+    parts = []
+    for f, lns in by.items():
+        nums = lns[0] if len(lns) == 1 else ", ".join(lns[:-1]) + " and " + lns[-1]
+        parts.append(f"<code>{e(f, 160)}</code> line{'s' * (len(lns) > 1)} {e(nums, 60)}")
+    n = d.get("count") if isinstance(d.get("count"), int) else 0
+    rest = n - sum(len(v) for v in by.values())
+    return "; ".join(parts) + (f" and {rest} more" if rest > 0 else "")
+
+
 def environment_html(report: dict[str, Any]) -> str:
     """(0.15) The environment variables the code reads and sets, by name
     (analyzers/py_env). Names are plain names from the scanned code: still escaped."""
@@ -3092,9 +3109,24 @@ def environment_html(report: dict[str, Any]) -> str:
         li.append(f"Sets {'one' if n == 1 else n} more whose name{'s are' if n != 1 else ' is'} "
                   "put together while the app runs.")  # fmt: skip
     whole = env.get("whole") if isinstance(env.get("whole"), dict) else {}
-    if isinstance(whole.get("count"), int) and whole["count"] > 0:
-        li.append("Uses all of them at once, for example to copy them or hand them to another "
-                  f"program.{at(whole)}")  # fmt: skip
+    nw = whole.get("count") if isinstance(whole.get("count"), int) else 0
+    where = _places(whole)
+    passes = ("Code usually does this to start another program with the same settings, "
+              "such as git or a shell. That program then gets every variable, including the "
+              "Supervisor's key on Home Assistant OS.")  # fmt: skip
+    if nw and not li:  # (0.15, his report) nothing by name: say that first, then what it does
+        return (
+            '<section class="box"><h2>Environment variables it uses</h2>'
+            "<p>It doesn't read or set any environment variable by name. "
+            f"{'In one place' if nw == 1 else f'In {nw} places'} it takes all of them at once. "
+            f"{passes}</p>"
+            + (f'<p class="muted small">Where: {where}</p>' if where else "")
+            + "</section>"
+        )
+    if nw:
+        li.append(f"Also takes all of them at once {'in one place' if nw == 1 else f'in {nw} places'}"
+                  f". {passes}" + (f'<br><span class="muted">Where: {where}</span>' if where
+                                   else ""))  # fmt: skip
     if not li:
         if not isinstance(env.get("reads"), list) or not isinstance(env.get("writes"), list):
             return ""

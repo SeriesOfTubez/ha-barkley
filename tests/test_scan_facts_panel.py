@@ -101,7 +101,23 @@ def test_environment_variables_are_listed_by_name():
     assert "Reads <code>TZ</code>. <span" in html and "a.py:7" in html
     assert "Sets or removes <code>ACME_HOME</code>." in html
     assert "Reads one more whose name is put together while the app runs." in html
-    assert "Uses all of them at once" in html and "run.py:5, run.py:9" in html
+    assert "Also takes all of them at once in 2 places" in html
+    assert "Where: <code>run.py</code> lines 5 and 9" in html
+
+
+def test_an_app_that_only_copies_the_whole_environment_says_so_plainly():
+    """(0.15, his report on a real integration) It names no variable; it copies them all in
+    three places to start git, a shell and ssh."""
+    only = dict(ENV, reads=[], writes=[], unnamed_reads=0,
+                whole={"count": 3, "at": ["backend/git.py:56", "backend/term.py:277",
+                                          "backend/term.py:596"]})  # fmt: skip
+    html = ui.environment_html({"environment": only})
+    assert "It doesn't read or set any environment variable by name." in html
+    assert "In 3 places it takes all of them at once." in html
+    assert "such as git or a shell" in html and "Supervisor" in html
+    assert ("Where: <code>backend/git.py</code> line 56; <code>backend/term.py</code> lines "
+            "277 and 596") in html  # fmt: skip
+    assert "Most are harmless" not in html  # the intro about named variables doesn't apply
     assert ui.environment_html({}) == "" and ui.environment_html({"environment": "x"}) == ""
     empty = dict(ENV, reads=[], writes=[], unnamed_reads=0, whole={"count": 0, "at": []})
     none = ui.environment_html({"environment": empty})  # checked, none used: said plainly
