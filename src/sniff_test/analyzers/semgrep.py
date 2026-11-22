@@ -14,7 +14,15 @@ from pathlib import Path
 from typing import Any
 
 from sniff_test import scancache
-from sniff_test.analyzers import _proc, js_fold, js_loader, js_wrapper, py_precision, py_tamper
+from sniff_test.analyzers import (
+    _proc,
+    js_fold,
+    js_loader,
+    js_settings,
+    js_wrapper,
+    py_precision,
+    py_tamper,
+)
 from sniff_test.analyzers.py_resolve import Resolver
 from sniff_test.models import (
     RULE_FILE_NOT_CHECKED,
@@ -972,6 +980,12 @@ def _run(
         card = target.kind is TargetKind.PLUGIN
         same_origin = _precise_cached(token_hits, root, runner, card, cache)
         findings = [f for f in findings if id(f) not in same_origin]
+        # (0.15) a path from the card's own settings, with a "/" default or none: a note
+        notes = js_settings.settings_note(
+            [h for h in token_hits if id(h.finding) not in same_origin]
+        )
+        findings = [js_settings.as_note(f, *notes[id(f)]) if id(f) in notes else f
+                    for f in findings]  # fmt: skip
     if eval_hits:  # (0.15) a loader: a door graded by the addresses it can be handed
         loader_ids = js_loader.loaders(eval_hits, root)
         if loader_ids:

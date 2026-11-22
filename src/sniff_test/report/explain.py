@@ -339,6 +339,17 @@ RULES: dict[str, Explanation] = {
         "Yes. Find out why the card hides the name before you install it.",
         "Hides a name",
     ),
+    "card-token-settings": _E(
+        "Sends your login token to the address in its settings",
+        "The card sends requests with your Home Assistant login token. The address is a "
+        "path from one of the card's settings, added to your Home Assistant's own address, "
+        "and the card's default is a path on your own Home Assistant (or it has none). The "
+        "token would only go to another site if someone typed a full address into that "
+        "setting on your dashboard.",
+        "Usually not. Check the setting in the card's options if you didn't set it up "
+        "yourself.",
+        "Token to its settings",
+    ),
     "card-code-loader": _E(
         "Can run code from an address it is given",
         "Part of its code downloads JavaScript from an address it is handed and runs it, "

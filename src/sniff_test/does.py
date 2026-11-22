@@ -61,6 +61,7 @@ RULE_ROOM: dict[str, tuple[str, str, str]] = {
     "ha-supervisor-token-local": ("programs", READS, "asks the Supervisor with that key"),
     "card-read-tokens": ("browser", READS, "reads your saved login"),
     "card-access-token-use": ("browser", READS, "uses your login"),
+    "card-token-settings": ("browser", READS, "sends your login to the address in its settings"),
     "card-eval": ("browser", CHANGES, "builds code while running and runs it"),
     "card-eval-config": ("browser", CHANGES, "runs code from its own settings"),
     "card-eval-address": ("browser", CHANGES, "runs code taken from the page address"),
