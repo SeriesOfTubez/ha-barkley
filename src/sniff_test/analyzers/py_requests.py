@@ -224,7 +224,8 @@ class Reader:
                 base = here
                 module = node.module
                 if node.level == 0:  # `from vendor_api.const import X` inside vendor_api
-                    base, module = Path(), module.partition(".")[2]  # type: ignore[union-attr]
+                    own = len(self._own())  # the rest after the package's own name
+                    base, module = Path(), ".".join(module.split(".")[own:])  # type: ignore[union-attr]
                 for _ in range(node.level - 1):
                     base = base.parent
                 for a in node.names:
@@ -240,8 +241,15 @@ class Reader:
                     mod.imports[a.asname or a.name] = (target, a.name)
         return mod
 
+    def _own(self) -> list[str]:
+        """How the code names its own package absolutely: a library by its name, an app as
+        `custom_components.<its folder>` (an app importing its own file by its full path
+        was read as another package: the address was "couldn't trace")."""
+        return [self.package] if self.package else ["custom_components", self.root.name]
+
     def _own_absolute(self, module: str | None) -> bool:
-        return bool(self.package and module and module.split(".")[0] == self.package)
+        own = self._own()
+        return bool(module and module.split(".")[: len(own)] == own)
 
     # --- the address ------------------------------------------------------------------
 

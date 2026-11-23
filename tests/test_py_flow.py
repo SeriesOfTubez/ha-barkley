@@ -447,3 +447,37 @@ def test_bare_host_names_are_not_file_names():
     assert py_flow._bare_host("config.json") == ""
     assert py_flow._bare_host("/api/x") == ""
     assert py_flow._bare_host("a" * 70 + ".example") == ""
+
+
+def test_an_app_importing_its_own_file_by_its_full_path(tmp_path):
+    # (2026-11-22, a real integration) `from custom_components.<its folder>.client.wire import
+    # URL_LOGIN`, where URL_LOGIN = urljoin(BASE, "/users/auth/login"): the request reader only
+    # followed relative imports, so the address was "couldn't trace" and the picture had no site
+    root = _app(tmp_path, {
+        "client/__init__.py": "",
+        "client/wire.py": """\
+            from urllib.parse import urljoin
+            API_BASE = "https://api.vendor.invalid"
+            URL_LOGIN = urljoin(API_BASE, "/users/auth/login")
+            """,
+        "client/transport.py": """\
+            import aiohttp
+            from custom_components.acme.client.wire import URL_LOGIN
+
+            class Transport:
+                def __init__(self, creds):
+                    self._creds = creds
+
+                async def login(self):
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(url=URL_LOGIN, json={
+                                "email": self._creds.email,
+                                "password": self._creds.password}) as r:
+                            return await r.json()
+            """,
+    })  # fmt: skip
+    (req,) = py_requests.requests_in(root)
+    assert (
+        req.host == "api.vendor.invalid"
+        or Origin(py_flow.SITE, "api.vendor.invalid") in req.origins
+    )
