@@ -338,7 +338,7 @@ def bar_html(rd: dict[str, Any], setting: str) -> str:
     if x < BAR.get(setting, readings.LOW):
         return ""
     reasons = [str(w) for w in rd.get("exposure_reasons") or []
-               if not str(w).startswith("This may be a sign")]  # fmt: skip
+               if not str(w).startswith(readings.POSSIBLE_REASON)]  # fmt: skip
     if not reasons:
         return (
             f'<p class="expo none">{_ic("door")}<span><b>Exposure {x:g} of 10.</b> Barkley '

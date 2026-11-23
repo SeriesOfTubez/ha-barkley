@@ -100,6 +100,10 @@ def test_a_possible_sign_says_so_first_and_keeps_its_exposure():
     r = readings.compute(rep(f("dep-typosquat"), f("ha-unauth-view", "low", "v.py")))
     assert r.threat_level == "possible" and r.exposure == 0.75
     assert r.exposure_reasons[0].startswith("This may be a sign of malicious behavior")
+    # the Exposure box speaks of Exposure only: the threat's sentence isn't one of its reasons
+    box = ui.exposure_box({"exposure_reasons": r.exposure_reasons, "network": "home"})
+    assert "This may be a sign" not in box and len(r.exposure_reasons) > 1
+    assert ui.e(r.exposure_reasons[1], 400) in box
 
 
 def test_lifetime_buckets_are_multipliers():

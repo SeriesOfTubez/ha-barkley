@@ -86,7 +86,8 @@ def test_a_possible_threat_drops_the_note_on_the_credential_reads_it_pairs():
     r = report(f("possible-exfil", "high", line=30), f("ha-auth-internals", line=20, n=1))
     assert r["readings"]["threat_level"] == "possible"
     out = page(r)
-    assert "may be a sign of malicious behavior" in out and "Give a device a user" not in out
+    assert "a possible sign of malicious behavior" in out and "Give a device a user" not in out
+    assert "This may be a sign" not in out  # Threat's sentence isn't an Exposure reason
     r = report(f("possible-exfil", "high", line=30), f("ha-auth-change-users", line=19, n=2))
     assert "Give a device a user" in page(r)  # not a credential read: its note stays
 

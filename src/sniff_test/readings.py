@@ -69,6 +69,9 @@ LINK_CODE = {"card-eval-address": 5.0}
 NETWORK = {"home": 1.0, "shared": 1.25}
 PUBLIC = 1.5
 EXPOSURE_MAX = 10.0
+# the possible-threat sentence that leads the reasons; the Exposure box and the picture
+# leave it out (it is about Threat)
+POSSIBLE_REASON = "This may be a sign of malicious behavior."
 LOW, MEDIUM = 2.0, 5.0
 
 # (0.15, his decision 2026-11-22) A build tool known to be malware: Threat 2.5 by default
@@ -252,6 +255,6 @@ def compute(
                           else "on a shared or work network."))  # fmt: skip
     exposure = round(min(EXPOSURE_MAX, pts * factor + remote_pts), 2)
     if t_level == "possible" and phrase:
-        reasons.insert(0, f"This may be a sign of malicious behavior. It {phrase}.")
+        reasons.insert(0, f"{POSSIBLE_REASON} It {phrase}.")
     return Readings(threat, t_level, exposure, level(exposure), phrase, reasons, complete,
                     where)  # fmt: skip

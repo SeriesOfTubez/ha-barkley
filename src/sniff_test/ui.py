@@ -3928,7 +3928,7 @@ def exposure_box(r: dict[str, Any], pages: str = "", listed: str = "") -> str:
     """The Exposure box: the reasons (Barkley's scan), then the developer's notes on its
     pages, then where Home Assistant runs. `pages`: escaped HTML of those notes."""
     why = [w for w in r.get("exposure_reasons") or []
-           if not str(w).startswith("A possible sign of malicious")]  # fmt: skip
+           if not str(w).startswith(readings.POSSIBLE_REASON)]  # fmt: skip
     based = {  # one whole sentence per network setting
         "home": "Based on Home Assistant running on a home network (Settings).",
         "shared": "Based on Home Assistant running on a shared or work network (Settings).",
