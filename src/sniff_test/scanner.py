@@ -18,6 +18,7 @@ from sniff_test.analyzers import (
     npm_meta,
     osv,
     packed,
+    platforms,
     py_env,
     py_group,
     py_library,
@@ -331,6 +332,8 @@ def scan(
             result.requests = py_requests.summary(py_reqs, tests, handoffs)
             # (0.15) which environment variables it reads and sets, by name
             result.environment = py_env.summary(py_env.uses_in(target.root))
+            # (0.15) the kinds of entity it sets up for itself, from its module names
+            result.platforms = platforms.platforms_in(target.root)
         else:
             say("web requests")  # (0.15) a card's built file: fetch calls and map-tile sites
             result.requests = js_requests.summary(*js_reqs)

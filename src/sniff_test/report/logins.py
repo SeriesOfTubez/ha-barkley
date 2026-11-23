@@ -80,7 +80,7 @@ class Dest:
 
 @dataclass
 class Group:
-    what: str  # html: "Your login for this app (…)", "The token from …'s answer"
+    what: str  # html: "The login you gave this app (…)", "The token from …'s answer"
     via: str  # "" = the app's own code, else the library's name
     via_note: str  # html
     dests: list[Dest] = field(default_factory=list)
@@ -156,7 +156,7 @@ def _library_note(h: dict[str, Any]) -> tuple[str, str]:
         to = f" to {_code(sites)}" if sites else ""
         return (f"Barkley read inside the library (version{ver}).",
                 f"It makes web requests{to}, but Barkley couldn't tell which of them gets "
-                "your login.")  # fmt: skip
+                "the login.")  # fmt: skip
     if state == "no_requests":
         other = _strs(inside.get("other"))
         how = f" It connects by {_e(' and '.join(other[:3]))}." if other else ""
@@ -195,7 +195,7 @@ def groups(report: dict[str, Any], app: str) -> list[Group]:
             _add(g.dests, _dest_of(host, s, _how(s)))
     out = []
     if own.dests:
-        own.what = f"Your login for this app ({_code(fields)})"
+        own.what = f"The login you gave this app ({_code(fields)})"
         out.append(own)
     out += list(tokens.values())
     for h in _handoffs(report):
@@ -204,7 +204,7 @@ def groups(report: dict[str, Any], app: str) -> list[Group]:
             continue  # an address alone: "Where it connects" lists it
         lib = str(h.get("library") or "")
         say, instead = _library_note(h)
-        g = Group(f"Your login for this app ({_code(logins)})", lib, say, note=instead)
+        g = Group(f"The login you gave this app ({_code(logins)})", lib, say, note=instead)
         inside = h.get("inside") if isinstance(h.get("inside"), dict) else {}
         for s in _list(inside.get("sends")):
             if isinstance(s, dict) and _strs(s.get("logins")):
@@ -259,9 +259,11 @@ def html(report: dict[str, Any], app: str, tag: str = "") -> str:
             f'<div class="lg-dests">{dests}</div></div>'
         )
     return (
-        f'<section class="box"><h2>Where your logins go{" " + tag if tag else ""}</h2>'
-        '<p class="sub">The logins Barkley followed in the code, from what is sent to where '
-        "it goes. A dashed box is an address the app works out while it runs.</p>"
+        f'<section class="box"><h2>Where the login you gave this app goes'
+        f"{' ' + tag if tag else ''}</h2>"
+        '<p class="sub">The login you entered when you set up this app (not your Home '
+        "Assistant login), and any token it gets back, from what is sent to where it goes. A "
+        "dashed box is an address the app works out while it runs.</p>"
         f'<div class="lg">{"".join(rows)}</div></section>'
     )
 
@@ -307,7 +309,7 @@ def marks(report: dict[str, Any]) -> dict[str, Mark]:
                         else " as its address"
                     )
                     m.lines.append(
-                        (f"Your login for this app ({_code(logins)}) is handed to the {name}, "
+                        (f"The login you gave this app ({_code(logins)}) is handed to the {name}, "
                          f"with this site{as_}." if logins else
                          f"The app hands this site to the {name}{as_}.")
                         + " The library makes the requests.")  # fmt: skip
@@ -330,7 +332,7 @@ def marks(report: dict[str, Any]) -> dict[str, Mark]:
         for lib, (sent, where) in m.sent.items():
             places = f" (at {_e(', '.join(where), 200)})" if where else ""
             m.lines.append(
-                (f"The <code>{_e(lib, 60)}</code> library sends your login for this app "
+                (f"The <code>{_e(lib, 60)}</code> library sends the login you gave this app "
                  f"({_code(sent)}) here" if sent else
                  f"The <code>{_e(lib, 60)}</code> library sends requests here with what the "
                  "app passes it")
@@ -345,7 +347,7 @@ def chips(m: Mark | None) -> str:
     if m.library:
         out += '<span class="chip">through a library</span>'
     if m.login:
-        out += '<span class="chip priv">your login</span>'
+        out += '<span class="chip priv">the login you gave this app</span>'
     elif m.token:
         out += '<span class="chip priv">a token</span>'
     return out
@@ -385,6 +387,17 @@ def origins_html(shapes: list[dict[str, Any]]) -> str:
         words, _fixed = origin_words({"kind": kind, "detail": detail, "site": site})
         if kind == "unknown":
             words = "Barkley couldn't trace where the address comes from"
-        also = f" Your login ({_code(sorted(logins))}) goes there too." if logins else ""  # type: ignore[arg-type]
+        also = (
+            f" The login you gave this app ({_code(sorted(logins))}) goes there too."
+            if logins
+            else ""
+        )  # type: ignore[arg-type]
         items.append(f"<li>{words}: {n} request{'s' * (n != 1)}.{also}</li>")
     return f'<ul class="from">{"".join(items)}</ul>'
+
+
+def holds_login(report: dict[str, Any]) -> bool:
+    """Whether Barkley followed a login you gave the app (a setup field) anywhere."""
+    if any(_strs(s.get("logins")) for _h, s in _shapes(report)):
+        return True
+    return any(_strs(h.get("logins")) for h in _handoffs(report))

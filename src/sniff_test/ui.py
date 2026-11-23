@@ -485,6 +485,8 @@ svg.does .cross.bad { fill:var(--red); font-weight:600; }
 svg.does .cross.in { fill:var(--orange); font-weight:600; }
 svg.does .runs { fill:var(--brand); font-size:12px; font-weight:500; }
 svg.does .pv { fill:var(--priv); font-size:12px; font-weight:500; } svg.does .pk { color:var(--priv); }
+svg.does .ro { fill:var(--muted); font-size:12px; }
+svg.does .kp { fill:none; stroke:var(--priv); stroke-width:1.6; } svg.does .mkk { fill:var(--priv); }
 .lg { display:flex; flex-direction:column; gap:var(--s3); }
 .lg-grp { display:grid; grid-template-columns:minmax(0, 15rem) 24px minmax(0, 12rem) 24px
   minmax(0, 1fr); align-items:start; gap:var(--s2); }

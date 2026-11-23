@@ -132,6 +132,10 @@ class Model:
     bugs: int = 0
     browser: bool = False
     elsewhere: int = 0  # requests whose address the code works out while it runs
+    # (0.15, his ask 2026-11-22) what the app does for itself, drawn without lighting a room:
+    # the kinds of entity it adds, and that it holds the login you gave it
+    own: dict[str, list[str]] = field(default_factory=dict)  # room -> plain lines
+    holds_login: bool = False
 
 
 def _site_lines(calls: Any) -> list[str]:
@@ -221,10 +225,8 @@ def build(report: dict[str, Any], name: str) -> Model:
             via = f"the {mk.library} library" if len(mk.library) <= 20 else "a library"
             lines = [f"through {via}", *lines][:2]
         if mk and (mk.login or mk.token):
-            lines = [
-                *lines[:2],
-                KEY + ("your login goes here" if mk.login else "a token goes here"),
-            ]
+            said = "gets the login you gave this app" if mk.login else "gets a token from a server"
+            lines = [*lines[:2], KEY + said]
         m.sites.append((host, lines, how))
     m.more_sites = max(0, len(order) - SITES_SHOWN)
     for i, (host, _lines, how) in enumerate(m.sites):
@@ -241,7 +243,40 @@ def build(report: dict[str, Any], name: str) -> Model:
                 m.bad_rooms.add(room)
     r = report.get("requests")
     m.elsewhere = len(r.get("elsewhere") or []) if isinstance(r, dict) else 0
+    entity_kinds = [x for x in report.get("platforms") or [] if isinstance(x, str)]
+    if entity_kinds:
+        m.own["devices"] = [own_devices(entity_kinds)]
+    m.holds_login = logins.holds_login(report)
     return m
+
+
+# Home Assistant's entity platforms in plain words (analyzers/platforms.ENTITY_PLATFORMS)
+KIND_WORDS = {
+    "sensor": "sensors", "binary_sensor": "on/off sensors", "climate": "thermostats",
+    "switch": "switches", "light": "lights", "select": "option lists",
+    "number": "number settings", "button": "buttons", "cover": "covers", "fan": "fans",
+    "lock": "locks", "camera": "cameras", "media_player": "media players",
+    "alarm_control_panel": "alarm panels", "vacuum": "vacuums", "water_heater": "water heaters",
+    "humidifier": "humidifiers", "device_tracker": "device trackers", "weather": "weather",
+    "update": "update notices", "event": "events", "image": "images", "text": "text fields",
+    "time": "time settings", "date": "date settings", "datetime": "date settings",
+    "siren": "sirens", "valve": "valves", "lawn_mower": "lawn mowers", "notify": "notifiers",
+    "tts": "text-to-speech", "stt": "speech-to-text", "scene": "scenes",
+    "calendar": "calendars", "todo": "to-do lists", "conversation": "conversation agents",
+    "remote": "remotes", "air_quality": "air quality", "geo_location": "map locations",
+    "assist_satellite": "voice satellites", "ai_task": "AI tasks", "wake_word": "wake words",
+    "image_processing": "image processing",
+}  # fmt: skip
+_KIND_ORDER = ("climate", "light", "switch", "cover", "lock", "sensor", "binary_sensor")
+
+
+def own_devices(kinds: list[str]) -> str:
+    """ "adds its own thermostats, sensors and option lists" (the first four kinds)."""
+    ordered = sorted(kinds, key=lambda k: (_KIND_ORDER.index(k) if k in _KIND_ORDER else 99, k))
+    words = list(dict.fromkeys(KIND_WORDS.get(k, k.replace("_", " ")) for k in ordered))
+    shown, more = words[:4], len(words) - 4
+    text = ", ".join(shown[:-1]) + (" and " if len(shown) > 1 else "") + shown[-1]
+    return f"adds its own {text}" + (f" and {more} more kinds" if more > 0 else "")
 
 
 # --- the Exposure bar ------------------------------------------------------------------
@@ -303,14 +338,15 @@ def _site_line(t: str, x: float, y: float) -> str:
     return f'<text class="ns" x="{x}" y="{y:.0f}">{e(t, 36)}</text>'
 
 
-def _room_h(u: list[tuple[str, str]] | None) -> int:
-    if not u:
+def _room_h(u: list[tuple[str, str]] | None, own: list[str] | None = None) -> int:
+    if not u and not own:
         return IDLE_H
-    return 34 + 17 * sum(len(textwrap.wrap(t, WRAP)) for _, t in u) + 6
+    texts = [t for _, t in u or []] + list(own or [])
+    return 34 + 17 * sum(len(textwrap.wrap(t, WRAP)) for t in texts) + 6
 
 
 def wide(m: Model, key: str = "d") -> str:
-    hs = [_room_h(m.use.get(k)) for k, _, _ in ROOMS]
+    hs = [_room_h(m.use.get(k), m.own.get(k)) for k, _, _ in ROOMS]
     top = 60
     height = top + sum(hs) + GAP * (len(hs) - 1) + 24
     cy = top + (height - top - 24) / 2
@@ -321,7 +357,7 @@ def wide(m: Model, key: str = "d") -> str:
         need = top + sum(in_h) + 12 * (len(in_h) - 1) + 44 + APP_H / 2 + 20 * m.browser
         cy = max(cy, need)
     bug_h = (12 + 16 * len(textwrap.wrap(_bug_note(m.bugs), 20)) + 8) if m.bugs else 0
-    height = max(height, cy + APP_H / 2 + bug_h + 40)
+    height = max(height, cy + APP_H / 2 + bug_h + 40 + (20 if m.holds_login else 0))
     p = [f'<svg class="flow does" viewBox="0 0 {W} {height:.0f}" role="img" '
          f'aria-label="What {e(m.name, 80)} does">',
          f'<defs><marker id="g-{key}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
@@ -329,7 +365,9 @@ def wide(m: Model, key: str = "d") -> str:
          f'</marker><marker id="r-{key}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
          'markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mkr"/>'
          f'</marker><marker id="o-{key}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
-         'markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="mko"/></marker></defs>',
+         'markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="mko"/></marker>'
+         f'<marker id="k-{key}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
+         'markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="mkk"/></marker></defs>',
          f'<rect class="inside" x="4" y="8" width="{WALL - 4}" '
          f'height="{height - 16:.0f}" rx="12"/>',
          f'<rect class="outside" x="{WALL + 12}" y="8" width="{W - WALL - 16}" '
@@ -382,6 +420,10 @@ def wide(m: Model, key: str = "d") -> str:
                     r.append(f'<g class="rg">{_icon(glyph, RX + 32, yy - 10, 12)}</g>')
                 r.append(f'<text class="rd" x="{RX + 48}" y="{yy:.0f}">{e(part, 60)}</text>')
                 yy += 17
+        for what in m.own.get(k) or []:  # its own devices: said, the room not lit
+            for part in textwrap.wrap(what, WRAP):
+                r.append(f'<text class="ro" x="{RX + 48}" y="{yy:.0f}">{e(part, 60)}</text>')
+                yy += 17
         r.append("</g>")
         rooms.append("".join(r))
         if u:
@@ -402,6 +444,8 @@ def wide(m: Model, key: str = "d") -> str:
         how = next((hw for _r, s, hw in m.paths if s == i), None)
         cls_l = "ln" if how is None else ("path bad" if how == "bad" else "path")
         mk = "r" if how == "bad" else "g"
+        if how != "bad" and any(t.startswith(KEY + "gets the login") for t in m.sites[i][1]):
+            cls_l, mk = "kp", "k"  # the login you gave this app goes along this line
         lines.append(f'<path class="{cls_l}" d="M{APP_X + APP_W} {cy:.0f} C {WALL - 20} '
                      f'{cy:.0f}, {YARD_X - 40} {mid:.0f}, {YARD_X - 2} {mid:.0f}" '
                      f'marker-end="url(#{mk}-{key})"/>')  # fmt: skip
@@ -418,8 +462,13 @@ def wide(m: Model, key: str = "d") -> str:
     if m.browser:
         app.append(f'<text class="runs" x="{APP_X + APP_W / 2}" y="{cy - APP_H / 2 - 8:.0f}" '
                    'text-anchor="middle">runs in your browser session</text>')  # fmt: skip
+    if m.holds_login:  # (his ask) the app holds the login you gave it
+        ky = cy + APP_H / 2 + 20
+        app.append(f'<g class="pk">{_icon("key", APP_X + 4, ky - 10, 12)}</g>'
+                   f'<text class="pv" x="{APP_X + 20}" y="{ky:.0f}">holds the login you gave it'
+                   "</text>")  # fmt: skip
     if m.bugs:
-        by = cy + APP_H / 2 + 8
+        by = cy + APP_H / 2 + 8 + (20 if m.holds_login else 0)
         note = textwrap.wrap(_bug_note(m.bugs), 20)
         bh = 12 + 16 * len(note)
         app.append(f'<g class="bugs"><rect x="{APP_X}" y="{by:.0f}" width="{APP_W}" '
@@ -486,11 +535,14 @@ def narrow(m: Model) -> str:
         u = m.use.get(k)
         cls = "bad" if k in m.bad_rooms else "on" if u else ""
         items = "".join(f'<span class="nd">{_ic(g)}{e(t)}</span>' for g, t in u or [])
+        items += "".join(f'<span class="ns2">{e(t)}</span>' for t in m.own.get(k) or [])
         rooms.append(f'<div class="nroom {cls}"><span class="nl">{_ic(ic)}{e(label)}</span>'
                      f"{items}</div>")  # fmt: skip
     extra = ""
     if m.browser:
         extra += '<span class="ns2">runs in your browser session</span>'
+    if m.holds_login:
+        extra += f'<span class="ns2 pv2">{_ic("key")}holds the login you gave it</span>'
     if m.bugs:
         extra += f'<span class="nbug">{_ic("bug")}{e(_bug_note(m.bugs))}</span>'
     app = (f'<div class="napp"><b>{e(m.name, 60)}</b><span class="ns2">{e(m.kind)}</span>'
@@ -523,9 +575,11 @@ def narrow(m: Model) -> str:
 
 def legend(m: Model) -> str:
     bits = [
-        "Blue rooms: what it reads (eye) or changes (pencil). Dashed rooms: Barkley saw it "
-        "do nothing there."
+        "Blue rooms: what it reads (eye) or changes (pencil) beyond its own devices. Dashed "
+        "rooms: Barkley saw nothing more there."
     ]
+    if m.holds_login:
+        bits.append("Purple: the login you gave this app, and where Barkley saw it go.")
     if any(how == "own" for *_x, how in m.paths):
         bits.append("Dotted line: your data goes through the app to its own site.")
     if any(how == "bad" for *_x, how in m.paths):

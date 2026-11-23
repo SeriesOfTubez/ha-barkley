@@ -49,7 +49,7 @@ def _text(html: str) -> str:
 def test_the_case_he_reported_a_login_and_a_site_handed_to_a_library():
     rep = _report({"handoffs": [{**HANDED, "inside": INSIDE}]})
     box = _text(logins.html(rep, "Solar monitor"))
-    assert "Your login for this app ( username , password )" in box
+    assert "The login you gave this app ( username , password )" in box
     assert "vendor_api library Barkley read inside the library (version 1.2)." in box
     # the site first, then what you entered (his pick, 2026-11-22)
     assert ("monitor.vendor.invalid , or the address you entered when you set it up "
@@ -57,7 +57,7 @@ def test_the_case_he_reported_a_login_and_a_site_handed_to_a_library():
     # the site: "through a library" and "your login", in the picture and the fold
     m = logins.marks(rep)["monitor.vendor.invalid"]
     assert (m.library, m.login) == ("vendor_api", True)
-    assert _text(logins.chips(m)) == "through a library your login"
+    assert _text(logins.chips(m)) == "through a library the login you gave this app"
     assert "with this site as its address ( base_url )" in _text(logins.fold_lines(m))
 
 
@@ -65,10 +65,14 @@ def test_the_picture_draws_the_library_site_with_the_key_line():
     rep = _report({"handoffs": [{**HANDED, "inside": INSIDE}]})
     m = does.build(rep, "Solar monitor")
     (site,) = [s for s in m.sites if s[0] == "monitor.vendor.invalid"]
-    assert site[1] == ["through the vendor_api library", does.KEY + "your login goes here"]
+    assert site[1] == [
+        "through the vendor_api library",
+        does.KEY + "gets the login you gave this app",
+    ]
     svg = does.wide(m)
-    assert 'class="pv"' in svg and "your login goes here" in svg
-    assert "your login goes here" in does.narrow(m)
+    assert 'class="pv"' in svg and "gets the login you gave this app" in svg
+    assert "holds the login you gave it" in svg and 'class="kp"' in svg  # the purple line
+    assert "holds the login you gave it" in does.narrow(m)
 
 
 def test_a_scan_from_before_library_reading_says_so():
@@ -101,7 +105,7 @@ def test_the_apps_own_login_and_a_token_get_a_group_each():
                   "from": [{"kind": "list", "detail": two}]}]  # fmt: skip
     gs = logins.groups(_report({"sites": sites, "elsewhere": elsewhere}), "Printer")
     assert [_text(g.what) for g in gs] == [
-        "Your login for this app ( email , password )",
+        "The login you gave this app ( email , password )",
         "The token from login.vendor.invalid 's answer",
     ]
     assert [(_text(d.name), d.note, d.fixed) for d in gs[0].dests] == [
@@ -143,8 +147,8 @@ def test_where_run_time_addresses_come_from_is_counted():
     ]  # fmt: skip
     got = _text(logins.origins_html(elsewhere))
     assert got == (
-        "The address you entered when you set it up ( host ): 12 requests. Your login "
-        "( password ) goes there too. An address from api.vendor.invalid 's answer: 2 "
+        "The address you entered when you set it up ( host ): 12 requests. The login you gave "
+        "this app ( password ) goes there too. An address from api.vendor.invalid 's answer: 2 "
         "requests. Your Home Assistant's own address: 1 request. Barkley couldn't trace "
         "where the address comes from: 3 requests."
     )
@@ -168,3 +172,43 @@ def test_the_new_styles_keep_to_the_tokens():
     css = ui.CSS[ui.CSS.index(".lg {") : ui.CSS.index("ul.from")]
     # sizes come from the tokens; only 1px borders and the 24px arrow column are literal
     assert not re.search(r"\b(?!0)\d+px", css.replace("24px", "").replace("1px", ""))
+
+
+# --- what the app does for itself (his ask, 2026-11-22) -------------------------------------
+
+
+def test_own_devices_are_said_without_lighting_the_room(tmp_path):
+    from sniff_test.analyzers import platforms
+
+    root = tmp_path / "acme"
+    root.mkdir()
+    for f in ("__init__.py", "climate.py", "sensor.py", "select.py", "api.py", "const.py"):
+        (root / f).write_text("")
+    (root / "number").mkdir()
+    (root / "number" / "__init__.py").write_text("")
+    assert platforms.platforms_in(root) == ["climate", "number", "select", "sensor"]
+    rep = {**_report({}), "platforms": ["climate", "number", "select", "sensor"]}
+    m = does.build(rep, "Thermostat")
+    assert m.own == {"devices": ["adds its own thermostats, sensors, number settings and "
+                                 "option lists"]}  # fmt: skip
+    assert "devices" not in m.use  # the room stays dashed: its own devices aren't reach
+    svg = does.wide(m)
+    assert 'class="ro"' in svg and "adds its own thermostats" in svg
+    assert 'class="room idle"' in svg and 'class="room on"' not in svg
+    assert "beyond its own devices" in does.legend(m)
+
+
+def test_no_entity_files_no_line():
+    m = does.build({**_report({}), "platforms": []}, "X")
+    assert m.own == {} and not m.holds_login
+    assert "holds the login" not in does.wide(m)
+
+
+def test_the_held_login_and_its_line_without_a_named_site():
+    # the login goes to an address worked out while it runs: the app still says it holds it
+    elsewhere = [{"method": "POST", "count": 1, "logins": ["email", "password"],
+                  "from": [{"kind": "setup", "detail": "host"}]}]  # fmt: skip
+    m = does.build(_report({"elsewhere": elsewhere}), "Cloud app")
+    assert m.holds_login
+    assert "holds the login you gave it" in does.wide(m)
+    assert "Purple: the login you gave this app" in does.legend(m)
