@@ -5,7 +5,8 @@ Supervised. You can still run it without one:
 
 - **Home Assistant Container or Core**, which have no Supervisor and no app store.
 - **A small box**, such as a Raspberry Pi with 1 or 2 GB, even one running Home Assistant
-  OS. A scan needs 0.5 to 1.5 GB of memory for a minute or two, which a small box may not
+  OS. Most scans need under 1 GB of memory for a minute or two (a few big apps need far
+  more), which a small box may not
   have to spare. Run Barkley on a NAS or PC and point it at Home Assistant. The Pi then
   only answers a few API calls.
 
@@ -82,7 +83,7 @@ again a day later. **Rotate now** does it at once.
 
 Where it's kept: in its own file next to Barkley's database in `data/` (mode 600), never
 in the database, an export or Diagnostics, and out of reach of the scanner tools (the
-sandbox lets them read only their own scan folder and caches). It isn't encrypted: the
+sandbox gives them nothing under `data/` except their caches). It isn't encrypted: the
 key would have to sit next to it, on the same disk, readable by the same process, so it
 would protect nothing. Protect the `data/` folder instead.
 
@@ -114,17 +115,19 @@ Barkley's own AppArmor profile is only for the app, and Docker doesn't load it. 
 Docker Desktop, or on a host without AppArmor, there may be no AppArmor at all. What
 protects you if a scanner tool is exploited by a file it reads is Barkley's tool
 sandbox, built on Landlock, a Linux kernel feature that needs nothing installed on the
-host. Each run of Semgrep, GuardDog, osv-scanner or uv:
+host. Each run of Semgrep, osv-scanner or uv:
 
 - can write only that scan's own folder, and can't read the scan store, the token or
   other scans;
 - can run only what the image ships, so nothing it downloaded or wrote;
 - can connect only to port 443 (Semgrep nowhere), and can't listen;
-- can't signal Barkley or read its environment.
+- can't read Barkley's environment, or signal Barkley.
 
-It needs Linux 5.13 or later (the port limit 6.7 or later) with Landlock enabled; Docker
+It needs Linux 5.13 or later with Landlock enabled. The port limit needs 6.7 or later,
+and the limit on signalling Barkley 6.12 or later. Docker
 Desktop has it. To check a host, run `cat /sys/kernel/security/lsm`: the list includes
-`landlock` when it's enabled. Diagnostics shows "Tool sandbox (Landlock)". **Without it,
+`landlock` when it's enabled. On Diagnostics the Tool sandbox line names Landlock and
+its version. **Without it,
 Barkley doesn't start standalone**, because it would be parsing hostile code with nothing
 around it. To run anyway, knowing that, add `BARKLEY_UNSANDBOXED: "1"` under
 `environment:` in `compose.yaml` (the line is there, commented out) and start it again.
@@ -152,8 +155,10 @@ auto-sniff and the notify target) are kept there once you change them.
 
 The memory guard reads the container's limit (`mem_limit` in the compose file) as well
 as the machine's free memory, and goes by the lower one. Under 2 GB available it warns,
-and under 1 GB it doesn't start a scan. Barkley counts 1.5 GB per scan: with **Memory for
-scans** on Auto (Settings), the 3 GB in the compose file fits two scans at once. On a
+and by default it doesn't start a scan with under 1 GB free (Settings → Low memory can
+lower that). Barkley counts 1.5 GB per scan: with **Memory for scans** on Auto
+(Settings), inside the 3 GB the compose file sets, a second scan starts while 2 GB is
+still free, and a third never does. On a
 machine with memory to spare, raise `mem_limit` and pick a fixed amount on the Settings
 page (8 GB: up to 4 scans, the most Parallel scans allows).
 

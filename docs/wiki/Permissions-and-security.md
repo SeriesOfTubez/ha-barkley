@@ -7,33 +7,44 @@ A security tool that reads hostile code should be held to its own standard.
 - **One permission: the Home Assistant API.** No host network, no open port, no
   Supervisor role, and no access to your configuration folder, so `secrets.yaml` and the
   auth storage are out of its reach. It never opens the installed copies of your apps.
-- **What it uses the API for** is a fixed list: reading your Home Assistant version;
-  asking the Marketplace for its installed list and its catalog; subscribing to two
-  Marketplace signals for auto-sniff; creating the bell notification and, if you picked
+- **What it uses the API for** is a fixed list: reading your Home Assistant version, and
+  whether an external URL is set (yes or no; the address isn't kept); asking the
+  Marketplace for its installed list and its catalog; subscribing to two Marketplace
+  signals for auto-sniff; creating the bell notification and, if you picked
   one, calling your notify service; listing your AI Task entities and notify services
   for the two dropdowns; and calling `ai_task.generate_data` only when you click an AI
   button.
 - **Its own AppArmor profile, enforcing** (Home Assistant security rating 8). Every
-  process in the container can run only the tools the image ships, write only under
-  `/data` and `/tmp`, and use only ordinary network sockets. Nothing downloaded is
-  executable.
+  process in the container can run only programs the image ships, write only under
+  `/data`, `/tmp`, and the folders under `/run` and `/etc` that the container's service
+  manager (s6) needs to start Barkley, and use only ordinary network sockets. Nothing
+  downloaded is executable.
 - **The panel** answers only Home Assistant's ingress, which handles the login. It ships
   no JavaScript: its content security policy allows no scripts.
 
-- **Each scanner tool in its own sandbox** (Landlock, a Linux kernel feature Barkley sets
-  up itself). Every run of Semgrep, GuardDog, osv-scanner or uv can write only that
-  scan's own folder. It can read the image and the system, but not the scan store, the
-  Home Assistant token or other scans. It can run only what the image ships and connect
-  only to port 443; Semgrep can't connect anywhere. It also can't signal Barkley or read
-  Barkley's environment. Diagnostics shows whether the sandbox is on. It needs Linux 5.13
-  or later; the port limit needs 6.7 or later. Home Assistant OS's kernel is built without Landlock
-  (checked on 6.18), so in the app there the AppArmor profile alone confines the tools.
+- **Each scanner tool in its own sandbox.** Where the Linux kernel has Landlock, Barkley
+  sets it up for every run of Semgrep, osv-scanner or uv. The tool can write only that
+  scan's own folder (and uv its package cache). It can read the image and the system,
+  but not the scan store, the Home Assistant token or other scans. It can run only what
+  the image ships and connect only to port 443; Semgrep can't connect anywhere. It can't
+  read Barkley's environment. Landlock needs Linux 5.13 or later; the port limit needs
+  6.7 or later, and the limit on signalling Barkley needs 6.12 or later.
+- **Home Assistant OS's kernel is built without Landlock** (checked on 6.18). There each
+  tool runs in a stricter AppArmor profile of its own, `tools`. It can't read where the
+  Supervisor's key is kept, the app's options, the GitHub token or the scan store, and it
+  can write only Barkley's caches and the temporary folder. It doesn't limit ports. If
+  neither sandbox works, Barkley won't start unless you set `BARKLEY_UNSANDBOXED=1`. The
+  Tool sandbox line on the Diagnostics page says which one is on.
 
 Run [standalone](Standalone), Barkley has no Supervisor around it. It reaches Home
 Assistant with a long-lived token of an administrator, sends it only to `HA_URL`, follows
-no redirects and ignores proxy settings. The same fixed list of calls applies. Its panel
-is on the network, so every page asks for a login with Home Assistant (administrators
-only), and Barkley keeps none of the login's tokens. The containment is the container's:
+no redirects and ignores proxy settings. The same fixed list of calls applies, plus the
+ones for logging in and for its own token: who logged in, and making, listing and
+deleting its own long-lived token. Its panel is on the network, so every page asks for a
+login with Home Assistant (administrators only), unless you name the addresses allowed
+in instead (`BARKLEY_ALLOW`, for use behind a proxy). Barkley revokes the login's tokens
+at once. The one exception is the first-run login, kept only for the setup's Home
+Assistant step and for 10 minutes at most. The containment is the container's:
 the compose file runs it as a non-root user with a read-only filesystem and no
 capabilities. The tool sandbox works the same there, and Barkley won't start standalone
 without it unless you tell it to.
@@ -44,6 +55,11 @@ It is treated as hostile. Barkley never executes, imports, builds or installs it
 Archives are extracted into a fresh temporary folder with protections against path
 tricks, symlinks and oversized files. Dependencies are resolved from prebuilt wheels
 only, so no build script ever runs.
+
+One kind of library is downloaded and read: the one an integration hands the login you
+gave it (or an address) to. Barkley downloads that library's published package (the
+exact version the app gets, checksum checked, at most four per scan and 40 MB each),
+unpacks it as files and reads it as text. It is never installed, imported or run.
 
 ## Where the image comes from
 

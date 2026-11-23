@@ -1,58 +1,177 @@
 # An app's page
 
-Every scan has a page. From top to bottom:
+Every scan has a page: the app's **sniff report**. Each block on it is tagged with where
+its sentences come from:
 
-- **The score and verdict.** Once you've reviewed findings, the circle shows your
-  reviewed score, with Barkley's own score in a small circle beside it and what your
-  review added. Barkley's own score never changes. "Powerful" marks an app that can do a
-  lot while nothing points to malicious behavior. Stars on GitHub and the downloads of
-  the release file are shown as facts and never scored (an app installed from its source
-  has no release file, so its downloads aren't counted). See
-  [What gets checked and how the score works](Checks-and-scoring).
-- **Accept all**, right under the score: marks every finding of this version reviewed,
-  with an optional note. Each Threat needs its own tick, and known malware can never be
-  accepted.
-- **In short:** a few sentences built from the scan by fixed rules (no AI).
-- **What we found:** every finding in plain words, grouped by kind (Threats first), with
-  what it means and where in the code it is. "Technical details" under a finding has the
-  rule name and the evidence. Under each finding: **Mark reviewed** (with a note), or
-  **✓ Accepted** with who accepted it and when (**Undo** takes it back), or, when the code
-  changed since you accepted it, **What changed?** and **Accept again**. **Report a false
-  positive** opens a new public issue on Barkley's GitHub with the versions, the rule, the
-  file and the line filled in; you write why it's wrong and submit it yourself. Minor
-  findings are left out unless you show them or turn on Paranoid mode.
-- **Where your data can go:** a diagram of the flows Barkley saw. Arrows point outward to
-  sites the app contacts and inward for ports it listens on; a line without an arrow
-  means the direction is unknown.
-- **Where it connects:** each address and port from the code. A well-known service is
-  named as a hint; that name never changes a score, and no address is ever sent anywhere
-  to be looked up.
-- **Privacy notes** such as telemetry, analytics or unencrypted connections. They are
-  never scored. In deep mode a note links to the AI's reading of the address or port
-  behind it.
-- **What it can do inside Home Assistant:** the services, views and events it hooks into.
+- **Barkley's scan**: what Barkley read in the code and the project's public data.
+- **The developer's words**: text the developer wrote, quoted with its file and lines. A
+  description in the code (shown as "The developer's note"), or a README or funding-file
+  mention of a site.
+- **AI** and **AI inferred**: text from the AI you picked. See
+  [AI explanations](AI-explanations).
+
+The developer's words, and the AI's summary of them ("AI inferred"), are never shown
+beside a found or possible threat. On a page with a found threat there are none at all.
+Nothing from the developer or the AI changes a reading.
+
+From top to bottom:
+
+- **The head.** The app's name, then the Threat verdict on its own line (🦴 Good Boy,
+  🐕 Sus or 🚨 BORK BORK BORK), then one row of facts: the kind of app, the version and
+  the day it was released, a link to the repository on GitHub, its stars, the downloads
+  of the release when GitHub counts them, the last push to the project, the year the
+  project started, and a link to its security habits. A chip says when a project is
+  archived or has gone quiet (Settings → Quiet projects). None of these is scored.
+  Under them: which version of Barkley checked it, what it read, how many files came
+  from the cache, and a fold with any test scripts Home Assistant never loads, which
+  don't count toward the readings. When the Marketplace has removed the app, the page
+  says so.
+- **The two readings**, Threat and Exposure, as dials in the head. See
+  [What gets checked and how the readings work](Checks-and-scoring).
+- **Threat:** the signs of malicious behavior Barkley found, each in plain words with
+  where in the code it is. When there are none, it says what Barkley looked for and
+  didn't find.
+- **Exposure:** the reasons for the reading in words, then each page that opens without
+  logging in to Home Assistant, by the address it answers on, with its class and place
+  in the code. An address the code builds while it runs is said to be so. The last line
+  says which "Where Home Assistant runs" choice the reading is based on.
+- **In short:** a few sentences built from the scan by fixed rules (no AI). An AI
+  explanation, if you asked for one, sits here, tagged AI.
+- **Privacy notes** such as telemetry, analytics or unencrypted connections. They never
+  change a reading. In the Explain and read code mode a note links to the AI's reading
+  of the address or port behind it.
+- **What it can do (not scored):** everything else the scan reports, grouped by kind,
+  with what it means and where in the code it is. "Technical details" under an item has
+  the rule name and the evidence. Several calls of the same kind in one Python function
+  are one item, and a websocket command only an administrator can run says so. Under
+  each item: **Report a false positive**, which opens a new public issue on Barkley's
+  GitHub with the versions, the rule, the file and the line filled in; you write why
+  it's wrong and submit it yourself. Minor items are left out unless you show them (a
+  link on the page, or Settings → Minor items).
+- **What the developer says it does** (only after an AI request in the Explain and read
+  code mode, and only when no threat was found or possible): sentences tagged AI
+  inferred.
+- **What it does:** a picture. Inside your Home Assistant are seven rooms, the same for
+  every app: users and logins, other apps' settings, devices and entities, files,
+  programs and the system, your home network, and your browser session. A room is blue
+  when the app reads (eye) or changes (pencil) something there beyond its own job, and
+  dashed when Barkley saw it do nothing there. What the app does in its own space, such
+  as the kinds of entity it adds or its own storage file, is said in grey with a thin
+  dashed line. Outside are the sites it sends requests to. A red line is a path Barkley
+  found from your data to a site that isn't the app's own; to its own site the line is
+  dotted grey. A purple line goes to where the login you gave this app is sent. A dashed
+  box is an address you entered at setup (Barkley can't tell whether it's on your home
+  network or the internet). Exposure is orange and points in: a door for each way in,
+  and a strip on the app for libraries with known security bugs. The orange Exposure
+  bar on top shows from Medium by default (Settings → Exposure bar).
+- **Where the login you gave this app goes:** the login you entered when you set up the
+  app (not your Home Assistant login), and any token it gets back, followed from what is
+  sent, through the app's own code or a library, to where it goes. Six places, then "and
+  N more". Context only.
+- **Where it connects** and **Other addresses in its code:** see below.
+- **Where its code comes from:** see below.
+- **Environment variables it uses** (integrations): which ones the code reads and sets,
+  by name when the code spells the name out, whether it reads one it set itself, and
+  whether it uses all of them at once.
 - **The developer's security habits:** whether the project runs security scanners in its
-  workflows or through pre-commit (Gitleaks, detect-private-key, Ruff's security rules and
-  the like; since 0.14.1, and only checks a workflow runs count toward the star), has Dependabot or Renovate and a SECURITY.md, how many dependency-update
-  pull requests wait, and open issues that look security-related. This is context from
-  public signs and never changes the score. When every check is green, a gold star says
-  **A+ security habits**; a dependency-update pull request younger than 7 days doesn't
-  count against it.
-- **History:** every stored scan of this app.
+  GitHub workflows or before each commit (pre-commit, lefthook or husky hooks, and
+  Ruff's security rules when the project selects them), has Dependabot or Renovate and a
+  SECURITY.md, how many dependency-update pull requests wait, and open issues that look
+  security-related. This is context from public signs and never changes a reading. When
+  every check is green, a gold star says **A+ security habits**. Only checks a workflow
+  runs count toward the star, and a dependency-update pull request younger than 7 days
+  doesn't count against it.
+- **Everything it uses inside Home Assistant:** the services, views and events it hooks
+  into.
+- **History:** every stored scan of this app, newest first, and the link to the
+  technical report (raw JSON), which includes the capability score.
+
+## Where it connects
+
+The sites Barkley read a request to, grouped: your home network, the app's own sites,
+servers the developer runs, analytics and crash reports, and other sites. Flagged sites
+and ports are listed here too. Other addresses the code only mentions, such as project
+and help links, are under **Other addresses in its code**: a site there is listed
+because the code names it, not because Barkley saw a request to it. (For an older scan
+without the requests, every site is under Where it connects.) A well-known service is named as a hint, and no address is
+ever sent anywhere to be looked up.
+
+Each site is one line that folds open. A group shows five, then "N more". Inside a site:
+
+- the scheme, the port and whether the connection is encrypted;
+- who runs it, when Barkley's own list knows;
+- the addresses, cut off at the `?`, and where the code names them;
+- **how the code sends requests to it**: the method (GET, POST and so on), from how
+  many places, and the names of what the call puts into the body, the headers and the
+  address. For a card, also "Loads map images" when its map pictures come from there.
+  Values are never recorded. GET or POST alone doesn't tell you what is sent: a GET can
+  carry data too, in the address or in a header;
+- chips when **the login you gave this app** or **a token** goes there, and **through a
+  library** when a library the app hands it to makes the request;
+- for a site found only in a list of sign-in return addresses (OAuth), a line saying so:
+  your browser goes there after you approve access, and Barkley found no code that
+  sends anything there;
+- tagged as the developer's words: that the app's README mentions the site (with the
+  line), or that the repository lists it as a way to support the developer. This never
+  changes the site's group, and it isn't shown on a flagged site, on the sites a
+  possible threat names, or on a page with a found threat;
+- **Explain in context**, in the Explain and read code mode.
+
+Two more groups follow when there is something to list:
+
+- **Connections whose address isn't in the code:** ports the code sets while the
+  server's address comes from setup or from another server.
+- **Requests to addresses that aren't in the code:** requests whose address the code
+  puts together while it runs. Barkley says where each address comes from: the address
+  you entered at setup, a server's answer (naming the site when the code does), one of
+  the sites listed in its code, a device found on your network, your Home Assistant's
+  own address, or an address Barkley couldn't trace.
+- **Sites a library connects to:** sites the app's own code doesn't name, found by
+  reading inside a library the app hands the login you gave it (or an address) to.
+  Barkley downloads that library's published package and reads it as text, one level
+  deep; it never installs or runs it.
+- **Sites named by an address pattern:** addresses the code writes with a placeholder
+  in them, such as a map server's `{s}` part, so they aren't in the groups above.
+
+## Where its code comes from
+
+None of this is scored.
+
+- **The project and this release:** what the Marketplace installs (a file attached to
+  the release, the code at the release's tag, or the newest code when there is no
+  release), the project's name on GitHub, whether it's under one person's account or an
+  organization's and when it was created, earlier names, who published this release and
+  when, how many releases the project has and who published them, and how this version's
+  commit is signed: made on github.com and signed by GitHub, signed with the developer's
+  own key, not signed (common, and it says nothing bad on its own), or with a signature
+  GitHub couldn't verify.
+- **Python packages** (integrations): every package Home Assistant would install for the
+  app. The ones the app asks for come first; the rest come along with those. Each line
+  has the version and whether Home Assistant already ships it.
+- **npm packages it is built from** (cards): what the card's `package.json` lists, with
+  the versions it accepts.
+- **Published libraries it ships:** files that are exact copies of files npm packages
+  publish. A recognised library says **not read** (well known: at least a month old, at
+  least 10,000 downloads a week, no malware warning; it's checked for known security
+  problems instead) or **read as code**, with the reason. A line under them counts the
+  large files that matched nothing.
+- **Code it gets while it runs:** packages the app installs or code it loads after it's
+  installed. Barkley can only read the code in the release and never sees code that
+  arrives later.
 
 ## Actions on the page
 
 - **Sniff this version again** runs a fresh scan instead of reusing the stored one.
 - **Other versions** lists the 10 newest releases, betas included.
-- **Malware check only** shows and notifies only Threats and known malware for this app;
-  **Show everything again** undoes it.
 - **Check advisories again**: see [Advisory re-checks](Advisory-re-checks).
-- **Explain this app** and, in deep mode, **Explain in context**: see
-  [AI explanations](AI-explanations).
+- **Explain this app** and, in the Explain and read code mode, **Explain in context**:
+  see [AI explanations](AI-explanations).
 
 ## "Unfinished"
 
 A scan is unfinished when something that may work next time went wrong: a tool timed out
-or a service couldn't be reached. Its score is capped at 89, it is never reused, and the
-page offers **Sniff again**. A file Barkley's code rules can't read at all is different:
-it happens on every sniff, so it is a finding in a finished scan.
+or a service couldn't be reached. The page says which part didn't finish, Threat reads
+"None found so far" when nothing was found, the scan is never reused, and the page
+offers **Sniff again**. A file Barkley's code rules can't read at all is different: it
+happens on every sniff, so it is listed in a finished scan under "What Barkley couldn't
+read".

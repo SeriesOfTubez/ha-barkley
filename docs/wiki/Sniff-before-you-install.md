@@ -1,7 +1,8 @@
 # Sniff before you install
 
-**This is the protection for a new install.** Since Home Assistant 2026.11 a new
-integration is set up right after its files land, which loads its code. Auto-sniff comes
+**This is the protection for a new install.** Since Home Assistant 2026.11 the
+Marketplace opens a new integration's setup right after its files land, and starting
+the setup loads its code. Auto-sniff comes
 after that, so for a brand-new install it can only tell you about what is already
 running. Sniff first, then install.
 
@@ -11,10 +12,10 @@ running. Sniff first, then install.
    catalog, integrations and cards.
 2. Click **Sniff it** on a result. Barkley scans exactly what the Marketplace would
    install, without installing it.
-3. Read the app's page. See [An app's page](An-apps-page).
+3. Read the app's sniff report. See [An app's page](An-apps-page).
 
 **Other versions** lists a project's 10 newest releases, betas included, each with its
-score or a Sniff button, so you can sniff the exact version you plan to pick.
+readings or a Sniff button, so you can sniff the exact version you plan to pick.
 
 ## What happens to these scans
 

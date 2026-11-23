@@ -14,8 +14,10 @@ installs it.
   and review. Most of the code and these pages are AI-generated. If that is a dealbreaker
   for you, this project isn't for you. The source and the checks that run on every change
   are public: see [Permissions and how Barkley is secured](Permissions-and-security).
-- **Scores come from fixed rules.** The optional AI features can explain a finding. They
-  can never set, clear or change a score.
+- **The readings come from fixed rules.** Each app gets two: Threat (signs of malicious
+  behavior) and Exposure (what it opens up to someone who isn't an administrator). The
+  optional AI features can explain what a scan found. They can never set, clear or change
+  a reading, and they are only as good as the model you pick.
 
 ## Pages
 
@@ -24,15 +26,15 @@ installs it.
 - [Standalone (no Supervisor)](Standalone): Home Assistant Container or Core, or Barkley on
   another machine
 - [The list](The-list): what you see when you open Barkley
-- [An app's page](An-apps-page): the score, the findings and everything under them
+- [An app's page](An-apps-page): the sniff report, with the two readings and everything
+  under them
 
 **What Barkley does**
-- [What gets checked and how the score works](Checks-and-scoring)
+- [What gets checked and how the readings work](Checks-and-scoring)
 - [Sniff before you install](Sniff-before-you-install)
 - [What an update would change](Update-comparison)
 - [Auto-sniff and notifications](Auto-sniff-and-notifications)
 - [Advisory re-checks](Advisory-re-checks)
-- [Addresses you trust](Addresses-you-trust)
 - [AI explanations](AI-explanations)
 
 **Reference**

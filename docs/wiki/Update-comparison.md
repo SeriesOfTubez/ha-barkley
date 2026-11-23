@@ -18,9 +18,31 @@ The status box shows progress.
 
 ## Reading the comparison
 
-- **In short** says whether anything important changes.
-- **Worth a look** lists the few changes that matter, most important first: new
-  findings, new data flows, a new publisher, new addresses nobody declared.
-- **Also changed** folds everything else into one line you can open.
+- The top shows the readings **Before** and **After**. Each version has its own
+  readings; the comparison itself doesn't change them.
+- **Changes to check** lists the few changes that matter, most important first: new
+  threats and other new items rated medium or higher, new data flows, a new publisher, new sites that aren't
+  the app's own. When there are none, **In short** says "Nothing important changed."
+- **Smaller changes** folds everything else into one line you can open. None is a
+  concern on its own.
 
-The comparison never scores. Each side keeps its own score, shown at the top.
+## What it also tells you since 0.15
+
+These come from facts a scan keeps since 0.15, so both versions must have been sniffed
+by 0.15 or later.
+
+- **How the release's commit is signed.** A release whose commit is no longer signed, or
+  is signed in a different way than before (by GitHub, or with the developer's own key),
+  is a change to check. Signing that starts is a smaller change.
+- **Requests** (integrations and cards): the new version sends a kind of request (GET, POST and so
+  on) to a site that the old one didn't, or puts new names into the body, the headers or
+  the address of a request it already sent.
+- **Environment variables** (integrations): the new version reads or sets one the old
+  one didn't, or starts using all of them at once.
+- **Published libraries copied into the app:** a new one, a changed version, or one that
+  Barkley recognised before and now reads as code.
+- **Test scripts Home Assistant never loads:** a change in one is listed, but it's never
+  a change to check.
+
+Requests, environment variables and published libraries are facts, not warnings. They
+are listed under the smaller changes and never send a notification on their own.

@@ -1,46 +1,86 @@
 # AI explanations
 
-Optional. Barkley works without any AI, and every score comes from fixed rules.
+Optional. Barkley works without any AI, and both readings come from fixed rules.
 
 **The explanations are only as good as the model behind the AI Task entity you pick, and
-they can be wrong.** In testing, GLM 5.3 and GLM 5.3 Flash both gave good results.
+they can be wrong.** In testing, GLM 5.3 and GLM 5.3 Flash both gave quality results.
 
 ## Setting it up
 
-On any app's page, pick one of your Home Assistant AI Task entities from the dropdown,
-and choose the mode. The choice made in the panel wins over the `ai_entity` and
+On any app's page, or on the Settings page, pick one of your Home Assistant AI Task
+entities from the dropdown, and choose the mode: **Explain only** or **Explain and read
+code** (the default). The choice made in the panel wins over the `ai_entity` and
 `ai_mode` options.
 
-The model must support structured output. Home Assistant's OpenRouter integration asks
-for a strict JSON schema, so a model without schema support fails with an error on the
-page.
+Everything from the AI is tagged **AI** or **AI inferred** on the page, and none of it
+changes a reading.
 
-## Summary mode: Explain this app
+The model must support structured output (an answer in fields Barkley names). A model
+without it fails with an error on the page.
 
-Each app's page gets an **Explain this app** button. Nothing is sent until you click
-it. Barkley then sends that scan's findings: rule names, severities, file names and
-short code excerpts from the public project that was scanned. The answer is shown as
-plain text labelled as an AI explanation, next to the fixed explanation.
+## Explain this app
 
-## Deep mode: Explain in context
+Each app's page gets an **Explain this app** button, in both modes. Nothing is sent until
+you click it. Barkley then sends the two readings and their reasons, up to 12 of the
+scan's items (the rule, the file and a short code excerpt from the public project that
+was scanned), and the checked statements of any earlier Explain in context on this app.
+A severity goes along only for a threat or a known bug in a library. The answer is shown
+as plain text labelled as an AI explanation, next to the fixed explanation.
 
-The default since 0.14.0 (Settings → AI mode: Explain and read code). Each finding,
-each port and each address the app's docs don't explain gets an **Explain in context**
-button. During the scan Barkley keeps the code around it, and you can open it under
+## What the developer says it does (AI inferred)
+
+New in 0.15, in the Explain and read code mode only. The same click on **Explain this
+app** makes one more request. It carries what the scan stored of the developer's own
+words, with their line numbers: the start of the README, the README passages about
+logins, accounts, where data goes, privacy and what the app runs on the system, and the
+descriptions in the code (docstrings, and the comment block above a function). That's
+at most 6,000 characters, at most six descriptions from the code, and the README gets
+at most 60% of it when there are descriptions. Barkley's own list of what it found goes
+along. It doesn't follow links to other repositories.
+
+The AI may write up to four sentences on what the developer says the app does. Each must
+end with the lines it rests on. Barkley shows a sentence only if:
+
+- the cited lines were sent, and have text on them;
+- every code name the sentence puts in backticks is on those lines;
+- at least three of its longer words are on those lines, so citing some unrelated real
+  line doesn't carry a made-up statement;
+- it gives no verdict (safe, fine, secure, no problem and the like).
+
+A shown sentence is tagged **AI inferred**, with the lines, under the item it is about.
+Sentences that aren't about one listed item go in a box called **What the developer says
+it does**. The page says it plainly: the developer wrote those lines, and Barkley checked
+that each line exists and holds these words, not that they are true. A README can
+describe a harmful feature in friendly words.
+
+Limits that are always on:
+
+- **A threat was found:** this request is not sent, and nothing of it is shown.
+- **A possible threat:** the descriptions on the threat and on the logins it could take
+  are not sent, and neither is any description that covers a whole file. Only a sentence about another listed item is kept, and the box of its
+  own isn't shown.
+- Nothing from it is read by the readings, the list or a notification.
+- If this second request fails, the explanation from the first is kept, and the page
+  says the AI didn't answer this part.
+
+## Explain in context
+
+In the Explain and read code mode (Settings → AI mode; the default). Each item, each
+port and each address that isn't one of the app's own sites gets an **Explain in
+context** button. During the scan Barkley keeps the code around it, and you can open it under
 "The code it reads" before you click. On your click, that code and the question go to
 your AI.
 
 A privacy note (telemetry, analytics, a server the developer runs, unencrypted
 addresses, MQTT without encryption) shows the button, or the AI's reading, of the
 address or port behind it. It is the same reading as under "Where it connects", not a
-second one. A note whose addresses are all named in the app's documentation or manifest
-has no reading, and says so.
+second one. A note whose addresses are all the app's own has no reading, and says so.
 
-What the code is, for an integration: the function the finding is in; the functions
+What the code is, for an integration: the function the item is in; the functions
 and classes of the app that it calls or refers to, starting with the ones named on the
 flagged line (at most 150 lines together); and the import lines and constants behind the
 names used (at most 40 more lines, plus the blank lines between them). For a dashboard
-card it is the lines around the finding in the bundle.
+card it is the lines around the item in the bundle.
 
 ### When the AI asks to see more
 
@@ -66,9 +106,9 @@ installed version and an update that is waiting. Copies of older versions are de
 ages out, and an app whose Python is over 1 MB compressed (or more than 3,000 files) gets no
 copy; its sheet then says the AI can't ask for more. Dashboard cards get no copy: their bundles are minified.
 
-### A finding about replaced Home Assistant code
+### An item about replaced Home Assistant code
 
-For the finding "Changes how Home Assistant itself works", the page says what is
+For the item "Changes how Home Assistant itself works", the page says what is
 replaced, whose code that is, and where the replacement is defined, under **What it
 replaces**. Barkley reads this from the code's import lines during the scan; no AI is
 involved.
@@ -81,26 +121,26 @@ gives the count of lines only in the replacement and only in the original, and t
 comparison itself opens underneath. No AI is involved. When there is no comparison the
 page says why (for example GitHub did not answer, or the replacement is not a function);
 that is never counted for or against the app. **The rest of the replacement** says
-whether the scan has any other finding, address or port on the replacement's own lines.
+whether the scan has any other item, address or port on the replacement's own lines.
 That sentence describes what Barkley's rules look for; it is not a statement that the
-code is safe. The score is the same with or without a comparison.
+code is safe. The readings are the same with or without a comparison.
 
-On such a finding, "Explain in context" also sends the comparison, so the AI can say
+On such an item, "Explain in context" also sends the comparison, so the AI can say
 what the replacement does differently and cite the lines.
 
 ### The AI's opinion on the README
 
-For the finding "Changes how Home Assistant itself works", "Explain in context" also
+For the item "Changes how Home Assistant itself works", "Explain in context" also
 sends the first lines of the repository's README (at most 80), as what the app's author
 says the app does. The AI
 may then add one sentence saying that the code is consistent with the README. Barkley
 shows it only if it cites README lines and lines of the app's code, and gives no verdict:
 a sentence that calls the code safe, fine, expected or the like is dropped. It is shown
-apart from the statements, under **The AI's opinion: consistent with the README**.
+apart from the statements, under **The AI thinks the code matches the README**.
 
 Read it for what it is. The README is written by the same person as the code, so code
-that matches it does what the author says, which is not the same as safe. The finding
-and the score do not change. No other finding gets this opinion: not one about data
+that matches it does what the author says, which is not the same as safe. The item and
+the readings do not change. No other item gets this opinion: not one about data
 leaving your Home Assistant or where it goes, and no address, port or package.
 
 ### How answers are checked
@@ -113,10 +153,11 @@ can close the sheet and come back.
 
 ## What the AI can't do
 
-- It can't set, clear or change a score or a finding. A statement that calls a finding a
+- It can't set, clear or change a reading or an item. A statement that calls an item a
   false positive, safe or harmless is dropped.
-- It gets nothing from your Home Assistant: only findings and code from the public
-  project.
+- It gets nothing from your Home Assistant: only what the scan found, and code and text
+  from the public project.
+- Its text is never put in a notification.
 
 ## Where the request goes
 
