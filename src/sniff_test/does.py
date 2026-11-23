@@ -25,6 +25,7 @@ from html import escape
 from typing import Any
 
 from sniff_test import kinds, readings
+from sniff_test.report import logins
 
 ROOMS = (  # key, label, icon
     ("users", "Users and logins", "user"),
@@ -198,10 +199,16 @@ def build(report: dict[str, Any], name: str) -> Model:
         if card and room == "users":  # a card's login is the one in your browser
             room = "browser"
         flow_hosts.setdefault(host, room)
+    # (0.15) a site that gets your login, and one a library connects to for the app
+    marked = logins.marks(report)
     # a site Barkley proved data flows to is drawn even when no request to it was read
     # (a card's code, or an address the request reader couldn't follow)
     names = list(sites) + [h for h in flow_hosts if h and h not in sites]
-    order = sorted(names, key=lambda h: (h not in flow_hosts, h not in own, h))
+    names += [h for h, mk in marked.items() if mk.library and h not in names]
+    order = sorted(
+        names,
+        key=lambda h: (h not in flow_hosts, h not in own, not (h in marked and marked[h].login), h),
+    )
     for host in order[:SITES_SHOWN]:
         how = "bad" if host in flow_hosts and host not in own else "own" if host in own else ""
         lines = _site_lines(sites.get(host))
@@ -209,6 +216,15 @@ def build(report: dict[str, Any], name: str) -> Model:
             lines = ["the code doesn't show where"]
         elif not lines and host in flow_hosts:
             lines = ["your data goes here"]
+        mk = marked.get(host)
+        if mk and mk.library:
+            via = f"the {mk.library} library" if len(mk.library) <= 20 else "a library"
+            lines = [f"through {via}", *lines][:2]
+        if mk and (mk.login or mk.token):
+            lines = [
+                *lines[:2],
+                KEY + ("your login goes here" if mk.login else "a token goes here"),
+            ]
         m.sites.append((host, lines, how))
     m.more_sites = max(0, len(order) - SITES_SHOWN)
     for i, (host, _lines, how) in enumerate(m.sites):
@@ -276,6 +292,17 @@ def _icon(name: str, x: float, y: float, size: int = 14) -> str:
             f'stroke-linejoin="round">{ui._ICONS[name]}</g></svg>')  # fmt: skip
 
 
+KEY = "\x00key:"  # a site line that says your login (or a token) goes there
+
+
+def _site_line(t: str, x: float, y: float) -> str:
+    if t.startswith(KEY):
+        text = e(t[len(KEY) :], 34)
+        return (f'<g class="pk">{_icon("key", x, y - 10, 12)}</g>'
+                f'<text class="pv" x="{x + 16}" y="{y:.0f}">{text}</text>')  # fmt: skip
+    return f'<text class="ns" x="{x}" y="{y:.0f}">{e(t, 36)}</text>'
+
+
 def _room_h(u: list[tuple[str, str]] | None) -> int:
     if not u:
         return IDLE_H
@@ -324,8 +351,8 @@ def wide(m: Model, key: str = "d") -> str:
                     f'y="{sy:.0f}" width="{SITE_W}" height="{h}" rx="8"/><text class="nt'
                     f'{"" if host == OFF_BOX else " mono"}" '
                     f'x="{YARD_X + 12}" y="{sy + 21:.0f}">{e(host, 34)}</text>'
-                    + "".join(f'<text class="ns" x="{YARD_X + 12}" y="{sy + 39 + 16 * j:.0f}">'
-                              f"{e(t, 36)}</text>" for j, t in enumerate(lines))
+                    + "".join(_site_line(t, YARD_X + 12, sy + 39 + 16 * j)
+                              for j, t in enumerate(lines))
                     + "</g>")  # fmt: skip
         smid.append(sy + h / 2)
         sy += h + 12
@@ -478,7 +505,9 @@ def narrow(m: Model) -> str:
     sites = "".join(
         f'<div class="nsite{" bad" if how == "bad" else ""}">'
         + (f"<b>{e(host)}</b>" if host == OFF_BOX else f"<code>{e(host, 60)}</code>")
-        + "".join(f'<span class="ns2">{e(t, 60)}</span>' for t in lines) + "</div>"
+        + "".join(f'<span class="ns2 pv2">{_ic("key")}{e(t[len(KEY):], 60)}</span>'
+                  if t.startswith(KEY) else f'<span class="ns2">{e(t, 60)}</span>'
+                  for t in lines) + "</div>"
         for host, lines, how in m.sites
     )  # fmt: skip
     if m.more_sites:

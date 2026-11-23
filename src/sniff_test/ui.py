@@ -24,7 +24,7 @@ from sniff_test.analyzers.correlate import CREDENTIAL_SOURCES, SENSITIVE_NODES
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
 from sniff_test.fetch import retry
 from sniff_test.models import STALE_YEARS, fix_phrase, version_key, years_since
-from sniff_test.report import explain, privacy
+from sniff_test.report import explain, logins, privacy
 from sniff_test.report.json_report import sanitize_untrusted
 
 if TYPE_CHECKING:
@@ -107,6 +107,8 @@ _ICONS = {
     '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
     "plug": '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 '
     '0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+    "key": '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/>'
+    '<path d="m15.5 7.5 3 3L22 7l-3-3"/>',
     "lock": '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 '
     '1 10 0v4"/>',
     "star": '<path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5'
@@ -482,6 +484,24 @@ svg.does .cross { fill:var(--muted); font-size:12px; }
 svg.does .cross.bad { fill:var(--red); font-weight:600; }
 svg.does .cross.in { fill:var(--orange); font-weight:600; }
 svg.does .runs { fill:var(--brand); font-size:12px; font-weight:500; }
+svg.does .pv { fill:var(--priv); font-size:12px; font-weight:500; } svg.does .pk { color:var(--priv); }
+.lg { display:flex; flex-direction:column; gap:var(--s3); }
+.lg-grp { display:grid; grid-template-columns:minmax(0, 15rem) 24px minmax(0, 12rem) 24px
+  minmax(0, 1fr); align-items:start; gap:var(--s2); }
+.lg-pill { border:1px solid var(--priv); background:var(--priv-bg); border-radius:var(--r3);
+  padding:var(--s2) var(--s3); min-width:0; overflow-wrap:anywhere; }
+.lg-via { border:1px solid var(--line); border-radius:var(--r3); padding:var(--s2) var(--s3);
+  min-width:0; display:flex; flex-direction:column; gap:var(--s1); overflow-wrap:anywhere; }
+.lg-via.lib { border-style:dashed; border-color:var(--priv); }
+.lg-arr { color:var(--priv); font-weight:600; padding-top:var(--s2); text-align:center; }
+.lg-dests { display:flex; flex-direction:column; gap:var(--s1); min-width:0; }
+.lg-dest { border:1px solid var(--line); border-radius:var(--r3); padding:var(--s1) var(--s3);
+  min-width:0; display:flex; flex-direction:column; overflow-wrap:anywhere; }
+.lg-dest.maybe { border-style:dashed; }
+ul.from { margin:var(--s2) 0 0; padding-left:var(--s4); display:flex; flex-direction:column;
+  gap:var(--s1); }
+@media (max-width:760px) { .lg-grp { grid-template-columns:1fr; }
+  .lg-arr { text-align:left; padding:0 0 0 var(--s3); transform:rotate(90deg); width:24px; } }
 svg.does .bugs rect { fill:var(--orange-bg); stroke:var(--orange-edge); }
 svg.does .bugs text { fill:var(--orange); font-size:12px; font-weight:600; }
 svg.does .bugs .bi, svg.does .door .di { color:var(--orange); }
@@ -504,6 +524,7 @@ svg.does .inbound { fill:none; stroke:var(--orange); stroke-width:2; stroke-dash
   gap:4px; background:var(--card); overflow-wrap:anywhere; }
 .nsite.bad { background:var(--red-bg); border-color:var(--red-edge); }
 .ns2 { color:var(--muted); font-size:var(--t-xs); font-weight:400; margin:0; }
+.ns2.pv2 { color:var(--priv); font-weight:500; display:flex; gap:var(--s1); align-items:center; }
 .nbug { color:var(--orange); font-size:var(--t-xs); font-weight:600; display:flex; gap:4px;
   align-items:center; }
 .ndoor { border:1px dashed var(--orange-edge); background:var(--orange-bg); border-radius:8px;
@@ -2266,6 +2287,7 @@ def requests_elsewhere_html(report: dict[str, Any]) -> str:
     total = sum(by.values())
     kinds = ", ".join(f"{n} {m}" for m, n in sorted(by.items(), key=lambda kv: -kv[1]))
     blocks = "".join(request_block(x, here=False) for x in shapes)
+    origins = logins.origins_html(shapes)  # (0.15, py_flow)
     return (
         f'<div class="zone"><h3>{icon("plug")} Requests to addresses that aren\'t in the code</h3>'
         f'<div class="zs">{_count(total, "request goes", "requests go")} to an address the code '
@@ -2275,8 +2297,12 @@ def requests_elsewhere_html(report: dict[str, Any]) -> str:
             if isinstance(r, dict) and r.get("code") == "card"
             else "for example from a device or a server you entered during setup"
         )
-        + ". Barkley can't say where they go.</div>"
-        f'<details class="more"><summary>Where in the code</summary><div class="in">{blocks}'
+        + (
+            ". Where the addresses come from:</div>" + origins
+            if origins
+            else ". Barkley can't say where they go.</div>"
+        )
+        + f'<details class="more"><summary>Where in the code</summary><div class="in">{blocks}'
         f"</div></details>{_test_requests(r)}</div>"
     )
 
@@ -2321,6 +2347,7 @@ def _host_li(
     reqs: Any = None,
     elsewhere: bool = False,
     images: Any = None,
+    mark: Any = None,
 ) -> str:
     """One line per site: the name and whether Barkley flagged it. Inside: scheme, port (the
     URL's own, else the scheme's default) and encryption, who runs it, the addresses, where
@@ -2336,6 +2363,7 @@ def _host_li(
     if not h.schemes and explicit:
         bits.append("port " + ", ".join(map(str, explicit)))
     flag = ' <span class="chip bad">see findings</span>' if h.flagged else ""
+    flag += logins.chips(mark)
     # whose address it is: a name from our own list, never a verdict
     who = f'<span class="u">{e(h.service, 120)}</span>' if h.service else ""
     how = f'<span class="u">{" · ".join(bits)}</span>' if bits else ""
@@ -2361,6 +2389,7 @@ def _host_li(
     dev = (f'<span class="u">{src_tag("dev")} {e(" ".join(said))}</span>'
            if said and dev_words and not h.flagged and h.name not in near else "")  # fmt: skip
     return _fold(h.edge_id, f"<code>{e(h.name, 120)}</code>{flag}", who + back + dev + how
+                 + logins.fold_lines(mark)
                  + (_images_span(images) + _requests_spans(reqs or None, elsewhere)
                     if images else _requests_spans(reqs, elsewhere))
                  + urls + where + deep, open_)  # fmt: skip
@@ -2396,6 +2425,9 @@ def zones_html(
     # to (and any site with a threat item, so none is ever tucked away), the ports and the
     # requests without a site; "mentioned" = every other address in the code. "" = all.
     imgs = site_images(report)
+    # (0.15) your login or a token goes there; a library connects there for the app
+    marked = logins.marks(report)
+    through = {n for n, mk in marked.items() if mk.library}
     # a site Barkley read a request or a map-tile address for, but that the site list
     # doesn't hold (a pattern like https://{s}.tiles.site/… isn't read as a site there)
     known = {h.name for h in hs}
@@ -2404,17 +2436,23 @@ def zones_html(
               _images_span(imgs.get(name)) + _requests_spans(reqs.get(name), False), False)
         for name in sorted((set(reqs) | set(imgs)) - known)
     ] if part != "mentioned" else []  # fmt: skip
+    libs_only = [  # (0.15) sites only a library's code names
+        _fold("", f"<code>{e(name, 120)}</code>{logins.chips(marked[name])}",
+              logins.fold_lines(marked[name]), False)
+        for name in sorted(through - known - set(reqs) - set(imgs))
+    ] if part != "mentioned" else []  # fmt: skip
     if part == "connects":
-        hs = [h for h in hs if h.name in reqs or h.name in imgs or h.flagged or h.name in near]
-        if not hs and not pts and not elsewhere and not extra:
+        hs = [h for h in hs if h.name in reqs or h.name in imgs or h.flagged or h.name in near
+              or h.name in through]  # fmt: skip
+        if not hs and not pts and not elsewhere and not extra and not libs_only:
             return '<p class="muted">Barkley read no request to a site named in the code.</p>'
     elif part == "mentioned":
-        hs = [h for h in hs
-              if not (h.name in reqs or h.name in imgs or h.flagged or h.name in near)]  # fmt: skip
+        hs = [h for h in hs if not (h.name in reqs or h.name in imgs or h.flagged
+                                    or h.name in near or h.name in through)]  # fmt: skip
         pts, elsewhere, read = [], "", False
         if not hs:
             return ""
-    if not hs and not pts and not extra:
+    if not hs and not pts and not extra and not libs_only:
         none = '<p class="muted">Its code names no sites, IP addresses or ports.</p>'
         return none + (f'<div class="zones">{elsewhere}</div>' if elsewhere else "")
 
@@ -2428,8 +2466,10 @@ def zones_html(
             continue
         lis = [_host_li(h, inline(h.edge_id), bool(open_id) and h.edge_id == open_id,
                         dev_words, near,
-                        reqs.get(h.name, [] if read and not h.redirect else None),
-                        bool(elsewhere), imgs.get(h.name)) for h in zh]  # fmt: skip
+                        reqs.get(h.name, [] if read and not h.redirect
+                                 and h.name not in through else None),
+                        bool(elsewhere), imgs.get(h.name), marked.get(h.name))
+               for h in zh]  # fmt: skip
         out.append(f'<div class="zone {key}"><h3>{icon(ic)} {title}</h3><div class="zs">{sub}'
                    f"</div>{_zone_list(lis)}</div>")  # fmt: skip
     if pts:
@@ -2453,6 +2493,12 @@ def zones_html(
             '<div class="zs">The code sets these ports, but the server\'s address comes from '
             "setup or from another server while the app runs. So Barkley can't tie them to any "
             f"site listed here.</div>{_zone_list(items)}</div>"
+        )
+    if libs_only:
+        out.append(
+            f'<div class="zone"><h3>{icon("globe")} Sites a library connects to</h3>'
+            '<div class="zs">The app hands these to a library, which makes the requests. The '
+            f"app's own code doesn't name them.</div>{_zone_list(libs_only)}</div>"
         )
     if extra:
         out.append(
@@ -4077,6 +4123,8 @@ def render_app(
     parts.append(does.section(report, title, rd, str(shown_opts.get("exposure_bar") or "medium"))
                  .replace("<h2>What it does</h2>",
                           f"<h2>What it does {src_tag('scan')}</h2>", 1))  # fmt: skip
+    # (0.15, his yes 2026-11-22) where the app's own logins go, under the picture
+    parts.append(logins.html(report, title, src_tag("scan")))
     tag = with_tag
     # an integration whose requests the scan read: proven sites and mentioned ones apart
     split = isinstance(report.get("requests"), dict)

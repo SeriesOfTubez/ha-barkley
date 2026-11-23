@@ -44,6 +44,7 @@ PANEL_ONLY = frozenset(
         "report/ai.py",
         "report/ai_context.py",
         "report/ai_words.py",  # (0.15) the AI reading the stored README passages
+        "report/logins.py",  # (0.15) "Where your logins go", drawn from a stored scan
         "report/human.py",
         "report/explain.py",
         "report/privacy.py",
