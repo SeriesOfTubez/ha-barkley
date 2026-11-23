@@ -346,8 +346,7 @@ RULES: dict[str, Explanation] = {
         "and the card's default is a path on your own Home Assistant (or it has none). The "
         "token would only go to another site if someone typed a full address into that "
         "setting on your dashboard.",
-        "Usually not. Check the setting in the card's options if you didn't set it up "
-        "yourself.",
+        "Usually not. Check the setting in the card's options if you didn't set it up yourself.",
         "Token to its settings",
     ),
     "card-code-loader": _E(

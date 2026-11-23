@@ -77,6 +77,8 @@ _NOT_LIB = frozenset({*sys.stdlib_module_names, "homeassistant", "custom_compone
 # calls whose positional arguments may be where to connect (a class, or connect/login…);
 # a signing or hashing helper given a URL isn't handed somewhere to connect to
 _CONNECTS = re.compile(r"(?i)connect|login|log_in|auth|client|session|open|create|setup|start")
+_TYPE_NAME = re.compile(r"(?<![\w.])([A-Z][A-Za-z0-9_]{0,60})(?![\w(\[])")
+_SESSION_SENDS = frozenset({"headers", "auth", "cookies"})
 ADDRESS_ARG = re.compile(r"(?i)url|uri|host|server|endpoint|address|domain|base")
 _MAX_HANDOFFS = 60
 _HANDOFF_BUDGET = 600  # steps per call looked at for a hand-off
@@ -343,6 +345,8 @@ class _Index(ast.NodeVisitor):
     stores: dict[str, list[_Site | tuple[str, ast.expr, ast.AST | None, ast.ClassDef | None]]] = (
         field(default_factory=dict))  # fmt: skip
     libs: dict[str, dict[str, str]] = field(default_factory=dict)  # file -> name -> package
+    own: str = ""  # (py_library) the library being read: its imports of itself aren't a library
+    aliases: dict[str, set[str]] = field(default_factory=dict)  # name -> `import name as X` names
     n: int = 0
     rel: str = ""
     fn: ast.AST | None = None
@@ -370,12 +374,15 @@ class _Index(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         for a in node.names:
             top = a.name.split(".")[0]
-            if top not in _NOT_LIB:
+            if top not in _NOT_LIB and top != self.own:
                 self.libs.setdefault(self.rel, {})[a.asname or top] = top
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for a in node.names:  # `from .api import Client as API`: `API(…)` calls Client
+            if a.asname and a.asname != a.name and len(self.aliases) < _MAX_CALLS:
+                self.aliases.setdefault(a.name, set()).add(a.asname)
         top = (node.module or "").split(".")[0]
-        if node.level == 0 and top and top not in _NOT_LIB:
+        if node.level == 0 and top and top not in _NOT_LIB and top != self.own:
             for a in node.names:
                 if a.name != "*":
                     self.libs.setdefault(self.rel, {})[a.asname or a.name] = top
@@ -413,7 +420,7 @@ class Tracer:
 
     def __init__(self, reader: Reader):
         self.reader = reader
-        self.res = py_resolve.Resolver(reader.root)
+        self.res = py_resolve.Resolver(reader.root, getattr(reader, "package", None))
         self._index: _Index | None = None
         self._locals: dict[int, dict[str, list[ast.expr]]] = {}
         self._dict_at: dict[int, tuple[ast.Dict, _Scope]] = {}
@@ -425,6 +432,9 @@ class Tracer:
         self._memo: dict[tuple[ast.AST, bool, object, object, object], frozenset[Origin]] = {}
         self._cuts = 0
         self._stop: ast.AST | None = None  # a wrapper whose parameters each call fills in
+        # (py_library) inside a library: the functions the app calls, whose parameters hold
+        # what the app passed in
+        self.entries: list[Entry] = []
         self.gave_up: list[tuple[str, ast.AST]] | None = None  # (why, where): for measuring
 
     def _cut(self, why: str) -> None:
@@ -447,6 +457,7 @@ class Tracer:
     def index(self) -> _Index:
         if self._index is None:
             ix = _Index()
+            ix.own = getattr(self.reader, "package", None) or ""
             n = 0
             for p in sorted(self.reader.root.rglob("*.py")):
                 if n >= _MAX_FILES:
@@ -516,6 +527,7 @@ class Tracer:
         sc: _Scope,
         wrapper: ast.AST | None,
         budget: int = BUDGET,
+        receiver: ast.expr | None = None,
     ) -> tuple[list[Origin], tuple[str, ...]]:
         """`carried`, for a request inside `wrapper` (the app's own function each call of
         which is read as a request): the wrapper's parameters are left open, and their
@@ -529,6 +541,8 @@ class Tracer:
             for x in exprs:
                 if x is not None:
                     out |= self._t(x, sc, False, 0)
+            if receiver is not None:  # what the session itself sends every time
+                out |= self._session_sends(receiver, sc)
         finally:
             self._stop = None
         params = tuple(sorted({o.detail for o in out if o.kind == _PARAM}))
@@ -612,9 +626,12 @@ class Tracer:
             return name.removeprefix("CONF_").lower()[:_KEY_MAX]
         return ""
 
-    def _session_base(self, receiver: ast.expr, sc: _Scope, d: int) -> set[Origin]:
-        """The site a session adds to paths: `ClientSession(base_url=X)` (also
-        `httpx.AsyncClient(base_url=X)`) where the receiver is made, one step back."""
+    def _session_made(
+        self, receiver: ast.expr, sc: _Scope, hops: int = 0
+    ) -> list[tuple[ast.Call, _Scope]]:
+        """The calls that make the session a request is sent on: the receiver itself, a
+        local name or `self.<attr>` it was set to, or what an own method that hands it out
+        returns (`session = await self._get_session()`), a few steps back."""
         values: list[tuple[ast.expr, _Scope]] = []
         if isinstance(receiver, ast.Call):
             values = [(receiver, sc)]
@@ -623,15 +640,43 @@ class Tracer:
         elif isinstance(receiver, ast.Attribute) and _tail(receiver.value) in ("self", "cls"):
             got = self._class_attr(sc.cls, receiver.attr, sc.rel)[:_FAN]
             values = [(v, self._scope(rel, fn, cls)) for v, fn, rel, cls in got]
-        out: set[Origin] = set()
+        out: list[tuple[ast.Call, _Scope]] = []
         for v, vsc in values:
             while isinstance(v, ast.Await):
                 v = v.value
-            if isinstance(v, ast.Call):
-                kw = next((k.value for k in v.keywords if k.arg in _BASE_KW), None)
-                if kw is not None:
-                    out |= self._t(kw, vsc, True, d)
+            if not isinstance(v, ast.Call):
+                if hops < 3 and isinstance(v, (ast.Name, ast.Attribute)):
+                    out += self._session_made(v, vsc, hops + 1)
+                continue
+            own = self._own_def(v, vsc) if hops < 3 else None
+            if own is None:
+                out.append((v, vsc))
+                continue
+            osc = self._scope(own.rel, own.fn, own.cls)
+            for r in [n for n in ast.walk(own.fn) if isinstance(n, ast.Return)][:_FAN]:
+                if r.value is not None:
+                    out += self._session_made(r.value, osc, hops + 1)
+        return out[:_FAN]
+
+    def _session_base(self, receiver: ast.expr, sc: _Scope, d: int) -> set[Origin]:
+        """The site a session adds to paths: `ClientSession(base_url=X)` (also
+        `httpx.AsyncClient(base_url=X)`) where the receiver is made."""
+        out: set[Origin] = set()
+        for v, vsc in self._session_made(receiver, sc):
+            kw = next((k.value for k in v.keywords if k.arg in _BASE_KW), None)
+            if kw is not None:
+                out |= self._t(kw, vsc, True, d)
         return {o for o in out if o.kind not in (_REL, UNKNOWN)}
+
+    def _session_sends(self, receiver: ast.expr, sc: _Scope) -> set[Origin]:
+        """(0.15) What a session sends with every request on it: the headers, login and
+        cookies it was made with (`ClientSession(headers={"Authorization": …})`)."""
+        out: set[Origin] = set()
+        for v, vsc in self._session_made(receiver, sc):
+            for k in v.keywords:
+                if k.arg in _SESSION_SENDS:
+                    out |= self._t(k.value, vsc, False, 0)
+        return out
 
     def _format_parts(self, text: str, x: ast.Call | None, args: list[ast.expr]) -> list[ast.expr]:
         """A format string's pieces in order: its text and what fills each field
@@ -851,6 +896,10 @@ class Tracer:
         return self._read_key(v, x.attr, sc, lead, d)
 
     def _self_attr(self, attr: str, sc: _Scope, lead: bool, d: int) -> set[Origin]:
+        for e in self.entries:  # (py_library) a field of a dataclass the app made
+            got = e.field(sc.cls, attr, lead)
+            if got is not None:
+                return set(got)
         values = self._class_attr(sc.cls, attr, sc.rel)
         if not values:
             if attr in _ENTRY_ATTRS:
@@ -1067,6 +1116,8 @@ class Tracer:
                 for v in values[:_FAN]:
                     out |= self._t(v, sc, lead, d)
                 return out
+            if name in ("self", "cls") and sc.cls is not None and _is_param(fn, name):
+                return {Origin(_OBJ, sc.cls.name)}  # the object passes itself on (`API(self)`)
             if _is_param(fn, name):
                 return self._param(fn, name, sc, lead, d)
         mod = self.reader.module(sc.rel)
@@ -1082,6 +1133,10 @@ class Tracer:
         return self._unk(fn or ast.Pass(), f"name {name}")
 
     def _param(self, fn: ast.AST, name: str, sc: _Scope, lead: bool, d: int) -> set[Origin]:
+        for e in self.entries:  # (py_library) what the app passed for this parameter
+            got = e.value(fn, sc, name, lead)
+            if got is not None:
+                return set(got) if got else self._from_default(fn, name, sc, lead, d)
         if fn is self._stop:
             return {Origin(_PARAM, name)}  # each call of the wrapper says what it passes
         fname = getattr(fn, "name", "")
@@ -1105,6 +1160,10 @@ class Tracer:
             return {_UNK}
         sites = self._callers(fn, sc)
         if not sites:
+            # `api: Client` with no caller in this code: one of its own Client objects
+            typed = {t for t in _TYPE_NAME.findall(ann) if self._class(t) is not None}
+            if typed and len(typed) <= 2:
+                return {Origin(_OBJ, t) for t in typed}
             default = _default(fn, name)
             if default is not None and not (
                 isinstance(default, ast.Constant) and default.value is None
@@ -1128,6 +1187,12 @@ class Tracer:
             self._hops -= 1
         return out or self._unk(fn, f"callers pass nothing for {name}")
 
+    def _from_default(self, fn: ast.AST, name: str, sc: _Scope, lead: bool, d: int) -> set[Origin]:
+        default = _default(fn, name)
+        if default is None or (isinstance(default, ast.Constant) and default.value is None):
+            return self._unk(fn, f"the app passes nothing for {name}")
+        return self._t(default, sc, lead, d)
+
     def _callers(self, fn: ast.AST, sc: _Scope) -> list[_Site]:
         ix = self.index()
         fname = getattr(fn, "name", "")
@@ -1140,12 +1205,25 @@ class Tracer:
                 and not any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
                             and n.name == "__init__" for n in c.body)
             ][:_FAN]]  # fmt: skip
-            return [s for n in names for s in ix.calls.get(n, [])]
+            names += [a for n in names for a in sorted(ix.aliases.get(n, ()))[:_FAN]]
+            # a subclass's `super().__init__(…)` (or `Base.__init__(self, …)`)
+            supers = [s for s in ix.calls.get("__init__", [])
+                      if s.cls is not None and isinstance(s.call.func, ast.Attribute)
+                      and any(_tail(b) == sc.cls.name for b in s.cls.bases)
+                      and ((isinstance(s.call.func.value, ast.Call)
+                            and _call_name(s.call.func.value) == "super")
+                           or _tail(s.call.func.value) == sc.cls.name)][:_FAN]  # fmt: skip
+            return [s for n in names for s in ix.calls.get(n, [])] + supers
         defs = ix.funcs.get(fname, [])
         if len(defs) != 1 or fname.startswith("__"):
-            # the name is defined more than once: only calls on `self` in the same class
+            # the name is defined more than once: only calls on `self` in the same class,
+            # or for a module-level function, plain calls of the name (`login(self)` beside a
+            # method `login`; `x.login()` is a method)
             if sc.cls is None:
-                return []
+                if fname.startswith("__"):
+                    return []
+                return [s for s in ix.calls.get(fname, [])
+                        if isinstance(s.call.func, ast.Name)][:_FAN * 4]  # fmt: skip
             return [s for s in ix.calls.get(fname, []) if s.cls is sc.cls
                     and isinstance(s.call.func, ast.Attribute)
                     and getattr(s.call.func.value, "id", "") in ("self", "cls")]  # fmt: skip
@@ -1195,7 +1273,12 @@ class Tracer:
             base = f.value if method else None  # type: ignore[union-attr]
             arg = base if base is not None else (x.args[0] if x.args else None)
             if name == "join" and base is not None and x.args:
-                arg = x.args[0]  # "/".join([...])
+                # "/".join([...]) is its list; URL(base).join(URL(path)) and
+                # self.base_url.join(path) start with the base
+                url = (_call_name(base) in ("URL", "build") if isinstance(base, ast.Call)
+                       else bool(ADDRESS_ARG.search(_tail(base))))  # fmt: skip
+                if not url:
+                    arg = x.args[0]
             if arg is None:
                 return set()
             return self._t(arg, sc, lead, d)
@@ -1295,7 +1378,27 @@ class Tracer:
                 h = out.get(key)
                 if h is None:
                     h = out[key] = Handoff(lib, _call_name(x)[:_KEY_MAX], at=f"{s.rel}:{x.lineno}")
+                    h.method = isinstance(x.func, ast.Attribute) and not self.library(x, sc)
                 h.logins = tuple(dict.fromkeys(h.logins + ids))
+                # (py_library) what each argument holds, for reading inside the library
+                named = [*((str(i), a, sc) for i, a in enumerate(x.args[:_FAN])
+                           if not isinstance(a, ast.Starred)),
+                         *((k.arg, k.value, sc) for k in x.keywords[:_FAN] if k.arg)]  # fmt: skip
+                for k in x.keywords[:_FAN]:  # `**kwargs`: a dict the code spells out
+                    for dct, dsc in self._dicts(k.value, sc) if k.arg is None else []:
+                        for kk, vv in list(zip(dct.keys, dct.values, strict=False))[:_FAN]:
+                            if kk is not None and (kn := self._key(kk, dsc)) not in ("", "\x00"):
+                                named.append((kn[:_KEY_MAX], vv, dsc))
+                for arg, value, vsc in named[: _FAN * 2]:
+                    lead = self.address(value, vsc, _HANDOFF_BUDGET)
+                    left -= _HANDOFF_BUDGET - max(self._left, 0)
+                    held = self.carried([value], vsc, _HANDOFF_BUDGET)
+                    left -= _HANDOFF_BUDGET - max(self._left, 0)
+                    was = h.passed.get(arg, (frozenset(), frozenset()))
+                    h.passed[arg] = (
+                        was[0] | {o for o in lead if o.kind != UNKNOWN},
+                        was[1] | {o for o in held if not o.kind.startswith("_")},
+                    )
                 for name, got in addresses:
                     if (name, got) not in h.addresses:
                         h.addresses.append((name, got))
@@ -1400,11 +1503,62 @@ class Handoff:
     logins: tuple[str, ...] = ()  # setup fields that are logins (with who-you-are ones)
     addresses: list[tuple[str, tuple[Origin, ...]]] = field(default_factory=list)  # (arg, from)
     at: str = ""  # file:line of the first such call
+    method: bool = False  # a method of an object the library made (`client.login(pw)`)
+    # (py_library) argument ("0", "1"… or its keyword) -> (where it comes from as an
+    # address, where every piece of it comes from); not in the report
+    passed: dict[str, tuple[frozenset[Origin], frozenset[Origin]]] = field(default_factory=dict)
+    inside: dict[str, object] | None = None  # (py_library) what Barkley read inside it
 
     def as_dict(self) -> dict[str, object]:
         return {"library": self.library, "call": self.call, "logins": list(self.logins),
                 "addresses": [{"arg": a, "from": [o.as_dict() for o in got]}
-                              for a, got in self.addresses[:6]], "at": self.at}  # fmt: skip
+                              for a, got in self.addresses[:6]], "at": self.at,
+                **({"inside": self.inside} if self.inside is not None else {})}  # fmt: skip
+
+
+@dataclass
+class Entry:
+    """(py_library) A function of a library the app calls: `classes` for a constructor
+    (the class called and the ones it inherits from), None for a plain function or, with
+    `method`, a method of any of the library's classes."""
+
+    func: str
+    classes: frozenset[str] | None
+    method: bool
+    passed: dict[str, tuple[frozenset[Origin], frozenset[Origin]]]
+    # a class with no constructor of its own (a dataclass, a pydantic model): its fields in
+    # the order the made-up constructor takes them
+    fields: tuple[str, ...] = ()
+
+    def field(self, cls: ast.ClassDef | None, attr: str, lead: bool) -> frozenset[Origin] | None:
+        """What the app passed for field `attr` (`self.attr` in the class), or None (not
+        this entry's field, or not passed: the class's own default answers)."""
+        if cls is None or self.classes is None or cls.name not in self.classes:
+            return None
+        if attr not in self.fields:
+            return None
+        key = attr if attr in self.passed else str(self.fields.index(attr))
+        got = self.passed.get(key)
+        if got is None:
+            return None
+        return (got[0] if lead else got[1]) or frozenset({_UNK})
+
+    def value(self, fn: ast.AST, sc: _Scope, name: str, lead: bool) -> frozenset[Origin] | None:
+        """What the app passed for parameter `name` of `fn` (empty: nothing, so the
+        library's default), or None when `fn` isn't this entry."""
+        if getattr(fn, "name", "") != self.func or (sc.cls is not None) != (
+            self.method or self.classes is not None
+        ):
+            return None
+        if self.classes is not None and (sc.cls is None or sc.cls.name not in self.classes):
+            return None
+        params = _params(fn)
+        pos = params[1:] if sc.cls is not None and params[:1] in (["self"], ["cls"]) else params
+        key = name if name in self.passed else (str(pos.index(name)) if name in pos else "")
+        got = self.passed.get(key)
+        if got is None:
+            return frozenset()  # not passed: the library's own default
+        return (got[0] if lead else got[1]) or frozenset({_UNK})  # passed, origin unknown
 
 
 # --- what the page says -----------------------------------------------------------------

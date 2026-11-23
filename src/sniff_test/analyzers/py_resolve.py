@@ -48,8 +48,11 @@ def parse(text: str) -> ast.Module | None:
 class Resolver:
     """Constants of the Python files under `root` (an integration's install folder)."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, package: str | None = None) -> None:
         self.root = root.resolve()
+        # (0.15, py_library) a library read from inside: `from <package>.x import y` is
+        # its own file, as `custom_components.<folder>.x` is an app's
+        self.own = [package] if package else ["custom_components", self.root.name]
         self._trees: dict[str, ast.Module | None] = {}
         self._imports: dict[str, dict[str, tuple[str, str]]] = {}
         self.domains: frozenset[str] | None = None  # py_precision.own_domains' cache
@@ -76,10 +79,11 @@ class Resolver:
             # own module, written absolutely (4 wrong findings on the 600-app batch);
             # any other absolute import is another package, never resolved.
             parts = module.split(".") if module else []
-            if parts[:2] != ["custom_components", self.root.name]:
+            n = len(self.own)
+            if parts[:n] != self.own:
                 return None
-            stem = Path(*parts[2:]) if parts[2:] else Path()
-            for cand in (stem.with_suffix(".py") if parts[2:] else None, stem / "__init__.py"):
+            stem = Path(*parts[n:]) if parts[n:] else Path()
+            for cand in (stem.with_suffix(".py") if parts[n:] else None, stem / "__init__.py"):
                 if cand is not None and self.tree(cand.as_posix()) is not None:
                     return cand.as_posix()
             return None

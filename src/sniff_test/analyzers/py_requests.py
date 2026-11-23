@@ -39,7 +39,7 @@ from typing import Any
 from sniff_test.analyzers import py_flow, py_resolve
 from sniff_test.analyzers.py_flow import Origin
 
-VERSION = 2  # (0.15) from / logins / tokens per shape, handoffs
+VERSION = 3  # (0.15) from / logins / tokens per shape, handoffs; 3: what a library does with them
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 _CALLS = {m.lower(): m for m in METHODS}
 _MAX_FILE = 5 * 1024 * 1024
@@ -189,8 +189,11 @@ def _single_assigns(scope: ast.AST, attr: bool) -> dict[str, ast.expr | None]:
 
 
 class Reader:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, package: str | None = None):
         self.root = root
+        # (0.15, py_library) a library read from inside: its absolute imports of itself
+        # (`from vendor_api.const import BASE`) are its own files, like relative ones
+        self.package = package
         self._mods: dict[str, _Module] = {}
         self._left = _BUDGET
 
@@ -215,20 +218,30 @@ class Reader:
                 for t in targets:
                     if isinstance(t, ast.Name):
                         mod.assigns[t.id] = node.value
-            elif isinstance(node, ast.ImportFrom) and node.level >= 1:
+            elif isinstance(node, ast.ImportFrom) and (
+                node.level >= 1 or self._own_absolute(node.module)
+            ):
                 base = here
+                module = node.module
+                if node.level == 0:  # `from vendor_api.const import X` inside vendor_api
+                    base, module = Path(), module.partition(".")[2]  # type: ignore[union-attr]
                 for _ in range(node.level - 1):
                     base = base.parent
                 for a in node.names:
-                    if node.module:
-                        target = (base / (node.module.replace(".", "/") + ".py")).as_posix()
-                        pkg = (base / node.module.replace(".", "/") / "__init__.py").as_posix()
+                    if node.level == 0 and not module:
+                        target = "__init__.py"  # `from vendor_api import X`
+                    elif module:
+                        target = (base / (module.replace(".", "/") + ".py")).as_posix()
+                        pkg = (base / module.replace(".", "/") / "__init__.py").as_posix()
                         if not (self.root / target).is_file() and (self.root / pkg).is_file():
                             target = pkg
                     else:  # `from . import const`: a module, not a value
                         continue
                     mod.imports[a.asname or a.name] = (target, a.name)
         return mod
+
+    def _own_absolute(self, module: str | None) -> bool:
+        return bool(self.package and module and module.split(".")[0] == self.package)
 
     # --- the address ------------------------------------------------------------------
 
@@ -635,6 +648,12 @@ class _Visitor(ScopeVisitor):
                 from_param = url.id
             elif (v := sc.local(url.id)) is not None:
                 from_param = _first_param(fn, v)
+        elif (
+            host is None
+            and isinstance(url, (ast.JoinedStr, ast.BinOp))
+            and isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ):  # `f"{self._base}/{path}"` made from a parameter
+            from_param = _first_param(fn, url)
         body, body_by = None, ""
         sent = [_kw(kws, k) for k in _BODY_KW]
         if name == "urlopen" and body_kw is not None:
@@ -646,7 +665,8 @@ class _Visitor(ScopeVisitor):
                     got, body_by = _built_by(expr, sc, self.reader)
                 body = tuple(dict.fromkeys((body or ()) + got))[:_MAX_NAMES]
         flow = _flow(self.tracer, url if host is None else None,
-                     [url, *sent, *(_kw(kws, k) for k in _CARRY_KW)], sc,
+                     [url, *sent, *(_kw(kws, k) for k in _CARRY_KW),
+                      *(k.value for k in kws if k.arg is None)], sc,
                      f.value if isinstance(f, ast.Attribute) else None,
                      fn if from_param else None)  # fmt: skip
         carry = flow.pop("params", ())
@@ -674,7 +694,7 @@ class _Visitor(ScopeVisitor):
                 for expr in exprs:
                     if isinstance(expr, ast.Name) and _is_param(fn, expr.id):
                         parts[part] = expr.id
-            direct = _is_param(fn, url.id)  # type: ignore[union-attr]
+            direct = isinstance(url, ast.Name) and _is_param(fn, url.id)
             self.wrappers.append(_Wrapper(fn, self.cls, from_param, parts, req, direct,
                                           carry))  # fmt: skip
 
@@ -697,7 +717,7 @@ def _flow(
     out: dict[str, Any] = {}
     if url is not None:
         out["origins"] = tuple(tracer.address(url, sc, receiver=receiver))
-    got, params = tracer.carried_in(carried, sc, wrapper)
+    got, params = tracer.carried_in(carried, sc, wrapper, receiver=receiver)
     ids, tokens = py_flow.logins(got)
     if params:
         out["params"] = params
@@ -741,9 +761,16 @@ def _bound(func: ast.AST, call: ast.Call, method: bool) -> dict[str, ast.expr]:
         if isinstance(value, ast.Starred):
             break
         out[name] = value
+    named = {x.arg for x in [*a.posonlyargs, *a.args, *a.kwonlyargs]}
+    extra: list[ast.keyword] = []
     for k in call.keywords:
         if k.arg:
             out[k.arg] = k.value
+            if k.arg not in named:
+                extra.append(k)
+    if a.kwarg is not None and extra:  # `def request(self, url, **kwargs)`: the rest
+        d = ast.Dict(keys=[ast.Constant(k.arg) for k in extra], values=[k.value for k in extra])
+        out[a.kwarg.arg] = ast.copy_location(d, call)
     return out
 
 
@@ -781,7 +808,14 @@ class _Callers(ScopeVisitor):
             if sc.func is w.func or _own_function(node, _Scope(self.rel, None, w.cls),
                                                   self.reader) is not w.func:  # fmt: skip
                 continue
-            if w.cls is not None and self.cls is not w.cls:
+            if (
+                w.cls is not None
+                and self.cls is not w.cls
+                and not (
+                    self.cls is not None  # a subclass calling its base class's helper
+                    and any(py_flow._tail(b) == w.cls.name for b in self.cls.bases)
+                )
+            ):
                 continue
             bound = _bound(w.func, node, method=w.cls is not None)
             url = bound.get(w.url)
@@ -838,10 +872,15 @@ def read_flow(root: Path) -> tuple[list[Request], list[py_flow.Handoff]]:
 
 
 def _read(
-    reader: Reader, make: type[py_flow.Tracer] | None, handoffs: bool = False
+    reader: Reader,
+    make: type[py_flow.Tracer] | None,
+    handoffs: bool = False,
+    tracer: py_flow.Tracer | None = None,
 ) -> tuple[list[Request], list[py_flow.Handoff]]:
+    """`tracer`: one already set up (py_library: a library's, with its entry points)."""
     root = reader.root
-    tracer = make(reader) if make is not None else None
+    if tracer is None and make is not None:
+        tracer = make(reader)
     out: list[Request] = []
     n = 0
     for p in sorted(root.rglob("*.py")):

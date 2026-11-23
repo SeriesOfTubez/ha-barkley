@@ -20,6 +20,7 @@ from sniff_test.analyzers import (
     packed,
     py_env,
     py_group,
+    py_library,
     py_pages,
     py_precision,
     py_requests,
@@ -257,6 +258,10 @@ def scan(
         # (an address it couldn't read may be any host the code names: then every one counts)
         if target.kind is TargetKind.INTEGRATION:
             py_reqs, handoffs = py_requests.read_flow(target.root)
+            # (0.15) where a login goes inside the library the app hands it to: the wheel
+            # of the version resolved above, unpacked and read as text; context only
+            say("libraries it hands logins to")
+            py_library.read_inside(handoffs, resolution, ws, offline)
             reqs = py_reqs
             called: set[str] | None = {r.host for r in py_reqs if r.host}
         else:
