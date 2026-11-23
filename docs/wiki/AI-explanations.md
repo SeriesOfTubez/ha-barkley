@@ -18,6 +18,20 @@ changes a reading.
 The model must support structured output (an answer in fields Barkley names). A model
 without it fails with an error on the page.
 
+## Waiting for an answer
+
+How fast an answer comes depends on your model and how busy it is. The same request can
+take seconds one time and minutes the next. While your AI answers, the app's card on
+the list has a moving outline in the AI's colour, the box at the top of the list names
+the app, and the app's page shows how long it has waited, with a **Stop waiting** button.
+
+Settings → **AI time limit** decides how long Barkley waits: 6 minutes by default, or
+"Wait as long as it takes" for a slow model on your own machine. When the time runs out,
+the page says so; nothing changes a reading. Home Assistant may still finish an answer
+Barkley stopped waiting for, but Barkley won't use it. Barkley sends AI requests over
+Home Assistant's websocket, because a request through the Supervisor's API ends after
+5 minutes.
+
 ## Explain this app
 
 Each app's page gets an **Explain this app** button, in both modes. Nothing is sent until
@@ -34,11 +48,13 @@ app** makes one more request. It carries what the scan stored of the developer's
 words, with their line numbers: the start of the README, the README passages about
 logins, accounts, where data goes, privacy and what the app runs on the system, and the
 descriptions in the code (docstrings, and the comment block above a function). That's
-at most 6,000 characters, at most six descriptions from the code, and the README gets
-at most 60% of it when there are descriptions. Barkley's own list of what it found goes
+at most 6,000, 12,000 or 18,000 characters (Settings → AI answers; 12,000 by default),
+one description from the code per 1,000 characters, and the README gets at most 60% of
+it when there are descriptions. Barkley's own list of what it found goes
 along. It doesn't follow links to other repositories.
 
-The AI may write up to four sentences on what the developer says the app does. Each must
+The AI may write up to four sentences at 6,000 characters, and up to six at 12,000 or
+18,000, on what the developer says the app does. Each must
 end with the lines it rests on. Barkley shows a sentence only if:
 
 - the cited lines were sent, and have text on them;

@@ -829,6 +829,31 @@ class AiRun:
     repo: str
 
 
+def ai_why(ex: BaseException, timeout: float | None = None) -> str:
+    """(0.15) Why an AI request ended without an answer, as one plain sentence for the
+    page. A time-out and Stop waiting say what happened and what to do; anything else is
+    Home Assistant's own message (an AI Task error), cut short."""
+    if isinstance(ex, supervisor.AiTimeout):
+        mins = round(ex.seconds / 60) or 1
+        return (f"Your AI didn't answer within {mins} minute{'s' * (mins != 1)}. Nothing here "
+                "changes the readings. You can try again, pick a faster model, or allow more "
+                "time in Settings → AI answers.")  # fmt: skip
+    if isinstance(ex, supervisor.AiStopped):
+        return ("You stopped waiting. Home Assistant may still finish the answer, but Barkley "
+                "won't use it.")  # fmt: skip
+    return f"The AI didn't answer: {str(ex)[:300]}"
+
+
+def ai_reason(ex: BaseException) -> str:
+    """The same, as a few words that fit inside a sentence of the page's."""
+    if isinstance(ex, supervisor.AiTimeout):
+        mins = round(ex.seconds / 60) or 1
+        return f"no answer within {mins} minute{'s' * (mins != 1)}"
+    if isinstance(ex, supervisor.AiStopped):
+        return "you stopped waiting"
+    return str(ex)[:300]
+
+
 def ai_wait(seconds: float) -> str:
     """How long the AI has been at it, in plain words."""
     n = max(0, int(seconds))
@@ -1317,6 +1342,27 @@ def render_settings(
                       sel("ai_mode", ai_mode, [
                           ("summary", "Explain only"),
                           ("deep", "Explain and read code (default)")]))  # fmt: skip
+    marks = "".join(
+        f"<span>{n:,} characters · {settings_mod.AI_PAIRED_MINUTES[n]} min"
+        f"{' (default)' if n == defaults.ai_size else ''}</span>"
+        for n in settings_mod.CHOICES["ai_size"]
+    )
+    check_rows += row("AI answers", "How much of the developer's README and code "
+                      "descriptions one request may carry. More gives your AI more to go on, "
+                      "and it may write up to 6 sentences (4 at 6,000). A bigger request can "
+                      "take your AI longer. Picking a size fills in its minutes below.",
+                      f'<input type=range name=ai_size min=6000 max=18000 step=6000 '
+                      f'value="{s.ai_size}" aria-label="AI answers size">'
+                      f'<div class="stops">{marks}</div>')  # fmt: skip
+    check_rows += row("AI time limit", "How long Barkley waits for an answer. Off waits as "
+                      "long as your model takes, for a slow model on your own machine; the "
+                      "page has a Stop waiting button. Home Assistant may still finish an "
+                      "answer Barkley stopped waiting for, but Barkley won't use it.",
+                      sel("ai_limit", "1" if s.ai_limit else "0",
+                          [("1", "Stop waiting after (default)"),
+                           ("0", "Wait as long as it takes")])
+                      + f' <input type=number name=ai_minutes min=1 max=60 value="{s.ai_minutes}"'
+                      ' class="mins" aria-label="minutes"> minutes')  # fmt: skip
     check_rows += row("Parallel scans", "How many apps Barkley scans at the same time.",
                       sel("parallel", s.parallel,
                           [(n, f"{n}{' (default)' if n == defaults.parallel else ''}")
@@ -1710,14 +1756,19 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
               f"({e(AI_MODES.get(mode, mode))})</summary>{picker}</details>")  # fmt: skip
     if state == "running":
         waited = f" It has been {ai_wait(time.time() - since)}." if since else ""
+        stop = (f'<form method=post action="{base}/ai-stop" class="act">'
+                f'<input type=hidden name=token value="{token}">'
+                f'<input type=hidden name=scan value="{sid}">'
+                "<button>Stop waiting</button></form>")  # fmt: skip
         return (f'<div class="aibox mt2"><span class="thinking">{ui.icon("sparkle", 20)}</span>'
                 f"<div><b>Your AI is answering…</b><br><span class=small>This can take a few "
                 f"minutes, depending on your AI.{waited} You don't have to wait here: the "
                 "answer is saved, and this page refreshes by itself.</span></div>"
-                "</div>")  # fmt: skip
+                f"{stop}</div>")  # fmt: skip
     if error:
-        return (f'<div class="banner warn mt2">The AI didn\'t answer: '
-                f"{e(error, 400)}</div>" + form.replace("{label}", "Try again") + note
+        said = error if error.endswith(".") else f"The AI didn't answer: {error}"
+        return (f'<div class="banner warn mt2">{e(said, 400)}</div>'
+                + form.replace("{label}", "Try again") + note
                 + change)  # fmt: skip
     if have:
         used = list(have.get("readings") or [])
@@ -2421,7 +2472,11 @@ class Panel:
         self.ai_entity = ""
         self.entities_fn: EntitiesFn | None = None
         self._entities: tuple[float, list[tuple[str, str]], str] = (0.0, [], "")
-        self.ai_fn: AiFn = supervisor.ai_generate_data
+        # (0.15) the panel's own AI call: it reads the time limit and the Stop waiting flag
+        # set for the request in hand (_ask_ai); tests put a plain function here
+        self._ai_local = threading.local()
+        self._ai_cancel: dict[tuple[int, str], threading.Event] = {}
+        self.ai_fn: AiFn = self._ai_call
         self._ai: dict[int, tuple[str, str]] = {}  # scan id -> (running|failed, error)
         self._ai_items: dict[tuple[int, str], tuple[str, str]] = {}  # (scan, item) -> same
         self._ai_asked: dict[tuple[int, str], list[str]] = {}  # second round: what it asked for
@@ -2459,14 +2514,50 @@ class Panel:
             self._diffs[key] = diff_reports(self.store.report(old), self.store.report(new))
         return self._diffs[key]
 
+    def _ai_call(
+        self, entity: str, instructions: str, structure: dict[str, Any], task_name: str
+    ) -> Any:
+        """The real AI call, with this request's time limit and Stop waiting flag."""
+        return supervisor.ai_generate_data(
+            entity, instructions, structure, task_name,
+            timeout=getattr(self._ai_local, "timeout", supervisor._AI_TIMEOUT),
+            cancel=getattr(self._ai_local, "cancel", None),
+        )  # fmt: skip
+
+    def ai_timeout(self) -> float | None:
+        """Settings → AI answers: seconds to wait, None when the time limit is off."""
+        s = self.settings
+        return s.ai_minutes * 60.0 if s.ai_limit else None
+
+    def stop_ai(self, sid: int, item: str = "") -> bool:
+        """Stop waiting for one AI request (Home Assistant may still finish it; the
+        answer isn't used). False when nothing is running for it."""
+        with self._ai_lock:
+            ev = self._ai_cancel.get((sid, item))
+        if ev is None:
+            return False
+        ev.set()
+        return True
+
+    def _ai_begin(self, key: tuple[int, str]) -> None:  # with _ai_lock held
+        self._ai_started[key] = time.time()
+        self._ai_cancel[key] = threading.Event()
+
+    def _ai_end(self, key: tuple[int, str]) -> None:  # with _ai_lock held
+        self._ai_started.pop(key, None)
+        self._ai_cancel.pop(key, None)
+
     def _ask_ai(
         self, sid: int, step: str, entity: str, instructions: str, structure: dict[str, Any],
-        task_name: str,
+        task_name: str, key: tuple[int, str] | None = None,
     ) -> Any:  # fmt: skip
         """One AI Task call, with one log line: how long it took and how many characters
         were sent (instructions + the answer's structure), whether it answered or not."""
         sent = len(instructions) + len(json.dumps(structure))
         started = time.monotonic()
+        with self._ai_lock:
+            self._ai_local.cancel = self._ai_cancel.get(key or (sid, ""))
+        self._ai_local.timeout = self.ai_timeout()
         try:
             data = self.ai_fn(entity, instructions, structure, task_name)
         except Exception as ex:
@@ -2488,8 +2579,9 @@ class Panel:
             if self._ai.get(sid, ("", ""))[0] == "running":
                 return True
             self._ai[sid] = ("running", "")
-            self._ai_started[(sid, "")] = time.time()
+            self._ai_begin((sid, ""))
         report = self.store.report(sid)
+        size = self.settings.ai_size
 
         def run() -> None:
             try:
@@ -2504,15 +2596,15 @@ class Panel:
                 # (0.15) "AI inferred": in the read-code mode, one more request with the
                 # README passages and docstrings the scan stored. Its failure never costs
                 # the explanation above; the page says it didn't answer.
-                if self.ai_mode == "deep" and ai_words.wanted(report):
+                if self.ai_mode == "deep" and ai_words.wanted(report, size):
                     started = time.monotonic()
                     try:
-                        instructions, structure = ai_words.build_request(report)
+                        instructions, structure = ai_words.build_request(report, size)
                         said = self._ask_ai(
                             sid, "developer's words", self.ai_entity, instructions, structure,
                             ai_words.TASK_NAME,
                         )  # fmt: skip
-                        accepted["words"] = ai_words.accept(report, said)
+                        accepted["words"] = ai_words.accept(report, said, size)
                         w = accepted["words"]
                         print(f"explain @{sid} developer's words "
                               f"({time.monotonic() - started:.0f} s): {len(w['says'])} "
@@ -2521,18 +2613,19 @@ class Panel:
                               file=sys.stderr, flush=True)  # fmt: skip
                     except Exception as ex:
                         why = f"{type(ex).__name__}: {ex}"
-                        accepted["words"] = {"says": [], "dropped": [], "failed": str(ex)[:300]}
+                        accepted["words"] = {"says": [], "dropped": [],
+                                             "failed": ai_why(ex, self.ai_timeout())}  # fmt: skip
                         print(f"explain @{sid} developer's words failed: {why}",
                               file=sys.stderr, flush=True)  # fmt: skip
                 self.store.save_explanation(sid, self.ai_entity, accepted)
                 with self._ai_lock:
                     self._ai.pop(sid, None)
-                    self._ai_started.pop((sid, ""), None)
+                    self._ai_end((sid, ""))
             except Exception as ex:  # shown on the page; never affects the scan
                 print(f"explain @{sid} failed: {type(ex).__name__}: {ex}", file=sys.stderr)
                 with self._ai_lock:
-                    self._ai[sid] = ("failed", str(ex))
-                    self._ai_started.pop((sid, ""), None)
+                    self._ai[sid] = ("failed", ai_why(ex, self.ai_timeout()))
+                    self._ai_end((sid, ""))
 
         threading.Thread(target=run, name=f"explain-{sid}", daemon=True).start()
         return True
@@ -2550,7 +2643,7 @@ class Panel:
             if self._ai_items.get(key, ("", ""))[0] == "running":
                 return True
             self._ai_items[key] = ("running", "")
-            self._ai_started[key] = time.time()
+            self._ai_begin(key)
         entity = self.ai_entity
 
         def run() -> None:
@@ -2564,7 +2657,7 @@ class Panel:
                 entries = ai_context.menu(snip, source)
                 instructions, structure = ai_context.build_request(report, item_id, entries)
                 data = self._ask_ai(sid, f"{item_id} round 1", entity, instructions, structure,
-                                    ai_context.TASK_NAME)  # fmt: skip
+                                    ai_context.TASK_NAME, key)  # fmt: skip
                 accepted = ai_context.accept(report, item_id, data)
                 picked, refused = ai_context.needs(data, entries)
                 extra = (
@@ -2583,14 +2676,14 @@ class Panel:
                             report, item_id, snip=full
                         )
                         again = self._ask_ai(sid, f"{item_id} round 2", entity, instructions,
-                                             structure, ai_context.TASK_NAME)  # fmt: skip
+                                             structure, ai_context.TASK_NAME, key)  # fmt: skip
                         # Both readings count: the first one's checked statements stay
                         # (they cite code that was sent both times).
                         accepted = ai_context.combine(
                             accepted, ai_context.accept(report, item_id, again, snip=full)
                         )
                     except Exception as ex:  # the first answer stands; the page says why
-                        accepted["second_failed"] = str(ex)[:300]
+                        accepted["second_failed"] = ai_reason(ex)
                     accepted["asked"] = asked
                     accepted["more"] = extra
                 if refused:
@@ -2608,15 +2701,15 @@ class Panel:
                 with self._ai_lock:
                     self._ai_items.pop(key, None)
                     self._ai_asked.pop(key, None)
-                    self._ai_started.pop(key, None)
+                    self._ai_end(key)
             except Exception as ex:  # shown on the page; never affects the scan
                 print(f"explain @{sid} {item_id} failed after {time.monotonic() - started:.0f} s: "
                       f"{type(ex).__name__}: {ex}",
                       file=sys.stderr, flush=True)  # fmt: skip
                 with self._ai_lock:
-                    self._ai_items[key] = ("failed", str(ex))
+                    self._ai_items[key] = ("failed", ai_why(ex, self.ai_timeout()))
                     self._ai_asked.pop(key, None)
-                    self._ai_started.pop(key, None)
+                    self._ai_end(key)
 
         threading.Thread(target=run, name=f"explain-{sid}-{item_id}", daemon=True).start()
         return True
@@ -2847,6 +2940,9 @@ class Panel:
         keeps what was there. The AI entity and notify target must be ones HA offers."""
         old = self.settings
         new = settings_mod.from_dict(raw, old)
+        # (0.15) a new size brings its paired minutes, unless the minutes were edited too
+        if new.ai_size != old.ai_size and new.ai_minutes == old.ai_minutes:
+            new = replace(new, ai_minutes=settings_mod.AI_PAIRED_MINUTES[new.ai_size])
         settings_mod.save(self.store, new)
         self.worker.exposure = new.exposure
         self.worker.parallel = new.parallel
@@ -3378,6 +3474,16 @@ class Panel:
                     except StoreError as ex:
                         return self._text(HTTPStatus.NOT_FOUND, str(ex))
                     return self._redirect(f"{self._base()}/scan/{sid}?open={item}#ai-{item}")
+                if path == "/ai-stop":  # (0.15) Stop waiting for an AI answer
+                    item = get("item")
+                    if not get("scan").isdigit() or (
+                        item and not re.fullmatch(r"[0-9a-f]{16}", item)
+                    ):
+                        return self._text(HTTPStatus.BAD_REQUEST, BAD_REQUEST)
+                    sid = int(get("scan"))
+                    panel.stop_ai(sid, item)
+                    to = f"/scan/{sid}?open={item}#ai-{item}" if item else f"/scan/{sid}"
+                    return self._redirect(f"{self._base()}{to}")
                 if path == "/explain":
                     if not get("scan").isdigit() or not panel.ai_entity:
                         return self._text(

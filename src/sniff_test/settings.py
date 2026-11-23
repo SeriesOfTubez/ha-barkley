@@ -65,6 +65,14 @@ class Settings:
     # (it runs on the developer's machine while building and could change what ships):
     # 2.5 is "possible", like any high sign
     build_tool_points: str = "2.5"
+    # (0.15, his design 2026-11-23) AI answers: how much of the developer's text one request
+    # may carry (ai_words.SIZES; docstrings and sentences follow), and how long Barkley
+    # waits for an answer: ai_minutes when ai_limit is on, as long as the model takes when
+    # it's off. Picking a size fills in its paired minutes (3, 6, 9); the minutes stay the
+    # user's to edit.
+    ai_size: int = 12000
+    ai_limit: bool = True
+    ai_minutes: int = 6
 
     @property
     def where(self) -> str:
@@ -100,8 +108,13 @@ PARTS = {
         "libraries",
         "cache_mb",
         "token_days",
+        "ai_size",
+        "ai_limit",
+        "ai_minutes",
     ),
 }
+# the minutes that go with each size (his design: 6,000 / 3 min, 12,000 / 6, 18,000 / 9)
+AI_PAIRED_MINUTES = {6000: 3, 12000: 6, 18000: 9}
 
 
 def describe(s: Settings) -> str:
@@ -123,6 +136,8 @@ CHOICES: dict[str, tuple[Any, ...]] = {
     "notify_when": ("all", "medium", "high", "threat"),
     "exposure_bar": ("medium", "high", "always"),
     "build_tool_points": ("2", "2.5", "3"),
+    "ai_size": (6000, 12000, 18000),
+    "ai_minutes": tuple(range(1, 61)),
 }
 
 

@@ -135,9 +135,23 @@ update the list offers one button to sniff your apps again.
   README passages and code descriptions the scan stored: the README's opening lines
   first, then the descriptions (docstrings, and the comment block above a function).
   The README gets at most 60% of the space when the code has descriptions. The AI may
-  sum up what the developer says the app does, in at most four sentences tagged "AI
-  inferred". Barkley shows a sentence only if the lines it cites were sent and hold its
-  words, and it gives no verdict. That request isn't sent when a threat was found.
+  sum up what the developer says the app does, in sentences tagged "AI inferred".
+  Barkley shows a sentence only if the lines it cites were sent and hold its words, and
+  it gives no verdict. That request isn't sent when a threat was found.
+- Settings → AI answers: how much of the developer's text one request may carry: 6,000,
+  12,000 (default) or 18,000 characters, with one code description per 1,000 characters.
+  The AI may write up to 4 sentences at 6,000 and up to 6 above that. Picking a size
+  fills in its time limit (3, 6 or 9 minutes), which you can change.
+- Settings → AI time limit: Barkley stops waiting after that many minutes, or, switched
+  off, waits as long as your model takes. While it waits, the page has a Stop waiting
+  button. A time-out says how long it waited and what you can do; it never changes a
+  reading. Home Assistant may still finish an answer Barkley stopped waiting for, but
+  Barkley won't use it.
+- Barkley now sends AI requests over Home Assistant's websocket. A request sent through
+  the Supervisor's API ends after 5 minutes, and a slow model can take longer.
+- While your AI answers, the app's card on the list gets a moving outline in the AI's
+  colour, the box at the top of the list names the app and how long it has waited, and
+  the app's page shows a box with the time so far.
 
 **Update comparison**
 

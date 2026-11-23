@@ -177,7 +177,8 @@ It has two sections, each with Reset to defaults:
 - **Readings:** Where Home Assistant runs (Only my home network, A shared or work
   network, Reachable from the internet), Minor items (Hide or Show), Exposure bar,
   Build tool known to be malware (2, 2.5 or 3) and Quiet projects.
-- **Checking and notifications:** Auto-sniff, Notify, Notify when, AI, AI mode,
+- **Checking and notifications:** Auto-sniff, Notify, Notify when, AI, AI mode, AI
+  answers, AI time limit,
   Parallel scans, Semgrep jobs, Published libraries, Cache of code already read, Memory
   for scans, Low memory and the GitHub token.
 
@@ -216,8 +217,9 @@ contain text aimed at the AI; it is marked as untrusted in the request.
 In the Explain and read code mode, the same click makes one more request, with the
 start of the README, the README passages on logins, accounts, where data goes, privacy
 and what the app runs, and the descriptions in the code (docstrings and the comment
-block above a function) that the scan stored: at most 6,000 characters. The AI may
-write up to four sentences on what the developer says the app does, each ending
+block above a function) that the scan stored: at most 6,000, 12,000 (the default) or
+18,000 characters (Settings → AI answers). The AI may write up to four sentences at
+6,000 and up to six above, on what the developer says the app does, each ending
 with the lines it rests on. Barkley shows a sentence only if those lines were sent and
 have text on them, every code name it mentions is on them, at least three of its longer
 words are on them, and it gives no verdict. Shown sentences are tagged **AI inferred**,
@@ -299,12 +301,14 @@ dependencies resolve against the release you run) and whether an external URL is
 (yes or no; the address isn't kept), asks the Marketplace for its installed list
 (`marketplace/repositories/list`, or HACS's `hacs/repositories/list` on older HA), and,
 only when you click
-"Explain this app" or "Explain in context", calls `ai_task.generate_data`. To
+"Explain this app" or "Explain in context", calls `ai_task.generate_data` over the
+websocket (`call_service`, with the answer returned; a request through the Supervisor's
+API would end after 5 minutes). To
 fill the AI dropdown it asks Home Assistant to render one fixed template that returns
 only the ids and names of AI Task entities. For auto-sniff it subscribes to two of the
 Marketplace's websocket signals (`marketplace/subscribe`: an install that ended, an
-uninstall); that and the installed list are the only websocket commands the app
-sends. It calls
+uninstall); that, the installed list and the AI call are the only websocket commands
+the app sends. It calls
 `persistent_notification.create` and, only when you picked one, `notify.<target>`; to
 offer the targets it reads the list of services once and keeps only the `notify` names.
 It reads its own app info from the Supervisor (allowed for every app) to build the

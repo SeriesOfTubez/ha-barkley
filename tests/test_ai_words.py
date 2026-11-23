@@ -241,3 +241,32 @@ def test_one_file_is_named_once_in_the_note():
     assert ui._lines([["README.md", 16, 16], ["README.md", 18, 18]]) == "README.md lines 16 and 18"
     assert (ui._lines([["README.md", 16, 16], ["README.md", 18, 20], ["api.py", 40, 40]])
             == "README.md lines 16 and 18–20, api.py line 40")  # fmt: skip  # noqa: RUF001
+
+
+def _many_docs(n):
+    def doc(i):
+        line = f'    """Step {i}: pairing renews the hub certificate weekly."""'
+        return {"file": f"m{i}.py", "start": 2, "code": [line]}
+
+    items = {f"f{i}": {"kind": "finding", "file": f"m{i}.py", "line": 5, "doc": doc(i)}
+             for i in range(n)}  # fmt: skip
+    rep = _report()
+    rep["context"]["items"] = items
+    return rep
+
+
+def test_the_size_setting_scales_the_text_the_descriptions_and_the_sentences():
+    """(0.15, his decision 2026-11-23) 6,000 / 12,000 / 18,000 characters; one description
+    per 1,000 characters; 4 sentences at 6,000, 6 above. The answer is checked against the
+    same text that was sent."""
+    rep = _many_docs(20)
+    docs = {n: sum(s["kind"] == "doc" for s in ai_words.sent(rep, n)["segments"])
+            for n in ai_words.SIZES}  # fmt: skip
+    assert docs == {6000: 6, 12000: 12, 18000: 18}
+    assert ai_words.sent(rep, 999)["segments"] == ai_words.sent(rep)["segments"]  # not a size
+    for size, says in ((6000, 4), (12000, 6), (18000, 6)):
+        _, structure = ai_words.build_request(rep, size)
+        assert sum(k.startswith("says_") for k in structure) == says
+    cite = "Pairing renews the hub certificate weekly (m15.py:2)."
+    assert ai_words.accept(rep, {"says_1": cite}, 18000)["says"]  # sent at 18,000
+    assert not ai_words.accept(rep, {"says_1": cite}, 6000)["says"]  # not sent at 6,000

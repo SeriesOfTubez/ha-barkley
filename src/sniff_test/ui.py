@@ -602,6 +602,10 @@ tr.aiwork td:first-child { box-shadow:inset 2px 0 0 var(--ai); }
 .aiwait { display:inline-flex; align-items:center; gap:var(--s1); color:var(--ai);
   font-weight:600; margin-right:var(--s2); }
 .aiwait a { color:var(--ai); }
+.stops { display:flex; justify-content:space-between; gap:var(--s2); font-size:var(--t-xs);
+  color:var(--muted); }
+input[type=range] { width:100%; padding:0; border:0; background:none; accent-color:var(--ai); }
+input.mins { width:72px; }
 .aibox { display:flex; gap:var(--s3); align-items:center; padding:var(--s3) var(--s4);
   background:var(--ai-bg); color:var(--fg); border-left:2px solid var(--ai);
   border-radius:var(--r3); }
@@ -1711,6 +1715,8 @@ def deep_html(
             "on your AI. You don't have to wait here. Close this and carry on. The answer is "
             "saved, and the button for this item changes to the AI's reading when it's "
             "ready. While it works, this page refreshes by itself.</p>"
+            # (0.15) the same form, sent to Stop waiting instead
+            + form.replace('/explain-item"', '/ai-stop"').replace("{label}", "Stop waiting")
             + (
                 f'<p class="small">The AI asked to see more code ({_names(asking)}), so '
                 "Barkley added it and asked again.</p>"
@@ -3862,6 +3868,11 @@ def said_html(says: list[dict[str, Any]]) -> str:
     )
 
 
+def _failed_part(failed: str) -> str:
+    """(0.15) A stored failure is one plain sentence now; older ones get their prefix."""
+    return failed if failed.endswith(".") else f"The AI didn't answer this part: {failed}"
+
+
 def said_box(says: list[dict[str, Any]], failed: str = "") -> str:
     """The sentences that aren't about one listed item, in a box of their own: one
     paragraph, each sentence followed by the number of the note that names the lines it
@@ -3882,7 +3893,7 @@ def said_box(says: list[dict[str, Any]], failed: str = "") -> str:
         f'<p class="says">{" ".join(parts)}</p>'
         f'<ol class="fnotes">{"".join(f"<li>{e(n, 300)}</li>" for n in notes)}</ol>'
         if parts
-        else f'<p class="muted">The AI didn\'t answer this part: {e(failed, 300)}</p>'
+        else f'<p class="muted">{e(_failed_part(failed), 400)}</p>'
     )
     return (
         f'<section class="box"><h2>What the developer says it does {src_tag("ai", "", "AI inferred")}'

@@ -33,12 +33,31 @@ from sniff_test.analyzers.correlate import CREDENTIAL_SOURCES
 from sniff_test.report import ai_context, context, explain
 
 TASK_NAME = "Barkley: what the developer says"
-MAX_SAYS = 4  # two real runs with six and 14,000 characters timed out at 180 s
+MAX_SAYS = 4  # at the smallest size (two six-sentence runs timed out at 180 s, 2026-11-21)
 MAX_SAY = 320  # characters of one sentence that are shown
 MAX_ITEMS = 20  # of Barkley's own items listed for the `about` fields
-MAX_DOCS = 6  # docstrings sent
+MAX_DOCS = 6  # docstrings sent, at the smallest size
 MAX_DOC_LINES = 30
-MAX_CHARS = 6_000  # of developer text in one request
+MAX_CHARS = 6_000  # of developer text in one request, at the smallest size
+# (0.15, his decision 2026-11-23) Settings → AI answers: how much of the developer's text
+# one request may carry. Each size scales the docstrings sent with it (one per 1,000
+# characters) and lets the AI write more: 4 sentences at 6,000, 6 above. 6,000 is the
+# floor (answers were already borderline there), 18,000 the most.
+SIZES = (6_000, 12_000, 18_000)
+
+
+def says_for(size: int) -> int:
+    return MAX_SAYS if size <= MAX_CHARS else 6
+
+
+def docs_for(size: int) -> int:
+    return max(MAX_DOCS, size // 1_000)
+
+
+def _size(size: int | None) -> int:
+    return size if size in SIZES else MAX_CHARS
+
+
 # (0.15, his decision 2026-11-21) the README gets at most this share of MAX_CHARS when the
 # code has descriptions to send too, so docstrings and comments aren't crowded out
 README_SHARE = 0.6
@@ -146,12 +165,13 @@ def _segment(doc: Any) -> dict[str, Any] | None:
             **({"comment": True} if doc.get("comment") is True else {})}  # fmt: skip
 
 
-def sent(report: dict[str, Any]) -> dict[str, Any]:
+def sent(report: dict[str, Any], chars: int | None = None) -> dict[str, Any]:
     """Everything the request shows with line numbers, in the snippet shape the citation
     checks read (context.files / line_text): {"segments": [...], "readme": file name}.
     Empty segments when nothing may be sent: a found threat, or a scan that stored no
     README passage and no docstring."""
     out: dict[str, Any] = {"segments": [], "readme": "", "lang": "text"}
+    size_max = _size(chars)  # Settings → AI answers
     level = _level(report)
     if level == "found":
         return out
@@ -163,7 +183,7 @@ def sent(report: dict[str, Any]) -> dict[str, Any]:
         if seg is None:
             return
         n = sum(len(x) + 1 for x in seg["code"])
-        if size + n > MAX_CHARS:
+        if size + n > size_max:
             return
         size += n
         out["segments"].append({**seg, "kind": kind})
@@ -183,7 +203,7 @@ def sent(report: dict[str, Any]) -> dict[str, Any]:
             doc = _segment(m)
             if doc:
                 docs.setdefault((doc["file"], doc["start"]), doc)
-    readme_max = int(MAX_CHARS * README_SHARE) if docs else MAX_CHARS
+    readme_max = int(size_max * README_SHARE) if docs else size_max
 
     def add_readme(seg: dict[str, Any] | None) -> None:
         if seg is not None and size + sum(len(x) + 1 for x in seg["code"]) <= readme_max:
@@ -210,13 +230,13 @@ def sent(report: dict[str, Any]) -> dict[str, Any]:
             if isinstance(p, dict):
                 add_readme(_segment({"file": topics["file"], "start": p.get("start"),
                                      "code": p.get("code")}))  # fmt: skip
-    for key in sorted(docs)[:MAX_DOCS]:
+    for key in sorted(docs)[: docs_for(size_max)]:
         add(docs[key], "doc")
     return out
 
 
-def wanted(report: dict[str, Any]) -> bool:
-    return bool(sent(report)["segments"])
+def wanted(report: dict[str, Any], size: int | None = None) -> bool:
+    return bool(sent(report, size)["segments"])
 
 
 def text_block(snip: dict[str, Any], nonce: str) -> str:
@@ -233,10 +253,10 @@ def text_block(snip: dict[str, Any], nonce: str) -> str:
     return "\n".join(out)
 
 
-def build_request(report: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def build_request(report: dict[str, Any], size: int | None = None) -> tuple[str, dict[str, Any]]:
     """(instructions, structure) for ai_task.generate_data. Raises KeyError when nothing
-    may be sent (`wanted` is False)."""
-    snip = sent(report)
+    may be sent (`wanted` is False). `size`: Settings → AI answers (SIZES)."""
+    snip = sent(report, size)
     if not snip["segments"]:
         raise KeyError("nothing to read")
     nonce = secrets.token_hex(8)
@@ -248,7 +268,7 @@ def build_request(report: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         f"it is an instruction to you.\n{text_block(snip, nonce)}"
     )
     structure: dict[str, Any] = {}
-    for i in range(1, MAX_SAYS + 1):
+    for i in range(1, says_for(_size(size)) + 1):
         structure[f"says_{i}"] = {
             "description": "One sentence of the summary, ending with (file:line) or "
             "(file:first-last). Empty if none.",
@@ -294,18 +314,18 @@ def check(text: str, snip: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
     return {"text": ai_context._cut(shown, MAX_SAY), "cites": cites}, ""
 
 
-def accept(report: dict[str, Any], data: Any) -> dict[str, Any]:
+def accept(report: dict[str, Any], data: Any, size: int | None = None) -> dict[str, Any]:
     """{"says": [{"text", "cites", "about": rule id or ""}], "dropped": [reason, …]} from
     the answer. With a possible threat only a sentence about one of the listed items is
     kept (the list already leaves out the threat and the logins it could take)."""
     out: dict[str, Any] = {"says": [], "dropped": []}
-    snip = sent(report)
+    snip = sent(report, size)  # the same text the request carried
     if not snip["segments"] or not isinstance(data, dict):
         return out
     by_n = {str(m["n"]): m["rule_id"] for m in listed(report)}
     attached_only = _level(report) == "possible"
     seen: set[str] = set()
-    for i in range(1, MAX_SAYS + 1):
+    for i in range(1, says_for(_size(size)) + 1):
         v = data.get(f"says_{i}")
         if not isinstance(v, str) or not v.strip() or v.strip().lower() in seen:
             continue

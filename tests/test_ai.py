@@ -241,3 +241,46 @@ def test_a_running_explanation_shows_a_box_in_the_ai_colour_with_the_wait(tmp_pa
     _wait(httpd, sid)
     assert httpd.panel.ai_running() == []
     httpd.shutdown()
+
+
+def test_ai_answers_settings_pair_minutes_with_the_size_and_reach_the_call(tmp_path,
+                                                                          monkeypatch):  # fmt: skip
+    """(0.15, his design 2026-11-23) A new size fills in its minutes unless they were edited;
+    the limit (or none) and the Stop waiting flag reach the websocket call."""
+    store, base, httpd = _serve(tmp_path, None)
+    panel = httpd.panel
+    assert (panel.settings.ai_size, panel.settings.ai_minutes, panel.ai_timeout()) == (
+        12000, 6, 360.0)  # fmt: skip
+    panel.save_settings({"ai_size": "18000", "ai_minutes": "6"})
+    assert (panel.settings.ai_size, panel.settings.ai_minutes) == (18000, 9)
+    panel.save_settings({"ai_size": "6000", "ai_minutes": "20"})  # edited: kept
+    assert (panel.settings.ai_size, panel.settings.ai_minutes) == (6000, 20)
+    panel.save_settings({"ai_limit": "0"})
+    assert panel.ai_timeout() is None
+    seen = {}
+
+    def fake(entity, instructions, structure, task, timeout=None, cancel=None, **_kw):
+        seen.update(timeout=timeout, cancel=cancel)
+        panel.stop_ai(sid)  # the user clicks Stop waiting while it runs
+        assert cancel is not None and cancel.is_set()
+        raise supervisor.AiStopped()
+
+    monkeypatch.setattr(supervisor, "ai_generate_data", fake)
+    sid = store.save(_report())
+    panel.explain(sid)
+    _wait(httpd, sid)
+    assert seen["timeout"] is None
+    state, err = panel.ai_state(sid)
+    assert state == "failed" and err.startswith("You stopped waiting.")
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert "You stopped waiting." in page and "The AI didn't answer: You" not in page
+    assert panel.ai_running() == []
+    httpd.shutdown()
+
+
+def test_a_time_out_says_how_long_it_waited_and_the_ways_out():
+    txt = server.ai_why(supervisor.AiTimeout(360))
+    assert txt.startswith("Your AI didn't answer within 6 minutes.")
+    assert "Settings → AI answers" in txt and "changes the readings" in txt
+    assert server.ai_why(RuntimeError("boom")) == "The AI didn't answer: boom"
+    assert server.ai_reason(supervisor.AiTimeout(60)) == "no answer within 1 minute"

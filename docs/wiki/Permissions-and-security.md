@@ -13,7 +13,8 @@ A security tool that reads hostile code should be held to its own standard.
   signals for auto-sniff; creating the bell notification and, if you picked
   one, calling your notify service; listing your AI Task entities and notify services
   for the two dropdowns; and calling `ai_task.generate_data` only when you click an AI
-  button.
+  button (over Home Assistant's websocket, because a request through the Supervisor's
+  API ends after 5 minutes and a slow model can take longer).
 - **Its own AppArmor profile, enforcing** (Home Assistant security rating 8). Every
   process in the container can run only programs the image ships, write only under
   `/data`, `/tmp`, and the folders under `/run` and `/etc` that the container's service
