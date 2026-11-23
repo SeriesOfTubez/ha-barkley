@@ -8,7 +8,8 @@ Auto-sniff is on by default. Barkley watches the Marketplace and reacts to three
   had.
 - **An offered update:** as soon as the Marketplace offers a new version of something
   you have, Barkley sniffs it and tells you what it would change, before you click
-  Update.
+  Update. This includes an older version you install on purpose while a newer one
+  is offered: both versions are sniffed.
 
 Barkley also reads the installed list every 10 minutes and once at start, so nothing is
 missed while it was stopped.

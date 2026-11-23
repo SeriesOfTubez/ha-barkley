@@ -76,12 +76,13 @@ def test_an_install_is_sniffed_at_its_version_and_notified(ctx):
     w.check()
     fakes.items.append(Installed("acme/b", "card", "B", "v2", "v9", False))  # v9 is newer
     changes = w.check()
-    assert changes == [watch.Change("install", "acme/b", "card", "v2")]
+    assert changes[0] == watch.Change("install", "acme/b", "card", "v2")
+    assert changes[1].action == "available"  # (0.15) v9 waiting is sniffed too
     worker.wait()
-    job = worker.jobs[0]
+    job = next(j for j in worker.jobs if j.prev is None)
     assert (job.kind, job.ref, job.prev, job.state) == ("auto", "v2", None, "done")
     assert store.get(job.scan_ids[0]).ref == "v2"  # the version that landed, not v9
-    ((title, message, nid),) = fakes.bell
+    (title, message, nid), _offer = fakes.bell
     assert title == "Barkley: acme/b v2" and nid == "barkley_acme_b"
     assert "Card acme/b v2 was installed. Barkley sniffed it." in message
     assert "🟢 Threat: none · 🟢 Exposure: low (0)" in message  # (0.15) no score
@@ -89,8 +90,8 @@ def test_an_install_is_sniffed_at_its_version_and_notified(ctx):
     assert "[Open Barkley](/app/local_sniff_test) to see scan @1." in message
     assert HOSTILE not in message and "x.invalid" not in message
     assert fakes.pushed == []  # no target chosen
-    entry = w.log()[0]
-    assert entry["action"] == "install" and entry["scan_ids"] == [1]
+    entry = next(x for x in w.log() if x["action"] == "install")
+    assert entry["scan_ids"] == [1]
     assert entry["readings"]["threat_level"] == "none" and "score" not in entry
 
 
@@ -437,6 +438,30 @@ def test_an_offered_update_is_sniffed_before_it_is_installed(ctx, capsys):
     assert w2.resume() == [] or True  # queued by check() already (a new offer), or resumed
     worker.wait()
     assert any(r.ref == "v3" for r in store.history("acme/a"))
+
+
+def test_an_older_version_installed_with_an_update_waiting_sniffs_both(ctx):
+    """Seen on his box 2026-11-23: an older version installed on purpose, the newer one
+    already offered. Only the install was sniffed, and the snapshot kept the offer, so no
+    later check saw it as new. Both are sniffed now, the installed version once, and the
+    offer's notification doesn't replace the install's."""
+    store, worker, fakes, w = ctx
+    w.check()
+    fakes.items.append(Installed("acme/new", "integration", "New", "v1", "v2", False))
+    assert w.check() == [
+        watch.Change("install", "acme/new", "integration", "v1"),
+        watch.Change("available", "acme/new", "integration", "v2", "v1", after_install=True),
+    ]
+    worker.wait()
+    assert sorted(r.ref for r in store.history("acme/new")) == ["v1", "v2"]  # v1 once
+    nids = {nid: title for title, _md, nid in fakes.bell}
+    assert nids["barkley_acme_new"] == "Barkley: acme/new v1"
+    assert nids["barkley_acme_new_update"] == "Barkley: acme/new v2 (update waiting)"
+    assert w.check() == []  # still offered: not queued again
+    # a pending one survives a restart with its flag
+    w._save_pending([watch.Change("available", "acme/new", "integration", "v2", "v1",
+                                  after_install=True)])  # fmt: skip
+    assert w.pending()[0].after_install is True
 
 
 def test_a_failed_job_says_a_fixed_sentence_never_the_projects_text():

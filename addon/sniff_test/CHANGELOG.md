@@ -298,6 +298,9 @@ change below is a general check applied to every app, not an exception for one:
   couldn't parse it, so Barkley rewrites the block in its own copy, with the same
   meaning, before scanning.
 - A card's item title read "It can it dashboard card uses …" in 0.14.0. Fixed.
+- An app installed at an older version, with a newer one already offered, had only the
+  installed version sniffed: the offered update never was. Both are sniffed now, and
+  the update's notification no longer replaces the install's.
 - Plainer words across the panel and the notifications.
 
 ## 0.14.0

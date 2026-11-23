@@ -92,6 +92,9 @@ class Change:
     kind: str
     version: str  # what landed; for "available", the offered version
     previous: str | None = None  # the version before; for "available", the installed one
+    # (0.15) an update already offered when the app was installed: its notification gets
+    # its own id, so it doesn't replace the install's (the installed version is what runs)
+    after_install: bool = False
 
 
 def _now_iso(now: float) -> str:
@@ -115,13 +118,19 @@ def snapshot_changes(old: dict[str, Any] | None, new: dict[str, Any]) -> list[Ch
     out = []
     for key, cur in new.items():
         prev = old.get(key)
+        offered = cur.get("available") or ""
         if not isinstance(prev, dict):
             out.append(Change("install", cur["repo"], cur["kind"], cur["version"]))
+            # (0.15, seen on his box 2026-11-23) an older version installed on purpose
+            # with an update already waiting: the offer is sniffed too. Before, the
+            # snapshot kept the offer, so no later check saw it as new.
+            if offered and offered != cur["version"]:
+                out.append(Change("available", cur["repo"], cur["kind"], offered,
+                                  cur["version"], after_install=True))  # fmt: skip
             continue
         if prev.get("version") != cur["version"]:
             out.append(Change("update", cur["repo"], cur["kind"], cur["version"],
                               str(prev.get("version") or "")))  # fmt: skip
-        offered = cur.get("available") or ""
         if offered and offered != cur["version"] and offered != (prev.get("available") or ""):
             out.append(Change("available", cur["repo"], cur["kind"], offered, cur["version"]))
     return out
@@ -768,7 +777,8 @@ class Watcher:
             if isinstance(x, dict) and all(isinstance(x.get(k), str) for k in ("repo", "version")):
                 out.append(Change(str(x.get("action") or "install"), x["repo"],
                                   str(x.get("kind") or ""), x["version"],
-                                  str(x["previous"]) if x.get("previous") else None))  # fmt: skip
+                                  str(x["previous"]) if x.get("previous") else None,
+                                  after_install=x.get("after_install") is True))  # fmt: skip
         return out
 
     def _save_pending(self, items: list[Change]) -> None:
@@ -886,7 +896,8 @@ class Watcher:
                 f"Barkley couldn't sniff {did} of {c.repo} ({job.state}: "
                 f"{str(job.message)[:200]}). Open Barkley from the sidebar to try again."
             )
-        err = self._notify(title, md, plain, f"barkley_{c.repo.lower()}")
+        nid = f"barkley_{c.repo.lower()}" + ("_update" if c.after_install else "")
+        err = self._notify(title, md, plain, nid)
         # One line per outcome in the app's log (a finished job printed nothing before, so
         # the log on the user's box couldn't say whether a sniff ended before a rebuild).
         ver = f"{c.previous} → {c.version}" if c.previous else c.version
