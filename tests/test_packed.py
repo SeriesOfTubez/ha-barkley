@@ -162,3 +162,19 @@ def test_a_regular_expression_is_not_running_code(tmp_path):
     assert packed.explained(_ob("a.py", 3), tmp_path, packed.unpack(tmp_path))
     (tmp_path / "b.py").write_text(code + "builtins.exec(EMPTY)\n")
     assert not packed.explained(_ob("b.py", 3), tmp_path, packed.unpack(tmp_path))
+
+
+def test_packed_lua_is_named_lua_not_javascript(tmp_path):
+    """Seen on his box 2026-11-23: a real integration packs two Lua libraries as base64.
+    Named .js they showed as "JavaScript file could not be parsed"."""
+    lua = "--\n-- json.lua\n--\nlocal json = { _version = '0.1' }\n" + "".join(
+        f"local v{i} = {i * 7919 % 104729}\n" for i in range(60)
+    )
+    body = base64.b64encode(lua.encode()).decode()
+    (tmp_path / "const.py").write_text(f'JSON_LUA = "{body}"\n')
+    u = packed.unpack(tmp_path)
+    assert [Path(f).suffix for f in u.files] == [".lua"]
+    (note,) = packed.notes(u, "x")
+    assert "unpacks to 1 piece of Lua code" in note.message
+    assert "no checks for Lua code" in note.message
+    assert packed._name_for("function a() {}", "") == "payload.js"

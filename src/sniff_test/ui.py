@@ -1398,18 +1398,22 @@ def finding_html(
     if points and not context:
         tech.append(f"−{points} points" + (" (repeats count less)" if len(fs) > 1 else ""))
     tech.append(e(f["title"], 200))
-    evid = [x for x in fs if x.get("evidence")][:3]
+    # (0.15) a finding with a message but no code to quote (packed files) shows the message too
+    evid = [x for x in fs if x.get("evidence")][:3] or [
+        x for x in fs if x.get("message") and x.get("analyzer") != "semgrep"
+    ][:1]
     code = ""
     if evid:
         code = (
             "<details><summary>Technical details</summary>"
             + "".join(
                 f'<p class="tech">{e(x.get("message"), 600)}</p>'
-                f'<code class="ev">{e(x.get("evidence"), 300)}</code>'
+                + (f'<code class="ev">{e(x.get("evidence"), 300)}</code>'
+                   if x.get("evidence") else "")
                 for x in evid
             )
             + "</details>"
-        )
+        )  # fmt: skip
     ai_html = f"<dt>{AI_BADGE}explanation</dt><dd>{e(ai, 1200)}</dd>" if ai else ""
     deps = [x["dependency"] for x in fs if isinstance(x.get("dependency"), dict)][:6]
     dep_html = (
@@ -2274,7 +2278,10 @@ def _requests_spans(shapes: Any, elsewhere: bool = False) -> str:
                 "may still reach it." if elsewhere else
                 " The code may only mention it, for example as a link.")  # fmt: skip
         return f'<span class="u">Barkley saw no request in the code that names this address.{more}</span>'
-    out = "".join(request_block(x) for x in shapes[:REQUESTS_SHOWN])
+    picked = next((_picked_line(x) for x in shapes if x.get("picked")), "")
+    out = (f'<span class="u">{picked}</span>' if picked else "") + "".join(
+        request_block(x) for x in shapes[:REQUESTS_SHOWN]
+    )
     if len(shapes) > REQUESTS_SHOWN:
         rest = "".join(request_block(x) for x in shapes[REQUESTS_SHOWN:])
         out += (f'<details class="more"><summary>{len(shapes) - REQUESTS_SHOWN} more kinds of '
@@ -2294,6 +2301,50 @@ def site_requests(report: dict[str, Any]) -> dict[str, Any]:
     r = report.get("requests")
     sites = r.get("sites") if isinstance(r, dict) else None
     return sites if isinstance(sites, dict) else {}
+
+
+_PICKED_HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9.\-]{0,252}")
+PICKED_MAX = 10
+
+
+def picked_sites(report: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """(0.15, seen on his box 2026-11-23) Requests whose address the code picks while it
+    runs from sites written in its code (py_flow's "list" and "site" origins): site -> those
+    requests, each marked with the sites it picks from (`picked`). A real cloud integration
+    sent all but one of its requests this way, and its cloud sites showed nowhere as sites
+    it connects to."""
+    r = report.get("requests")
+    out: dict[str, list[dict[str, Any]]] = {}
+    for x in (r.get("elsewhere") if isinstance(r, dict) else None) or []:
+        if not isinstance(x, dict):
+            continue
+        hosts: list[str] = []
+        for o in x.get("from") or []:
+            if isinstance(o, dict) and o.get("kind") in ("list", "site"):
+                hosts += [h for h in str(o.get("detail") or "").split(",")
+                          if _PICKED_HOST.fullmatch(h) and h not in hosts]  # fmt: skip
+        for h in hosts[:PICKED_MAX]:
+            if h in out or len(out) < PICKED_MAX:
+                out.setdefault(h, []).append({**x, "picked": hosts[:PICKED_MAX]})
+    return out
+
+
+def all_site_requests(report: dict[str, Any]) -> dict[str, list[Any]]:
+    """The requests that name a site, and those that pick it from a list in the code."""
+    out = {h: list(v) for h, v in site_requests(report).items() if isinstance(v, list)}
+    for h, v in picked_sites(report).items():
+        out[h] = out.get(h, []) + v
+    return out
+
+
+def _picked_line(shape: dict[str, Any]) -> str:
+    hosts = [h for h in shape.get("picked") or [] if isinstance(h, str)]
+    if not hosts:
+        return ""
+    if len(hosts) == 1:
+        return "The code builds the address for this site while it runs."
+    names = ", ".join(f"<code>{e(h, 80)}</code>" for h in hosts)
+    return f"The code picks this site or another one while it runs, from {names}."
 
 
 def _test_requests(r: Any) -> str:
@@ -2331,7 +2382,7 @@ def requests_elsewhere_html(report: dict[str, Any]) -> str:
     blocks = "".join(request_block(x, here=False) for x in shapes)
     origins = logins.origins_html(shapes)  # (0.15, py_flow)
     return (
-        f'<div class="zone"><h3>{icon("plug")} Requests to addresses that aren\'t in the code</h3>'
+        f'<div class="zone"><h3>{icon("plug")} Requests to addresses it works out while it runs</h3>'
         f'<div class="zs">{_count(total, "request goes", "requests go")} to an address the code '
         f"only works out while the app runs ({e(kinds)}), "
         + (
@@ -2460,7 +2511,7 @@ def zones_html(
     wouldn't show). `open_id`: the item whose sheet is open (?open=), so its fold is too."""
     hs = hosts(report)
     pts = ports(report)
-    reqs = site_requests(report)
+    reqs = all_site_requests(report)
     elsewhere = requests_elsewhere_html(report)
     read = isinstance(report.get("requests"), dict)  # the scan read the requests
     # (0.15, his decision 2026-11-21) `part`: "connects" = the sites Barkley read a request

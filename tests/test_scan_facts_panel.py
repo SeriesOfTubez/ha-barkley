@@ -60,7 +60,7 @@ def test_what_is_built_elsewhere_is_said_plainly():
 def test_requests_without_a_site_are_listed_apart():
     html = ui.zones_html(_report(elsewhere=[SHAPES[1]]))
     assert "Requests to addresses that aren&#x27;t in the code" in html or (
-        "Requests to addresses that aren't in the code" in html
+        "Requests to addresses it works out while it runs" in html
     )
     assert "Sends <b>GET</b> requests from one place in the code." in html
     # no site, no port: the box still shows them
@@ -226,3 +226,27 @@ def test_sites_with_a_request_and_sites_only_mentioned_are_listed_apart():
     rep["graph"]["edges"][2]["finding_ids"] = []
     assert "Barkley read no request to a site named in the code." in ui.zones_html(
         rep, part="connects")  # fmt: skip
+
+
+def test_sites_picked_from_a_list_count_as_sites_it_connects_to():
+    """Seen on his box 2026-11-23: a real cloud integration picks one of two cloud sites
+    written in its code for nearly every request. The scan kept them under requests whose
+    address it works out while it runs, and neither the picture nor "Where it connects"
+    showed them."""
+    from sniff_test import does, ui
+
+    shape = {"method": "POST", "body": [], "headers": [], "query": None, "address": [],
+             "count": 3, "at": ["cloud.py:9"],
+             "from": [{"kind": "list", "detail": "a.cloud.invalid,b.cloud.invalid"}]}  # fmt: skip
+    odd = {**shape, "from": [{"kind": "list", "detail": "<b>x</b>,ok.invalid"}]}
+    rep = {"target": {"kind": "integration"}, "findings": [],
+           "graph": {"subject": "integration:x", "nodes": [], "edges": []},
+           "requests": {"sites": {}, "elsewhere": [shape, odd], "total": 6}}  # fmt: skip
+    assert sorted(ui.picked_sites(rep)) == ["a.cloud.invalid", "b.cloud.invalid", "ok.invalid"]
+    html = ui.zones_html(rep, None, "", True, "connects")
+    assert "<code>a.cloud.invalid</code>" in html and "<b>x" not in html
+    assert html.count("picks this site or another one") == 2  # once per site
+    assert "builds the address for this site while it runs" in html  # ok.invalid alone
+    assert "Requests to addresses it works out while it runs" in html
+    m = does.build(rep, "X")
+    assert ("a.cloud.invalid", ["one of 2 sites it picks from", "POST"], "") in m.sites

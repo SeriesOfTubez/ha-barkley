@@ -106,7 +106,8 @@ update the list offers one button to sniff your apps again.
   address comes from: what you entered at setup, a list of sites in the code, a
   server's answer, a device found on your network, Home Assistant's own address, or
   "couldn't tell". An address you entered shows as a dashed box on the picture: Barkley
-  can't tell whether it's on your home network or the internet.
+  can't tell whether it's on your home network or the internet. Sites the code picks
+  from a list in it are shown with the sites it connects to, and on the picture.
 - When an integration hands the login you gave it, or an address, to a library it
   requires, Barkley reads inside that library, one level deep. It downloads the
   library's published package (the exact version the app gets, checksum checked, at
@@ -215,7 +216,9 @@ change below is a general check applied to every app, not an exception for one:
   one named entry of secrets.yaml are no longer paired with a site.
 - Loading saved data with pickle is a habit (medium), not hidden code. Encoded pictures,
   fonts and keys aren't hidden code. Packed text is unpacked, as data, and read like the
-  app's own files; the page says so, and says when it changes another app's files.
+  app's own files; the page says so, what kind of code it holds, and when it changes
+  another app's files. Barkley has no checks for Lua code, so in packed Lua it only
+  looks for web addresses.
 - A build tool known to be malware is a possible threat, not a found one: it runs on
   the developer's machine, not in your home, but could change what ships. Settings →
   Build tool known to be malware sets how much it counts (2, 2.5 or 3).

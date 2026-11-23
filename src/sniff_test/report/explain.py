@@ -128,11 +128,10 @@ RULES: dict[str, Explanation] = {
     ),
     "ha-own-storage-path": _E(
         "Keeps its own file in Home Assistant's storage folder",
-        "The app writes its own file into Home Assistant's .storage folder. Home Assistant "
-        "also keeps logins and every integration's settings there. The app builds the "
-        "file's path itself. Home Assistant's code has a helper, called Store, that does "
-        "this for an app. Home Assistant has no documentation page that says which way to "
-        "use.",
+        "The app saves its own data in Home Assistant's .storage folder, where your logins "
+        "and every app's settings are kept too. It writes the file's path itself instead "
+        "of using Home Assistant's Store helper. Home Assistant's docs don't say which way "
+        "an app should use.",
         "No. The file is the app's own. Barkley shows this for information and doesn't score it.",
         "Own storage file",
         (
@@ -275,6 +274,30 @@ RULES: dict[str, Explanation] = {
         "from outside the app.",
         "Check what it runs.",
         "Runs system commands",
+    ),
+    # (0.15) analyzers/packed.py
+    "packed-files": _E(
+        "Carries files packed inside its code",
+        "Part of its code is long encoded text that holds whole files. Apps do this to ship "
+        "a small library or script inside another file. Barkley unpacked them without "
+        "running them and checked them like the app's other files. Technical details says "
+        "what kind of code they are.",
+        "Usually not. What Barkley found in them is listed with the app's other findings.",
+        "Packed files",
+    ),
+    "changes-other-app": _E(
+        "Changes files of another app",
+        "What it unpacks names files in another app's folder. Apps that add features to "
+        "another integration do this. That app's own scan doesn't include these changes.",
+        "Usually not, if the app says it extends that integration. Check that it does.",
+        "Changes another app",
+    ),
+    "packed-too-big": _E(
+        "Carries packed text too large to unpack",
+        "Part of its code is packed text that unpacks to more than Barkley reads, so "
+        "Barkley didn't check what it holds.",
+        "Maybe. Barkley couldn't check this part of the code.",
+        "Packed text not read",
     ),
     "py-obfuscation": _E(
         "Uses tricks that make its code hard to read",

@@ -129,11 +129,13 @@ Two more groups follow when there is something to list:
 
 - **Connections whose address isn't in the code:** ports the code sets while the
   server's address comes from setup or from another server.
-- **Requests to addresses that aren't in the code:** requests whose address the code
+- **Requests to addresses it works out while it runs:** requests whose address the code
   puts together while it runs. Barkley says where each address comes from: the address
   you entered at setup, a server's answer (naming the site when the code does), one of
   the sites listed in its code, a device found on your network, your Home Assistant's
-  own address, or an address Barkley couldn't trace.
+  own address, or an address Barkley couldn't trace. When the code picks from sites
+  listed in it, those sites are also shown with the sites it connects to, and in the
+  picture.
 - **Sites a library connects to:** sites the app's own code doesn't name, found by
   reading inside a library the app hands the login you gave it (or an address) to.
   Barkley downloads that library's published package and reads it as text, one level

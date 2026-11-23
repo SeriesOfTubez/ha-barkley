@@ -203,7 +203,8 @@ def build(report: dict[str, Any], name: str) -> Model:
             (READS, f"uses {len(pts)} network port{'s' * (len(pts) != 1)}")
         )
     own = {h.name for h in hs if h.cls == "declared"}
-    sites = ui.site_requests(report)
+    sites = ui.all_site_requests(report)  # (0.15) with the sites it picks from a list
+    named = ui.site_requests(report)
     flows = ui.flows(report)
     _g, nodes = ui._graph(report)
     flow_hosts: dict[str, str] = {}  # host -> room
@@ -229,6 +230,10 @@ def build(report: dict[str, Any], name: str) -> Model:
     for host in order[:SITES_SHOWN]:
         how = "bad" if host in flow_hosts and host not in own else "own" if host in own else ""
         lines = _site_lines(sites.get(host))
+        picked = next((len(c.get("picked") or []) for c in sites.get(host) or []
+                       if isinstance(c, dict) and c.get("picked")), 0)  # fmt: skip
+        if picked > 1 and host not in named:  # (0.15) picked from a list while it runs
+            lines = [f"one of {picked} sites it picks from", *lines][:2]
         if host == OFF_BOX:
             lines = ["the code doesn't show where"]
         elif not lines and host in flow_hosts:

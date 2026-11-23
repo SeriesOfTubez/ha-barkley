@@ -179,12 +179,21 @@ def classify(
     return "text", raw
 
 
+# (0.15, seen on his box 2026-11-23) a real integration packs two Lua libraries; read as
+# JavaScript they showed as "JavaScript file could not be parsed". Lua starts with a `--`
+# comment or a `local` line; JavaScript does neither.
+_LUA = re.compile(r"(?:--|local\s)")
+_LANG = {".lua": "Lua", ".js": "JavaScript", ".mjs": "JavaScript", ".py": "Python",
+         ".ts": "TypeScript", ".json": "JSON", ".yaml": "YAML", ".yml": "YAML",
+         ".html": "HTML", ".css": "CSS"}  # fmt: skip
+
+
 def _name_for(text: str, hint: str) -> str:
     ext = Path(hint).suffix.lower() if hint else ""
     if ext not in _CODE_EXT:
         t = text.lstrip()[:200]
         ext = (".json" if t[:1] in "{[" else ".py" if re.match(r"(import|from|def|class)\s", t)
-               else ".js")  # fmt: skip
+               else ".lua" if _LUA.match(t) else ".js")  # fmt: skip
     base = _SAFE.sub("_", Path(hint).name)[:60] if hint else "payload"
     return base if base.endswith(ext) else base + ext
 
@@ -284,16 +293,29 @@ def notes(u: Unpacked, domain: str | None) -> list[Finding]:
     if u.files:
         n, k = len(u.sources), len(u.files)
         rel, line = u.sources[0]
+        langs: dict[str, int] = {}
+        for f in u.files:
+            lang = _LANG.get(Path(f).suffix.lower(), "text")
+            langs[lang] = langs.get(lang, 0) + 1
+        what = "code" if set(langs) & {"Lua", "JavaScript", "Python", "TypeScript"} else "text"
+        kinds = (
+            f"of {next(iter(langs))} {what}" if len(langs) == 1
+            else ": " + ", ".join(f"{c} in {lang}"
+                                  for lang, c in sorted(langs.items(), key=lambda x: -x[1]))
+        )  # fmt: skip
+        lua = (" Barkley has no checks for Lua code, so in those it only looks for web "
+               "addresses.") if "Lua" in langs else ""  # fmt: skip
         out.append(Finding(
             rule_id=CARRIES,
             title="Carries packed files",
             severity=Severity.INFO,
             category=Category.CODE_EXEC,
             message=(f"Its code holds {n} packed {'string' if n == 1 else 'strings'} "
-                     f"(encoded and compressed text) that {'unpacks' if n == 1 else 'unpack'} "
-                     f"to {k} {'piece' if k == 1 else 'pieces'}: files, or changes to files. "
-                     "Barkley unpacked them as data, without running anything, and read them "
-                     "like the app's own files."),
+                     "(long encoded text, sometimes compressed too) that "
+                     f"{'unpacks' if n == 1 else 'unpack'} "
+                     f"to {k} {'piece' if k == 1 else 'pieces'} {kinds}. Barkley unpacked "
+                     "them as data, without running anything, and read them like the app's "
+                     f"own files.{lua}"),
             file=rel,
             line=line,
             analyzer="packed",

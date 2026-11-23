@@ -21,7 +21,10 @@ def _semgrep_rule_ids() -> set[str]:
 
 def _analyzer_rule_ids() -> set[str]:
     """Rule ids written as literals in the analyzers and fetch code."""
-    rx = re.compile(r'"((?:dep|repo|py|endpoint|scan|card|ha)-[a-z0-9-]+|possible-exfil)"')
+    rx = re.compile(
+        r'"((?:dep|repo|py|endpoint|scan|card|ha|packed)-[a-z0-9-]+'
+        r'|possible-exfil|changes-other-app)"'
+    )
     out = set()
     for f in (ROOT / "src" / "sniff_test").rglob("*.py"):
         if f.parent.name in ("analyzers", "fetch"):
