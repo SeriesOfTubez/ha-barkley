@@ -347,7 +347,7 @@ def test_installed_grid_leads_with_what_needs_attention(addon):
     assert "Sniff it" in _card(page, "Never")
     assert "<b>5</b> apps installed" in page
     assert "Sniff 2 apps not yet sniffed" in page
-    assert "Not scanned because they aren't integrations or cards: 2 theme" in page
+    assert "Barkley checks integrations and dashboard cards only. Not checked: 2 themes" in page
     _, _, look = get(base + "/?f=look")
     assert _card_order(look) == ["Moved"]
     _, _, ups = get(base + "/?f=updates")

@@ -761,15 +761,27 @@ def render_installed(
         if rows
         else ['<p class="muted">The Marketplace lists no installed integrations or cards.</p>']
     )
-    skipped = ", ".join(f"{n} {e(c)}" for c, n in sorted(state.other.items()))
+    skipped = ", ".join(f"{n} {e(_OTHER_KINDS.get(c, c))}" for c, n in sorted(state.other.items()))
     age = int(time.time() - state.fetched) // 60 if state.fetched else 0
     out.append(
         f'<p class="muted small">Barkley read the installed list from the Marketplace {age} '
-        f"min ago ({refresh})"
-        + (f". Not scanned because they aren't integrations or cards: {skipped}" if skipped else "")
+        f"min ago ({refresh}). Barkley checks integrations and dashboard cards only"
+        + (f". Not checked: {skipped}" if skipped else "")
         + ".</p>"
     )
     return "".join(out)
+
+
+# (0.15, his decision 2026-11-22) the Marketplace's other kinds, in plain words
+_OTHER_KINDS = {
+    "theme": "themes",
+    "python_script": "Python scripts",
+    "appdaemon": "AppDaemon apps",
+    "template": "templates",
+    "netdaemon": "NetDaemon apps",
+    "unknown": "of an unknown kind",
+    "unreadable": "Barkley couldn't read",
+}
 
 
 def _token_banner(base: str, panel: Panel) -> str:
@@ -1079,7 +1091,7 @@ SETTING_HELP = {
     "AI": (
         "Explanations go through the Home Assistant AI Task entity you pick, so they use the "
         "AI provider you set up in Home Assistant. Nothing is sent until you click Explain. "
-        "The AI never sets, clears or changes a score or a finding, and it's only as good "
+        "The AI never sets, clears or changes a reading or a finding, and it's only as good "
         "as the model behind the entity."
     ),
     "AI mode": (
