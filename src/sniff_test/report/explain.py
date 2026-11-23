@@ -130,8 +130,8 @@ RULES: dict[str, Explanation] = {
         "Keeps its own file in Home Assistant's storage folder",
         "The app saves its own data in Home Assistant's .storage folder, where your logins "
         "and every app's settings are kept too. It writes the file's path itself instead "
-        "of using Home Assistant's Store helper. Home Assistant's docs don't say which way "
-        "an app should use.",
+        "of using Home Assistant's Store helper. Home Assistant's docs don't say which method "
+        "is preferred.",
         "No. The file is the app's own. Barkley shows this for information and doesn't score it.",
         "Own storage file",
         (
