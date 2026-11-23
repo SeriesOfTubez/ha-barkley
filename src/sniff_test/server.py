@@ -552,6 +552,7 @@ class Row:
     available_scan: ScanRow | None
     reasons: list[str] = field(default_factory=list)
     busy: str = ""  # "queued" or "running" while a job for this repo is in the worker
+    ai: bool = False  # (0.15) an AI request about this app is waiting for its answer
 
 
 GROUPS = {
@@ -720,6 +721,7 @@ def render_installed(
             group=r.group,
             reasons=r.reasons,
             busy=r.busy,
+            ai=r.ai,
             diff_link=_diff_link(r),
             action=_action(base, r, token, back),
         )
@@ -765,7 +767,7 @@ def render_installed(
     age = int(time.time() - state.fetched) // 60 if state.fetched else 0
     out.append(
         f'<p class="muted small">Barkley read the installed list from the Marketplace {age} '
-        f"min ago ({refresh}). Barkley checks integrations and dashboard cards only"
+        f"min ago ({refresh}). Barkley currently checks integrations and dashboard cards only"
         + (f". Not checked: {skipped}" if skipped else "")
         + ".</p>"
     )
@@ -816,11 +818,37 @@ def _github_banner(wait: str) -> str:
 STATUS_RECENT = 600  # seconds a finished job stays in the status strip
 
 
+@dataclass
+class AiRun:
+    """(0.15) One AI request waiting for its answer: the scan, the item ("" for Explain
+    this app), when it started, and the app's repository."""
+
+    sid: int
+    item: str
+    started: float
+    repo: str
+
+
+def ai_wait(seconds: float) -> str:
+    """How long the AI has been at it, in plain words."""
+    n = max(0, int(seconds))
+    if n < 60:
+        return f"{n} s"
+    return f"{n // 60} min {n % 60:02d} s"
+
+
 def status_html(
-    base: str, jobs: list[Job], names: dict[str, str], here: str, now: float | None = None
+    base: str,
+    jobs: list[Job],
+    names: dict[str, str],
+    here: str,
+    now: float | None = None,
+    ai: list[AiRun] | None = None,
 ) -> str:
-    """The strip at the top: what's being sniffed now and what just finished."""
+    """The strip at the top: what's being sniffed now, what the AI is answering (in its
+    colour), and what just finished."""
     now = time.time() if now is None else now
+    ai = ai or []
     active = [j for j in jobs if j.state in ("running", "waiting", "queued")]
     # A daily advisory re-check that found nothing new isn't news: it stays out of the strip.
     recent = [
@@ -828,11 +856,14 @@ def status_html(
         if j.finished and now - j.finished < STATUS_RECENT
         and not (j.kind == "recheck" and j.state == "done" and len(j.scan_ids) < 2)
     ][-3:]  # fmt: skip
-    if not active and not recent:
+    if not active and not recent and not ai:
         return ""
 
     def name(j: Job) -> str:
         return e(names.get(j.repo.lower()) or j.repo, 100)
+
+    def app(a: AiRun) -> str:
+        return e(names.get(a.repo.lower()) or a.repo or f"scan @{a.sid}", 100)
 
     lines = []
     for j in active:
@@ -845,6 +876,14 @@ def status_html(
             lines.append(f'<b><span class="dot"></span>{what} {name(j)}…</b>')
         elif j.state == "waiting":
             lines.append(f"{ui.icon('clock', 14, 'muted')} {name(j)}: {e(j.message, 200)}")
+    for a in ai:
+        what = "Explain this app" if not a.item else "Explain in context"
+        lines.append(
+            f'<span class="aiwait"><span class="thinking">{ui.icon("sparkle", 14)}</span>'
+            f'<b>Your AI is answering about {app(a)}…</b> <span class="small">({what}, '
+            f"{ai_wait(now - a.started)} so far) "
+            f'<a href="{base}/scan/{a.sid}">open</a></span></span>'
+        )
     queued = sum(j.state == "queued" for j in active)
     if queued:
         nxt = ", ".join(name(j) for j in active if j.state == "queued")
@@ -866,11 +905,10 @@ def status_html(
             lines.append(f"{ui.icon('check', 14, 'ok')} {name(j)} is done: {link}")
         else:
             lines.append(f"{ui.icon('x', 14, 'bad')} {name(j)} {e(j.state)}: {e(j.message, 200)}")
-    tail = (
-        '<span class="muted small">This page refreshes by itself while a scan runs.</span>'
-        if active
-        else ""
-    )
+    tail = ""
+    if active or ai:
+        why = "a scan runs" if active else "your AI answers"
+        tail = f'<span class="muted small">This page refreshes by itself while {why}.</span>'
     return (
         '<div class="box status" role="status">'
         + "".join(f'<div class="row">{x}</div>' for x in lines)
@@ -895,6 +933,7 @@ def render_index(
     auto: str = "",
     account: str = "",
     token_banner: str = "",
+    ai_busy: bool = False,
 ) -> bytes:
     rows = store.history(limit=100)
     against = f", checking against Home Assistant {e(ha)}" if ha else ""
@@ -977,7 +1016,7 @@ def render_index(
         f'<a href="{base}/settings">Settings</a></p>'
     )
     out.append(account)
-    return ui.page("Barkley", "".join(out), refresh=5 if active else 0, base=base)
+    return ui.page("Barkley", "".join(out), refresh=5 if active or ai_busy else 0, base=base)
 
 
 WIKI_GITHUB_HELP = "https://github.com/SeriesOfTubez/ha-barkley/wiki/Options#github-token"
@@ -1646,7 +1685,7 @@ def _mode_picker(base: str, sid: int, token: str, mode: str) -> str:
 def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: str,
              have: dict[str, Any] | None, choices: list[tuple[str, str]] | None = None,
              choices_err: str = "", mode: str = AI_MODE_DEFAULT,
-             readings: list[str] | None = None) -> str:  # fmt: skip
+             readings: list[str] | None = None, since: float = 0.0) -> str:  # fmt: skip
     """The "Explain this app" control. Nothing is sent until the user clicks.
     `readings`: ids of this scan's "Explain in context" answers with something shown."""
     picker = _ai_picker(base, sid, token, entity, choices, choices_err)
@@ -1670,8 +1709,12 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
     change = (f"<details><summary>Change which AI explains, or how much "
               f"({e(AI_MODES.get(mode, mode))})</summary>{picker}</details>")  # fmt: skip
     if state == "running":
-        return ('<p class="muted small mt2">Asking your AI… this page '
-                "refreshes by itself.</p>")  # fmt: skip
+        waited = f" It has been {ai_wait(time.time() - since)}." if since else ""
+        return (f'<div class="aibox mt2"><span class="thinking">{ui.icon("sparkle", 20)}</span>'
+                f"<div><b>Your AI is answering…</b><br><span class=small>This can take a few "
+                f"minutes, depending on your AI.{waited} You don't have to wait here: the "
+                "answer is saved, and this page refreshes by itself.</span></div>"
+                "</div>")  # fmt: skip
     if error:
         return (f'<div class="banner warn mt2">The AI didn\'t answer: '
                 f"{e(error, 400)}</div>" + form.replace("{label}", "Try again") + note
@@ -1714,6 +1757,7 @@ def render_scan(
     rechecking: bool = False,
     item_asked: dict[str, list[str]] | None = None,
     listing: dict[str, str] | None = None,
+    ai_since: float = 0.0,
 ) -> bytes:
     """`open_item`: the item whose AI sheet is open (`?open=`), kept open across refreshes.
     `listing`: the Marketplace's removed list entry for this app (listings.py), if any.
@@ -1798,6 +1842,7 @@ def render_scan(
                 for k, v in store.item_explanations(sid).items()
                 if v.get("claims") or v.get("questions")
             ],
+            ai_since,
         ),
         refresh=5 if running or rechecking else 0,
         deep=deep,
@@ -2380,6 +2425,8 @@ class Panel:
         self._ai: dict[int, tuple[str, str]] = {}  # scan id -> (running|failed, error)
         self._ai_items: dict[tuple[int, str], tuple[str, str]] = {}  # (scan, item) -> same
         self._ai_asked: dict[tuple[int, str], list[str]] = {}  # second round: what it asked for
+        # (0.15) when each AI run started: (scan, "" for Explain this app or the item id)
+        self._ai_started: dict[tuple[int, str], float] = {}
         self._ai_lock = threading.Lock()
         self.ai_mode = AI_MODE_DEFAULT
         self.watcher: watch.Watcher | None = None  # auto-sniff (set by `serve` in an add-on)
@@ -2441,6 +2488,7 @@ class Panel:
             if self._ai.get(sid, ("", ""))[0] == "running":
                 return True
             self._ai[sid] = ("running", "")
+            self._ai_started[(sid, "")] = time.time()
         report = self.store.report(sid)
 
         def run() -> None:
@@ -2479,10 +2527,12 @@ class Panel:
                 self.store.save_explanation(sid, self.ai_entity, accepted)
                 with self._ai_lock:
                     self._ai.pop(sid, None)
+                    self._ai_started.pop((sid, ""), None)
             except Exception as ex:  # shown on the page; never affects the scan
                 print(f"explain @{sid} failed: {type(ex).__name__}: {ex}", file=sys.stderr)
                 with self._ai_lock:
                     self._ai[sid] = ("failed", str(ex))
+                    self._ai_started.pop((sid, ""), None)
 
         threading.Thread(target=run, name=f"explain-{sid}", daemon=True).start()
         return True
@@ -2500,6 +2550,7 @@ class Panel:
             if self._ai_items.get(key, ("", ""))[0] == "running":
                 return True
             self._ai_items[key] = ("running", "")
+            self._ai_started[key] = time.time()
         entity = self.ai_entity
 
         def run() -> None:
@@ -2557,6 +2608,7 @@ class Panel:
                 with self._ai_lock:
                     self._ai_items.pop(key, None)
                     self._ai_asked.pop(key, None)
+                    self._ai_started.pop(key, None)
             except Exception as ex:  # shown on the page; never affects the scan
                 print(f"explain @{sid} {item_id} failed after {time.monotonic() - started:.0f} s: "
                       f"{type(ex).__name__}: {ex}",
@@ -2564,6 +2616,7 @@ class Panel:
                 with self._ai_lock:
                     self._ai_items[key] = ("failed", str(ex))
                     self._ai_asked.pop(key, None)
+                    self._ai_started.pop(key, None)
 
         threading.Thread(target=run, name=f"explain-{sid}-{item_id}", daemon=True).start()
         return True
@@ -2654,6 +2707,7 @@ class Panel:
         v = v or ui.View()
         names = {c.repo.lower(): c.name for c in self.catalog()[0]} if self.catalog_fn else {}
         busy = self.busy()
+        thinking = {a.repo.lower() for a in self.ai_running() if a.repo}
         tv = self.worker.tool_version
         cards = []
         for repo, scan in self.not_installed_scans(installed).items():
@@ -2678,6 +2732,7 @@ class Panel:
                     scan=scan,
                     report=self.shown_report(scan.id),
                     busy=busy.get(repo, ""),
+                    ai=repo in thinking,
                     action=action,
                     stale=stale,
                 )
@@ -2703,6 +2758,22 @@ class Panel:
     def ai_state(self, sid: int) -> tuple[str, str]:
         with self._ai_lock:
             return self._ai.get(sid, ("", ""))
+
+    def ai_since(self, sid: int) -> float:
+        """When this scan's Explain this app started (0: it isn't running)."""
+        with self._ai_lock:
+            return self._ai_started.get((sid, ""), 0.0)
+
+    def ai_running(self) -> list[AiRun]:
+        """(0.15) Every AI request still waiting for its answer, oldest first, with the app
+        it is about (for the list's cards and the status strip)."""
+        with self._ai_lock:
+            started = sorted(self._ai_started.items(), key=lambda kv: kv[1])
+        out = []
+        for (sid, item), since in started:
+            row = self.store.get(sid)
+            out.append(AiRun(sid, item, since, (row.repo or "") if row else ""))
+        return out
 
     def report(self, sid: int) -> dict[str, Any] | None:
         """Stored reports never change, so parsed ones are kept (bounded)."""
@@ -2823,8 +2894,10 @@ class Panel:
             for j in reversed(list(self.worker.jobs))
             if j.state in ("queued", "running", "waiting")
         }
+        thinking = {a.repo.lower() for a in self.ai_running() if a.repo}
         for r in rows:
             r.busy = busy.get(r.item.repo.lower(), "")
+            r.ai = r.item.repo.lower() in thinking
         return st, rows
 
     def row_for(self, repo: str | None) -> Row | None:
@@ -2993,15 +3066,18 @@ class Panel:
                         if q.get("view") and v.view != panel.store.setting("view"):
                             panel.store.set_setting("view", v.view)  # remembered for next time
                         auto = ""  # (0.14.0) auto-sniff lives on Settings
+                        thinking = panel.ai_running()
                         body = render_index(
                             base, panel.store, jobs, panel.token,
                             panel.installed_html(base, refresh, v), panel.worker._mem(),
                             panel.worker.github_wait, panel.worker.ha_fn(),
                             panel.worker.parallel, panel.catalog_fn is not None,
-                            status_html(base, jobs, panel.names(), v.qs()), v.qs(), auto,
+                            status_html(base, jobs, panel.names(), v.qs(), ai=thinking),
+                            v.qs(), auto,
                             render_account(base, s.user, panel.token)
                             if (s := self._session()) else "",
                             _token_banner(base, panel),
+                            ai_busy=bool(thinking),
                         )  # fmt: skip
                         return self._send(200, body)
                     if m := re.fullmatch(r"/fonts/([A-Za-z-]+\.woff2)", url.path):
@@ -3029,6 +3105,7 @@ class Panel:
                             panel.ai_mode, panel.item_states(sid), open_item,
                             item_asked=panel.item_asked(sid),
                             listing=panel.listing(report.get("target", {}).get("repo")),
+                            ai_since=panel.ai_since(sid),
                             rechecking=any(
                                 j.kind == "recheck" and j.scan == sid
                                 and j.state in ("queued", "running", "waiting")

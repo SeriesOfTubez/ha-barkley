@@ -128,3 +128,28 @@ def test_filters_and_order_by_reading():
     assert ui.View.parse({"sort": ["exposure"]}).sort == "exposure"
     assert ui.View.parse({"sort": ["<x>"]}).sort == "concern"
     assert ui.View(f="threat", sort="name").qs("&") == "f=threat&view=cards&sort=name"
+
+
+def test_ai_runs_show_in_the_strip_on_their_card_and_keep_the_list_refreshing(tmp_path):
+    """(0.15) An AI request waiting for its answer is listed in the status strip in the AI's
+    colour, marks its app's card, and keeps the list reloading; names stay escaped."""
+    now = time.time()
+    runs = [server.AiRun(7, "", now - 75, "acme/one"),
+            server.AiRun(8, "ab" * 8, now - 3, "acme/two")]  # fmt: skip
+    html = server.status_html("", [], {"acme/one": "One <b>"}, "", now=now, ai=runs)
+    assert "Your AI is answering about One &lt;b&gt;…" in html and "1 min 15 s so far" in html
+    assert "Explain in context, 3 s so far" in html and 'href="/scan/8"' in html
+    assert 'class="thinking"' in html and "while your AI answers" in html
+    assert server.status_html("", [], {}, "", now=now) == ""
+    page = server.render_index("", Store(tmp_path / "s.db"), [], "t", status=html,
+                               ai_busy=True).decode()  # fmt: skip
+    assert '<meta http-equiv="refresh" content="5">' in page
+    card = ui.Card(repo="acme/one", name="One", kind="integration", installed="v1",
+                   available=None, scan=None, report=None, ai=True)  # fmt: skip
+    assert "aiwork" in ui.card_html("", card) and "AI is answering…" in ui.card_html("", card)
+    assert "class=aiwork" in ui.card_row("", card)
+    plain = ui.Card(repo="acme/one", name="One", kind="integration", installed="v1",
+                    available=None, scan=None, report=None)  # fmt: skip
+    assert "aiwork" not in ui.card_html("", plain) and "AI is answering" not in ui.card_html(
+        "", plain
+    )

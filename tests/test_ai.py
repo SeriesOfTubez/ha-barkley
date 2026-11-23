@@ -219,3 +219,25 @@ def test_every_ai_call_logs_its_time_and_size(tmp_path, capfd):
     assert "failed after" in line and line.endswith("SupervisorError")
     assert "secret-looking" not in line
     httpd.shutdown()
+
+
+def test_a_running_explanation_shows_a_box_in_the_ai_colour_with_the_wait(tmp_path):
+    """(0.15) While the AI answers, the app page shows a box with a moving sparkle and how
+    long it has waited; the list's status strip names the app."""
+    release = threading.Event()
+
+    def slow(*_a):
+        release.wait(5)
+        return {"summary": "Fine."}
+
+    store, base, httpd = _serve(tmp_path, slow)
+    sid = store.save(_report())
+    post(f"{base}/explain", {"token": token(base), "scan": sid})
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert 'class="aibox' in page and "Your AI is answering…" in page and "It has been" in page
+    assert 'class="thinking"' in page and '<meta http-equiv="refresh"' in page
+    assert [(r.sid, r.item) for r in httpd.panel.ai_running()] == [(sid, "")]
+    release.set()
+    _wait(httpd, sid)
+    assert httpd.panel.ai_running() == []
+    httpd.shutdown()

@@ -588,6 +588,23 @@ details[open] > :not(summary) { animation:fade-in var(--dur-in) ease-out; }
 tr.busy .badge { background:linear-gradient(90deg, var(--soft) 30%, var(--line) 50%,
   var(--soft) 70%); background-size:300% 100%; animation:shimmer 1.6s linear infinite; }
 @keyframes shimmer { from { background-position:100% 0; } to { background-position:-100% 0; } }
+/* (0.15) while an AI request runs: the card's moving bar in the AI's colour, and a sparkle
+   that breathes beside the words (status strip, card, the app page's box) */
+@keyframes think { 0%, 100% { transform:scale(0.8) rotate(0deg); opacity:0.55; }
+  50% { transform:scale(1.15) rotate(20deg); opacity:1; } }
+.app.aiwork { overflow:hidden; border-color:var(--ai); }
+.app.aiwork::before { content:""; position:absolute; left:0; right:0; top:0; height:2px;
+  background:linear-gradient(90deg, transparent, var(--ai), transparent);
+  animation:slide 1.6s linear infinite; }
+tr.aiwork td:first-child { box-shadow:inset 2px 0 0 var(--ai); }
+.thinking { display:inline-flex; color:var(--ai); }
+.thinking .i { animation:think 1.4s ease-in-out infinite; transform-origin:center; }
+.aiwait { display:inline-flex; align-items:center; gap:var(--s1); color:var(--ai);
+  font-weight:600; margin-right:var(--s2); }
+.aiwait a { color:var(--ai); }
+.aibox { display:flex; gap:var(--s3); align-items:center; padding:var(--s3) var(--s4);
+  background:var(--ai-bg); color:var(--fg); border-left:2px solid var(--ai);
+  border-radius:var(--r3); }
 @media (prefers-reduced-motion: reduce) { *, ::before, ::after { animation:none !important;
   transition:none !important; } }
 .sev-critical { color:var(--red); font-weight:600; } .sev-high { color:var(--orange);
@@ -765,6 +782,7 @@ class Card:
     group: str = "current"  # classify(): attention | unchecked | checked | current
     reasons: list[str] = field(default_factory=list)
     busy: str = ""
+    ai: bool = False  # (0.15) an AI request about this app is waiting for its answer
     diff_link: str = ""  # "old=..&new=.." when an update check exists
     action: str = ""  # rendered form/button HTML (built by the server)
     stale: bool = False  # sniffed with earlier rules (an app that isn't installed)
@@ -906,13 +924,16 @@ def card_html(base: str, c: Card) -> str:
     )
     chips = "".join(f'<span class="chip {cls}">{e(t, 60)}</span>' for cls, t in card_chips(c))
     act = f'<span class="muted">{_busy_text(c)}</span>' if c.busy else c.action
+    if c.ai:
+        act = _ai_waiting() + act
     links = ""
     if c.diff_link:
         links = f'<a href="{base}/diff?{c.diff_link}">what the update changes</a>'
     actions = f'<div class="act">{act}{links}</div>' if (act or links) else ""
     top = f"</div>{_readings_cell(c)}"
     return (
-        f'<div class="app {b}{" busy" if c.busy else ""}"><div class="app-top"><div>{name}'
+        f'<div class="app {b}{" busy" if c.busy else ""}{" aiwork" if c.ai else ""}">'
+        f'<div class="app-top"><div>{name}'
         f'<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}</div></div>'
         f"{top}"
         f'<div class="say">{e(card_sentence(c), 400)}</div>'
@@ -1033,6 +1054,12 @@ def _readings_cell(c: Card) -> str:
     return readings_compact(rd) + done
 
 
+def _ai_waiting() -> str:
+    """(0.15) A card's line while its AI answers, in the AI's colour."""
+    return (f'<span class="aiwait"><span class="thinking">{icon("sparkle", 14)}</span>'
+            "AI is answering…</span>")  # fmt: skip
+
+
 def _busy_text(c: Card) -> str:
     text = {"running": "checking…", "waiting": "waiting for GitHub…"}.get(c.busy, "queued…")
     return f'<span class="dot"></span>{text}'
@@ -1047,11 +1074,14 @@ def card_row(base: str, c: Card) -> str:
     )
     chips = "".join(f'<span class="chip {cls}">{e(t, 60)}</span>' for cls, t in card_chips(c))
     act = f'<span class="muted">{_busy_text(c)}</span>' if c.busy else c.action
+    if c.ai:
+        act = _ai_waiting() + act
     if c.diff_link:
         act += f' <a href="{base}/diff?{c.diff_link}">what the update changes</a>'
     act = f'<div class="act">{act}</div>' if act else ""
     return (
-        f"<tr{' class=busy' if c.busy else ''}><td>{_readings_cell(c)}</td>"
+        f"<tr{' class=busy' if c.busy else ' class=aiwork' if c.ai else ''}>"
+        f"<td>{_readings_cell(c)}</td>"
         f'<td>{name}<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}'
         f'</div><div class="small">{e(card_sentence(c), 400)}</div></td>'
         f'<td><div class="chips">{chips}</div></td>'
@@ -1673,7 +1703,8 @@ def deep_html(
         + "</details>"
     )
     if state == "running":
-        inline = (f'<a class="aichip" href="{to}">{icon("sparkle")} AI is reading the code… '
+        inline = (f'<a class="aichip" href="{to}"><span class="thinking">{icon("sparkle")}'
+                  "</span> AI is reading the code… "
                   "(can take minutes)</a>")  # fmt: skip
         body = (
             '<p class="small"><b>Reading the code…</b> This can take a few minutes, depending '
