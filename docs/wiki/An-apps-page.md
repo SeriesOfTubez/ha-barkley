@@ -167,7 +167,10 @@ None of this is scored.
   large files that matched nothing.
 - **Code it gets while it runs:** packages the app installs or code it loads after it's
   installed. Barkley can only read the code in the release and never sees code that
-  arrives later.
+  arrives later. For an integration that runs Lua code through the lupa package, it
+  says where the Lua comes from (downloaded while it runs and from where, shipped in the
+  release, packed in its code, or a file Barkley couldn't follow) and whether that Lua
+  can use Python or run programs.
 
 ## Actions on the page
 

@@ -60,6 +60,7 @@ RULE_ROOM: dict[str, tuple[str, str, str]] = {
     "py-shell-exec": ("programs", CHANGES, "runs commands on your system"),
     "py-runtime-pip": ("programs", CHANGES, "installs extra software while running"),
     "py-eval-exec": ("programs", CHANGES, "builds code while running and runs it"),
+    "py-lua-download": ("programs", CHANGES, "runs code it downloads"),
     "py-dynamic-import": ("programs", READS, "loads code whose name it works out"),
     "ha-monkeypatch": ("programs", CHANGES, "changes how Home Assistant itself works"),
     "ha-supervisor-token": ("programs", READS, "reads the key to your whole system"),

@@ -143,6 +143,7 @@ can already do everything in Home Assistant, so nothing else is counted.
 | A card loads code from another site while it runs, and which version is picked while it runs | 5 |
 | A card loads one fixed version of code from another site | 2 |
 | A card runs code taken from the page address (anyone who gets you to open a link could run code in your dashboard) | 5 |
+| An integration downloads Lua code while it runs and runs it through the lupa package, where that code can reach Python or run programs | 5 |
 
 - **Pages:** the strongest page counts in full and each further page a quarter.
 - **Tokens:** a token handed to another machine is only as safe as that machine. Barkley
@@ -150,13 +151,18 @@ can already do everything in Home Assistant, so nothing else is counted.
   user who isn't an administrator, lasting over a year, once per app. An app that only
   checks tokens sent to it isn't counted here.
 - **Library bugs:** each one counts, at the severity the scan gave it (see below).
-- **Code a card loads or takes from the address:** the strongest counts in full and each
-  further one a quarter.
+- **Code a card loads or takes from the address, and Lua an integration downloads:** the
+  strongest counts in full and each further one a quarter. Barkley counts downloaded Lua
+  only when it can follow the file the code runs back to a web request that wrote it.
+  lupa's own source shows that a runner made with its default settings opens all of
+  Lua's standard libraries (so Lua can run programs) and gives Lua Python's `eval` and
+  builtins. A runner that switches both off, guards attribute access and removes Lua's
+  `os` and `io` isn't counted.
 
 Pages, tokens and library bugs are multiplied by where Home Assistant runs: 1 on a home network, 1.25 on a
-shared or work network, 1.5 when it's reachable from the internet. Code a card loads is
-added after that, unmultiplied: where Home Assistant runs doesn't change who publishes
-that code. The total stops at 10.
+shared or work network, 1.5 when it's reachable from the internet. Code a card loads,
+and Lua an integration downloads, is added after that, unmultiplied: where Home
+Assistant runs doesn't change who publishes that code. The total stops at 10.
 
 | Exposure | The panel says |
 |---|---|

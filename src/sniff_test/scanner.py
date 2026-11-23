@@ -22,6 +22,7 @@ from sniff_test.analyzers import (
     py_env,
     py_group,
     py_library,
+    py_lua,
     py_pages,
     py_precision,
     py_requests,
@@ -227,6 +228,7 @@ def scan(
                 r.findings = [f for f in r.findings
                               if not packed.explained(f, target.root, unpacked)]  # fmt: skip
         results.append(libs.analyzer)
+        packed_lua = sum(1 for f in unpacked.files if f.endswith(".lua"))  # (0.15) py_lua
         results.append(
             AnalyzerResult(
                 packed.NAME,
@@ -275,6 +277,13 @@ def scan(
             if target.kind is TargetKind.INTEGRATION:
                 addressed = endpoints.addressed_hosts(target.root)
         findings += correlate.correlate(findings, facts, target.root, called, addressed)
+        lua = None
+        if target.kind is TargetKind.INTEGRATION:
+            # (0.15, his decision 2026-11-23) Lua it runs through lupa: where it comes from;
+            # Lua it downloads counts like a card's code from another site
+            say("lua")
+            lua = py_lua.read(target.root, packed_lua)
+            findings += py_lua.findings(lua)
         if target.kind is TargetKind.PLUGIN:  # (0.15) code it loads from a code CDN
             findings = js_remote.merge(findings, js_remote.loads_in(target.root))
             findings = js_address.add(findings, target.root)  # settings from the address
@@ -334,6 +343,7 @@ def scan(
             result.environment = py_env.summary(py_env.uses_in(target.root))
             # (0.15) the kinds of entity it sets up for itself, from its module names
             result.platforms = platforms.platforms_in(target.root)
+            result.lua = lua.section() if lua is not None else None
         else:
             say("web requests")  # (0.15) a card's built file: fetch calls and map-tile sites
             result.requests = js_requests.summary(*js_reqs)

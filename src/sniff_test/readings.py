@@ -20,7 +20,8 @@ mock-ups and his yes to items 1-4 of round 4):
   hand out (non-admin 1, administrator 3, times a lifetime factor); a library bug (medium
   1, high 3, critical 5). Times 1.25 on a shared or work network, 1.5 when Home Assistant
   is reachable from the internet. (0.15) Plus code a card loads from another site while it
-  runs (5 when the version is decided then, 2 for a fixed one; not raised by the network).
+  runs (5 when the version is decided then, 2 for a fixed one; not raised by the network),
+  and Lua an integration downloads and runs where it can reach Python (5).
   Under 2 low, under 5 medium, 5 and up high. A found threat is exposure 10: the app
   itself sends your data out.
 
@@ -61,7 +62,11 @@ LIB_BUG = {"critical": 5.0, "high": 3.0, "medium": 1.0}
 # 5 when which version it gets is only decided then, 2 for one fixed version. The
 # strongest counts in full, each further one a quarter. Not raised by the network setting:
 # who can reach Home Assistant doesn't change who publishes that code.
-REMOTE_CODE = {"card-remote-script": 5.0, "card-remote-pinned": 2.0}
+REMOTE_CODE = {"card-remote-script": 5.0, "card-remote-pinned": 2.0,
+               # (0.15, his decision 2026-11-23) an integration that downloads Lua and runs
+               # it where it can reach Python: the same principle, on the server ("I might
+               # even argue this is worse")
+               "py-lua-download": 5.0}  # fmt: skip
 # (0.15, his decision 2026-11-21) Code taken from the page address: anyone who gets you to
 # open a link decides what runs. Counted with the remote code (same principle: someone
 # else picks the code), so the strongest of them counts in full, each further a quarter.
@@ -234,6 +239,7 @@ def compute(
     remote_pts = remote[0] + REPEAT * sum(remote[1:]) if remote else 0.0
     loose = sum(1 for f in findings if str(f.get("rule_id")) == "card-remote-script")
     fixed = sum(1 for f in findings if str(f.get("rule_id")) == "card-remote-pinned")
+    lua = sum(1 for f in findings if str(f.get("rule_id")) == "py-lua-download")
     if links:
         reasons.append("A link can make it run code: it runs code taken from the page "
                        "address. Anyone who gets you to open a link to your dashboard can "
@@ -244,6 +250,10 @@ def compute(
                        + ". Which version it gets is only decided then, so whoever publishes "
                        "that code decides what runs in your dashboard, with your login. "
                        "Barkley never read it.")  # fmt: skip
+    if lua:
+        reasons.append("It downloads Lua code while it runs and runs it where that code can "
+                       "reach Python. Whoever controls where that code comes from decides "
+                       "what runs in Home Assistant. Barkley never read it.")  # fmt: skip
     if fixed:
         reasons.append(("It loads one fixed version of code from another site" if fixed == 1
                         else f"It loads fixed versions of code from {fixed} other sites or "

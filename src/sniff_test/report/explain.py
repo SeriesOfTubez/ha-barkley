@@ -415,6 +415,15 @@ RULES: dict[str, Explanation] = {
         "runs in your dashboard, now and after every new release.",
         "Loads code from the web",
     ),
+    "py-lua-download": _E(
+        "Runs Lua code it downloads",
+        "While it runs, the app downloads Lua code and runs it inside Home Assistant. Its Lua "
+        "runner lets that code use Python or run programs, so the code can do anything the "
+        "app can. Which code it gets is only decided then, and Barkley never saw it.",
+        "Check it. Whoever controls where that code comes from controls what runs in your "
+        "Home Assistant, now and later, without an update to the app.",
+        "Runs downloaded Lua",
+    ),
     "card-eval-address": _E(
         "A link can make its dashboard card run code",
         "The card runs code it takes from the page address, directly or through its "

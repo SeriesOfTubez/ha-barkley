@@ -51,6 +51,9 @@ VERSION = 1
 BUDGET = 3000  # steps one question may take
 _DEPTH = 40  # nesting of one question
 _HOPS = 4  # function boundaries crossed in one question
+# (0.15, py_lua) where a file of code comes from: the path often travels further (a device
+# object made with it, a class handed to a worker thread, a subclass's constructor)
+_HOPS_FILES = 6
 _MAX_ORIGINS = 6  # kept per question
 _MAX_CALLS = 20000  # calls indexed per app
 _MAX_FILES = 3000
@@ -64,6 +67,12 @@ KINDS = (ANSWER, SETUP, DISCOVERY, HA, LIST, SITE, UNKNOWN)
 # containers: not an address themselves; reading a key of one gives the origin
 _ENTRY, _DATA, _RESPONSE, _FOUND, _LISTED = "_entry", "_data", "_response", "_found", "_listed"
 _OBJ, _STORE, _LIB, _REL, _PARAM, _DICT = "_obj", "_store", "_lib", "_rel", "_param", "_dict"
+# (py_lua) a file the app writes with what a web request answered; detail: its number in
+# Tracer.downloads
+DOWNLOADED = "downloaded"
+_WEB_STEPS = 200  # steps for "does this written value come from a web answer"
+_ANSWER_SITES = 3  # sites named for one answer (one of a few in the code)
+_WRITE_MODE = re.compile(r"[wax]")
 _BASE_KW = ("base_url", "base_uri", "baseurl")  # a session that adds its own site
 _FIELD = re.compile(r"\{([A-Za-z0-9_]{0,40})(?:![rsa])?(?::[^{}]{0,20})?\}")
 
@@ -347,6 +356,7 @@ class _Index(ast.NodeVisitor):
     libs: dict[str, dict[str, str]] = field(default_factory=dict)  # file -> name -> package
     own: str = ""  # (py_library) the library being read: its imports of itself aren't a library
     aliases: dict[str, set[str]] = field(default_factory=dict)  # name -> `import name as X` names
+    cls_of: dict[ast.AST, str | None] = field(default_factory=dict)  # (py_lua) _own_cls
     n: int = 0
     rel: str = ""
     fn: ast.AST | None = None
@@ -396,11 +406,39 @@ class _Index(ast.NodeVisitor):
                 )
         self.generic_visit(node)
 
+    def _own_cls(self) -> str | None:
+        """The class a classmethod's `cls` stands for: only when `cls` is the first
+        parameter of a method of that class and never assigned in it (a local named
+        `cls` holding an exception class isn't this class: the hand check of
+        2026-11-23)."""
+        fn, c = self.fn, self.cls
+        if c is None or not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        if fn in self.cls_of:  # worked out once per function
+            return self.cls_of[fn]
+        got: str | None = c.name
+        if (
+            not any(n is fn for n in c.body)
+            or _params(fn)[:1] != ["cls"]
+            or any(
+                isinstance(n, ast.Name) and n.id == "cls" and isinstance(n.ctx, ast.Store)
+                for n in ast.walk(fn)
+            )
+        ):
+            got = None
+        self.cls_of[fn] = got
+        return got
+
     def visit_Call(self, node: ast.Call) -> None:
         if self.n < _MAX_CALLS:
             self.n += 1
             name = _call_name(node)
-            self.calls.setdefault(name, []).append(_Site(self.rel, node, self.fn, self.cls))
+            site = _Site(self.rel, node, self.fn, self.cls)
+            self.calls.setdefault(name, []).append(site)
+            own_cls = self._own_cls()
+            if name == "cls" and isinstance(node.func, ast.Name) and own_cls is not None:
+                # (py_lua) `cls(…)` in a classmethod makes one of this class
+                self.calls.setdefault(own_cls, []).append(site)
             at = _HANDED.get(name)
             if at is not None and len(node.args) > at:
                 ref = node.args[at]  # a function handed over: called with what follows it
@@ -408,9 +446,11 @@ class _Index(ast.NodeVisitor):
                     call = ast.copy_location(
                         ast.Call(func=ref, args=node.args[at + 1 :], keywords=node.keywords), node
                     )
-                    self.calls.setdefault(_tail(ref), []).append(
-                        _Site(self.rel, call, self.fn, self.cls)
-                    )
+                    handed = _Site(self.rel, call, self.fn, self.cls)
+                    self.calls.setdefault(_tail(ref), []).append(handed)
+                    if _tail(ref) == "cls" and isinstance(ref, ast.Name) and own_cls is not None:
+                        # (py_lua) `asyncio.to_thread(cls, …)`: the class's constructor
+                        self.calls.setdefault(own_cls, []).append(handed)
         self.generic_visit(node)
 
 
@@ -428,6 +468,11 @@ class Tracer:
         self._attrs: dict[int, dict[str, list[tuple[ast.expr, ast.AST | None]]]] = {}
         self._left = BUDGET
         self._hops = 0
+        self._max_hops = _HOPS
+        # (py_lua) following a file's path: a local name the function writes a web answer
+        # into is "downloaded"; the requests found that way, by number
+        self._files = False
+        self.downloads: list[tuple[ast.Call, _Scope]] = []
         self._busy: set[tuple[ast.AST, bool, ast.AST | None]] = set()
         self._memo: dict[tuple[ast.AST, bool, object, object, object], frozenset[Origin]] = {}
         self._cuts = 0
@@ -547,6 +592,112 @@ class Tracer:
             self._stop = None
         params = tuple(sorted({o.detail for o in out if o.kind == _PARAM}))
         return sorted(o for o in out if not o.kind.startswith("_")), params
+
+    def source(
+        self, expr: ast.expr, sc: _Scope, budget: int = BUDGET
+    ) -> tuple[list[Origin], list[tuple[ast.Call, _Scope]]]:
+        """(0.15, py_lua) Where a file's path (or a piece of code) comes from. Like
+        `address`, but a local name the function writes a web answer into
+        (`async with aiofiles.open(fnm, "w") as fp: await fp.write(text)` after
+        `text = await (await session.get(url)).text()`) is a DOWNLOADED origin, a method
+        name several classes define is followed into each of them, and the path may cross
+        more function boundaries. Returns the origins and the requests that downloaded."""
+        saved = self._memo
+        self._memo = {}  # answers in this mode differ from the address question's
+        self._left, self._hops, self._busy = budget, 0, set()
+        self._files, self._max_hops, self.downloads = True, _HOPS_FILES, []
+        try:
+            got = self._t(expr, sc, True, 0)
+        finally:
+            self._files, self._max_hops, self._memo = False, _HOPS, saved
+        got = {o if not o.kind.startswith("_") else _UNK for o in got} or {_UNK}
+        return sorted(got)[:_MAX_ORIGINS], list(self.downloads)
+
+    def _written_from_web(self, fn: ast.AST, name: str) -> ast.Call | None:
+        """The request whose answer `fn` writes into the file named by the local `name`:
+        `with open(name, "w") as fp: fp.write(v)` (also `async with aiofiles.open`),
+        `open(name, "wb").write(v)`, `Path(name).write_text(v)`, `name.write_bytes(v)`,
+        where `v` comes from a web request in the same function. None otherwise."""
+
+        def is_name(x: ast.expr | None) -> bool:
+            return isinstance(x, ast.Name) and x.id == name
+
+        def opens(c: ast.expr) -> bool:
+            if not (isinstance(c, ast.Call) and _call_name(c) == "open" and c.args):
+                return False
+            mode = c.args[1] if len(c.args) > 1 else next(
+                (k.value for k in c.keywords if k.arg == "mode"), None)  # fmt: skip
+            text = mode.value if isinstance(mode, ast.Constant) else None
+            return is_name(c.args[0]) and isinstance(text, str) and bool(_WRITE_MODE.search(text))
+
+        values: list[ast.expr] = []
+        for node in ast.walk(fn):
+            if isinstance(node, (ast.With, ast.AsyncWith)):
+                for w in node.items:
+                    if opens(w.context_expr) and isinstance(w.optional_vars, ast.Name):
+                        fp = w.optional_vars.id
+                        values += [
+                            c.args[0] for c in ast.walk(node)
+                            if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                            and c.func.attr in ("write", "writelines") and c.args
+                            and _tail(c.func.value) == fp
+                        ]  # fmt: skip
+            elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                  and node.args):  # fmt: skip
+                recv, attr = node.func.value, node.func.attr
+                path = (isinstance(recv, ast.Call) and _call_name(recv) == "Path"
+                        and bool(recv.args) and is_name(recv.args[0]))  # fmt: skip
+                if (attr == "write" and opens(recv)) or (
+                    attr in ("write_text", "write_bytes") and (is_name(recv) or path)
+                ):
+                    values.append(node.args[0])
+            if len(values) >= _FAN:
+                break
+        for v in values[:_FAN]:
+            if (req := self._from_web(v, fn)) is not None:
+                return req
+        return None
+
+    def _from_web(self, v: ast.expr, fn: ast.AST) -> ast.Call | None:
+        """The web request in `fn` that `v` is made from, through the function's own local
+        names and any call (a decryption, `.text()`, a join): every call's result is taken
+        to come from what it was given and what it was called on. At most _WEB_STEPS."""
+        from sniff_test.analyzers import py_requests
+
+        local = self._local_values(fn)
+        todo: list[ast.AST] = [v]
+        seen: set[int] = set()
+        steps = 0
+        while todo and steps < _WEB_STEPS:
+            x = todo.pop()
+            if id(x) in seen:
+                continue
+            seen.add(id(x))
+            steps += 1
+            if isinstance(x, ast.Name):
+                todo += (local.get(x.id) or [])[:_FAN]
+            elif isinstance(x, ast.Call):
+                name = _call_name(x)
+                url = x.args[0] if x.args else next(
+                    (k.value for k in x.keywords if k.arg == "url"), None)  # fmt: skip
+                # a request: also `self._session.get(response["url"])`, whose address
+                # isn't named like one (a dict's `.get` isn't called on a session)
+                if name == "urlopen" or (
+                    name in _REQUEST_CALLS and name != "request"
+                    and isinstance(x.func, ast.Attribute)
+                    and (py_requests._SESSION.search(py_requests._receiver(x.func))
+                         or py_requests._looks_like_request(x, url))
+                ):  # fmt: skip
+                    return x
+                todo += [*x.args, *(k.value for k in x.keywords)][:_FAN]
+                if isinstance(x.func, ast.Attribute):
+                    todo.append(x.func.value)
+            elif isinstance(x, (ast.Await, ast.Attribute, ast.Subscript, ast.Starred)):
+                todo.append(x.value)
+            elif isinstance(x, (ast.BinOp, ast.JoinedStr, ast.FormattedValue, ast.IfExp,
+                                ast.BoolOp, ast.List, ast.Tuple)):  # fmt: skip
+                todo += list(ast.iter_child_nodes(x))[:_FAN]
+        return None
 
     # --- the walk ------------------------------------------------------------------------
 
@@ -987,7 +1138,7 @@ class Tracer:
             return self._self_attr(attr, self._scope(rel, None, cls), lead, d)
         fields = [n.target.id for n in cls.body
                   if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name)]  # fmt: skip
-        if attr in fields and self._hops < _HOPS:  # a dataclass or NamedTuple field
+        if attr in fields and self._hops < self._max_hops:  # a dataclass or NamedTuple field
             out: set[Origin] = set()
             self._hops += 1
             try:
@@ -1107,6 +1258,9 @@ class Tracer:
 
     def _name(self, name: str, sc: _Scope, lead: bool, d: int) -> set[Origin]:
         fn = sc.func
+        if fn is not None and self._files and (req := self._written_from_web(fn, name)):
+            self.downloads.append((req, sc))
+            return {Origin(DOWNLOADED, str(len(self.downloads) - 1))}
         if fn is not None:
             values = list(self._local_values(fn).get(name) or [])
             if values and not lead:  # what it carries includes what was written into it
@@ -1155,7 +1309,7 @@ class Tracer:
             return {Origin(_ENTRY)}
         if name == "hass":
             return self._unk(fn, "hass")
-        if self._hops >= _HOPS:
+        if self._hops >= self._max_hops:
             self._cut("hops")
             return {_UNK}
         sites = self._callers(fn, sc)
@@ -1283,6 +1437,22 @@ class Tracer:
                 return set()
             return self._t(arg, sc, lead, d)
         own = self._own_def(x, sc)
+        if own is None and self._files and isinstance(f, ast.Attribute):
+            # (py_lua) `cloud.download_lua(…)` with three classes defining it and no way to
+            # tell which one `cloud` is: each of them; downloaded only when all are
+            defs = [
+                df
+                for df in self.index().funcs.get(name, [])  # an abstract one that
+                if any(
+                    isinstance(r, ast.Return) and r.value is not None  # only raises
+                    for r in ast.walk(df.fn)
+                )
+            ]  # returns nothing: left out
+            if 1 < len(defs) <= _FAN and not name.startswith("__"):
+                every: set[Origin] = set()
+                for df in defs:
+                    every |= self._returns(df, lead, d)
+                return every
         if own is not None:
             got = self._returns(own, lead, d)
             if any(o.kind == _RESPONSE and not o.site for o in got):
@@ -1431,18 +1601,31 @@ class Tracer:
 
     def _own_def(self, x: ast.Call, sc: _Scope) -> _Def | None:
         f = x.func
-        if (
-            isinstance(f, ast.Attribute)
-            and isinstance(f.value, ast.Name)
-            and f.value.id in ("self", "cls")
-            and sc.cls is not None
-        ):
-            for node in sc.cls.body:
-                if (
-                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and node.name == f.attr
-                ):
-                    return _Def(sc.rel, node, sc.cls)
+        own = isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and (
+            f.value.id in ("self", "cls"))  # fmt: skip
+        up = (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Call)
+              and _call_name(f.value) == "super")  # fmt: skip
+        if (own or up) and sc.cls is not None:
+            # the class itself, then its own base classes in the app (`super().m(…)`:
+            # only the bases); a method inherited from the app's base class answers too
+            todo = ([(sc.rel, b) for b in sc.cls.bases] if up
+                    else [(sc.rel, sc.cls)])  # fmt: skip
+            for _ in range(8):
+                if not todo:
+                    break
+                rel, c = todo.pop(0)
+                if not isinstance(c, ast.ClassDef):
+                    hit = self._class(_tail(c))
+                    if hit is None:
+                        continue
+                    rel, c = hit
+                for node in c.body:
+                    if (
+                        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and node.name == f.attr  # type: ignore[union-attr]
+                    ):
+                        return _Def(rel, node, c)
+                todo += [(rel, b) for b in c.bases]
             return None
         name = _call_name(x)
         defs = self.index().funcs.get(name, [])
@@ -1451,7 +1634,7 @@ class Tracer:
         return None
 
     def _returns(self, df: _Def, lead: bool, d: int) -> set[Origin]:
-        if self._hops >= _HOPS:
+        if self._hops >= self._max_hops:
             self._cut("hops")
             return {_UNK}
         self._hops += 1
@@ -1490,9 +1673,11 @@ class Tracer:
             return None
         if host is None:  # `f"{API_BASE}{endpoint}"`: the site it starts with names the answer
             got = self._t(url, sc, True, d)
-            sites = {o.detail for o in got if o.kind == SITE}
-            if len(sites) == 1 and all(o.kind == SITE for o in got):
-                return sites.pop()
+            sites = {h for o in got if o.kind in (SITE, LIST) for h in o.detail.split(",") if h}
+            # (0.15) one of a few sites in the code (`SERVERS[region]["api_url"]`): all of
+            # them, comma-separated ("a.example,b.example")
+            if 1 <= len(sites) <= _ANSWER_SITES and all(o.kind in (SITE, LIST) for o in got):
+                return ",".join(sorted(sites))
         return host or ""
 
 

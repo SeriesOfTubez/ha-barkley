@@ -107,7 +107,9 @@ update the list offers one button to sniff your apps again.
   server's answer, a device found on your network, Home Assistant's own address, or
   "couldn't tell". An address you entered shows as a dashed box on the picture: Barkley
   can't tell whether it's on your home network or the internet. Sites the code picks
-  from a list in it are shown with the sites it connects to, and on the picture.
+  from a list in it are shown with the sites it connects to, and on the picture. When
+  the address comes from the answer of one of a few sites in the code, those sites are
+  named. Barkley also follows methods an app's class gets from its own base class.
 - When an integration hands the login you gave it, or an address, to a library it
   requires, Barkley reads inside that library, one level deep. It downloads the
   library's published package (the exact version the app gets, checksum checked, at
@@ -129,6 +131,9 @@ update the list offers one button to sniff your apps again.
   code", with the reason (too new, too few downloads, no answer from npm, a malware
   warning), and how many large files matched nothing.
 - Code it gets while it runs: packages it installs or code it loads after it's installed.
+  For an integration that runs Lua code through the lupa package, where that Lua comes
+  from: downloaded while it runs (and from where), shipped in the release, packed in its
+  code, or a file Barkley couldn't follow. Barkley has no checks for Lua code itself.
 
 **AI**
 
@@ -246,6 +251,10 @@ change below is a general check applied to every app, not an exception for one:
   version it gets is decided while it runs, 2 when it's one exact version.
 - A card that runs code taken from the page address is Exposure 5, not a Threat: anyone
   who gets a logged-in user to open a link could run code in the dashboard.
+- An integration that downloads Lua code while it runs and runs it through lupa is
+  Exposure 5, like a card's code from another site. With lupa's out-of-the-box settings
+  that code can use Python and run programs, so it can do anything the app can. A
+  runner that keeps the code away from both is listed and not counted.
 
 **The list and Settings**
 

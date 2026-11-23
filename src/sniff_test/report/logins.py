@@ -45,6 +45,19 @@ def _strs(x: Any) -> list[str]:
     return [v for v in _list(x) if isinstance(v, str) and v]
 
 
+def answer_of(site: str) -> str:
+    """ "<code>api.example</code>'s answer"; for one of a few sites in the code
+    ("a.example,b.example"), "the answer of one of 2 sites in its code (…)"; else "a
+    server's answer"."""
+    sites = [h for h in site.split(",") if h and h != "?"][:3]
+    if len(sites) == 1:
+        return f"<code>{_e(sites[0], 120)}</code>'s answer"
+    if sites:
+        shown = ", ".join(f"<code>{_e(h, 80)}</code>" for h in sites)
+        return f"the answer of one of {len(sites)} sites in its code ({shown})"
+    return "a server's answer"
+
+
 def origin_words(o: dict[str, Any]) -> tuple[str, bool]:
     """(plain words for where an address comes from, whether it is one fixed site)."""
     kind, detail = str(o.get("kind") or ""), str(o.get("detail") or "")
@@ -59,10 +72,7 @@ def origin_words(o: dict[str, Any]) -> tuple[str, bool]:
         more = f" and {len(sites) - 3} more" if len(sites) > 3 else ""
         return f"One of {len(sites)} sites in its code ({shown}{more})", False
     if kind == "answer":
-        site = str(o.get("site") or "")
-        if site and site != "?":
-            return f"An address from <code>{_e(site, 120)}</code>'s answer", False
-        return "An address from a server's answer", False
+        return f"An address from {answer_of(str(o.get('site') or ''))}", False
     if kind == "discovery":
         return "A device it found on your network", False
     if kind == "ha":
@@ -189,9 +199,7 @@ def groups(report: dict[str, Any], app: str) -> list[Group]:
         for t in _strs(s.get("tokens")):
             g = tokens.get(t)
             if g is None:
-                who = (f"<code>{_e(t, 120)}</code>'s answer" if t != "?"
-                       else "a server's answer")  # fmt: skip
-                g = tokens[t] = Group(f"The token from {who}", "", "its own code")
+                g = tokens[t] = Group(f"The token from {answer_of(t)}", "", "its own code")
             _add(g.dests, _dest_of(host, s, _how(s)))
     out = []
     if own.dests:

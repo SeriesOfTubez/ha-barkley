@@ -20,6 +20,7 @@ from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from sniff_test import __version__, devnote, does, kinds, known, readings, scancache
+from sniff_test.analyzers import py_lua
 from sniff_test.analyzers.correlate import CREDENTIAL_SOURCES, SENSITIVE_NODES
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
 from sniff_test.fetch import retry
@@ -3292,6 +3293,94 @@ def _supply_packages(report: dict[str, Any]) -> str:
     return "".join(out)
 
 
+def _lua_from(o: dict[str, Any]) -> str:
+    """Where downloaded Lua comes from, as the end of a sentence."""
+    kind, detail = str(o.get("kind") or ""), str(o.get("detail") or "")
+    if kind == "answer":
+        return f"The address comes from {logins.answer_of(str(o.get('site') or ''))}"
+    if kind == "site" and detail:
+        return f"It downloads it from <code>{e(detail, 120)}</code>"
+    if kind == "list":
+        sites = [h for h in detail.split(",") if h][:3]
+        shown = ", ".join(f"<code>{e(h, 80)}</code>" for h in sites)
+        return f"It downloads it from one of {len(sites)} sites in its code ({shown})"
+    if kind == "setup":
+        return "It downloads it from the address you entered when you set it up"
+    return "Barkley couldn't tell where it downloads it from"
+
+
+def _lua_loc(x: dict[str, Any]) -> str:
+    return (f"<code>{e(x.get('file'), 160)}</code> line {int(x['line'])}"
+            if x.get("file") and isinstance(x.get("line"), int) else "")  # fmt: skip
+
+
+def lua_lines(report: dict[str, Any]) -> list[str]:
+    """(0.15, his decision 2026-11-23) The Lua an integration runs through lupa and where
+    it comes from (report "lua", analyzers/py_lua): one line per kind of source."""
+    lua = report.get("lua")
+    if not isinstance(lua, dict):
+        return []
+    runs = [r for r in lua.get("runs") or [] if isinstance(r, dict)]
+    rts = [r for r in lua.get("runtimes") or [] if isinstance(r, dict)]
+    by: dict[str, list[dict[str, Any]]] = {}
+    for r in runs:
+        by.setdefault(str(r.get("source")), []).append(r)
+    bare = bool(rts) and all(r.get("defaults") is True for r in rts)
+    can = py_lua.ways_words(lua)
+    closed = bool(rts) and all(r.get("python") == "closed" and r.get("system") == "closed"
+                               for r in rts)  # fmt: skip
+    runner = ("Its Lua runner keeps that code away from Python and from running programs."
+              if closed else
+              f"Its Lua runner is left at lupa's out-of-the-box settings, so that code {can} "
+              "on your system." if bare else
+              f"Its Lua runner lets that code {can.removeprefix('can ')} on your system."
+              if can.startswith("can ") else "")  # fmt: skip
+    out = []
+    for r in by.get(py_lua.DOWNLOADED, [])[:3]:
+        where = "; ".join(_lua_from(o) for o in (r.get("from") or [])[:2]
+                          if isinstance(o, dict)) or _lua_from({})  # fmt: skip
+        lines: dict[str, list[int]] = {}  # the downloading requests, by file
+        for a in r.get("at") or []:
+            f, _, n = str(a).rpartition(":")
+            if f and n.isdigit() and len(lines) < 3:
+                lines.setdefault(f, []).append(int(n))
+        at = "; ".join(
+            f"<code>{e(f, 160)}</code> line{'s' * (len(ns) > 1)} "
+            + " and ".join(str(n) for n in sorted(ns)[:3])
+            for f, ns in lines.items()
+        )
+        how = (f"It downloads the code ({at}), saves it to a file and runs it ({_lua_loc(r)})."
+               if at else f"It runs it at {_lua_loc(r)}.")  # fmt: skip
+        out.append(f"<b>Runs Lua code it downloads.</b> {where}. {how} {runner} "
+                   "Barkley never sees that code.")  # fmt: skip
+    names = {k: sorted({str(r["name"]) for r in by.get(k, []) if r.get("name")})
+             for k in (py_lua.PACKED, py_lua.SHIPPED)}  # fmt: skip
+
+    def named(k: str) -> str:
+        ns = names[k][:4]
+        if not ns:
+            return ""
+        more = f" and {len(names[k]) - 4} more" if len(names[k]) > 4 else ""
+        return " (" + ", ".join(f"<code>{e(n, 80)}</code>" for n in ns) + more + ")"
+
+    if by.get(py_lua.PACKED):
+        out.append(f"<b>Runs Lua code packed in its own code</b>{named(py_lua.PACKED)}. "
+                   "Barkley has no checks for Lua code.")  # fmt: skip
+    if by.get(py_lua.SHIPPED):
+        out.append(f"<b>Runs Lua code that comes with the release</b>{named(py_lua.SHIPPED)}. "
+                   "Barkley has no checks for Lua code.")  # fmt: skip
+    if by.get(py_lua.UNKNOWN):
+        out.append("<b>Runs Lua code from a file it picks while it runs.</b> Barkley couldn't "
+                   f"tell where that file comes from ({_lua_loc(by[py_lua.UNKNOWN][0])}).")  # fmt: skip
+    if by.get(py_lua.IN_CODE):
+        n = len(by[py_lua.IN_CODE])
+        out.append(f"It also runs short pieces of Lua written in its Python code "
+                   f"({_count(n, 'place', 'places')}).")  # fmt: skip
+    if not out and rts:
+        out.append(f"It can run Lua code (the lupa package, {_lua_loc(rts[0])}).")
+    return out
+
+
 def _supply_runtime(report: dict[str, Any]) -> str:
     """Code that doesn't come with the release: installed or downloaded while the app
     runs, or a library taken straight from a web address. From the scan's own items."""
@@ -3300,14 +3389,15 @@ def _supply_runtime(report: dict[str, Any]) -> str:
         if str(f.get("rule_id")) in RUNTIME_CODE_RULES:
             by.setdefault(str(f["rule_id"]), []).append(f)
     head = '<h3 class="kindh">Code it gets while it runs</h3>'
-    if not by:
+    lua = lua_lines(report)  # (0.15) said from the report's own section, not the finding
+    if not by and not lua:
         kind = str((report.get("target") or {}).get("kind"))
         what = ("that loads code from a website while the card runs" if kind in ("plugin", "card")
                 else "that installs packages while the app runs")  # fmt: skip
         who = ("Barkley found" if report.get("complete", True)
                else "In the part Barkley could check, it found")  # fmt: skip
         return f'{head}<p class="sub">{who} nothing {what}.</p>'
-    li = []
+    li = list(lua)
     for rule in RUNTIME_CODE_RULES:
         fs = by.get(rule) or []
         if fs:
