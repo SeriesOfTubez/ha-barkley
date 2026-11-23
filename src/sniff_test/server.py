@@ -46,7 +46,7 @@ from sniff_test import (
 )
 from sniff_test import settings as settings_mod
 from sniff_test import shown as shown_mod
-from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK
+from sniff_test.diff import HEADLINE_MAX, HEADLINE_RANK, WHAT, what_sentence
 from sniff_test.diff import diff as diff_reports
 from sniff_test.fetch.github import GitHubError, NotFoundError, RateLimit, RateLimitError
 from sniff_test.releases import ReleasesError
@@ -2349,6 +2349,34 @@ def _side_words(base: str, side: dict[str, Any], sid: int) -> str:
     return f"<b>{e(side['ref'], 60)}</b> ({link})" if side.get("ref") else link
 
 
+def what_html(d: dict[str, Any]) -> str:
+    """(0.15, his ask 2026-11-23) What the update changes beyond security: one sentence of
+    counts, and a fold that names them. Names come from the scanned code: escaped."""
+    what = [w for w in d.get("what") or [] if isinstance(w, dict) and w.get("kind") in WHAT]
+    if not d.get("what_known"):
+        return ('<p class="small mt2 muted">What else the update changes (actions, kinds of '
+                "entity, packages, sites) shows once both versions are sniffed by Barkley "
+                "0.15 or later.</p>")  # fmt: skip
+    said = (
+        what_sentence(what)
+        or "It adds and removes no actions, kinds of entity, pages, packages or sites."
+    )
+    rows = []
+    for w in what:
+        one, many, _add, _drop = WHAT[w["kind"]]
+        for side, word in (("added", "New"), ("removed", "Gone")):
+            shown = [str(x) for x in w.get(side) or []][:20]
+            if shown:
+                total = max(int(w.get(f"n_{side}") or 0), len(shown))
+                rest = f" and {total - len(shown)} more" if total > len(shown) else ""
+                rows.append(f"<li>{word} {e(one if total == 1 else many)}: "
+                            + ", ".join(f"<code>{e(n, 120)}</code>" for n in shown)
+                            + f"{rest}</li>")  # fmt: skip
+    fold = (f'<details class="small"><summary>Which ones</summary><ul>{"".join(rows)}</ul>'
+            "</details>" if rows else "")  # fmt: skip
+    return f'<p class="mt2"><b>What the update changes:</b> {e(said, 600)}</p>{fold}'
+
+
 def render_diff(
     base: str,
     old: int,
@@ -2389,6 +2417,7 @@ def render_diff(
             if r_from or r_to
             else ""
         )
+        + what_html(d)
         + f'<div class="muted small">Each version has its own readings. The comparison itself '
         f"doesn't change them. {how}</div></div></section>",
     ]

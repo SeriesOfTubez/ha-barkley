@@ -329,8 +329,11 @@ def test_notification_text_is_built_from_fixed_words_only():
         {"rank": 60, "group": "hosts", "sign": "+", "text": HOSTILE},
         {"rank": 60, "group": "hosts", "sign": "+", "text": HOSTILE},
         {"rank": 5, "group": "coverage", "sign": "+", "text": HOSTILE},
-    ]}  # fmt: skip
+    ], "what": [{"kind": "actions", "added": [HOSTILE, "x.b"], "removed": [], "n_added": 2,
+                 "n_removed": 0}]}  # fmt: skip
     title, md, plain = watch.notification(entry, rep, d, "/app/x")
+    # (0.15) what else it changes: counts only, never the names
+    assert "It also adds 2 actions you can use in automations." in md and "x.b" not in md
     assert title == "Barkley: 🔴 malicious behavior found in acme/x v2"
     assert md.startswith(
         "Integration acme/x was updated from v1 to v2. Barkley sniffed it. 🔴 Threat: found · "

@@ -30,6 +30,21 @@ The status box shows progress.
 
 <sub>Screenshots from Barkley's own made-up test apps, not real projects. The AI text is real output from Claude Sonnet 5.5, standing in for the AI Task model you pick; your model's answers will differ.</sub>
 
+## What else the update changes
+
+Under the readings, one sentence says what the update adds and removes beyond security:
+actions you can use in automations, kinds of entity, pages and sidebar pages, commands
+and webhooks it accepts, other integrations' actions it calls, packages it requires (and
+the ones that come with them), sites it sends requests to, sites the login you gave it
+goes to, and environment variables it reads. **Which ones** names them. A package that
+only changes version isn't counted.
+
+Barkley counts kinds of entity (switches, sensors), not entities: how many an app
+creates depends on your devices, so the code can't say. An update notification carries
+the same sentence with counts only, never names. Both versions must be sniffed by 0.15
+or later; otherwise the page says so. None of this changes a reading or the changes to
+check.
+
 ## What it also tells you since 0.15
 
 These come from facts a scan keeps since 0.15, so both versions must have been sniffed

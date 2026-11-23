@@ -155,6 +155,16 @@ update the list offers one button to sniff your apps again.
 
 **Update comparison**
 
+- A summary of what the update changes beyond security, added and removed: actions you
+  can use in automations, kinds of entity, pages and sidebar pages, commands and
+  webhooks it accepts, other integrations' actions it calls, packages, sites it sends
+  requests to, sites the login you gave it goes to, and environment variables it reads.
+  For example: "Adds 3 actions you can use in automations, adds 1 kind of entity, adds 2
+  packages it requires, no longer adds 1 sidebar page." A fold names them. Barkley
+  counts kinds of entity (switches, sensors), not entities: how many an app creates
+  depends on your devices. An update notification carries the same sentence, with
+  counts only. Both versions must be sniffed by 0.15 or later.
+
 - It now also says when an update changes how the release's commit is signed, sends a
   new kind of request to a site, puts new names into a request, reads or sets a new
   environment variable, or brings a new, changed or newly read published library.

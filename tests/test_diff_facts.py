@@ -100,3 +100,80 @@ def test_the_whole_comparison_carries_them_and_the_panel_escapes_names():
         lead, html, _raw = ui.change_line(c)
         assert lead == "New" and "<b>x" not in html
     assert any("&lt;b&gt;x&lt;/b&gt; in the body" in ui.change_line(c)[1] for c in d["changes"])
+
+
+def _app(services=(), packages=(), carried=(), platforms=None, sites=None, env=None):
+    nodes = [{"id": "integration:x", "kind": "integration", "label": "x"}]
+    edges = []
+    for s in services:
+        nodes.append({"id": f"service:{s}", "kind": "service", "label": s})
+        edges.append(
+            {
+                "source": "integration:x",
+                "target": f"service:{s}",
+                "relation": "registers",
+                "finding_ids": [],
+            }
+        )
+    for p, direct in [(p, True) for p in packages] + [(p, False) for p in carried]:
+        nodes.append({"id": f"package:pypi/{p}", "kind": "package", "label": f"pypi/{p}"})
+        edges.append(
+            {
+                "source": "integration:x",
+                "target": f"package:pypi/{p}",
+                "relation": "depends_on",
+                "attrs": {"direct": direct, "version": "1"},
+                "finding_ids": [],
+            }
+        )
+    rep = {"graph": {"subject": "integration:x", "nodes": nodes, "edges": edges}}
+    if platforms is not None:
+        rep["platforms"] = list(platforms)
+    if sites is not None:
+        rep["requests"] = {"sites": {h: [_shape("GET")] for h in sites}, "elsewhere": []}
+    if env is not None:
+        rep["environment"] = {"reads": [{"name": n} for n in env]}
+    return rep  # fmt: skip
+
+
+def test_what_the_update_changes_counts_added_and_removed_by_name():
+    """(0.15, his ask 2026-11-23) Beyond security: actions, kinds of entity, packages,
+    sites, environment variables, added and removed; a version bump of a package is no
+    change; kinds of entity, not a count of entities."""
+    old = _app(["x.refresh", "x.reset"], ["aiohttp"], ["yarl"], ["sensor"], ["api.x.invalid"],
+               [])  # fmt: skip
+    new = _app(["x.refresh", "x.a", "x.b", "x.c"], ["aiohttp", "pyx", "qy"], ["yarl"],
+               ["sensor", "switch", "binary_sensor"], ["api.x.invalid", "eu.x.invalid"],
+               ["X_KEY"])  # fmt: skip
+    what = diff.what_changes(old, new)
+    by = {w["kind"]: w for w in what}
+    assert by["actions"]["added"] == ["x.a", "x.b", "x.c"] and by["actions"]["removed"] == [
+        "x.reset"
+    ]
+    assert by["entities"]["added"] == ["binary sensor", "switch"]
+    assert by["packages"]["added"] == ["pyx", "qy"] and "carried" not in by
+    assert diff.what_sentence(what) == (
+        "Adds 3 actions you can use in automations, adds 2 kinds of entity, adds 2 packages it "
+        "requires, sends requests to 1 new site, reads 1 more environment variable, no longer "
+        "adds 1 action you can use in automations."
+    )
+    assert diff.what_sentence([]) == ""
+    # a scan that doesn't keep a fact never reads as "all removed"
+    assert "entities" not in {w["kind"] for w in diff.what_changes(_app(), new)}
+    from test_store import report
+
+    # the full comparison carries it; an older scan without the facts says it can't tell
+    d = diff.diff(report(repo="acme/x", ref="v1"), report(repo="acme/x", ref="v2"))
+    assert d["what"] == [] and d["what_known"] is False
+
+
+def test_the_comparison_page_names_them_escaped_and_says_when_it_cant_tell():
+    from sniff_test import server
+
+    what = [{"kind": "actions", "added": ["x.<b>"], "removed": [], "n_added": 1,
+             "n_removed": 0}]  # fmt: skip
+    html = server.what_html({"what": what, "what_known": True})
+    assert "Adds 1 action you can use in automations." in html
+    assert "<code>x.&lt;b&gt;</code>" in html and "<b>x" not in html
+    assert "0.15 or later" in server.what_html({"what": [], "what_known": False})
+    assert "adds and removes no actions" in server.what_html({"what": [], "what_known": True})

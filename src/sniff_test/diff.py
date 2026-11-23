@@ -801,6 +801,148 @@ def library_changes(old: dict, new: dict) -> list[Change]:
     return out
 
 
+# --- (0.15, his ask 2026-11-23) what the update changes, added and removed -------------
+# Facts both scans keep, compared by name: never a reading and never a change to check.
+# kind -> (one, many, added, removed); {n} is the count, {noun} the one or many word.
+WHAT = {
+    "actions": (
+        "action you can use in automations",
+        "actions you can use in automations",
+        "adds {n} {noun}",
+        "no longer adds {n} {noun}",
+    ),
+    "entities": (
+        "kind of entity",
+        "kinds of entity",
+        "adds {n} {noun}",
+        "no longer adds {n} {noun}",
+    ),
+    "pages": (
+        "page in your Home Assistant",
+        "pages in your Home Assistant",
+        "adds {n} {noun}",
+        "no longer adds {n} {noun}",
+    ),
+    "sidebar": ("sidebar page", "sidebar pages", "adds {n} {noun}", "no longer adds {n} {noun}"),
+    "commands": (
+        "command the app and dashboards can send it",
+        "commands the app and dashboards can send it",
+        "accepts {n} more {noun}",
+        "no longer accepts {n} {noun}",
+    ),
+    "webhooks": ("webhook", "webhooks", "accepts {n} more {noun}", "no longer accepts {n} {noun}"),
+    "calls": (
+        "action of another integration",
+        "actions of other integrations",
+        "calls {n} more {noun}",
+        "no longer calls {n} {noun}",
+    ),
+    "packages": (
+        "package it requires",
+        "packages it requires",
+        "adds {n} {noun}",
+        "drops {n} {noun}",
+    ),
+    "carried": (
+        "package that comes with them",
+        "packages that come with them",
+        "adds {n} {noun}",
+        "drops {n} {noun}",
+    ),
+    "sites": (
+        "site",
+        "sites",
+        "sends requests to {n} new {noun}",
+        "no longer sends requests to {n} {noun}",
+    ),
+    "logins": (
+        "site",
+        "sites",
+        "sends the login you gave it to {n} new {noun}",
+        "no longer sends the login you gave it to {n} {noun}",
+    ),
+    "env": (
+        "environment variable",
+        "environment variables",
+        "reads {n} more {noun}",
+        "no longer reads {n} {noun}",
+    ),
+}
+_REGISTERS = {"service": "actions", "http_view": "pages", "panel": "sidebar",
+              "ws_command": "commands", "webhook": "webhooks"}  # fmt: skip
+
+
+def _what_facts(report: dict[str, Any]) -> dict[str, set[str]]:
+    """The names behind each WHAT kind in one report. A kind the report doesn't keep (a
+    scan from before it was recorded) is missing, so it is never read as all removed."""
+    out: dict[str, set[str]] = {}
+    g = report.get("graph") or {}
+    nodes = {n.get("id"): n for n in g.get("nodes") or [] if isinstance(n, dict)}
+    if g.get("subject"):
+        for k in ("actions", "pages", "sidebar", "commands", "webhooks", "calls", "packages",
+                  "carried"):  # fmt: skip
+            out[k] = set()
+        for e in g.get("edges") or []:
+            if not isinstance(e, dict) or e.get("source") != g["subject"]:
+                continue
+            n = nodes.get(e.get("target")) or {}
+            kind, label = str(n.get("kind") or ""), str(n.get("label") or "")
+            if not label:
+                continue
+            if e.get("relation") == "registers" and kind in _REGISTERS:
+                out[_REGISTERS[kind]].add(label)
+            elif e.get("relation") == "calls" and kind == "service":
+                out["calls"].add(label)
+            elif e.get("relation") == "depends_on" and kind == "package":
+                direct = (e.get("attrs") or {}).get("direct", True)
+                out["packages" if direct else "carried"].add(label.split("/", 1)[-1])
+    if isinstance(report.get("platforms"), list):
+        out["entities"] = {str(x).replace("_", " ") for x in report["platforms"]}
+    req = report.get("requests")
+    if isinstance(req, dict) and isinstance(req.get("sites"), dict):
+        out["sites"] = {str(h) for h in req["sites"]}
+        from sniff_test.report import logins  # panel-only, like this module
+
+        out["logins"] = {h for h, m in logins.marks(report).items() if m.login and h}
+    env = _section(report, "environment")
+    if env is not None:
+        out["env"] = {str(d.get("name")) for d in env.get("reads") or []
+                      if isinstance(d, dict) and d.get("name")}  # fmt: skip
+    return out
+
+
+def what_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str, Any]]:
+    """[{"kind", "added": [names], "removed": [names]}] for each WHAT kind both reports
+    keep and that changed, in WHAT's order. Names come from the scanned code (untrusted)."""
+    a, b = _what_facts(old), _what_facts(new)
+    out = []
+    for kind in WHAT:
+        if kind not in a or kind not in b:
+            continue
+        added, removed = sorted(b[kind] - a[kind]), sorted(a[kind] - b[kind])
+        if added or removed:
+            out.append({"kind": kind, "added": added[:50], "removed": removed[:50],
+                        "n_added": len(added), "n_removed": len(removed)})  # fmt: skip
+    return out
+
+
+def what_sentence(items: list[dict[str, Any]]) -> str:
+    """One plain sentence of counts, fixed words only (no names): for the page and the
+    notification. "" when nothing changed."""
+    parts = []
+    for side in ("added", "removed"):
+        for it in items:
+            n = int(it.get(f"n_{side}") or 0)
+            one, many, add, drop = WHAT[it["kind"]]
+            if n:
+                parts.append((add if side == "added" else drop).format(
+                    n=n, noun=one if n == 1 else many))  # fmt: skip
+    if not parts:
+        return ""
+    text = ", ".join(parts)
+    return text[0].upper() + text[1:] + "."
+
+
 def diff(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     warnings = []
     if old.get("schema_version") != new.get("schema_version"):
@@ -855,7 +997,15 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
         "score": {"from": a["score"], "to": b["score"], "delta": b["score"] - a["score"]},
         "warnings": warnings,
         "headline_rank": HEADLINE_RANK,
-        "untrusted_fields": ["changes[].text", "changes[].detail"],
+        "untrusted_fields": [
+            "changes[].text",
+            "changes[].detail",
+            "what[].added",
+            "what[].removed",
+        ],
         "summary": summary,
         "changes": [c.to_dict() for c in changes],
+        "what": what_changes(old, new),
+        # both scans keep the newest of these facts (0.15): else the page says it can't tell
+        "what_known": "entities" in _what_facts(old) and "entities" in _what_facts(new),
     }

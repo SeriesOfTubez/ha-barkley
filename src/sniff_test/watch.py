@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sniff_test import readings, shown, supervisor
-from sniff_test.diff import HEADLINE_RANK
+from sniff_test.diff import HEADLINE_RANK, what_sentence
 from sniff_test.diff import diff as diff_reports
 from sniff_test.store import Store, StoreError
 from sniff_test.supervisor import Installed, SupervisorError
@@ -254,6 +254,11 @@ def _readings_notification(
             f"Changes in this update: {summary}." if summary
             else f"Nothing important changed since {prev}."
         )  # fmt: skip
+        # (0.15, his decision 2026-11-23) what else it changes, as counts only: fixed words,
+        # never a name from the scanned code
+        what = what_sentence(d.get("what") or [])
+        if what:
+            lines.append(f"It also {what[0].lower()}{what[1:]}")
     if not report.get("complete", True):
         lines.append("Part of the check didn't finish.")
     ids = entry.get("scan_ids") or []
