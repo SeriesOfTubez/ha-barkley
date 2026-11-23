@@ -56,7 +56,7 @@ opens a pre-filled public issue that you finish and submit.
   didn't keeps them). "Sniff N unfinished again" repeats every scan that didn't finish,
   and "Sniff all N again" runs a fresh scan of each. Apps already queued or running are
   skipped.
-- **The list:** Barkley checks integrations and dashboard cards only; the list says what
+- **The list:** Barkley currently checks integrations and dashboard cards only; the list says what
   else you have that it doesn't check. The counts at the top are filters (needs a look,
   with signs of a threat, with medium or high Exposure, no concerns found, with privacy
   notes, updates waiting, not checked), and Order sorts by most concern first, Threat,

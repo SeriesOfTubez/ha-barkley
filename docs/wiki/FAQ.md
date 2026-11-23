@@ -27,9 +27,9 @@ No. It reports. There is no quarantine and no install gate.
 No. The code is downloaded and read. It is never executed, imported, built or installed.
 
 **Can it scan Home Assistant apps (add-ons)?**
-No. Barkley checks integrations and dashboard cards only. It doesn't check apps
-(add-ons), AppDaemon apps, Python scripts, themes or templates; the list says how many
-of those you have that it didn't check.
+Not yet. Barkley currently checks integrations and dashboard cards only. It doesn't
+check apps (add-ons), AppDaemon apps, Python scripts, themes or templates; the list
+says how many of those you have that it didn't check.
 
 **Was Barkley written with AI?**
 Yes, with AI assistance under human direction and review; most of the code and docs are

@@ -13,8 +13,8 @@ unsandboxed inside the HA Python process; cards run in the HA frontend origin an
 read your tokens. Nobody reviews them before you install. Barkley does a first pass, as
 an app (add-on) in your Home Assistant sidebar or from the command line.
 
-Barkley checks integrations and dashboard cards only. It doesn't check Home Assistant
-apps (add-ons), AppDaemon apps, Python scripts, themes or templates.
+Barkley currently checks integrations and dashboard cards only. It doesn't check Home
+Assistant apps (add-ons), AppDaemon apps, Python scripts, themes or templates yet.
 
 > **Status:** young, and built by one person. Barkley is a first pass, not a substitute
 > for reading the code: a clean sniff means the checks below found nothing, not that

@@ -173,10 +173,11 @@ update the list offers one button to sniff your apps again.
   (at most high) instead of always medium; one that can only slow or stop the page
   stays at most medium.
 
-**Fewer false alarms, from scanning the whole Marketplace**
+**Fewer false alarms, from scanning the Marketplace**
 
-Barkley scanned all 6,753 apps in the Marketplace's list (November 2026). It flagged 92
-as a possible or found threat, and when their code was read, none was malicious. Every
+Barkley scanned 6,753 of the 6,759 apps in the Marketplace's list (November 2026): three
+repositories were gone, and three downloads were over Barkley's 256 MB limit. It flagged
+92 as a possible or found threat, and when their code was read, none was malicious. Every
 change below is a general check applied to every app, not an exception for one:
 
 - A login token sent to Home Assistant itself: through a helper that takes the address
