@@ -270,3 +270,10 @@ def test_the_size_setting_scales_the_text_the_descriptions_and_the_sentences():
     cite = "Pairing renews the hub certificate weekly (m15.py:2)."
     assert ai_words.accept(rep, {"says_1": cite}, 18000)["says"]  # sent at 18,000
     assert not ai_words.accept(rep, {"says_1": cite}, 6000)["says"]  # not sent at 6,000
+
+
+def test_a_name_in_backticks_shows_as_code_and_stays_escaped():
+    """The box shows `names` as code, like the reading sheet, after escaping the rest."""
+    box = ui.said_box([{"text": "It calls `ws_provision` <b>first</b> (ws.py:33).",
+                        "cites": [["ws.py", 33, 33]], "about": ""}])  # fmt: skip
+    assert "<code>ws_provision</code>" in box and "&lt;b&gt;" in box and "`" not in box

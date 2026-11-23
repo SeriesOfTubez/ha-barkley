@@ -602,6 +602,7 @@ tr.aiwork td:first-child { box-shadow:inset 2px 0 0 var(--ai); }
 .aiwait { display:inline-flex; align-items:center; gap:var(--s1); color:var(--ai);
   font-weight:600; margin-right:var(--s2); }
 .aiwait a { color:var(--ai); }
+.ailine { margin-top:var(--s2); }
 .stops { display:flex; justify-content:space-between; gap:var(--s2); font-size:var(--t-xs);
   color:var(--muted); }
 input[type=range] { width:100%; padding:0; border:0; background:none; accent-color:var(--ai); }
@@ -928,8 +929,7 @@ def card_html(base: str, c: Card) -> str:
     )
     chips = "".join(f'<span class="chip {cls}">{e(t, 60)}</span>' for cls, t in card_chips(c))
     act = f'<span class="muted">{_busy_text(c)}</span>' if c.busy else c.action
-    if c.ai:
-        act = _ai_waiting() + act
+    thinking = f'<div class="ailine">{_ai_waiting()}</div>' if c.ai else ""
     links = ""
     if c.diff_link:
         links = f'<a href="{base}/diff?{c.diff_link}">what the update changes</a>'
@@ -941,7 +941,7 @@ def card_html(base: str, c: Card) -> str:
         f'<div class="app-kind">{e(KIND.get(c.kind, c.kind))} · {e(c.installed, 40)}</div></div>'
         f"{top}"
         f'<div class="say">{e(card_sentence(c), 400)}</div>'
-        f'<div class="chips">{chips}</div>{actions}</div>'
+        f'<div class="chips">{chips}</div>{thinking}{actions}</div>'
     )
 
 
@@ -3860,7 +3860,7 @@ def said_html(says: list[dict[str, Any]]) -> str:
     lines Barkley checked. Text from an AI about untrusted text: escaped."""
     return "".join(
         f'<div class="devq">{src_tag("ai", _lines(x.get("cites")), "AI inferred")}'
-        f"<div>From the developer's text: {e(_said(x), 400)}</div>"
+        f"<div>From the developer's text: {_ai_text(_said(x), 400)}</div>"
         '<span class="cite">The developer wrote those lines. It doesn\'t change the readings.'
         "</span></div>"
         for x in says
@@ -3886,7 +3886,7 @@ def said_box(says: list[dict[str, Any]], failed: str = "") -> str:
         if where and where not in notes:
             notes.append(where)
         mark = f'<sup class="fn">{notes.index(where) + 1}</sup>' if where else ""
-        parts.append(f"{e(_said(x), 400)}{mark}")
+        parts.append(f"{_ai_text(_said(x), 400)}{mark}")
     if not parts and not failed:
         return ""
     body = (
