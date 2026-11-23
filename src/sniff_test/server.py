@@ -869,6 +869,7 @@ def status_html(
     here: str,
     now: float | None = None,
     ai: list[AiRun] | None = None,
+    refresh_href: str = "",
 ) -> str:
     """The strip at the top: what's being sniffed now, what the AI is answering (in its
     colour), and what just finished."""
@@ -937,7 +938,8 @@ def status_html(
     return (
         '<div class="box status" role="status">'
         + "".join(f'<div class="row">{x}</div>' for x in lines)
-        + f'<div class="row">{tail}<a class="small" href="{base}/?{here}">{ui.icon("refresh")} '
+        + f'<div class="row">{tail}<a class="small" href="{refresh_href or f"{base}/?{here}"}">'
+        f"{ui.icon('refresh')} "
         "Refresh</a></div></div>"
     )
 
@@ -1809,6 +1811,7 @@ def render_scan(
     item_asked: dict[str, list[str]] | None = None,
     listing: dict[str, str] | None = None,
     ai_since: float = 0.0,
+    jobs: list[Job] | None = None,
 ) -> bytes:
     """`open_item`: the item whose AI sheet is open (`?open=`), kept open across refreshes.
     `listing`: the Marketplace's removed list entry for this app (listings.py), if any.
@@ -1823,6 +1826,14 @@ def render_scan(
     # reader's scroll position but needs an address without a fragment, so the sheets'
     # links are URLs for that long (see ui.deep_html).
     running = ai_state == "running" or any(st == "running" for st, _ in item_states.values())
+    # (0.15, his report) a sniff of this app that is queued, running or just done: the same
+    # lines as the list's status box, so the page says so and reloads until it ends
+    mine = [j for j in jobs or [] if repo and j.repo.lower() == str(repo).lower()
+            and j.kind != "recheck"]  # fmt: skip
+    sniffing = any(j.state in ("queued", "running", "waiting") for j in mine)
+    shown_name = row.item.name if row else str(repo or "")
+    strip = status_html(base, mine, {str(repo or "").lower(): shown_name}, "",
+                        refresh_href=f"{base}/scan/{sid}") if mine else ""  # fmt: skip
     deep = None
     if ai_mode == "deep" and ai_entity and report.get("context"):
         answers = store.item_explanations(sid)
@@ -1871,7 +1882,7 @@ def render_scan(
         report,
         rows,
         name=row.item.name if row else None,
-        update=listings.note_html(listing) + _update_box(base, row, token),
+        update=strip + listings.note_html(listing) + _update_box(base, row, token),
         again=_again_box(base, report, token, sid)
         + _advisory_line(base, sid, report, store, token, rechecking),
         trust=address_block,
@@ -1895,7 +1906,7 @@ def render_scan(
             ],
             ai_since,
         ),
-        refresh=5 if running or rechecking else 0,
+        refresh=5 if running or rechecking or sniffing else 0,
         deep=deep,
         refresh_url=_scan_url(base, sid, open_item, fresh=True) if open_item else "",
         open_item=open_item,
@@ -2744,10 +2755,15 @@ class Panel:
                 out.setdefault(r.repo.lower(), r)
         return out
 
-    def busy(self) -> dict[str, str]:
+    def jobs_now(self) -> list[Job]:
+        """A copy of every job as it is now: the worker changes the live ones while a page
+        is drawn."""
+        return [replace(j, scan_ids=list(j.scan_ids)) for j in list(self.worker.jobs)]
+
+    def busy(self, jobs: list[Job] | None = None) -> dict[str, str]:
         return {
             j.repo.lower(): j.state
-            for j in reversed(list(self.worker.jobs))
+            for j in reversed(jobs if jobs is not None else list(self.worker.jobs))
             if j.state in ("queued", "running", "waiting")
         }
 
@@ -2795,11 +2811,14 @@ class Panel:
                 out.setdefault(r.repo.lower(), r)
         return out
 
-    def not_installed_html(self, base: str, installed: set[str], v: ui.View | None = None) -> str:
+    def not_installed_html(
+        self, base: str, installed: set[str], v: ui.View | None = None,
+        jobs: list[Job] | None = None,
+    ) -> str:  # fmt: skip
         """Cards for apps sniffed from search (or by name) that aren't installed."""
         v = v or ui.View()
         names = {c.repo.lower(): c.name for c in self.catalog()[0]} if self.catalog_fn else {}
-        busy = self.busy()
+        busy = self.busy(jobs)
         thinking = {a.repo.lower() for a in self.ai_running() if a.repo}
         tv = self.worker.tool_version
         cards = []
@@ -2979,17 +2998,15 @@ class Panel:
             self.store.set_setting("ai_mode", AI_MODE_DEFAULT)
             self.ai_mode = AI_MODE_DEFAULT
 
-    def rows(self, refresh: bool = False) -> tuple[InstalledState, list[Row]]:
+    def rows(
+        self, refresh: bool = False, jobs: list[Job] | None = None
+    ) -> tuple[InstalledState, list[Row]]:
         if self.installed_fn is None:
             return InstalledState(error="not running as a Home Assistant add-on"), []
         st = self.installed(refresh)
         tv = self.worker.tool_version
         rows = classify(st.items, self.store, self.diff, tv) if not st.error else []
-        busy = {
-            j.repo.lower(): j.state
-            for j in reversed(list(self.worker.jobs))
-            if j.state in ("queued", "running", "waiting")
-        }
+        busy = self.busy(jobs)
         thinking = {a.repo.lower() for a in self.ai_running() if a.repo}
         for r in rows:
             r.busy = busy.get(r.item.repo.lower(), "")
@@ -3002,13 +3019,16 @@ class Panel:
         _, rows = self.rows()
         return next((r for r in rows if r.item.repo.lower() == repo.lower()), None)
 
-    def installed_html(self, base: str, refresh: bool = False, v: ui.View | None = None) -> str:
+    def installed_html(
+        self, base: str, refresh: bool = False, v: ui.View | None = None,
+        jobs: list[Job] | None = None,
+    ) -> str:  # fmt: skip
         if self.installed_fn is None:
             return ""
-        st, rows = self.rows(refresh)
+        st, rows = self.rows(refresh, jobs)
         html = render_installed(base, st, rows, self.token, self.shown_report, v, self.listing)
         if not st.error:
-            html += self.not_installed_html(base, {r.item.repo.lower() for r in rows}, v)
+            html += self.not_installed_html(base, {r.item.repo.lower() for r in rows}, v, jobs)
         return html
 
     def handler(self) -> type[BaseHTTPRequestHandler]:
@@ -3155,7 +3175,10 @@ class Panel:
                     return
                 try:
                     if url.path in ("", "/"):
-                        jobs = list(panel.worker.jobs)
+                        # (0.15, his report) one copy of every job's state for the whole page:
+                        # the cards, the status box and the reload must agree, or a scan that
+                        # ends while the page is drawn leaves a card on "checking…" for good
+                        jobs = panel.jobs_now()
                         q = urllib.parse.parse_qs(url.query)
                         refresh = q.get("refresh") == ["1"]
                         v = ui.View.parse(q, panel.store.setting("view") or "cards")
@@ -3165,7 +3188,7 @@ class Panel:
                         thinking = panel.ai_running()
                         body = render_index(
                             base, panel.store, jobs, panel.token,
-                            panel.installed_html(base, refresh, v), panel.worker._mem(),
+                            panel.installed_html(base, refresh, v, jobs), panel.worker._mem(),
                             panel.worker.github_wait, panel.worker.ha_fn(),
                             panel.worker.parallel, panel.catalog_fn is not None,
                             status_html(base, jobs, panel.names(), v.qs(), ai=thinking),
@@ -3202,6 +3225,7 @@ class Panel:
                             item_asked=panel.item_asked(sid),
                             listing=panel.listing(report.get("target", {}).get("repo")),
                             ai_since=panel.ai_since(sid),
+                            jobs=panel.jobs_now(),
                             rechecking=any(
                                 j.kind == "recheck" and j.scan == sid
                                 and j.state in ("queued", "running", "waiting")

@@ -10,7 +10,7 @@ import urllib.request
 import pytest
 from test_store import EDGE, FINDING, report
 
-from sniff_test import server
+from sniff_test import server, ui
 from sniff_test.store import Store
 
 HOSTILE = '<script>alert(1)</script>"><img src=x onerror=alert(2)>'
@@ -632,3 +632,41 @@ def test_a_redirect_target_is_one_local_path():
         "/scan/\u00e9",
     ):
         assert local_path(bad) == "/", bad
+
+
+def test_one_page_load_reads_every_job_once(addon):
+    """(0.15, his report) A scan that ended while the list was drawn left its card on
+    "checking…" while the status box said done, and the page stopped reloading. The page now
+    works from one copy of the jobs, so the card, the box and the reload agree."""
+    _, _, base, httpd, _ = addon
+    panel = httpd.panel
+    job = server.Job(98, "update", "acme/new", "v1", "v2", state="running")
+    panel.worker.jobs.insert(0, job)
+    snap = panel.jobs_now()
+    job.state, job.finished = "done", time.time()  # the scan ends mid-page
+    cards = panel.installed_html(base, False, ui.View(), snap)
+    assert "checking…" in _card(cards, "Unchecked")
+    strip = server.status_html(base, snap, {}, "")
+    assert "Checking the update of" in strip and "is done" not in strip
+    page = server.render_index(base, panel.store, snap, "t", cards, status=strip).decode()
+    assert '<meta http-equiv="refresh"' in page  # it reloads, and then shows the result
+    assert panel.jobs_now()[0].state == "done"
+    panel.worker.jobs.remove(job)
+
+
+def test_an_apps_page_says_when_it_is_being_sniffed_again(addon):
+    """(0.15, his report) Sniff again on an app's page: the page shows the running sniff
+    and reloads, then links to the new result."""
+    store, _, base, httpd, _ = addon
+    sid = store.save(report(repo="acme/fine", ref="v1"))
+    job = server.Job(97, "scan", "acme/fine", "v1", state="running")
+    httpd.panel.worker.jobs.insert(0, job)
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert "Sniffing" in page and '<meta http-equiv="refresh"' in page
+    assert f'href="/scan/{sid}"' in page  # its Refresh stays on this page
+    new = store.save(report(repo="acme/fine", ref="v1"))
+    job.state, job.scan_ids, job.finished = "done", [new], time.time()
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert f'is done: <a href="/scan/{new}">see the result</a>' in page
+    assert '<meta http-equiv="refresh"' not in page
+    httpd.panel.worker.jobs.remove(job)
