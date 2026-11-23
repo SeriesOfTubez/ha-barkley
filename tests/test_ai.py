@@ -191,3 +191,31 @@ def test_picker_lists_ai_task_entities_and_saves_the_choice(tmp_path):
 def test_entities_template_is_fixed_and_parsed_safely():
     assert "states.ai_task" in supervisor.AI_ENTITIES_TEMPLATE
     assert "states." not in supervisor.AI_ENTITIES_TEMPLATE.replace("states.ai_task", "")
+
+
+def test_every_ai_call_logs_its_time_and_size(tmp_path, capfd):
+    """One log line per AI call: seconds and characters sent, answered or not. The
+    error's text stays out of it (only its type)."""
+
+    def fake_ai(entity, instructions, structure, task):
+        return {"summary": "Fine.", "f_" + "f" * 16: "Reads secrets."}
+
+    store, base, httpd = _serve(tmp_path, fake_ai)
+    sid = store.save(_report())
+    post(f"{base}/explain", {"token": token(base), "scan": sid})
+    _wait(httpd, sid)
+    err = capfd.readouterr().err
+    line = next(x for x in err.splitlines() if x.startswith(f"ai call @{sid} explain this app"))
+    assert "answered in" in line and line.endswith("chars sent")
+
+    def broken(*_a):
+        raise supervisor.SupervisorError("secret-looking text that must not be logged")
+
+    httpd.panel.ai_fn = broken
+    post(f"{base}/explain", {"token": token(base), "scan": sid})
+    _wait(httpd, sid)
+    err = capfd.readouterr().err
+    line = next(x for x in err.splitlines() if x.startswith(f"ai call @{sid} explain this app"))
+    assert "failed after" in line and line.endswith("SupervisorError")
+    assert "secret-looking" not in line
+    httpd.shutdown()

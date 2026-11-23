@@ -275,7 +275,9 @@ def _with(tok: str | None) -> Connection:
 
 AI_TASK_PATH = "/api/services/ai_task/generate_data?return_response"
 _AI_ENTITY = re.compile(r"^ai_task\.[a-z0-9_]{1,100}$")
-_AI_TIMEOUT = 180
+# (measuring, 2026-11-23) just under the Supervisor's own 300 s limit on a proxied request
+# (supervisor/api/proxy.py); the AI answers settings replace this.
+_AI_TIMEOUT = 290
 
 
 TEMPLATE_PATH = "/api/template"

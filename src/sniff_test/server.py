@@ -2400,6 +2400,26 @@ class Panel:
             self._diffs[key] = diff_reports(self.store.report(old), self.store.report(new))
         return self._diffs[key]
 
+    def _ask_ai(
+        self, sid: int, step: str, entity: str, instructions: str, structure: dict[str, Any],
+        task_name: str,
+    ) -> Any:  # fmt: skip
+        """One AI Task call, with one log line: how long it took and how many characters
+        were sent (instructions + the answer's structure), whether it answered or not."""
+        sent = len(instructions) + len(json.dumps(structure))
+        started = time.monotonic()
+        try:
+            data = self.ai_fn(entity, instructions, structure, task_name)
+        except Exception as ex:
+            print(f"ai call @{sid} {step}: failed after {time.monotonic() - started:.0f} s, "
+                  f"{sent} chars sent: {type(ex).__name__}",
+                  file=sys.stderr, flush=True)  # fmt: skip
+            raise
+        print(f"ai call @{sid} {step}: answered in {time.monotonic() - started:.0f} s, "
+              f"{sent} chars sent",
+              file=sys.stderr, flush=True)  # fmt: skip
+        return data
+
     def explain(self, sid: int) -> bool:
         """Ask the AI Task entity about one stored scan, in the background. One request
         per scan at a time. Only the report's ai_brief is sent (report.ai)."""
@@ -2416,7 +2436,8 @@ class Panel:
                 readings = self.store.item_explanations(sid)
                 shown = (self.shown_report(sid) or {}).get("readings")
                 instructions, structure, _ids = report_ai.build_request(report, readings, shown)
-                data = self.ai_fn(self.ai_entity, instructions, structure, report_ai.TASK_NAME)
+                data = self._ask_ai(sid, "explain this app", self.ai_entity, instructions,
+                                    structure, report_ai.TASK_NAME)  # fmt: skip
                 accepted = report_ai.accept(report, data, readings)
                 if not accepted["summary"] and not accepted["findings"]:
                     raise supervisor.SupervisorError("the answer had no usable text")
@@ -2427,8 +2448,10 @@ class Panel:
                     started = time.monotonic()
                     try:
                         instructions, structure = ai_words.build_request(report)
-                        said = self.ai_fn(self.ai_entity, instructions, structure,
-                                          ai_words.TASK_NAME)  # fmt: skip
+                        said = self._ask_ai(
+                            sid, "developer's words", self.ai_entity, instructions, structure,
+                            ai_words.TASK_NAME,
+                        )  # fmt: skip
                         accepted["words"] = ai_words.accept(report, said)
                         w = accepted["words"]
                         print(f"explain @{sid} developer's words "
@@ -2477,7 +2500,8 @@ class Panel:
                 source = self.store.source(sid)
                 entries = ai_context.menu(snip, source)
                 instructions, structure = ai_context.build_request(report, item_id, entries)
-                data = self.ai_fn(entity, instructions, structure, ai_context.TASK_NAME)
+                data = self._ask_ai(sid, f"{item_id} round 1", entity, instructions, structure,
+                                    ai_context.TASK_NAME)  # fmt: skip
                 accepted = ai_context.accept(report, item_id, data)
                 picked, refused = ai_context.needs(data, entries)
                 extra = (
@@ -2495,7 +2519,8 @@ class Panel:
                         instructions, structure = ai_context.build_request(
                             report, item_id, snip=full
                         )
-                        again = self.ai_fn(entity, instructions, structure, ai_context.TASK_NAME)
+                        again = self._ask_ai(sid, f"{item_id} round 2", entity, instructions,
+                                             structure, ai_context.TASK_NAME)  # fmt: skip
                         # Both readings count: the first one's checked statements stay
                         # (they cite code that was sent both times).
                         accepted = ai_context.combine(
