@@ -26,6 +26,10 @@ The status box shows progress.
 - **Smaller changes** folds everything else into one line you can open. None is a
   concern on its own.
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/update-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/update-light.png" alt="What an update changes"></picture>
+
+<sub>Screenshots from Barkley's own made-up test apps, not real projects. The AI text is real output from Claude Sonnet 5.5, standing in for the AI Task model you pick; your model's answers will differ.</sub>
+
 ## What it also tells you since 0.15
 
 These come from facts a scan keeps since 0.15, so both versions must have been sniffed

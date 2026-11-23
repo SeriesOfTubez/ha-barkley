@@ -18,6 +18,10 @@ changes a reading.
 The model must support structured output (an answer in fields Barkley names). A model
 without it fails with an error on the page.
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/ai-reading-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/ai-reading-light.png" alt="The AI's reading of one item's code"></picture>
+
+<sub>Screenshots from Barkley's own made-up test apps, not real projects. The AI text is real output from Claude Sonnet 5.5, standing in for the AI Task model you pick; your model's answers will differ.</sub>
+
 ## Waiting for an answer
 
 How fast an answer comes depends on your model and how busy it is. The same request can

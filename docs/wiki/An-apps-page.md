@@ -14,6 +14,10 @@ The developer's words, and the AI's summary of them ("AI inferred"), are never s
 beside a found or possible threat. On a page with a found threat there are none at all.
 Nothing from the developer or the AI changes a reading.
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/app-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/app-light.png" alt="The top of an app's page with a found threat"></picture>
+
+<sub>Screenshots from Barkley's own made-up test apps, not real projects. The AI text is real output from Claude Sonnet 5.5, standing in for the AI Task model you pick; your model's answers will differ.</sub>
+
 From top to bottom:
 
 - **The head.** The app's name, then the Threat verdict on its own line (🦴 Good Boy,
@@ -85,6 +89,10 @@ From top to bottom:
   into.
 - **History:** every stored scan of this app, newest first, and the link to the
   technical report (raw JSON), which includes the capability score.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/picture-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/picture-light.png" alt="What it does: the picture of an app with a found threat"></picture>
+
+<sub>The "What it does" picture for one of Barkley's made-up test apps.</sub>
 
 ## Where it connects
 

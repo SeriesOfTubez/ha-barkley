@@ -6,6 +6,10 @@ you save the Settings page, it wins. Standalone, the `BARKLEY_*` variables play 
 of the options (see [Standalone](Standalone)).
 
 ## The Settings page
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/settings-ai-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/settings-ai-light.png" alt="The AI answers settings"></picture>
+
+<sub>Screenshots from Barkley's own made-up test apps, not real projects. The AI text is real output from Claude Sonnet 5.5, standing in for the AI Task model you pick; your model's answers will differ.</sub>
+
 
 | Setting | Default | Meaning |
 |---|---|---|

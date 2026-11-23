@@ -4,6 +4,10 @@ Barkley's first page shows what you have installed through the Marketplace, with
 version you run and the version the Marketplace would install now. Each app shows its
 two readings, Threat and Exposure.
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/list-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/list-light.png" alt="The list of installed apps"></picture>
+
+<sub>Screenshots from Barkley's own made-up test apps, not real projects. The AI text is real output from Claude Sonnet 5.5, standing in for the AI Task model you pick; your model's answers will differ.</sub>
+
 ## What comes first
 
 By default (Order: Most concern first) apps that weren't checked yet come first, then
