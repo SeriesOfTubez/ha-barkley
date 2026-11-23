@@ -24,6 +24,7 @@ from typing import Any
 DESTS_SHOWN = 6
 _FIELDS_SHOWN = 6
 _ORDER = ("setup", "site", "list", "answer", "discovery", "ha", "unknown")
+_ORDER_SHOWN = {"site": 0, "list": 1, "setup": 2, "answer": 3, "discovery": 4, "ha": 5}
 
 
 def _e(text: Any, n: int = 200) -> str:
@@ -118,9 +119,15 @@ def _dest_of(host: str, shape: dict[str, Any], note: str) -> Dest:
     if host:
         return Dest(f"<code>{_e(host, 120)}</code>", note)
     origins = [o for o in _list(shape.get("from")) if isinstance(o, dict)]
+    # a site in the code first, then a list of sites, then what you entered and the rest:
+    # "monitor.x, or the address you entered when you set it up (base_url)" (his pick,
+    # 2026-11-22: the usual case before the exception)
+    origins.sort(key=lambda o: _ORDER_SHOWN.get(str(o.get("kind")), 9))
     words = [origin_words(o) for o in origins] or [origin_words({})]
     fixed = all(f for _w, f in words)
-    return Dest(" or ".join(w for w, _f in words[:3]), note, fixed)
+    shown = [w for w, _f in words[:3]]
+    text = shown[0] + "".join(f", or {w[0].lower()}{w[1:]}" for w in shown[1:])
+    return Dest(text, note, fixed)
 
 
 def _add(dests: list[Dest], d: Dest) -> None:

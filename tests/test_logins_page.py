@@ -51,8 +51,9 @@ def test_the_case_he_reported_a_login_and_a_site_handed_to_a_library():
     box = _text(logins.html(rep, "Solar monitor"))
     assert "Your login for this app ( username , password )" in box
     assert "vendor_api library Barkley read inside the library (version 1.2)." in box
-    assert ("The address you entered when you set it up ( base_url ) or "
-            "monitor.vendor.invalid inside the library at client.py:765") in box  # fmt: skip
+    # the site first, then what you entered (his pick, 2026-11-22)
+    assert ("monitor.vendor.invalid , or the address you entered when you set it up "
+            "( base_url ) inside the library at client.py:765") in box  # fmt: skip
     # the site: "through a library" and "your login", in the picture and the fold
     m = logins.marks(rep)["monitor.vendor.invalid"]
     assert (m.library, m.login) == ("vendor_api", True)
