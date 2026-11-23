@@ -212,3 +212,91 @@ def test_the_held_login_and_its_line_without_a_named_site():
     assert m.holds_login
     assert "holds the login you gave it" in does.wide(m)
     assert "Purple: the login you gave this app" in does.legend(m)
+
+
+# --- its own space, and the address you entered (his yes, 2026-11-23) ----------------------
+
+
+def _graph(*pairs):
+    nodes = [{"id": f"{k}:x{i}", "kind": k} for i, (k, _r) in enumerate(pairs)]
+    edges = [{"source": "integration:x", "target": f"{k}:x{i}", "relation": r}
+             for i, (k, r) in enumerate(pairs)]  # fmt: skip
+    return {"subject": "integration:x", "nodes": nodes, "edges": edges}
+
+
+def test_own_storage_is_its_own_space_not_reach():
+    m = does.build({**_report({}), "findings": [{"rule_id": "ha-own-storage-path"}]}, "X")
+    assert "files" not in m.use
+    assert m.own["files"] == ["keeps its own data in Home Assistant's storage folder"]
+    assert 'class="own"' in does.wide(m)  # the thin dashed line into the room
+
+
+def test_a_card_runs_in_your_session_and_so_does_its_library():
+    rep = {"target": {"kind": "plugin"}, "findings": [{"rule_id": "dep-vuln"}]}
+    m = does.build(rep, "Card")
+    assert m.own["browser"] == ["runs here, with your Home Assistant login",
+                                "1 library with known security bugs runs here too"]  # fmt: skip
+    assert "browser" not in m.use  # not lit: running there is what a card is
+
+
+def test_browser_code_from_an_integration():
+    g = _graph(("frontend_js", "injects"), ("panel", "registers"), ("http_static", "registers"))
+    m = does.build({**_report({}), "graph": g}, "X")
+    assert m.use["browser"] == [(does.CHANGES, "adds code to every Home Assistant page in your "
+                                               "browser")]  # fmt: skip
+    assert m.own["browser"] == ["adds its own page to the sidebar",
+                                "serves its own files to your browser"]  # fmt: skip
+
+
+def test_its_own_actions():
+    m = does.build({**_report({}), "graph": _graph(("service", "registers"))}, "X")
+    assert m.own["devices"] == ["adds its own actions"]
+    m = does.build({**_report({}), "platforms": ["sensor"],
+                    "graph": _graph(("entity_service", "registers"))}, "X")  # fmt: skip
+    assert m.own["devices"] == ["adds its own sensors, and its own actions"]
+
+
+def test_devices_home_assistant_finds_for_it():
+    elsewhere = [{"method": "GET", "count": 2, "from": [{"kind": "discovery"}]}]
+    m = does.build(_report({"elsewhere": elsewhere}), "X")
+    assert m.own["network"] == ["connects to devices Home Assistant finds for it on your network"]
+    assert "works out while it runs" not in does.wide(m)
+
+
+def test_the_address_you_entered_gets_its_box():
+    elsewhere = [{"method": "GET", "count": 3, "logins": ["password"],
+                  "from": [{"kind": "setup", "detail": "host"}]}]  # fmt: skip
+    m = does.build(_report({"elsewhere": elsewhere}), "Inverter")
+    assert (m.entered, m.entered_login) == (["host"], True)
+    svg = does.wide(m)
+    assert 'class="maybe"' in svg and "Barkley can&#x27;t tell" in svg
+    assert "gets the login you gave this app" in svg and 'class="kp"' in svg
+    assert "Nothing leaves" not in svg
+    assert "Dashed box: an address you entered" in does.legend(m)
+    assert "The address you entered" in does.narrow(m)
+
+
+def test_a_default_site_is_drawn_as_the_site_not_a_box():
+    # the reported case: the setup field with a site in the code as its default
+    rep = _report({"handoffs": [{**HANDED, "inside": INSIDE}]})
+    assert does.build(rep, "X").entered == []
+
+
+def test_a_broker_you_entered_by_mqtt():
+    h = {**HANDED, "logins": [], "addresses": [{"arg": "broker_host",
+         "from": [{"kind": "setup", "detail": "broker_host"}]}],
+         "inside": {"state": "no_requests", "other": ["MQTT"], "uses": []}}  # fmt: skip
+    m = does.build(_report({"handoffs": [h]}), "X")
+    assert (m.entered, m.entered_how, m.entered_login) == (["broker_host"], ["MQTT"], False)
+    assert "by MQTT" in does.wide(m)
+
+
+def test_the_picture_grows_to_hold_the_box():
+    many = [{"method": "GET", "count": 1, "from": [{"kind": "setup", "detail": f"f{i}"}]}
+            for i in range(3)]  # fmt: skip
+    rep = _report({"elsewhere": many, "sites": {f"s{i}.invalid": [{"method": "GET"}]
+                                                for i in range(6)}})  # fmt: skip
+    svg = does.wide(does.build(rep, "X"))
+    view = float(re.search(r'viewBox="0 0 \d+ (\d+)"', svg).group(1))
+    box = re.search(r'<g class="maybe"><rect x="\d+" y="(\d+)" width="\d+" height="(\d+)"', svg)
+    assert int(box.group(1)) + int(box.group(2)) <= view

@@ -486,6 +486,9 @@ svg.does .cross.in { fill:var(--orange); font-weight:600; }
 svg.does .runs { fill:var(--brand); font-size:12px; font-weight:500; }
 svg.does .pv { fill:var(--priv); font-size:12px; font-weight:500; } svg.does .pk { color:var(--priv); }
 svg.does .ro { fill:var(--muted); font-size:12px; }
+svg.does .own { fill:none; stroke:var(--muted); stroke-width:1; stroke-dasharray:4 3; }
+svg.does .maybe rect { fill:var(--card); stroke:var(--muted); stroke-dasharray:5 3; }
+.nsite.maybe { border-style:dashed; }
 svg.does .kp { fill:none; stroke:var(--priv); stroke-width:1.6; } svg.does .mkk { fill:var(--priv); }
 .lg { display:flex; flex-direction:column; gap:var(--s3); }
 .lg-grp { display:grid; grid-template-columns:minmax(0, 15rem) 24px minmax(0, 12rem) 24px

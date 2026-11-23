@@ -401,3 +401,64 @@ def holds_login(report: dict[str, Any]) -> bool:
     if any(_strs(s.get("logins")) for _h, s in _shapes(report)):
         return True
     return any(_strs(h.get("logins")) for h in _handoffs(report))
+
+
+# --- an address you entered at setup (the picture's dashed box) -----------------------------
+
+
+@dataclass
+class Entered:
+    fields: list[str] = field(default_factory=list)  # setup fields that are the address
+    login: bool = False  # the login you gave this app goes there (followed)
+    how: list[str] = field(default_factory=list)  # a library's other ways ("MQTT"…)
+    discovered: bool = False  # it connects to a device Home Assistant found for it
+    other: int = 0  # run-time request shapes whose address comes from somewhere else
+
+
+def _setup_only(origins: list[Any]) -> list[str]:
+    """The setup fields when an address comes only from what you entered (a default site
+    in the code is drawn as that site instead)."""
+    os_ = [o for o in origins if isinstance(o, dict)]
+    if not os_ or any(o.get("kind") != "setup" for o in os_):
+        return []
+    return [str(o.get("detail") or "") for o in os_]
+
+
+def entered(report: dict[str, Any]) -> Entered:
+    """What the picture's dashed "address you entered" box says, from the app's own
+    requests and what Barkley read inside a library it hands the address to."""
+    out = Entered()
+
+    def add(names: list[str]) -> None:
+        for n in names:
+            if n and n not in out.fields and len(out.fields) < 3:
+                out.fields.append(n)
+
+    for host, s in _shapes(report):
+        if host:
+            continue
+        origins = _list(s.get("from"))
+        if any(isinstance(o, dict) and o.get("kind") == "discovery" for o in origins):
+            out.discovered = True
+            continue
+        names = _setup_only(origins)
+        if not names:
+            out.other += 1
+            continue
+        add(names)
+        out.login = out.login or bool(_strs(s.get("logins")))
+    for h in _handoffs(report):
+        inside = h.get("inside") if isinstance(h.get("inside"), dict) else {}
+        for a in _list(h.get("addresses")):
+            names = _setup_only(_list(a.get("from") if isinstance(a, dict) else None))
+            if names:
+                add(names)
+                if inside.get("state") == "no_requests":
+                    out.how += [w for w in _strs(inside.get("other")) if w not in out.how]
+        for s in _list(inside.get("sends")):
+            if isinstance(s, dict) and not s.get("site"):
+                names = _setup_only(_list(s.get("from")))
+                if names:
+                    add(names)
+                    out.login = out.login or bool(_strs(s.get("logins")))
+    return out

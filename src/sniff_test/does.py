@@ -37,6 +37,11 @@ ROOMS = (  # key, label, icon
     ("browser", "Your browser session", "browser"),
 )
 READS, CHANGES, OUT = "eye", "pencil", "out"
+# (0.15, his ask 2026-11-22) what an app does in its own space: said in grey, with a thin
+# dashed line into the room, without lighting it (blue is reach beyond its own job)
+OWN_RULES = {
+    "ha-own-storage-path": ("files", "keeps its own data in Home Assistant's storage folder"),
+}
 
 # rule -> (room, reads or changes, what it does there, in plain words)
 RULE_ROOM: dict[str, tuple[str, str, str]] = {
@@ -51,7 +56,6 @@ RULE_ROOM: dict[str, tuple[str, str, str]] = {
     "ha-read-secrets": ("files", READS, "reads your secrets file"),
     "ha-read-own-secret": ("files", READS, "reads one named entry of your secrets file"),
     "ha-raw-storage-access": ("files", READS, "looks inside the private storage folder"),
-    "ha-own-storage-path": ("files", CHANGES, "keeps its own file in the storage folder"),
     "py-write-outside-own-dir": ("files", CHANGES, "writes or deletes files outside its folder"),
     "py-shell-exec": ("programs", CHANGES, "runs commands on your system"),
     "py-runtime-pip": ("programs", CHANGES, "installs extra software while running"),
@@ -136,6 +140,11 @@ class Model:
     # the kinds of entity it adds, and that it holds the login you gave it
     own: dict[str, list[str]] = field(default_factory=dict)  # room -> plain lines
     holds_login: bool = False
+    # an address you entered at setup (home network or internet: Barkley can't tell)
+    entered: list[str] = field(default_factory=list)  # the setup fields
+    entered_login: bool = False  # the login you gave this app goes there
+    entered_how: list[str] = field(default_factory=list)  # "by MQTT"… (a library's other ways)
+    elsewhere_other: int = 0  # run-time addresses not from what you entered
 
 
 def _site_lines(calls: Any) -> list[str]:
@@ -174,6 +183,10 @@ def build(report: dict[str, Any], name: str) -> Model:
                 m.use.setdefault(room, []).append((glyph, text))
             if kinds.is_threat(rule):
                 m.bad_rooms.add(room)
+        if rule in OWN_RULES:
+            room, text = OWN_RULES[rule]
+            if text not in m.own.get(room, []):
+                m.own.setdefault(room, []).append(text)
         if rule in DOORS and (d := door(rule, network)) not in m.doors:
             m.doors.append(d)
         if rule == readings.DEP_VULN:
@@ -244,9 +257,39 @@ def build(report: dict[str, Any], name: str) -> Model:
     r = report.get("requests")
     m.elsewhere = len(r.get("elsewhere") or []) if isinstance(r, dict) else 0
     entity_kinds = [x for x in report.get("platforms") or [] if isinstance(x, str)]
-    if entity_kinds:
-        m.own["devices"] = [own_devices(entity_kinds)]
+    g = report.get("graph") if isinstance(report.get("graph"), dict) else {}
+    by_kind: dict[str, set[str]] = {}  # node kind -> relations from the app
+    gnodes = {n.get("id"): n for n in g.get("nodes") or [] if isinstance(n, dict)}
+    for x in g.get("edges") or []:
+        if isinstance(x, dict):
+            kind = str(gnodes.get(x.get("target"), {}).get("kind") or "")
+            by_kind.setdefault(kind, set()).add(str(x.get("relation") or ""))
+    actions = "registers" in by_kind.get("service", set()) | by_kind.get("entity_service", set())
+    if entity_kinds or actions:
+        m.own.setdefault("devices", []).append(own_devices(entity_kinds, actions))
+    if card:  # a card works inside your session by design
+        m.own.setdefault("browser", []).append("runs here, with your Home Assistant login")
+        if m.bugs:
+            n = m.bugs
+            lib, run = ("library", "runs") if n == 1 else ("libraries", "run")
+            m.own["browser"].append(f"{n} {lib} with known security bugs {run} here too")
+    else:
+        if "injects" in by_kind.get("frontend_js", set()):  # reach: every page you open
+            m.use.setdefault("browser", []).append(
+                (CHANGES, "adds code to every Home Assistant page in your browser")
+            )
+        if "registers" in by_kind.get("panel", set()):
+            m.own.setdefault("browser", []).append("adds its own page to the sidebar")
+        if "registers" in by_kind.get("http_static", set()):
+            m.own.setdefault("browser", []).append("serves its own files to your browser")
     m.holds_login = logins.holds_login(report)
+    ent = logins.entered(report)
+    if ent.discovered:
+        m.own.setdefault("network", []).append(
+            "connects to devices Home Assistant finds for it on your network"
+        )
+    m.entered, m.entered_login, m.entered_how = ent.fields, ent.login, ent.how
+    m.elsewhere_other = ent.other
     return m
 
 
@@ -270,13 +313,17 @@ KIND_WORDS = {
 _KIND_ORDER = ("climate", "light", "switch", "cover", "lock", "sensor", "binary_sensor")
 
 
-def own_devices(kinds: list[str]) -> str:
-    """ "adds its own thermostats, sensors and option lists" (the first four kinds)."""
+def own_devices(kinds: list[str], actions: bool = False) -> str:
+    """ "adds its own thermostats, sensors and option lists" (the first four kinds), and
+    "…, and its own actions" when it registers actions."""
+    if not kinds:
+        return "adds its own actions"
     ordered = sorted(kinds, key=lambda k: (_KIND_ORDER.index(k) if k in _KIND_ORDER else 99, k))
     words = list(dict.fromkeys(KIND_WORDS.get(k, k.replace("_", " ")) for k in ordered))
     shown, more = words[:4], len(words) - 4
     text = ", ".join(shown[:-1]) + (" and " if len(shown) > 1 else "") + shown[-1]
-    return f"adds its own {text}" + (f" and {more} more kinds" if more > 0 else "")
+    out = f"adds its own {text}" + (f" and {more} more kinds" if more > 0 else "")
+    return out + (", and its own actions" if actions else "")
 
 
 # --- the Exposure bar ------------------------------------------------------------------
@@ -397,14 +444,16 @@ def wide(m: Model, key: str = "d") -> str:
     notes = []
     if m.more_sites:
         notes.append(f"and {m.more_sites} more site{'s' * (m.more_sites != 1)}")
-    if m.elsewhere:
+    if m.elsewhere_other or (m.elsewhere and not m.entered and "network" not in m.own):
         notes.append("and requests to addresses it works out while it runs")
-    if not m.sites and not m.elsewhere:
+    if not m.sites and not m.elsewhere and not m.entered:
         notes.append("Nothing leaves: no request in its code.")
     wrapped = [part for text in notes for part in textwrap.wrap(text, 38)]
     for j, text in enumerate(wrapped):
         yard.append(f'<text class="ns" x="{YARD_X}" y="{max(sy, cy) + 16 + 17 * j:.0f}">'
                     f"{e(text)}</text>")  # fmt: skip
+    notes_end = max(sy, cy) + 16 + 17 * len(wrapped)
+    entered_box = _entered_box(m, cy, notes_end, bug_h, key)
     path_room = {room: how for room, _i, how in m.paths}
     rooms, lines, y = [], [], float(top)
     for (k, label, ic), h in zip(ROOMS, hs, strict=True):
@@ -439,6 +488,11 @@ def wide(m: Model, key: str = "d") -> str:
                     ends += f' marker-start="url(#g-{key})"'
             curve = f"M{RX + RW} {mid:.0f} C {APP_X - 40} {mid:.0f}, {APP_X - 50} {cy:.0f}, "
             lines.append(f'<path class="{cls_l}" d="{curve}{APP_X - 2} {cy:.0f}"{ends}/>')
+        elif m.own.get(k):  # its own space: a thin dashed line from the app into the room
+            mid = y + h / 2
+            curve = f"M{RX + RW + 2} {mid:.0f} C {APP_X - 40} {mid:.0f}, {APP_X - 50} {cy:.0f}, "
+            lines.append(f'<path class="own" d="{curve}{APP_X} {cy:.0f}" '
+                         f'marker-start="url(#g-{key})"/>')  # fmt: skip
         y += h + GAP
     for i, mid in enumerate(smid):
         how = next((hw for _r, s, hw in m.paths if s == i), None)
@@ -495,8 +549,53 @@ def wide(m: Model, key: str = "d") -> str:
         app.append(f'<path class="inbound" d="M{mx} {dy - 10:.0f} L {mx} {end:.0f}" '
                    f'marker-end="url(#o-{key})"/><text class="cross in" x="{mx + 8}" '
                    f'y="{(dy - 10 + end) / 2 + 4:.0f}">comes in</text>')  # fmt: skip
+    if entered_box:
+        box, bottom = entered_box
+        yard.append(box)
+        if bottom + 24 > height:  # the box sits below the rest: the picture grows
+            old_h, height = height, bottom + 24
+            p = [x.replace(f'viewBox="0 0 {W} {old_h:.0f}"', f'viewBox="0 0 {W} {height:.0f}"')
+                 .replace(f'height="{old_h - 16:.0f}"', f'height="{height - 16:.0f}"')
+                 for x in p]  # fmt: skip
     p += lines + rooms + app + yard + ["</svg>"]
     return "".join(p)
+
+
+EBOX_X, EBOX_W = WALL - 60, 220  # straddles the wall: home network or internet
+
+
+def _entered_box(m: Model, cy: float, notes_end: float, bug_h: float, key: str):
+    """The dashed box for an address you entered at setup, below the app and the sites,
+    with the line from the app (purple when the login you gave this app goes there)."""
+    if not m.entered:
+        return None
+    rows = [("nt", "The address you entered"),
+            ("ns", f"when you set it up ({', '.join(m.entered)})"),
+            ("ns", "Home network or internet:"), ("ns", "Barkley can't tell")]  # fmt: skip
+    if m.entered_how:
+        rows.append(("ns", "by " + " and ".join(m.entered_how[:2])))
+    if m.entered_login:
+        rows.append(("pv", KEY + "gets the login you gave this app"))
+    app_bottom = cy + APP_H / 2 + (20 if m.holds_login else 0) + bug_h
+    y0 = max(notes_end, app_bottom) + 24
+    h = 20 + 17 * len(rows)
+    out = [f'<g class="maybe"><rect x="{EBOX_X}" y="{y0:.0f}" width="{EBOX_W}" height="{h}" '
+           'rx="8"/>']  # fmt: skip
+    for j, (cls, text) in enumerate(rows):
+        ty = y0 + 22 + 17 * j
+        if text.startswith(KEY):
+            out.append(_site_line(text, EBOX_X + 12, ty))
+        else:
+            out.append(f'<text class="{cls}" x="{EBOX_X + 12}" y="{ty:.0f}">{e(text, 34)}</text>')
+    out.append("</g>")
+    mid = y0 + h / 2
+    cls_l, mk = ("kp", "k") if m.entered_login else ("ln", "g")
+    # from the app's right edge, then down to the right of the notes under the app
+    sx, sy0 = APP_X + APP_W, cy + 10
+    out.append(f'<path class="{cls_l}" d="M{sx} {sy0:.0f} C {EBOX_X - 14} {sy0:.0f}, '
+               f'{EBOX_X - 24} {mid:.0f}, {EBOX_X - 2} {mid:.0f}" '
+               f'marker-end="url(#{mk}-{key})"/>')  # fmt: skip
+    return "".join(out), y0 + h
 
 
 IN_X, IN_W, IN_WRAP = APP_X - 16, WALL - 16 - (APP_X - 16), 34  # a door inside your home
@@ -564,7 +663,15 @@ def narrow(m: Model) -> str:
     )  # fmt: skip
     if m.more_sites:
         sites += f'<p class="ns2">and {m.more_sites} more site{"s" * (m.more_sites != 1)}</p>'
-    if not m.sites and not m.elsewhere:
+    if m.entered:
+        sites += (f'<div class="nsite maybe"><b>The address you entered</b><span class="ns2">'
+                  f'when you set it up ({e(", ".join(m.entered), 80)}). Home network or '
+                  "internet: Barkley can't tell.</span>"
+                  + (f'<span class="ns2">by {e(" and ".join(m.entered_how[:2]))}</span>'
+                     if m.entered_how else "")
+                  + (f'<span class="ns2 pv2">{_ic("key")}gets the login you gave this app</span>'
+                     if m.entered_login else "") + "</div>")  # fmt: skip
+    if not m.sites and not m.elsewhere and not m.entered:
         sites += '<p class="ns2">Nothing leaves: no request in its code.</p>'
     return (
         f'<div class="narrow"><div class="hdr2">{_ic("home")}Inside your Home Assistant</div>'
@@ -580,6 +687,16 @@ def legend(m: Model) -> str:
     ]
     if m.holds_login:
         bits.append("Purple: the login you gave this app, and where Barkley saw it go.")
+    if m.own:
+        bits.append(
+            "Thin dashed line: what it does in its own space, such as adding its own "
+            "devices, or for a card, running in your browser session."
+        )
+    if m.entered:
+        bits.append(
+            "Dashed box: an address you entered when you set it up. Barkley can't "
+            "tell if it's on your home network or the internet."
+        )
     if any(how == "own" for *_x, how in m.paths):
         bits.append("Dotted line: your data goes through the app to its own site.")
     if any(how == "bad" for *_x, how in m.paths):
