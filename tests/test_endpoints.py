@@ -335,3 +335,36 @@ def test_a_translation_key_is_not_a_site(tmp_path):
     hosts = {f.key for f in endpoints.run(_target(root)).facts if f.kind == "host"}
     assert "timeline.when.at" not in hosts
     assert "api.acme-weather.at" in hosts
+
+
+def test_a_version_number_written_like_an_address_is_not_one(tmp_path):
+    # (his report 2026-11-23) a real cloud integration's `APP_VERSION = "2.4.1.7"` showed
+    # under "Other addresses in its code" as an IP address
+    (tmp_path / "const.py").write_text(
+        'APP_VERSION = "2.4.1.7"\n'
+        'HEADERS = {"appVersion": "7.10.3.4", "x": 1}\n'
+        'client = Client(fw_ver="3.1.2.9")\n'
+        'SERVER = "203.0.113.44"\n'  # "SERVER" holds "ver" but isn't a version
+        'host = "10.1.2.3"\n'
+        'BUILD = {"build": "1.2.3.4"}\n'
+    )
+    (tmp_path / "card.js").write_text('const a={version:"2.4.6.8",ip:"198.51.100.9"};\n')
+    refs, _ = endpoints.extract(tmp_path)
+    assert {r.host for r in refs} == {"203.0.113.44", "10.1.2.3", "198.51.100.9"}
+
+
+def test_a_version_named_ip_is_not_counted_as_called(tmp_path):
+    (tmp_path / "a.py").write_text('SW_VERSION = "1.4.2.7"\nTARGET_HOST = "203.0.113.34"\n')
+    assert endpoints.addressed_hosts(tmp_path) == {"203.0.113.34"}
+
+
+def test_version_lens_stays_linear_on_hostile_lines():
+    import time
+
+    for text in ("a" * 100_000 + '= "', "_" * 100_000 + ':"', "x=" * 50_000 + '"'):
+        t = time.perf_counter()
+        endpoints._version_before(text)
+        assert time.perf_counter() - t < 0.5
+    t = time.perf_counter()
+    assert not endpoints.version_name("A" * 10_000)
+    assert time.perf_counter() - t < 0.5

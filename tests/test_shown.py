@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 import stat
+from pathlib import Path
 
 import pytest
 from test_server import addon, get, panel, post, token  # noqa: F401 (fixtures)
@@ -286,6 +287,12 @@ def test_report_links_carry_versions_not_secrets():
     assert q["template"] == "2-scan-result.yml" and q["rule"] == "py-shell-exec"
     assert q["ha-version"] == "2026.11.1" and "x.py%3A7" in q["location"]
     assert "token" not in url.lower()
+    # (his report 2026-11-23) every field the link fills is one the form has, and the app
+    # is filled in (GitHub left a field with the id `repo` empty)
+    form = (Path(__file__).parents[1] / ".github/ISSUE_TEMPLATE/2-scan-result.yml").read_text()
+    ids = set(re.findall(r"(?m)^\s+id: ([\w-]+)$", form))
+    assert set(q) - {"template", "title"} <= ids and "repo" not in ids
+    assert q.get("app-repo", "").startswith("https%3A%2F%2Fgithub.com%2F")
 
 
 # --- page wording ---------------------------------------------------------------------------

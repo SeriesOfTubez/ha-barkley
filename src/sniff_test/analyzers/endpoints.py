@@ -351,6 +351,29 @@ def _refs_in(chunk: str, rel: str, line: int, fragment: bool = False) -> Iterato
         yield HostRef(host, rel, line, url, m["scheme"].lower())
 
 
+# (0.15, his report 2026-11-23) a version number written like an address
+# (`APP_VERSION = "2.4.1.7"`, `"appVersion": "2.4.1.7"`, `fw_ver="1.2.3.4"`): the name
+# or key right before the string, split into words, says it's a version
+_NAME_BEFORE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_]{0,60})[\"']?\s{0,4}[:=]\s{0,4}[rRbBuUfF]{0,2}[\"'`]$"
+)
+_NAME_WORDS = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])")
+_VERSION_WORDS = frozenset({"version", "versions", "ver", "vers", "build", "release",
+                            "firmware", "fw", "sw", "rev", "revision"})  # fmt: skip
+
+
+def version_name(name: str) -> bool:
+    """Whether a name or key says it holds a version (`APP_VERSION`, `appVersion`, `fw`)."""
+    return any(w.lower() in _VERSION_WORDS for w in _NAME_WORDS.findall(name[:60]))
+
+
+def _version_before(text: str) -> bool:
+    """Whether the code right before a string names it a version (the last 80 characters
+    of the line before it)."""
+    m = _NAME_BEFORE.search(text[-80:])
+    return bool(m and version_name(m[1]))
+
+
 def _bare_ref(value: str, rel: str, line: int) -> HostRef | None:
     v = value.strip().lower()
     if _IPV4.match(v):
@@ -420,10 +443,17 @@ def extract(root: Path) -> tuple[list[HostRef], list[tuple[str, int]]]:
             continue
         rel = p.relative_to(root).as_posix()
         if p.suffix in _PY:
+            lines: list[str] | None = None
             for line, value, whole in py_strings(text):
                 refs.extend(_refs_in(value, rel, line, fragment=not whole))
                 if whole:
                     if bare := _bare_ref(value, rel, line):
+                        if _IPV4.match(bare.host):
+                            lines = lines if lines is not None else text.splitlines()
+                            src = lines[line - 1] if 0 < line <= len(lines) else ""
+                            at = src.find(value)
+                            if at > 0 and _version_before(src[:at]):
+                                continue  # a version number, not an address
                         refs.append(bare)
                     if _TELEGRAM_TOKEN.match(value.strip()):
                         tokens.append((rel, line))
@@ -431,6 +461,8 @@ def extract(root: Path) -> tuple[list[HostRef], list[tuple[str, int]]]:
             for line, chunk in _js_chunks(text):
                 refs.extend(_refs_in(chunk, rel, line))
                 for q in re.finditer(r"[\"'`](\d{1,3}(?:\.\d{1,3}){3})[\"'`]", chunk):
+                    if _version_before(chunk[max(0, q.start() - 80) : q.start() + 1]):
+                        continue  # `version:"1.2.3.4"`: a version number
                     if bare := _bare_ref(q[1], rel, line):
                         refs.append(bare)
     if any(r.url is None for r in refs):
@@ -556,7 +588,7 @@ def addressed_hosts(root: Path) -> set[str]:
                         out.add(m["host"].lower())
                 continue
             bare = _bare_ref(value, "", 0)
-            if bare is None:
+            if bare is None or (_IPV4.match(bare.host) and any(version_name(k) for k in names)):
                 continue
             if any(_ADDRESS_NAME.search(k) for k in names) or (
                 call is not None and call.lower() in _SEND_CALLS

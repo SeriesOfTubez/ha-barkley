@@ -1741,10 +1741,10 @@ def deep_html(
     elif not answer:
         inline = (
             form.replace("{label}", f"{icon('sparkle', 16)} Explain in context")
-            + f'<a class="small" href="{to}">see the {lines} lines it would send</a>'
+            + f'<a class="small" href="{to}">see the {_these(lines, False)} it would send</a>'
         )
         body = (
-            f'<p class="small">Explain in context sends these {lines} lines of the app\'s own '
+            f'<p class="small">Explain in context sends {_these(lines)} of the app\'s own '
             f"code to the AI set up as <code>{e(entity, 120)}</code>. The code is public on "
             "GitHub, and no Home Assistant data is sent. Nothing is sent until you click."
             f"{more}</p>"
@@ -3007,6 +3007,13 @@ def build_tool_upkeep(report: dict[str, Any], f: dict[str, Any]) -> str:
 
 def _count(n: int, one: str, many: str) -> str:
     return f"one {one}" if n == 1 else f"{n:,} {many}"
+
+
+def _these(n: Any, these: bool = True) -> str:
+    """ "this line" / "these 12 lines" ("line" / "12 lines" without the word in front)."""
+    if n == 1:
+        return "this line" if these else "line"
+    return f"these {n} lines" if these else f"{n} lines"
 
 
 def _supply_repo(report: dict[str, Any]) -> str:

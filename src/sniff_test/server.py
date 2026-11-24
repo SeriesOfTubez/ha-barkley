@@ -2184,8 +2184,10 @@ def report_fp_url(report: dict[str, Any], f: dict[str, Any]) -> str:
     return issue_url(
         "2-scan-result.yml",
         title=f"[Scan]: {f.get('rule_id')} on {repo.rsplit('/', 1)[-1]}"[:120],
-        repo=f"https://github.com/{repo}" if _REPO.fullmatch(repo) else "",
         **{
+            # (his report 2026-11-23) the form's field was `repo`, which GitHub doesn't fill
+            # from the query; `app-repo` is
+            "app-repo": f"https://github.com/{repo}" if _REPO.fullmatch(repo) else "",
             "app-version": str(t.get("ref") or ""),
             "barkley-version": str((report.get("tool") or {}).get("version") or __version__),
             "ha-version": str(report.get("ha_version") or ""),

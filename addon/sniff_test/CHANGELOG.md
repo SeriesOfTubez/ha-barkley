@@ -220,9 +220,10 @@ change below is a general check applied to every app, not an exception for one:
   websocket; or as a blob address that never leaves the browser.
 - Data leaving: a site counts as a destination only when the code uses it like an
   address (not a link in a message, an XML namespace, an app package name or a dotted
-  key). Login-token code that only counts, checks or removes tokens, another app's
-  settings fields that aren't secrets, the Supervisor's key sent to the Supervisor, and
-  one named entry of secrets.yaml are no longer paired with a site.
+  key). A version number written like an IP address (`APP_VERSION = "2.4.1.7"`) isn't
+  listed as an address. Login-token code that only counts, checks or removes tokens,
+  another app's settings fields that aren't secrets, the Supervisor's key sent to the
+  Supervisor, and one named entry of secrets.yaml are no longer paired with a site.
 - Loading saved data with pickle is a habit (medium), not hidden code. Encoded pictures,
   fonts and keys aren't hidden code. Packed text is unpacked, as data, and read like the
   app's own files; the page says so, what kind of code it holds, and when it changes
@@ -317,6 +318,8 @@ change below is a general check applied to every app, not an exception for one:
 - An app installed at an older version, with a newer one already offered, had only the
   installed version sniffed: the offered update never was. Both are sniffed now, and
   the update's notification no longer replaces the install's.
+- Report a false positive now fills in the app's repository too (GitHub left that one
+  field empty), and the code a click sends says "this line" for one line.
 - Plainer words across the panel and the notifications.
 
 ## 0.14.0
