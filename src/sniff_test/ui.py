@@ -513,6 +513,10 @@ svg.does .bugs text { fill:var(--orange); font-size:12px; font-weight:600; }
 svg.does .bugs .bi, svg.does .door .di { color:var(--orange); }
 svg.does .door rect { fill:var(--orange-bg); stroke:var(--orange-edge); stroke-dasharray:5 3; }
 svg.does .inbound { fill:none; stroke:var(--orange); stroke-width:2; stroke-dasharray:7 4; }
+svg.does .codein { fill:none; stroke:var(--orange); stroke-width:2; stroke-dasharray:2 5;
+  stroke-linecap:round; }
+svg.does text.co { fill:var(--orange); font-size:var(--t-xs); }
+.nsite .co2 { color:var(--orange); }
 .narrow { display:none; }
 @media (max-width:760px) { .flowwrap .wide { display:none; } .narrow { display:grid; gap:8px; } }
 .hdr2 { display:flex; gap:8px; align-items:center; color:var(--muted); font-weight:500; }

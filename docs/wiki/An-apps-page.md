@@ -66,7 +66,11 @@ From top to bottom:
   dotted grey. A purple line goes to where the login you gave this app is sent. A dashed
   box is an address you entered at setup (Barkley can't tell whether it's on your home
   network or the internet). Exposure is orange and points in: a door for each way in,
-  and a strip on the app for libraries with known security bugs. The orange Exposure
+  and a strip on the app for libraries with known security bugs. A dotted orange arrow
+  is code from outside that runs here: from the site a card loads code from into your
+  browser session, or from where an integration downloads Lua into Programs and the
+  system. When that address comes from a server's answer, the arrow starts at a dashed
+  box linked to the site that answers. The orange Exposure
   bar on top shows from Medium by default (Settings → Exposure bar).
 - **Where the login you gave this app goes:** the login you entered when you set up the
   app (not your Home Assistant login), and any token it gets back, followed from what is

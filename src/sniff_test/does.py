@@ -19,6 +19,7 @@ and plain HTML for phones (the CSS shows one).
 
 from __future__ import annotations
 
+import re
 import textwrap
 from dataclasses import dataclass, field
 from html import escape
@@ -146,6 +147,13 @@ class Model:
     entered_login: bool = False  # the login you gave this app goes there
     entered_how: list[str] = field(default_factory=list)  # "by MQTT"… (a library's other ways)
     elsewhere_other: int = 0  # run-time addresses not from what you entered
+    # (0.15, his ask 2026-11-23) code from outside that runs here: a dotted orange arrow from
+    # where it comes from into the room where it runs. Sites by index -> room; and for code
+    # whose address comes from a server's answer, a dashed box (its text, room, the sites
+    # whose answer gives the address)
+    code_paths: list[tuple[int, str]] = field(default_factory=list)
+    code_only: set[int] = field(default_factory=set)  # code sites with no request drawn
+    code_boxes: list[tuple[str, str, list[str]]] = field(default_factory=list)
 
 
 def _site_lines(calls: Any) -> list[str]:
@@ -162,6 +170,55 @@ def _site_lines(calls: Any) -> list[str]:
         if what not in out:
             out.append(what)
     return out[:2]
+
+
+_URL_HOST = re.compile(r"(?:https?:)?//([A-Za-z0-9][A-Za-z0-9.\-]{0,252})")
+CODE_RULES = {"card-remote-script": "sends code that runs here",
+              "card-remote-pinned": "sends a fixed version of code"}  # fmt: skip
+WHERE_RUNS = {"browser": "in your browser", "programs": "in Home Assistant"}
+
+
+def code_sources(
+    report: dict[str, Any],
+) -> tuple[dict[str, tuple[str, str]], list[tuple[str, str, list[str]]]]:
+    """(0.15, his ask 2026-11-23) Where code from outside comes from: {site: (room, what
+    the site's line says)} for a card's code site and Lua downloaded from a site named in
+    the code; and boxes (text, room, answering sites) for Lua whose address comes from a
+    server's answer or can't be traced. Only sites Barkley read in the code."""
+    sites: dict[str, tuple[str, str]] = {}
+    boxes: list[tuple[str, str, list[str]]] = []
+    for f in report.get("findings") or []:
+        if not isinstance(f, dict) or str(f.get("rule_id")) not in CODE_RULES:
+            continue
+        m = _URL_HOST.search(str(f.get("evidence") or "")[:2000])
+        if m and m[1] not in sites:
+            sites[m[1].lower().rstrip(".")] = ("browser", CODE_RULES[str(f["rule_id"])])
+    lua = report.get("lua")
+    runs = lua.get("runs") if isinstance(lua, dict) else None
+    for r in runs if isinstance(runs, list) else []:
+        if not isinstance(r, dict) or r.get("source") != "downloaded":
+            continue
+        for o in [o for o in r.get("from") or [] if isinstance(o, dict)][:2] or [{}]:
+            kind, detail = str(o.get("kind") or ""), str(o.get("detail") or "")
+            hosts = [h for h in detail.split(",") if _URL_HOST.fullmatch("//" + h)][:3]
+            if kind in ("site", "list") and hosts:
+                for h in hosts:
+                    sites.setdefault(h, ("programs", "sends code that runs here"))
+                continue
+            if kind == "answer":
+                said = [h for h in str(o.get("site") or "").split(",")
+                        if _URL_HOST.fullmatch("//" + h)][:3]  # fmt: skip
+                text = (f"Code from an address {said[0]} gives it" if len(said) == 1
+                        else "Code from an address one of these sites gives it" if said
+                        else "Code from an address a server gives it")  # fmt: skip
+                box = (text, "programs", said)
+            elif kind == "setup":
+                box = ("Code from the address you entered", "programs", [])
+            else:
+                box = ("Code from an address Barkley couldn't trace", "programs", [])
+            if box not in boxes:
+                boxes.append(box)
+    return sites, boxes[:2]
 
 
 def build(report: dict[str, Any], name: str) -> Model:
@@ -224,10 +281,13 @@ def build(report: dict[str, Any], name: str) -> Model:
     # (a card's code, or an address the request reader couldn't follow)
     names = list(sites) + [h for h in flow_hosts if h and h not in sites]
     names += [h for h, mk in marked.items() if mk.library and h not in names]
+    code, m.code_boxes = code_sources(report)
+    names += [h for h in code if h not in names]
     order = sorted(
         names,
-        key=lambda h: (h not in flow_hosts, h not in own, not (h in marked and marked[h].login), h),
-    )
+        key=lambda h: (h not in code, h not in flow_hosts, h not in own,
+                       not (h in marked and marked[h].login), h),
+    )  # fmt: skip
     for host in order[:SITES_SHOWN]:
         how = "bad" if host in flow_hosts and host not in own else "own" if host in own else ""
         lines = _site_lines(sites.get(host))
@@ -246,6 +306,12 @@ def build(report: dict[str, Any], name: str) -> Model:
         if mk and (mk.login or mk.token):
             said = "gets the login you gave this app" if mk.login else "gets a token from a server"
             lines = [*lines[:2], KEY + said]
+        if host in code:  # (0.15) code from here runs in a room: a dotted orange arrow
+            room, said = code[host]
+            if not lines:
+                m.code_only.add(len(m.sites))
+            lines = [CODE + said, *lines][:3]
+            m.code_paths.append((len(m.sites), room))
         m.sites.append((host, lines, how))
     m.more_sites = max(0, len(order) - SITES_SHOWN)
     for i, (host, _lines, how) in enumerate(m.sites):
@@ -381,9 +447,12 @@ def _icon(name: str, x: float, y: float, size: int = 14) -> str:
 
 
 KEY = "\x00key:"  # a site line that says your login (or a token) goes there
+CODE = "\x00code:"  # a site line that says code from there runs here (orange)
 
 
 def _site_line(t: str, x: float, y: float) -> str:
+    if t.startswith(CODE):
+        return f'<text class="co" x="{x}" y="{y:.0f}">{e(t[len(CODE) :], 36)}</text>'
     if t.startswith(KEY):
         text = e(t[len(KEY) :], 34)
         return (f'<g class="pk">{_icon("key", x, y - 10, 12)}</g>'
@@ -462,7 +531,9 @@ def wide(m: Model, key: str = "d") -> str:
     entered_box = _entered_box(m, cy, notes_end, bug_h, key)
     path_room = {room: how for room, _i, how in m.paths}
     rooms, lines, y = [], [], float(top)
+    room_mid: dict[str, float] = {}
     for (k, label, ic), h in zip(ROOMS, hs, strict=True):
+        room_mid[k] = y + h / 2
         u = m.use.get(k)
         cls = "room " + ("bad" if k in m.bad_rooms else "on" if u else "idle")
         r = [f'<g class="{cls}"><rect x="{RX}" y="{y:.0f}" width="{RW}" height="{h}" rx="8"/>',
@@ -500,7 +571,12 @@ def wide(m: Model, key: str = "d") -> str:
             lines.append(f'<path class="own" d="{curve}{APP_X} {cy:.0f}" '
                          f'marker-start="url(#g-{key})"/>')  # fmt: skip
         y += h + GAP
+    for i, room in m.code_paths:  # (0.15) code from this site runs in that room
+        if i < len(smid):
+            lines.append(_code_arrow(YARD_X - 2, smid[i], room_mid[room], key))
     for i, mid in enumerate(smid):
+        if i in m.code_only:
+            continue  # only code comes from it: the orange arrow is its line
         how = next((hw for _r, s, hw in m.paths if s == i), None)
         cls_l = "ln" if how is None else ("path bad" if how == "bad" else "path")
         mk = "r" if how == "bad" else "g"
@@ -555,6 +631,15 @@ def wide(m: Model, key: str = "d") -> str:
         app.append(f'<path class="inbound" d="M{mx} {dy - 10:.0f} L {mx} {end:.0f}" '
                    f'marker-end="url(#o-{key})"/><text class="cross in" x="{mx + 8}" '
                    f'y="{(dy - 10 + end) / 2 + 4:.0f}">comes in</text>')  # fmt: skip
+    below = notes_end
+    if entered_box:
+        below = entered_box[1]
+    for text, room, said in m.code_boxes:  # code from an address worked out while it runs
+        to = [smid[i] for i, (h, _l, _w) in enumerate(m.sites) if h in said and i < len(smid)]
+        box, bottom = _code_box(text, room_mid[room], to, below, cy, bug_h, m, key)
+        yard.append(box)
+        below = bottom
+        entered_box = (entered_box[0] if entered_box else "", bottom)
     if entered_box:
         box, bottom = entered_box
         yard.append(box)
@@ -601,6 +686,50 @@ def _entered_box(m: Model, cy: float, notes_end: float, bug_h: float, key: str):
     out.append(f'<path class="{cls_l}" d="M{sx} {sy0:.0f} C {EBOX_X - 14} {sy0:.0f}, '
                f'{EBOX_X - 24} {mid:.0f}, {EBOX_X - 2} {mid:.0f}" '
                f'marker-end="url(#{mk}-{key})"/>')  # fmt: skip
+    return "".join(out), y0 + h
+
+
+def _code_arrow(x0: float, y0: float, room_y: float, key: str) -> str:
+    """A dotted orange arrow from where code comes from (a site's or a box's left edge)
+    into the right edge of the room where it runs; it passes behind the app."""
+    x1 = RX + RW + 2
+    return (
+        f'<path class="codein" d="M{x0:.0f} {y0:.0f} C {WALL - 60} {y0:.0f}, '
+        f'{x1 + 50} {room_y:.0f}, {x1} {room_y:.0f}" marker-end="url(#o-{key})"/>'
+    )
+
+
+def _code_box(
+    text: str,
+    room_y: float,
+    sites: list[float],
+    below: float,
+    cy: float,
+    bug_h: float,
+    m: Model,
+    key: str,
+) -> tuple[str, float]:
+    """(0.15) A dashed box for code whose address comes from a server's answer (or can't be
+    traced): below the app and the notes, straddling the wall like the address you entered.
+    A thin grey line from the box to each answering site on the picture; a dotted orange
+    arrow from the box into the room where the code runs."""
+    rows = [*textwrap.wrap(text, 30), f"runs {WHERE_RUNS.get('programs')}"]
+    app_bottom = cy + APP_H / 2 + (20 if m.holds_login else 0) + bug_h
+    y0 = max(below, app_bottom) + 24
+    h = 20 + 17 * len(rows)
+    out = [f'<g class="maybe"><rect x="{EBOX_X}" y="{y0:.0f}" width="{EBOX_W}" height="{h}" '
+           'rx="8"/>']  # fmt: skip
+    for j, t in enumerate(rows):
+        cls = "nt" if j < len(rows) - 1 else "co"
+        out.append(f'<text class="{cls}" x="{EBOX_X + 12}" y="{y0 + 22 + 17 * j:.0f}">'
+                   f"{e(t, 34)}</text>")  # fmt: skip
+    out.append("</g>")
+    mid = y0 + h / 2
+    bx = EBOX_X + 30
+    for sy in sites:  # up from the box's top to the site whose answer gives the address
+        out.append(f'<path class="own" d="M{bx} {y0 - 2:.0f} C {bx} {sy:.0f}, {bx} {sy:.0f}, '
+                   f'{YARD_X - 2} {sy:.0f}"/>')  # fmt: skip
+    out.append(_code_arrow(EBOX_X - 2, mid, room_y, key))
     return "".join(out), y0 + h
 
 
@@ -663,9 +792,11 @@ def narrow(m: Model) -> str:
         f'<div class="nsite{" bad" if how == "bad" else ""}">'
         + (f"<b>{e(host)}</b>" if host == OFF_BOX else f"<code>{e(host, 60)}</code>")
         + "".join(f'<span class="ns2 pv2">{_ic("key")}{e(t[len(KEY):], 60)}</span>'
-                  if t.startswith(KEY) else f'<span class="ns2">{e(t, 60)}</span>'
+                  if t.startswith(KEY) else
+                  f'<span class="ns2 co2">{e(_runs_where(m, i, t[len(CODE):]), 80)}</span>'
+                  if t.startswith(CODE) else f'<span class="ns2">{e(t, 60)}</span>'
                   for t in lines) + "</div>"
-        for host, lines, how in m.sites
+        for i, (host, lines, how) in enumerate(m.sites)
     )  # fmt: skip
     if m.more_sites:
         sites += f'<p class="ns2">and {m.more_sites} more site{"s" * (m.more_sites != 1)}</p>'
@@ -677,6 +808,9 @@ def narrow(m: Model) -> str:
                      if m.entered_how else "")
                   + (f'<span class="ns2 pv2">{_ic("key")}gets the login you gave this app</span>'
                      if m.entered_login else "") + "</div>")  # fmt: skip
+    for text, room, _said in m.code_boxes:
+        sites += (f'<div class="nsite maybe"><b>{e(text, 80)}</b><span class="ns2 co2">'
+                  f"runs {e(WHERE_RUNS.get(room, ''))}</span></div>")  # fmt: skip
     if not m.sites and not m.elsewhere and not m.entered:
         sites += '<p class="ns2">Nothing leaves: no request in its code.</p>'
     return (
@@ -684,6 +818,13 @@ def narrow(m: Model) -> str:
         f'<div class="nrooms">{"".join(rooms)}{in_doors}{app}</div>'
         f'<div class="hdr2">{_ic("globe")}Outside your home</div>{doors}{sites}</div>'
     )
+
+
+def _runs_where(m: Model, i: int, said: str) -> str:
+    """A code site's line on a phone: where that code runs ("… runs in your browser")."""
+    room = next((r for j, r in m.code_paths if j == i), "")
+    where = WHERE_RUNS.get(room, "")
+    return said.replace("that runs here", f"that runs {where}") if where else said
 
 
 def legend(m: Model) -> str:
@@ -707,6 +848,8 @@ def legend(m: Model) -> str:
         bits.append("Dotted line: your data goes through the app to its own site.")
     if any(how == "bad" for *_x, how in m.paths):
         bits.append("Red line: your data goes through the app to a site that isn't the app's own.")
+    if m.code_paths or m.code_boxes:
+        bits.append("Dotted orange arrow: code from outside that runs here.")
     if m.doors or m.bugs:
         bits.append("Orange, pointing in: a way in that counts toward Exposure.")
     return f'<p class="sub">{" ".join(bits)}</p>'

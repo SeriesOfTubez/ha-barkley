@@ -92,6 +92,10 @@ update the list offers one button to sniff your apps again.
 - Exposure is orange and points in: a door for each way in (a page that opens without
   logging in, messages from the internet, a link that can run code), and a strip on the
   app for libraries with known security bugs.
+- A dotted orange arrow shows code from outside that runs here: from the site a card
+  loads code from into your browser session, and from where an integration downloads
+  Lua into Programs and the system. When the address comes from a server's answer, the
+  arrow starts at a dashed box linked to the sites that answer.
 - On a phone the same picture is stacked, one part under the other. Settings →
   Exposure bar decides when the orange strip with the Exposure reading shows: medium
   and high (default), high only, or always.
