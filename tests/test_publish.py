@@ -235,7 +235,9 @@ def test_accepted_findings_carry_a_reason_and_dates():
 
 def test_dependabot_waits_a_week():
     bot = _yaml(ROOT / ".github" / "dependabot.yml")
-    assert [u["cooldown"] for u in bot["updates"]] == [{"default-days": 7}] * 2
+    assert all(u["cooldown"] == {"default-days": 7} for u in bot["updates"])
+    ecosystems = {u["package-ecosystem"] for u in bot["updates"]}
+    assert ecosystems == {"github-actions", "uv", "docker"}  # docker: the pinned base image
 
 
 @requires_semgrep

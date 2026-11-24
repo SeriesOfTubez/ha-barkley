@@ -5,6 +5,7 @@ aarch64/amd64 only (armhf/armv7/i386 deprecated), `init: false` for s6-overlay v
 images, ingress requests only from 172.30.32.2, no per-app memory limit keys.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -158,7 +159,13 @@ def test_panel_only_trusts_the_supervisor_by_default():
 
 def test_image_installs_tools_from_wheels_and_pinned_binaries():
     df = (ADDON / "Dockerfile").read_text()
-    assert "FROM ghcr.io/home-assistant/base-debian:trixie" in df
+    # (0.15) the base image pinned by digest, the same in both stages and in build.yaml
+    froms = re.findall(r"(?m)^FROM (\S+)", df)
+    assert len(froms) == 2 and len(set(froms)) == 1
+    assert re.fullmatch(r"ghcr\.io/home-assistant/base-debian:trixie@sha256:[0-9a-f]{64}",
+                        froms[0])  # fmt: skip
+    build = (ADDON.parents[1] / ".github/workflows/build.yaml").read_text()
+    assert f"BASE_IMAGE: {froms[0]}\n" in build
     assert df.count("--no-build") >= 2  # semgrep, the scanner's deps
     # uv and osv-scanner both go through get(), which always checks the sha256 pin,
     # whichever URL (release download, or the API asset fallback) served the bytes.

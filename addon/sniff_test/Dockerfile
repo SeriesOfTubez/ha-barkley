@@ -18,7 +18,11 @@
 # Do NOT strip semgrep-core: its sections are laid out unusually (".dynstr not in
 # segment"), and every binutils mode, even --strip-debug, leaves it failing with
 # "symbol lookup error: undefined symbol: , version" (tried 2026-11-10).
-FROM ghcr.io/home-assistant/base-debian:trixie AS build
+# (0.15, his decision 2026-11-23) The base image is pinned by digest (the multi-arch
+# index), so a rebuild gets exactly the image whose Cosign signature was checked;
+# Dependabot offers a newer one as a pull request after a week (.github/dependabot.yml).
+# Keep it the same in both stages and in build.yaml's BASE_IMAGE.
+FROM ghcr.io/home-assistant/base-debian:trixie@sha256:d996c8f8ef0096a1ac3756766149b31b8171afc663068cc192f2bcab20f1b8c9 AS build
 
 # TARGETARCH comes from BuildKit (amd64/arm64); the Supervisor passes BUILD_ARCH
 # (amd64/aarch64). Either is enough.
@@ -109,7 +113,7 @@ RUN uv venv --python /opt/python/barkley-python /opt/sniff-test \
     && rm -rf /src /tmp/req.txt
 
 # --- the shipped image: base + Python + the trimmed tools ---------------------------
-FROM ghcr.io/home-assistant/base-debian:trixie
+FROM ghcr.io/home-assistant/base-debian:trixie@sha256:d996c8f8ef0096a1ac3756766149b31b8171afc663068cc192f2bcab20f1b8c9
 ARG BUILD_ARCH
 # `upgrade`: the base image is rebuilt less often than Debian ships security fixes
 # (2026-11-13: zlib1g had two high CVEs fixed in trixie-security that the base lacked).
