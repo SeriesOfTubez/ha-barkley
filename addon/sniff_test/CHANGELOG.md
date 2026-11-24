@@ -81,7 +81,7 @@ update the list offers one button to sniff your apps again.
 - Under the app's name: the kind of app, the version, a link to the repository, stars,
   and downloads when GitHub counts them.
 
-**What it does: a picture of the app in your home**
+**What it touches: a picture of the app in your home**
 
 - At the top of an app's page. Inside your Home Assistant are seven rooms, the same
   for every app: users and logins, other apps' settings, devices and entities, files,
@@ -101,8 +101,13 @@ update the list offers one button to sniff your apps again.
   Lua into Programs and the system. When the address comes from a server's answer, the
   arrow starts at a dashed box linked to the sites that answer. The "leaves your home"
   label sits over the lines that leave, and lines behind it break around it.
-- An item that adds to the Exposure reading is marked Counts in Exposure, with a link up
-  to that box. The rest of What it can do is context.
+- An item that adds to the Exposure reading is marked Exposure, with a link up to that
+  box. The rest of What Barkley found is context. Only the AI's own row under an item is
+  in the AI's colour.
+- The Exposure box names the site code is loaded from and says what the app relies on:
+  that site, and whoever publishes the code. Barkley never downloads that code.
+- Page sections: What Barkley found (the items), What it touches (the picture). The
+  developer's description, after an AI request, is now part of In short.
 - The short AI text from Explain this app is labelled AI summary, apart from Explain in
   context.
 - On a phone the same picture is stacked, one part under the other. Settings →
@@ -139,7 +144,10 @@ update the list offers one button to sniff your apps again.
   and how the release's commit is signed.
 - Every Python package Home Assistant would install for an integration, the ones that
   come along with the app's own included. For a card, the npm packages its
-  `package.json` lists.
+  `package.json` lists. Each line says how many releases it is behind and the newest
+  version with its date, or "up to date", and "pinned by Home Assistant" where Home
+  Assistant's own pin holds it. For a card, "built with" names the lock file's version
+  when it isn't the one `package.json` names.
 - Published libraries it ships: each recognised library says "not read" or "read as
   code", with the reason (too new, too few downloads, no answer from npm, a malware
   warning), and how many large files matched nothing.

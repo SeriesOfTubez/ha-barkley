@@ -362,7 +362,7 @@ def test_detail_page_of_an_installed_app_shows_its_update(addon):
     assert "<h1>Moved</h1>" in page and "All apps</a>" in page
     assert "Update available: v1 → v2" in page
     assert "Everything the update" in page
-    assert "What it can do" in page and "Where it connects" in page
+    assert "What Barkley found" in page and "Where it connects" in page
 
 
 def test_check_runs_the_update_diff_reusing_stored_scans(addon):

@@ -57,10 +57,10 @@ def page(r: dict) -> str:
 def test_the_report_puts_threat_and_exposure_first_and_the_rest_as_context():
     out = page(report(f("ha-auth-change-users", line=19), f("ha-auth-internals")))
     t, x = out.index("<h2>Threat <span"), out.index("<h2>Exposure <span")
-    c = out.index("What it can do")
+    c = out.index("What Barkley found")
     assert t < x < c
-    assert "What Barkley found" not in out and "Should you worry?" not in out
-    assert 'class="lvl high"' not in out and "points" not in out.split("What it can do", 1)[1]
+    assert "What Barkley found (" not in out and "Should you worry?" not in out
+    assert 'class="lvl high"' not in out and "points" not in out.split("What Barkley found", 1)[1]
     assert out.count('class="src scan"') >= 5  # Threat, Exposure, In short, can do, …
     assert "capability score" in out
 

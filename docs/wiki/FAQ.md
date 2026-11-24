@@ -19,8 +19,8 @@ Barkley got something wrong, use Report a false positive under the item.
 **Why can an app that can do a lot read Good Boy?**
 A custom integration runs unsandboxed inside Home Assistant, so what its code openly uses
 says little about whether it means harm. Threat counts only signs of malicious behavior.
-What the app can do is still listed on its page, under "What it can do". Only the items
-marked Counts in Exposure change a reading.
+What the app can do is still listed on its page, under "What Barkley found". Only the
+items marked Exposure change a reading.
 
 **Does Barkley block or remove anything?**
 No. It reports. There is no quarantine and no install gate.

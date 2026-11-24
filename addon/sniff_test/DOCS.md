@@ -80,12 +80,12 @@ opens a pre-filled public issue that you finish and submit.
   Turn it off, pick who else gets notified, or choose which results notify you (Notify
   when), on the Settings page.
 - **An app's page**, top to bottom: the two readings, the Threat box and the Exposure
-  box, In short, privacy notes, What it can do (items that add to Exposure are marked),
-  What the developer says it does (after an AI request), What it does, Where the login
+  box, In short (with the developer's description after an AI request), privacy notes,
+  What Barkley found (items that add to Exposure are marked), What it touches, Where the login
   you gave this app goes, Where it connects, Other addresses in its code, Where its code
   comes from, Environment variables it uses, The developer's security habits, Everything
   it uses inside Home Assistant, and History.
-- **What it does:** a picture of the app in your home. Seven rooms, the same for every
+- **What it touches:** a picture of the app in your home. Seven rooms, the same for every
   app (users and logins, other apps' settings, devices and entities, files, programs
   and the system, your home network, your browser session), blue where the app reaches
   beyond its own job and dashed where it does nothing; its own space said in grey; the
@@ -225,7 +225,7 @@ block above a function) that the scan stored: at most 6,000, 12,000 (the default
 with the lines it rests on. Barkley shows a sentence only if those lines were sent and
 have text on them, every code name it mentions is on them, at least three of its longer
 words are on them, and it gives no verdict. Shown sentences are tagged **AI inferred**,
-under the item they are about or in a box called "What the developer says it does". The
+under the item they are about or under In short as "The developer's description". The
 developer wrote those lines: Barkley checks that they exist and hold the words, not that
 they are true. This request is not sent when a threat was found. With a possible threat,
 the descriptions on the threat and on the logins it could take are not sent, and only a

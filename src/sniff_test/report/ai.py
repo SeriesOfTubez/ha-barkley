@@ -43,8 +43,9 @@ _READINGS_RULE = (
     "Barkley gives an app two readings and they are final: Threat (signs of malicious "
     "behavior: none, possible or found) and Exposure (what the app opens up to someone who "
     "is not an administrator: low, medium or high). Do not compute, restate differently or "
-    "argue with them. Everything else listed is context about what the app can do: it is "
-    "not scored and not a problem by itself."
+    "argue with them. An item whose kind says it counts toward Exposure is part of that "
+    "reading. Everything else listed is context about what the app can do: it is not "
+    "scored and not a problem by itself."
 )
 _STYLE = (
     "Write for a Home Assistant user who is not a security expert. Use plain words, no "
@@ -169,7 +170,7 @@ def build_request(
         "threat_reason": rd.get("threat_reason") or None,
         "exposure": rd.get("exposure_level"),
         "exposure_out_of_10": rd.get("exposure"),
-        "exposure_reasons": [str(x)[:400] for x in rd.get("exposure_reasons") or []][:8],
+        "exposure_reasons": [str(x)[:700] for x in rd.get("exposure_reasons") or []][:8],
         "incomplete_analyzers": brief.get("incomplete_analyzers", []),
         "items": items,
     }

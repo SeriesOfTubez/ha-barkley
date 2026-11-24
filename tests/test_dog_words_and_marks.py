@@ -87,5 +87,47 @@ def test_an_item_that_adds_to_exposure_says_so_and_links_up() -> None:
     f = {"id": "f1", "rule_id": "card-remote-script", "severity": "medium", "file": "c.js",
          "line": 3, "title": "Card loads code", "message": "m"}  # fmt: skip
     html = ui.finding_html(f, [f], 0, context=True, counts=True)
-    assert '<a class="chip expo" href="#exposure">Counts in Exposure</a></h3>' in html
-    assert "Counts in Exposure" not in ui.finding_html(f, [f], 0, context=True)
+    assert '<a class="chip xp" href="#exposure">Exposure</a></h3>' in html
+    assert 'class="chip xp"' not in ui.finding_html(f, [f], 0, context=True)
+    # (his ask 2026-11-24) a chip, not the picture's Exposure bar (.expo)
+    assert "a.chip.xp { display:inline-block;" in ui.CSS and "chip expo" not in html
+
+
+def test_only_the_ai_row_wears_the_ai_colour() -> None:
+    f = {"id": "f1", "rule_id": "card-remote-script", "severity": "medium", "file": "c.js",
+         "line": 3, "title": "Card loads code", "message": "m"}  # fmt: skip
+    html = ui.finding_html(f, [f], 0, "The AI's words.", context=True)
+    assert "<dl>" in html and "<dl class=ai>" not in html
+    assert '<dt class="ai">' in html and "<dt>What it means</dt>" in html
+
+
+def test_the_exposure_reasons_name_the_site_and_what_it_relies_on() -> None:
+    rep = {"target": {"kind": "plugin"}, "findings": [
+        {"rule_id": "card-remote-script", "severity": "medium", "file": "c.js", "line": 1,
+         "evidence": "import('https://cdn.example.invalid/npm/thing@latest/x.js')"},
+        {"rule_id": "card-remote-pinned", "severity": "low", "file": "c.js", "line": 2,
+         "evidence": "import('https://pinned.example.invalid/x@1.2.3/x.js')"},
+        {"rule_id": "card-remote-pinned", "severity": "low", "file": "c.js", "line": 3,
+         "evidence": "import('https://two.example.invalid/y@1.0.0/y.js')"}]}  # fmt: skip
+    why = readings.compute(rep).exposure_reasons
+    assert why[0].startswith("It loads unpinned code from cdn.example.invalid while it runs.")
+    assert "So the card is only as safe as the site that hosts the code" in why[0]
+    assert why[1].startswith("It loads a pinned version of code from 2 sites "
+                             "(pinned.example.invalid, two.example.invalid)")  # fmt: skip
+    assert "relies on those sites to serve it unmodified" in why[1]
+    # Barkley never fetches that code: it never claims to have checked a version of it
+    assert all(x.endswith("Barkley never downloads that code, so it hasn't checked any of it.")
+               for x in why)  # fmt: skip
+    box = ui.exposure_box({"exposure_reasons": why, "network": "home"})
+    assert "checked any of it." in box.replace("&#x27;", "'")  # not cut off
+
+
+def test_lua_reason_names_the_site() -> None:
+    rep = {"target": {"kind": "integration"},
+           "findings": [{"rule_id": "py-lua-download", "severity": "medium", "file": "rt.py",
+                         "line": 5}],
+           "lua": {"runs": [{"source": "downloaded", "from": [
+               {"kind": "site", "detail": "lua.example.invalid"}]}]}}  # fmt: skip
+    why = readings.compute(rep).exposure_reasons[0]
+    assert why.startswith("It downloads Lua code from lua.example.invalid while it runs.")
+    assert "with the same access as Home Assistant itself" in why

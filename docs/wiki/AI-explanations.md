@@ -47,7 +47,7 @@ is shown as plain text labelled **AI summary**: one for the app under "In short"
 under each item it explains, next to the fixed explanation. Explain in context (below) is
 a separate, deeper request about one item.
 
-## What the developer says it does (AI inferred)
+## The developer's description (AI inferred)
 
 New in 0.15, in the Explain and read code mode only. The same click on **Explain this
 app** makes one more request. It carries what the scan stored of the developer's own
@@ -70,8 +70,8 @@ end with the lines it rests on. Barkley shows a sentence only if:
 - it gives no verdict (safe, fine, secure, no problem and the like).
 
 A shown sentence is tagged **AI inferred**, with the lines, under the item it is about.
-Sentences that aren't about one listed item go in a box called **What the developer says
-it does**. The page says it plainly: the developer wrote those lines, and Barkley checked
+Sentences that aren't about one listed item go under **In short**, as **The developer's
+description**. The page says it plainly: the developer wrote those lines, and Barkley checked
 that each line exists and holds these words, not that they are true. A README can
 describe a harmful feature in friendly words.
 

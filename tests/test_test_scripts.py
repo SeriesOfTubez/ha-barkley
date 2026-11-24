@@ -56,7 +56,7 @@ def test_the_fold_sits_in_the_scan_details_not_under_what_it_can_do():
     page = ui.render_app("", 1, v, [], name="acme").decode()
     head, _, rest = page.partition("In short")
     assert "Ignored test scripts" in head and "Ignored test scripts" not in rest
-    can_do = rest.split("What it can do")[1].split("</section>")[0]
+    can_do = rest.split("What Barkley found")[1].split("</section>")[0]
     assert "tests/test_api.py" not in can_do
 
 

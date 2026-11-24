@@ -127,7 +127,7 @@ def test_names_from_the_code_are_escaped_and_the_picture_is_script_free():
     r = rep([fnd(1, "ha-read-secrets")])
     r["requests"] = {"sites": {"<script>x</script>.invalid": [{"method": "<b>GET</b>"}]}}
     page = ui.render_app("", 1, shown.view(r), [], name="<img src=x>").decode()
-    part = page.split("<h2>What it does")[1].split("</section>")[0]
+    part = page.split("<h2>What it touches")[1].split("</section>")[0]
     assert "<script>" not in part and "<img" not in part and "&lt;script&gt;" in part
 
 

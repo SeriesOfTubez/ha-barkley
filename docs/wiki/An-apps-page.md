@@ -40,23 +40,23 @@ From top to bottom:
   in the code. An address the code builds while it runs is said to be so. The last line
   says which "Where Home Assistant runs" choice the reading is based on.
 - **In short:** a few sentences built from the scan by fixed rules (no AI). An AI
-  explanation, if you asked for one, sits here, tagged AI.
+  summary, if you asked for one, sits here, tagged AI. After an AI request in the Explain
+  and read code mode, and only when no threat was found or possible, **The developer's
+  description** follows: sentences tagged AI inferred.
 - **Privacy notes** such as telemetry, analytics or unencrypted connections. They never
   change a reading. In the Explain and read code mode a note links to the AI's reading
   of the address or port behind it.
-- **What it can do:** everything else the scan reports, grouped by kind, with what it
-  means and where in the code it is. An item that adds to the Exposure reading is marked
-  **Counts in Exposure**, with a link up to that box; the rest is context. "Technical details" under an item has
+- **What Barkley found:** everything else the scan reports, grouped by kind, with what
+  it means and where in the code it is. An item that adds to the Exposure reading is
+  marked **Exposure**, with a link up to that box; the rest is context. "Technical
+  details" under an item has
   the rule name and the evidence. Several calls of the same kind in one Python function
   are one item, and a websocket command only an administrator can run says so. Under
   each item: **Report a false positive**, which opens a new public issue on Barkley's
   GitHub with the versions, the rule, the file and the line filled in; you write why
   it's wrong and submit it yourself. Minor items are left out unless you show them (a
   link on the page, or Settings → Minor items).
-- **What the developer says it does** (only after an AI request in the Explain and read
-  code mode, and only when no threat was found or possible): sentences tagged AI
-  inferred.
-- **What it does:** a picture. Inside your Home Assistant are seven rooms, the same for
+- **What it touches:** a picture. Inside your Home Assistant are seven rooms, the same for
   every app: users and logins, other apps' settings, devices and entities, files,
   programs and the system, your home network, and your browser session. A room is blue
   when the app reads (eye) or changes (pencil) something there beyond its own job, and
@@ -95,9 +95,9 @@ From top to bottom:
 - **History:** every stored scan of this app, newest first, and the link to the
   technical report (raw JSON), which includes the capability score.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/picture-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/picture-light.png" alt="What it does: the picture of an app with a found threat"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/picture-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/picture-light.png" alt="What it touches: the picture of an app with a found threat"></picture>
 
-<sub>The "What it does" picture for one of Barkley's made-up test apps.</sub>
+<sub>The "What it touches" picture for one of Barkley's made-up test apps.</sub>
 
 ## Where it connects
 

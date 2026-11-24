@@ -166,7 +166,7 @@ def test_the_page_shows_the_readings_and_no_score(tmp_path):
     on = ui.render_app("", sid, panel.shown_report(sid), []).decode()
     assert 'aria-label="Exposure 1.25 of 10"' in on and "<h2>Exposure <span" in on
     assert "Barkley found nothing that sends your data off your Home Assistant machine" in on
-    assert "What Barkley found" not in on
+    assert "What Barkley found (" not in on  # the old scored list had a count
     assert "of 100" not in on and "Very Sus" not in on and "Powerful" not in on
     assert "Good Boy · no signs of malicious behavior" in on
     assert "banner threat" not in on

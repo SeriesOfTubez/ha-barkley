@@ -34,6 +34,7 @@ so they aren't counted.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -183,6 +184,50 @@ def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
+# (0.15, his wording 2026-11-24) the site code comes from, named in the Exposure reason
+URL_HOST = re.compile(r"(?:https?:)?//([A-Za-z0-9][A-Za-z0-9.\-]{0,252})")
+NEVER_READ = "Barkley never downloads that code, so it hasn't checked any of it."
+
+
+def _code_hosts(findings: list[dict[str, Any]], rule: str) -> list[str]:
+    """The sites a code-load item's address names, in the order found (from the scanned
+    code: hostname characters only, escaped by the caller)."""
+    out: list[str] = []
+    for f in findings:
+        if str(f.get("rule_id")) == rule:
+            m = URL_HOST.search(str(f.get("evidence") or "")[:2000])
+            h = m[1].lower().rstrip(".") if m else ""
+            if h and h not in out:
+                out.append(h)
+    return out
+
+
+def _lua_hosts(report: dict[str, Any]) -> list[str]:
+    """Sites downloaded Lua comes from, when the code names them (py_lua's runs)."""
+    lua = report.get("lua")
+    runs = lua.get("runs") if isinstance(lua, dict) else None
+    out: list[str] = []
+    for r in runs if isinstance(runs, list) else []:
+        if not isinstance(r, dict) or r.get("source") != "downloaded":
+            continue
+        for o in r.get("from") or []:
+            if isinstance(o, dict) and o.get("kind") in ("site", "list"):
+                for h in str(o.get("detail") or "").split(","):
+                    if URL_HOST.fullmatch("//" + h) and h not in out:
+                        out.append(h)
+    return out
+
+
+def _from(hosts: list[str]) -> str:
+    """Says "cdn.example", "2 sites (a, b)", "5 sites (a, b, c and 2 more)", or "another site"."""
+    if not hosts:
+        return "another site"
+    if len(hosts) == 1:
+        return hosts[0]
+    named = ", ".join(hosts[:3]) + (f" and {len(hosts) - 3} more" if len(hosts) > 3 else "")
+    return f"{len(hosts)} sites ({named})"
+
+
 def counts_in_exposure(f: dict[str, Any]) -> bool:
     """Whether a finding adds to the Exposure reading in compute() (the panel marks it)."""
     rule = str(f.get("rule_id"))
@@ -254,20 +299,33 @@ def compute(
         reasons.append("A link can make it run code: it runs code taken from the page "
                        "address. Anyone who gets you to open a link to your dashboard can "
                        "run code there, with your login.")  # fmt: skip
+    # (0.15, his wording 2026-11-24) what the app relies on: the site and the publisher
+    subject = "card" if str((report.get("target") or {}).get("kind")) == "plugin" else "app"
     if loose:
-        reasons.append(("It loads code from another site while it runs" if loose == 1 else
-                        f"It loads code from {loose} other sites or packages while it runs")
-                       + ". Which version it gets is only decided then, so whoever publishes "
-                       "that code decides what runs in your dashboard, with your login. "
-                       "Barkley never read it.")  # fmt: skip
+        where_from = _from(_code_hosts(findings, "card-remote-script"))
+        reasons.append(f"It loads unpinned code from {where_from} while it runs. Which "
+                       "version runs is decided when it loads. That code runs in your "
+                       "dashboard with your login, and it can load more code of its own (such "
+                       f"as packages it depends on). So the {subject} is only as safe as the "
+                       "site that hosts the code and whoever publishes it. If either is "
+                       "compromised, the next load can bring an attacker's code into your "
+                       f"Home Assistant. {NEVER_READ}")  # fmt: skip
     if lua:
-        reasons.append("It downloads Lua code while it runs and runs it where that code can "
-                       "reach Python. Whoever controls where that code comes from decides "
-                       "what runs in Home Assistant. Barkley never read it.")  # fmt: skip
+        hosts = _lua_hosts(report)
+        reasons.append(f"It downloads Lua code{' from ' + _from(hosts) if hosts else ''} while it "
+                       "runs. Which version runs is decided when it loads. That code runs in "
+                       "Home Assistant with the same access as Home Assistant itself, and it "
+                       "can load more code of its own. So the integration is only as safe as "
+                       "the site that hosts the code and whoever publishes it. If either is "
+                       "compromised, the next load can bring an attacker's code into your Home "
+                       f"Assistant. {NEVER_READ}")  # fmt: skip
     if fixed:
-        reasons.append(("It loads one fixed version of code from another site" if fixed == 1
-                        else f"It loads fixed versions of code from {fixed} other sites or "
-                        "packages") + " while it runs. Barkley never read that code.")  # fmt: skip
+        hosts = _code_hosts(findings, "card-remote-pinned")
+        them = "those sites" if len(hosts) > 1 else "that site"
+        reasons.append(f"It loads a pinned version of code from {_from(hosts)} while it runs. "
+                       f"The {subject} relies on {them} to serve it unmodified, and that code "
+                       "can load more code of its own (such as packages it depends on). "
+                       f"{NEVER_READ}")  # fmt: skip
     factor = PUBLIC if public else NETWORK.get(where, 1.0)
     if pts and factor != 1.0:
         reasons.append("Barkley counts this higher because Home Assistant is "

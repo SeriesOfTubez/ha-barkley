@@ -139,7 +139,7 @@ def test_the_page_shows_them_tagged_escaped_and_apart_from_the_scan():
     says = [{"text": "The README says <b>x</b> has no password.",
              "cites": [["README.md", 124, 126]], "about": ""}]  # fmt: skip
     box = ui.said_box(says).replace("&#x27;", "'")
-    assert "What the developer says it does" in box and "AI inferred" in box
+    assert "The developer's description" in box and "AI inferred" in box
     assert "<b>x" not in box and "README.md lines 124–126" in box  # noqa: RUF001
     assert "not that they are true" in box and "Nothing here changes the readings" in box
     under = ui.said_html(says)

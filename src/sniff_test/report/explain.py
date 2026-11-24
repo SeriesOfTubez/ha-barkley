@@ -408,9 +408,11 @@ RULES: dict[str, Explanation] = {
     ),
     "card-remote-script": _E(
         "Its dashboard card loads code from the internet",
-        "While it runs, the card downloads extra code from a website. Which version it gets "
-        "is only decided then. That code runs with your Home Assistant login, and Barkley "
-        "never saw it.",
+        "While it runs, the card loads unpinned code from another site, so which version "
+        "runs is decided when it loads. That code runs with your Home Assistant login and can "
+        "load more code of its own. The card is only as safe as that site and whoever "
+        "publishes the code. Barkley never downloads that code, so it hasn't checked any of "
+        "it.",
         "Check it. Whoever controls that website, or can publish that package, controls what "
         "runs in your dashboard, now and after every new release.",
         "Loads code from the web",
@@ -418,8 +420,9 @@ RULES: dict[str, Explanation] = {
     "py-lua-download": _E(
         "Runs Lua code it downloads",
         "While it runs, the app downloads Lua code and runs it inside Home Assistant. Its Lua "
-        "runner lets that code use Python or run programs, so the code can do anything the "
-        "app can. Which code it gets is only decided then, and Barkley never saw it.",
+        "runner lets that code use Python or run programs, so it can do anything Home "
+        "Assistant can, and it can load more code of its own. Which version runs is decided "
+        "when it loads. Barkley never downloads that code, so it hasn't checked any of it.",
         "Check it. Whoever controls where that code comes from controls what runs in your "
         "Home Assistant, now and later, without an update to the app.",
         "Runs downloaded Lua",
@@ -434,9 +437,10 @@ RULES: dict[str, Explanation] = {
     ),
     "card-remote-pinned": _E(
         "Its dashboard card loads a fixed version of code from the internet",
-        "While it runs, the card downloads one fixed version of extra code from a website. "
-        "That code can't change under you, but it runs with your Home Assistant login, and "
-        "Barkley never saw it.",
+        "While it runs, the card loads a pinned version of code from another site. It relies "
+        "on that site to serve it unmodified. The code runs with your Home Assistant login and "
+        "can load more code of its own. Barkley never downloads that code, so it hasn't "
+        "checked any of it.",
         "Worth knowing. The card depends on that website being up and serving the same file.",
         "Loads fixed web code",
     ),

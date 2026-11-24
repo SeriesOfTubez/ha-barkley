@@ -73,7 +73,15 @@ def test_the_package_line_says_it_plainly():
     from sniff_test import ui
 
     b = {"newest": "2.0.0", "newest_date": "2026-05-01", "newer": 3, "held_by_ha": True}
-    assert ui.behind_facts(b) == ["newest 2.0.0 (2026-05-01), 3 releases newer",
-                                  "held here by Home Assistant's own pin"]  # fmt: skip
-    assert ui.behind_facts({"newest": "2.0.0", "newer": 0}) == ["the newest release"]
+    assert ui.behind_facts(b) == ["3 releases behind", "newest 2.0.0 (2026-05-01)",
+                                  "pinned by Home Assistant"]  # fmt: skip
+    assert ui.behind_facts({"newest": "2.0.0", "newer": 1}) == ["1 release behind",
+                                                                 "newest 2.0.0"]  # fmt: skip
+    assert ui.behind_facts({"newest": "2.0.0", "newer": 0}) == ["up to date"]
+    # (his decision 2026-11-24) a card's range: the lock file's version, when it isn't the
+    # range's own, is the one the count starts from
+    lock = {"newest": "2.1.1", "newer": 2, "installed": "1.0.4"}
+    assert ui.behind_facts(lock, "^1.0.2") == ["built with 1.0.4", "2 releases behind",
+                                               "newest 2.1.1"]  # fmt: skip
+    assert ui.behind_facts({**lock, "installed": "1.0.2"}, "^1.0.2")[0] == "2 releases behind"
     assert ui.behind_facts(None) == []

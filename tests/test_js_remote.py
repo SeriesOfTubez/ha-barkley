@@ -100,7 +100,8 @@ def test_the_exposure_reading():
     assert rd("card-remote-pinned").exposure == 2.0
     assert rd("card-remote-pinned").exposure_level == "medium"
     assert rd("card-remote-script", "card-remote-pinned").exposure == 5.5
-    assert any("Which version it gets is only decided then" in x
+    assert any(x.startswith("It loads unpinned code from another site while it runs. Which "
+                            "version runs is decided when it loads.")
                for x in rd("card-remote-script").exposure_reasons)  # fmt: skip
     # the network setting doesn't raise it: who can reach HA doesn't change who publishes
     shared = readings.compute({"findings": [{"rule_id": "card-remote-script"}]}, "shared")

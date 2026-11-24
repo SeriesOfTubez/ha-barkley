@@ -86,8 +86,8 @@ Every item a scan reports has a kind, and an app's page groups them:
 - **How it's made**: release and dependency habits, usage reporting.
 - **What Barkley couldn't read**: code files the rules couldn't parse.
 
-Threats are shown in the Threat box. Everything else is listed under "What it can do".
-The items that add to Exposure are marked **Counts in Exposure** there; the rest is
+Threats are shown in the Threat box. Everything else is listed under "What Barkley
+found". The items that add to Exposure are marked **Exposure** there; the rest is
 context. One item there still counts toward Threat: a library whose name is one typo away
 from a popular one (it's a How it's made item). Each item still has a severity (critical,
 high, medium or low) in the technical report; the kind never changes it.
@@ -166,7 +166,9 @@ can already do everything in Home Assistant, so nothing else is counted.
   lupa's own source shows that a runner made with its default settings opens all of
   Lua's standard libraries (so Lua can run programs) and gives Lua Python's `eval` and
   builtins. A runner that switches both off, guards attribute access and removes Lua's
-  `os` and `io` isn't counted.
+  `os` and `io` isn't counted. The Exposure box names the site the code comes from and
+  says what the app relies on: that site, and whoever publishes the code. That code can
+  load more code of its own. Barkley never downloads it, so it hasn't checked any of it.
 
 Pages, tokens and library vulnerabilities are multiplied by where Home Assistant runs: 1 on a home network, 1.25 on a
 shared or work network, 1.5 when it's reachable from the internet. Code a card loads,

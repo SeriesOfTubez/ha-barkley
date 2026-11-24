@@ -1,4 +1,5 @@
-"""(0.15, his decision 2026-11-21: mock-up v5) "What it does": the app's page picture.
+"""(0.15, his decision 2026-11-21: mock-up v5) "What it touches" (named "What it does"
+until 2026-11-24): the app's page picture.
 
 Inside your Home Assistant, a column of seven fixed rooms (the same for every app, so apps
 can be compared at a glance): blue when the app reads (eye) or changes (pencil) something
@@ -19,7 +20,6 @@ and plain HTML for phones (the CSS shows one).
 
 from __future__ import annotations
 
-import re
 import textwrap
 from dataclasses import dataclass, field
 from html import escape
@@ -172,7 +172,7 @@ def _site_lines(calls: Any) -> list[str]:
     return out[:2]
 
 
-_URL_HOST = re.compile(r"(?:https?:)?//([A-Za-z0-9][A-Za-z0-9.\-]{0,252})")
+_URL_HOST = readings.URL_HOST
 CODE_RULES = {"card-remote-script": "sends code that runs here",
               "card-remote-pinned": "sends a fixed version of code"}  # fmt: skip
 WHERE_RUNS = {"browser": "in your browser", "programs": "in Home Assistant"}
@@ -860,6 +860,6 @@ def legend(m: Model) -> str:
 
 def section(report: dict[str, Any], name: str, rd: dict[str, Any], setting: str) -> str:
     m = build(report, name)
-    return ('<section class="box"><h2>What it does</h2>' + bar_html(rd, setting)
+    return ('<section class="box"><h2>What it touches</h2>' + bar_html(rd, setting)
             + f'<div class="flowwrap"><div class="wide">{wide(m)}</div>{narrow(m)}</div>'
             + legend(m) + "</section>")  # fmt: skip

@@ -269,8 +269,9 @@ a.app-name::after { content:""; position:absolute; inset:0; border-radius:var(--
 .chip.priv { background:var(--priv-bg); color:var(--priv); }
 .chip.warn { background:var(--yellow-bg); color:var(--yellow); }
 .chip.bad { background:var(--red-bg); color:var(--red); }
-a.chip.expo { background:var(--orange-bg); color:var(--orange); text-decoration:none;
-  margin-left:var(--s2); vertical-align:middle; font-weight:600; }
+/* (his ask 2026-11-24) a small chip: .expo is the Exposure bar on the picture */
+a.chip.xp { display:inline-block; background:var(--orange-bg); color:var(--orange);
+  text-decoration:none; margin-left:var(--s2); vertical-align:middle; font-weight:600; }
 .act { position:relative; z-index:1; display:flex; gap:var(--s2); align-items:center; }
 .act form { margin:0; }
 button { font:500 var(--t-sm)/20px var(--font); padding:var(--s1) var(--s3);
@@ -385,7 +386,7 @@ a.button:hover { filter:brightness(1.08); }
 .aib { display:inline-block; font-size:var(--t-xs); line-height:16px; font-weight:600;
   letter-spacing:0.04em; color:var(--card); background:var(--ai); border-radius:var(--r1);
   padding:0 var(--s1); margin-right:var(--s1); vertical-align:1px; }
-.ai dt { color:var(--ai); font-weight:600; } .ai dd { border-left:2px solid var(--ai);
+dt.ai { color:var(--ai); font-weight:600; } dd.ai { border-left:2px solid var(--ai);
   padding-left:var(--s2); }
 .aibox { border-left:2px solid var(--ai); background:var(--ai-bg);
   border-radius:0 var(--r3) var(--r3) 0; padding:var(--s2) var(--s3); margin-top:var(--s2); }
@@ -461,7 +462,7 @@ details.tests > :not(summary) { margin-top:var(--s1); max-width:72ch; }
 .flow text { fill:var(--fg); font:var(--t-xs) var(--font); }
 .flow .sm { fill:var(--muted); }
 .flow .nm { font-weight:600; }
-/* (0.15) "What it does" (does.py): rooms, paths and ways in */
+/* (0.15) "What it touches" (does.py): rooms, paths and ways in */
 svg.does { width:100%; height:auto; display:block; min-width:720px; }
 svg.does .inside { fill:var(--soft); stroke:var(--line); }
 svg.does .outside { fill:none; stroke:var(--line); stroke-dasharray:4 4; }
@@ -1426,7 +1427,10 @@ def finding_html(
             )
             + "</details>"
         )  # fmt: skip
-    ai_html = f"<dt>{AI_BADGE}summary</dt><dd>{e(ai, 1200)}</dd>" if ai else ""
+    # (his yes 2026-11-24) only the AI's row wears the AI colour: the rest is Barkley's
+    ai_html = (
+        f'<dt class="ai">{AI_BADGE}summary</dt><dd class="ai">{e(ai, 1200)}</dd>' if ai else ""
+    )
     deps = [x["dependency"] for x in fs if isinstance(x.get("dependency"), dict)][:6]
     dep_html = (
         "<dt>Fix and newer versions</dt><dd>"
@@ -1443,8 +1447,8 @@ def finding_html(
     return (
         f'<div class="finding{" ctx" if context else ""}">{lvl}'
         f"<div><h3>{e(ex.title)}"
-        + ('<a class="chip expo" href="#exposure">Counts in Exposure</a>' if counts else "")
-        + f"</h3><dl{' class=ai' if ai else ''}>"
+        + ('<a class="chip xp" href="#exposure">Exposure</a>' if counts else "")
+        + "</h3><dl>"
         f"<dt>What it means</dt><dd>{e(means or ex.means, 800)}</dd>"
         f"{worry}"
         + (f"<dt>Where Barkley saw it</dt><dd>{where}</dd>" if where else "")
@@ -3023,7 +3027,7 @@ def environment_html(report: dict[str, Any]) -> str:
         '<section class="box"><h2>Environment variables it uses</h2><p class="sub">These are '
         "settings of the system Home Assistant runs on. Most are harmless, like the time zone. "
         "On Home Assistant OS one of them holds the Supervisor's key, and Barkley lists a read "
-        "of that one under What it can do.</p>"
+        "of that one under What Barkley found.</p>"
         f'<div class="libs">{_zone_list(items)}</div></section>'
     )
 
@@ -3277,20 +3281,27 @@ def _mark_html(m: dict[str, Any] | None) -> str:
     return out
 
 
-def behind_facts(b: Any) -> list[str]:
-    """(0.15) ["newest 2.0.0 (2026-05-01), 3 releases newer", "held here by Home
-    Assistant's pin"]: context on a package line, from the scan (pypi_meta / npm_meta).
-    Versions come from the package index: escaped by the caller."""
+def behind_facts(b: Any, spec: str = "") -> list[str]:
+    """(0.15, his wording 2026-11-24) ["built with 1.0.4", "2 releases behind", "newest
+    2.1.1 (2026-11-22)", "pinned by Home Assistant"]: context on a package line, from the
+    scan (pypi_meta / npm_meta). `spec` is the range a card's package.json gives; when the
+    lock file's version isn't that range's own version, the line says which one the count
+    starts from. Versions come from the files and the package index: escaped by the caller."""
     if not isinstance(b, dict) or not isinstance(b.get("newest"), str):
         return []
+    out = []
+    got = b.get("installed")
+    if spec and isinstance(got, str) and got != spec.strip().lstrip("^~=v").strip():
+        out.append(f"built with {got}")
     n = b.get("newer")
-    if n == 0:
-        return ["the newest release"]
     date = f" ({b['newest_date']})" if isinstance(b.get("newest_date"), str) else ""
-    text = f"newest {b['newest']}{date}"
-    if isinstance(n, int) and n > 0:
-        text += f", {n} release{'s' * (n != 1)} newer"
-    return [text] + (["held here by Home Assistant's own pin"] if b.get("held_by_ha") else [])
+    if n == 0:
+        out.append("up to date")
+    else:
+        if isinstance(n, int) and n > 0:
+            out.append(f"{n} release{'s' * (n != 1)} behind")
+        out.append(f"newest {b['newest']}{date}")
+    return out + (["pinned by Home Assistant"] if b.get("held_by_ha") else [])
 
 
 def _supply_packages(report: dict[str, Any]) -> str:
@@ -3304,9 +3315,9 @@ def _supply_packages(report: dict[str, Any]) -> str:
     marks = _package_marks(report)
     pv = report.get("package_versions") if isinstance(report.get("package_versions"), dict) else {}
 
-    def behind(eco: str, name: str) -> list[str]:
+    def behind(eco: str, name: str, spec: str = "") -> list[str]:
         known = pv.get(eco) if isinstance(pv.get(eco), dict) else {}
-        return behind_facts(known.get(name) or known.get(name.lower()))
+        return behind_facts(known.get(name) or known.get(name.lower()), spec)
 
     py, npm = [], []
     for edge in g.get("edges", []):
@@ -3376,7 +3387,7 @@ def _supply_packages(report: dict[str, Any]) -> str:
         npm.sort(key=lambda x: (*first(x[2]), x[0]))
         n = len(npm)
         items = [line(name, ([str(a["spec"])] if a.get("spec") else [])
-                      + behind("npm", name), m)
+                      + behind("npm", name, str(a.get("spec") or "")), m)
                  for name, a, m in npm[:PACKAGES_LISTED]]  # fmt: skip
         if n > PACKAGES_LISTED:
             items.append(f"<li>and {n - PACKAGES_LISTED:,} more</li>")
@@ -3554,7 +3565,7 @@ TEST_ITEMS_SHOWN = 6  # items listed per file
 def test_scripts_html(report: dict[str, Any]) -> str:
     """(0.15, his decision 2026-11-21) A fold in the scan details: the developer's test
     scripts that no part of the app Home Assistant loads imports, and what Barkley saw in
-    each. They aren't in the readings or "What it can do", and they aren't listed under
+    each. They aren't in the readings or "What Barkley found", and they aren't listed under
     what Barkley couldn't check: Barkley read them. File names are the scanned app's."""
     fs = [f for f in report.get("test_scripts") or [] if isinstance(f, dict) and f.get("file")]
     if not fs:
@@ -4143,7 +4154,7 @@ def _failed_part(failed: str) -> str:
 
 
 def said_box(says: list[dict[str, Any]], failed: str = "") -> str:
-    """The sentences that aren't about one listed item, in a box of their own: one
+    """The sentences that aren't about one listed item, as the last part of In short: one
     paragraph, each sentence followed by the number of the note that names the lines it
     was read from."""
     notes: list[str] = []
@@ -4164,13 +4175,14 @@ def said_box(says: list[dict[str, Any]], failed: str = "") -> str:
         if parts
         else f'<p class="muted">{e(_failed_part(failed), 400)}</p>'
     )
+    # (his yes 2026-11-24) part of In short: it describes the app, after an AI request
     return (
-        f'<section class="box"><h2>What the developer says it does {src_tag("ai", "", "AI inferred")}'
-        '</h2><p class="sub">Your AI read parts of the app\'s README and the descriptions in '
-        "its code, and summed up what they say. The developer wrote those lines. Barkley "
-        "checked that each numbered line exists and holds these words, not that they are "
-        "true. Nothing here changes the readings.</p>"
-        f"{body}</section>"
+        f'<div class="aibox said"><div class="small"><b>The developer\'s description</b> '
+        f'{src_tag("ai", "", "AI inferred")}</div><p class="sub">Your AI read parts of the '
+        "app's README and the descriptions in its code, and summed up what they say. The "
+        "developer wrote those lines. Barkley checked that each numbered line exists and "
+        "holds these words, not that they are true. Nothing here changes the readings.</p>"
+        f"{body}</div>"
     )
 
 
@@ -4247,7 +4259,7 @@ def exposure_box(r: dict[str, Any], pages: str = "", listed: str = "") -> str:
     }.get(str(r.get("network")), "")
     return (
         f'<section class="box" id="exposure"><h2>Exposure {src_tag("scan")}</h2>'
-        + ('<ul class="rdwhy">' + "".join(f"<li>{e(w, 400)}</li>" for w in why) + "</ul>"
+        + ('<ul class="rdwhy">' + "".join(f"<li>{e(w, 700)}</li>" for w in why) + "</ul>"
            if why else "<p>Barkley found nothing that would let someone who isn't an admin "
                        "get in.</p>")
         + listed
@@ -4330,6 +4342,7 @@ def render_app(
             if summary
             else ""
         )
+        + "\0said\0"  # the developer's description, once the items have taken theirs
         + ai_form
         + "</section>"
     )
@@ -4424,9 +4437,9 @@ def render_app(
     )
     parts[parts.index("\0readings\0")] = boxes
     parts.append(
-        f'<section class="box"><h2>What it can do {src_tag("scan")}</h2>'
-        + ('<p class="sub">Items marked Counts in Exposure make up that reading. The rest '
-           "is context.</p>" if any(readings.counts_in_exposure(x) for g in rest for x in g[1])
+        f'<section class="box"><h2>What Barkley found {src_tag("scan")}</h2>'
+        + ('<p class="sub">Items marked Exposure make up that reading. The rest is '
+           "context.</p>" if any(readings.counts_in_exposure(x) for g in rest for x in g[1])
            and rd.get("threat_level") != "found" else "")
         + (kinds_html(report, rest, one, skip=frozenset({kinds.THREAT}),
                       untitled=frozenset({kinds.CAPABILITY})) if rest else
@@ -4435,13 +4448,15 @@ def render_app(
         + "</section>"
     )  # fmt: skip
     loose = [x for x in says if id(x) not in placed]
+    said = ""
     if rd.get("threat_level") == "none":  # beside a possible threat: only the placed ones
-        parts.append(said_box(loose, str(words.get("failed") or "")))
+        said = said_box(loose, str(words.get("failed") or ""))
+    parts = [x.replace("\0said\0", said) for x in parts]
     # (0.15, mock-up v5) rooms, paths and ways in (does.py); the Exposure bar on top
     shown_opts = report.get("shown") if isinstance(report.get("shown"), dict) else {}
     parts.append(does.section(report, title, rd, str(shown_opts.get("exposure_bar") or "medium"))
-                 .replace("<h2>What it does</h2>",
-                          f"<h2>What it does {src_tag('scan')}</h2>", 1))  # fmt: skip
+                 .replace("<h2>What it touches</h2>",
+                          f"<h2>What it touches {src_tag('scan')}</h2>", 1))  # fmt: skip
     # (0.15, his yes 2026-11-22) where the app's own logins go, under the picture
     parts.append(logins.html(report, title, src_tag("scan")))
     tag = with_tag
