@@ -7,7 +7,7 @@ Outside your home, the sites it sends requests to. A path Barkley found from you
 a site that isn't the app's own runs red, from the room through the app to the site; to
 the app's own site it runs dotted grey. Exposure is orange and points in: a door for each
 way in (a page that opens without logging in, messages from the internet, a link that can
-run code), a bug strip on the app for libraries with known security bugs, and a card's
+run code), a bug strip on the app for libraries with known vulnerabilities, and a card's
 box says it runs in your browser session. The Exposure bar on top shows from medium by
 default (Settings → Exposure bar: medium and high, high only, always).
 
@@ -344,7 +344,7 @@ def build(report: dict[str, Any], name: str) -> Model:
         if m.bugs:
             n = m.bugs
             lib, run = ("library", "runs") if n == 1 else ("libraries", "run")
-            m.own["browser"].append(f"{n} {lib} with known security bugs {run} here too")
+            m.own["browser"].append(f"{n} {lib} with known vulnerabilities {run} here too")
     else:
         if "injects" in by_kind.get("frontend_js", set()):  # reach: every page you open
             m.use.setdefault("browser", []).append(
@@ -414,8 +414,8 @@ def bar_html(rd: dict[str, Any], setting: str) -> str:
     if not reasons:
         return (
             f'<p class="expo none">{_ic("door")}<span><b>Exposure {x:g} of 10.</b> Barkley '
-            "found no way in: no page without a login, no library with known security "
-            "bugs.</span></p>"
+            "found no way in: no page without a login, no library with known "
+            "vulnerabilities.</span></p>"
         )
     level = str(rd.get("exposure_level") or "")
     return (f'<p class="expo">{_ic("door")}<span><b>Exposure {x:g} of 10 ({e(level)}).</b> '
@@ -757,7 +757,7 @@ def _curve_y(cy: float, mid: float, x: float) -> float:
 
 
 def _bug_note(n: int) -> str:
-    return f"Uses {n} librar{'ies' if n != 1 else 'y'} with known security bugs"
+    return f"Uses {n} librar{'ies' if n != 1 else 'y'} with known vulnerabilities"
 
 
 # --- narrow: plain HTML --------------------------------------------------------------------

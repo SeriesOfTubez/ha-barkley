@@ -74,7 +74,8 @@ def test_ways_in_are_orange_doors_and_a_bug_strip():
         and m.bugs == 1
     )
     svg = does.wide(m)
-    assert 'class="door"' in svg and "comes in" in svg and "known security bugs" in svg
+    assert 'class="door"' in svg and "comes in" in svg
+    assert "vulnerabilities</text>" in svg  # the strip wraps at 20 characters
 
 
 def test_a_door_is_drawn_where_the_people_who_can_use_it_are():

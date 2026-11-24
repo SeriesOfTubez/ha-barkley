@@ -9,7 +9,7 @@ Kinds (decided 2026-11-17):
 - Capability: powerful things the app is able to do. Normal for some apps; what an
   attacker would get if the app were ever compromised.
 - Practice: how the app is made and released.
-- Vulnerability: published security bugs in the libraries it uses.
+- Vulnerability: published vulnerabilities in the libraries it uses.
 - Coverage: parts of the code the scan couldn't read.
 
 Kinds never change a severity. Scoring reads them only for the "no Threat" floor
@@ -25,14 +25,6 @@ VULNERABILITY = "vulnerability"
 COVERAGE = "coverage"
 
 ORDER = (THREAT, CAPABILITY, VULNERABILITY, PRACTICE, COVERAGE)
-
-TITLES = {
-    THREAT: "Threats",
-    CAPABILITY: "What it can do",
-    VULNERABILITY: "Known bugs in its libraries",
-    PRACTICE: "How it's made",
-    COVERAGE: "What Barkley couldn't read",
-}
 
 THREAT_RULES = frozenset(
     {

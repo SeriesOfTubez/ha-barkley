@@ -13,8 +13,8 @@ update the list offers one button to sniff your apps again.
 - Each app now gets two readings in place of the 0–100 score. Threat counts only signs
   of malicious behavior: none found, possible, or found. Exposure, from 0 to 10 (Low,
   Medium or High), counts what lets someone who isn't an administrator in: pages that
-  skip Home Assistant's login, login tokens the app may hand out, and published bugs in
-  its libraries. Everything else Barkley finds is listed as context and changes neither
+  skip Home Assistant's login, login tokens the app may hand out, and published
+  vulnerabilities in its libraries. Everything else Barkley finds is listed as context and changes neither
   reading.
 - The dog words go with Threat only: Good Boy (none found), Sus (possible), BORK BORK
   BORK (found).
@@ -91,7 +91,7 @@ update the list offers one button to sniff your apps again.
   site that isn't the app's own is red.
 - Exposure is orange and points in: a door for each way in (a page that opens without
   logging in, messages from the internet, a link that can run code), and a strip on the
-  app for libraries with known security bugs.
+  app for libraries with known vulnerabilities.
 - A dotted orange arrow shows code from outside that runs here: from the site a card
   loads code from into your browser session, and from where an integration downloads
   Lua into Programs and the system. When the address comes from a server's answer, the
@@ -197,7 +197,7 @@ update the list offers one button to sniff your apps again.
   read again (an app's new release, Sniff again). 1 GB by default; Settings → Cache of
   code already read. An app's page says how many files came from it.
 
-**Where Home Assistant runs decides how much a library's known bug counts**
+**Where Home Assistant runs decides how much a library's known vulnerability counts**
 
 - A home or work network: a known vulnerability in a dependency is at most medium, and
   the item says why. Reachable from the internet: its rating, and critical when CISA

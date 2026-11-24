@@ -191,10 +191,10 @@ def test_packages_say_what_was_checked_and_what_came_back():
                      "edges": [{"source": "s", "target": "package:pypi/x",
                                 "relation": "depends_on", "attrs": {"version": "1"}}]}}  # fmt: skip
     html = ui.supply_html(rep)
-    assert "<b>0</b> malware warnings" in html and "<b>0</b> with known bugs" in html
+    assert "<b>0</b> malware warnings" in html and "<b>0</b> with known vulnerabilities" in html
     bug = {"rule_id": "dep-vuln", "dependency": {"package": "x"}}
     rep["findings"] = [{"id": "a", **bug}, {"id": "b", **bug}]
-    assert "<b>1</b> with known bugs" in ui.supply_html(rep)
+    assert "<b>1</b> with known vulnerabilities" in ui.supply_html(rep)
     rep["analyzers"][0]["state"] = "error"
     assert "check these packages" in ui.supply_html(rep) and "<b>0</b>" not in ui.supply_html(rep)
 

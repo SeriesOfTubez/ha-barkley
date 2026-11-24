@@ -82,7 +82,7 @@ Every item a scan reports has a kind, and an app's page groups them:
 - **What it can do**: powerful things the app is able to do, such as changing who can
   log in, reading other apps' settings or running programs. Some apps need them. They
   are also what an attacker would get if the app were ever taken over.
-- **Known bugs in its libraries**: published vulnerabilities.
+- **Known vulnerabilities in its libraries**: published security flaws in the code libraries it uses.
 - **How it's made**: release and dependency habits, usage reporting.
 - **What Barkley couldn't read**: code files the rules couldn't parse.
 
@@ -139,7 +139,7 @@ can already do everything in Home Assistant, so nothing else is counted.
 | A page that opens without logging in to Home Assistant, in a file that checks a signed link or a login token | 0.25 |
 | A page that opens without logging in, with no such check that Barkley can confirm | 0.75 |
 | The app works with Home Assistant login tokens | 1.25 |
-| A published security bug in one of its libraries | 1 (medium), 3 (high), 5 (critical) |
+| A published vulnerability in one of its libraries | 1 (medium), 3 (high), 5 (critical) |
 | A card loads code from another site while it runs, and which version is picked while it runs | 5 |
 | A card loads one fixed version of code from another site | 2 |
 | A card runs code taken from the page address (anyone who gets you to open a link could run code in your dashboard) | 5 |
@@ -150,7 +150,7 @@ can already do everything in Home Assistant, so nothing else is counted.
   can't tell yet who gets a token or how long it lasts. So it counts one token for a
   user who isn't an administrator, lasting over a year, once per app. An app that only
   checks tokens sent to it isn't counted here.
-- **Library bugs:** each one counts, at the severity the scan gave it (see below).
+- **Library vulnerabilities:** each one counts, at the severity the scan gave it (see below).
 - **Code a card loads or takes from the address, and Lua an integration downloads:** the
   strongest counts in full and each further one a quarter. Barkley counts downloaded Lua
   only when it can follow the file the code runs back to a web request that wrote it.
@@ -159,7 +159,7 @@ can already do everything in Home Assistant, so nothing else is counted.
   builtins. A runner that switches both off, guards attribute access and removes Lua's
   `os` and `io` isn't counted.
 
-Pages, tokens and library bugs are multiplied by where Home Assistant runs: 1 on a home network, 1.25 on a
+Pages, tokens and library vulnerabilities are multiplied by where Home Assistant runs: 1 on a home network, 1.25 on a
 shared or work network, 1.5 when it's reachable from the internet. Code a card loads,
 and Lua an integration downloads, is added after that, unmultiplied: where Home
 Assistant runs doesn't change who publishes that code. The total stops at 10.
@@ -204,8 +204,8 @@ isn't a judgment, and nothing in the panel reads it.
 
 Some items touch no password or login, change nothing, and usually have a plain reason:
 listing user accounts (names only), reading other apps' settings (their options, not
-their stored data), writing its own files in Home Assistant's `.storage` folder, a bug
-in a build tool that never ships in a card, installing its own declared libraries, and
+their stored data), writing its own files in Home Assistant's `.storage` folder, a
+vulnerability in a build tool that never ships in a card, installing its own declared libraries, and
 usage reporting that is disclosed or optional.
 
 By default they are hidden. An app's page says how many it left out, with a link to
@@ -224,16 +224,16 @@ One setting (Settings → Where Home Assistant runs) with three choices:
 
 | Choice | Exposure reading | What a new sniff finds |
 |---|---|---|
-| Only my home network (default) | as counted | a known bug in a library is at most medium |
+| Only my home network (default) | as counted | a known vulnerability in a library is at most medium |
 | A shared or work network | up by a quarter | the same |
-| Reachable from the internet | up by half | pages that work without a login, pages other websites may call and webhooks count one level higher; a known bug in a library keeps its rating |
+| Reachable from the internet | up by half | pages that work without a login, pages other websites may call and webhooks count one level higher; a known vulnerability in a library keeps its rating |
 
 Switching between the first two changes the Exposure reading right away. Reachable from
 the internet also changes what a sniff finds, and a stored scan keeps the choice it was
 made with, so sniff again after changing to or from it. Data leaving your home and other
 signs of malicious behavior count the same in all three.
 
-A known vulnerability in one of an app's libraries depends on this, because a bug an
+A known vulnerability in one of an app's libraries depends on this, because a flaw an
 attacker can't reach is a smaller risk:
 
 - **A home, shared or work network:** at most medium. An item rated higher says so, and

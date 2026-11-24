@@ -235,7 +235,7 @@ def test_a_card_runs_in_your_session_and_so_does_its_library():
     rep = {"target": {"kind": "plugin"}, "findings": [{"rule_id": "dep-vuln"}]}
     m = does.build(rep, "Card")
     assert m.own["browser"] == ["runs here, with your Home Assistant login",
-                                "1 library with known security bugs runs here too"]  # fmt: skip
+                                "1 library with known vulnerabilities runs here too"]  # fmt: skip
     assert "browser" not in m.use  # not lit: running there is what a card is
 
 

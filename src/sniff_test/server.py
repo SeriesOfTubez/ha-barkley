@@ -1118,30 +1118,32 @@ SETTING_HELP = {
         "a quarter, and when Home Assistant can be reached from the internet, by half. "
         "Reachable from the internet also changes what new sniffs find: pages that work "
         "without a login, pages other websites may call and webhooks count one level "
-        "higher, and a known bug in a library counts as critical if attackers are already "
-        "using it (with a home or work network, as medium at most). A stored scan keeps "
-        "the choice it was made with. Data leaving your home and other signs of malicious "
-        "behavior count the same either way."
+        "higher, and a known vulnerability in a library counts as critical if attackers "
+        "are already using it (with a home or work network, as medium at most). A stored "
+        "scan keeps the choice it was made with. Data leaving your home and other signs of "
+        "malicious behavior count the same either way."
     ),
     "Minor items": (
         "These touch no password or login, change nothing, and usually have a plain "
         "reason: listing user accounts (names only), reading other apps' settings (their "
         "options, not their stored data), writing its own files in Home Assistant's "
-        ".storage folder, a bug in a build tool that never ships in a card, installing its "
-        "own declared libraries, and usage reporting that is disclosed or optional. When "
-        "hidden, an app's page says how many it left out and has a link to show them. "
+        ".storage folder, a vulnerability in a build tool that never ships in a card, "
+        "installing its own declared libraries, and usage reporting that is disclosed or "
+        "optional. When hidden, an app's page says how many it left out and has a link to "
+        "show them. "
         "Changing who can log in, reading other apps' stored data or passwords, and code "
         "Barkley couldn't read are never minor. Minor items never change the readings."
     ),
     "Auto-sniff": (
         "When the Marketplace installs or updates an app, or offers an update, Barkley "
         "sniffs that version and notifies you. Once a day it also checks whether the "
-        "libraries in your installed apps and waiting updates have new known bugs or have "
-        "been found to be malware. That check doesn't download or scan the app's code again. "
-        "A new integration runs as soon as it's installed. Home Assistant opens its setup "
-        "right away, and that loads its code before the auto-sniff can finish. So sniff a new "
-        "app from search before you install it. Barkley sniffs an update as soon as the "
-        "Marketplace offers it, so you hear what it changes before you update."
+        "libraries in your installed apps and waiting updates have new known "
+        "vulnerabilities or have been found to be malware. That check doesn't download or "
+        "scan the app's code again. A new integration runs as soon as it's installed. "
+        "Home Assistant opens its setup right away, and that loads its code before the "
+        "auto-sniff can finish. So sniff a new app from search before you install it. "
+        "Barkley sniffs an update as soon as the Marketplace offers it, so you hear what it "
+        "changes before you update."
     ),
     "Notify": (
         "Every result goes to Home Assistant's bell. Pick a notify service, such as your "
@@ -1286,7 +1288,8 @@ def render_settings(
               sel("show_minor", "1" if s.show_minor else "0",
                   [("0", "Hide (default)"), ("1", "Show")]))
         + row("Exposure bar", "The orange strip above an app's picture with its Exposure "
-              "reading and the reasons. The doors and the bug strip in the picture always show.",
+              "reading and the reasons. The doors and the strip for known vulnerabilities in "
+              "the picture always show.",
               sel("exposure_bar", s.exposure_bar,
                   [("medium", "Medium and high (default)"), ("high", "High only"),
                    ("always", "Always")]))

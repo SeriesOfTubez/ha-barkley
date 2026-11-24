@@ -42,7 +42,7 @@ Each app's page gets an **Explain this app** button, in both modes. Nothing is s
 you click it. Barkley then sends the two readings and their reasons, up to 12 of the
 scan's items (the rule, the file and a short code excerpt from the public project that
 was scanned), and the checked statements of any earlier Explain in context on this app.
-A severity goes along only for a threat or a known bug in a library. The answer is shown
+A severity goes along only for a threat or a known vulnerability in a library. The answer is shown
 as plain text labelled as an AI explanation, next to the fixed explanation.
 
 ## What the developer says it does (AI inferred)

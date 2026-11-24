@@ -41,7 +41,7 @@ the panel. Each app gets:
   (🐕 Sus) or found (🚨 BORK BORK BORK).
 - **Exposure**, from 0 to 10 (Low, Medium or High): what the app opens up to someone who
   isn't an administrator. Pages that skip Home Assistant's login, login tokens it may
-  hand out, published bugs in its libraries, and code a card loads from another site or
+  hand out, published vulnerabilities in its libraries, and code a card loads from another site or
   takes from the page address while it runs. It depends on where your Home Assistant
   runs, which you set once.
 

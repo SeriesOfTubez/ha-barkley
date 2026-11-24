@@ -18,9 +18,9 @@ Since 0.15 the panel shows no 0–100 score. Each app has a sniff report with tw
 - **Exposure**, from 0 to 10, shown as Low (under 2), Medium (2 to under 5) or High
   (5 and up): what the app opens up to someone who isn't an administrator. It counts
   pages that open without logging in to Home Assistant, login tokens the app may hand
-  out, published security bugs in its libraries, and code a card loads from another
+  out, published vulnerabilities in its libraries, and code a card loads from another
   site or takes from the page address while it runs. Something only an administrator
-  can do adds nothing. The pages, tokens and library bugs count a quarter more on a
+  can do adds nothing. The pages, tokens and library vulnerabilities count a quarter more on a
   shared or work network and half more when Home Assistant is reachable from the
   internet (Settings → Where Home Assistant runs). A found threat sets it to 10.
 

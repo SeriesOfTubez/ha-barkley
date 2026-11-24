@@ -118,7 +118,7 @@ _ICONS = {
     "6l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2"
     '.122 2.122 0 0 0 1.597-1.16z"/>',
     "back": '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
-    # (0.15) beside a package with a known bug (Lucide "bug"); malware uses "alert"
+    # (0.15) beside a package with a known vulnerability (Lucide "bug"); malware uses "alert"
     "bug": '<path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/>'
     '<path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 '
     '0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/>'
@@ -1188,7 +1188,7 @@ def render_grid(base: str, cards: list[Card], v: View | None = None, lead: str =
         '<p class="small">Threat counts only signs of malicious behavior: none found, '
         "possible, or found. Exposure, from 0 to 10, counts what lets someone who isn't an "
         "administrator in: pages that skip Home Assistant's login, login tokens it may hand "
-        "out, and published bugs in its libraries.</p>"
+        "out, and published vulnerabilities in its libraries.</p>"
         '<div class="legend">'
         '<span><span class="sw" style="border-color:var(--red)"></span>a threat found</span>'
         '<span><span class="sw" style="border-color:var(--yellow)"></span>a possible threat'
@@ -1424,7 +1424,7 @@ def finding_html(
     dep_html = (
         "<dt>Fix and newer versions</dt><dd>"
         + "<br>".join(dependency_line(d) for d in deps)
-        + "</dd><dt>The bug</dt><dd>"
+        + "</dd><dt>The vulnerability</dt><dd>"
         + "<br>".join(advisory_lines(d) for d in deps)
         + f"</dd><dt>What you can do</dt><dd>{e(_DEP_ACTION.get(deps[0].get('ecosystem'), ''))}</dd>"
         if deps
@@ -1460,12 +1460,12 @@ def _links_html(links: tuple[tuple[str, str], ...]) -> str:
 
 _DEP_ACTION = {
     "npm": "If the card uses this library, it's built into the card's JavaScript, so you "
-    "can't update it yourself. If the bug matters for how the card uses it, open an issue "
+    "can't update it yourself. If the vulnerability matters for how the card uses it, open an issue "
     "on the developer's "
     "repository and ask them to update, patch or replace it. Before you switch to a "
     "replacement library someone suggests online, check who publishes it.",
     "PyPI": "Home Assistant installs the version the integration asks for, so if you change it "
-    "yourself, the change doesn't last. If the bug matters for how the integration uses it, "
+    "yourself, the change doesn't last. If the vulnerability matters for how the integration uses it, "
     "open an issue on the developer's repository and ask them to update or replace it.",
 }
 
@@ -2796,7 +2796,7 @@ def libraries_html(report: dict[str, Any], inner: bool = False) -> str:
         bugs = ""
         if isinstance(known, int) and not isinstance(known, bool) and known > 0:
             bugs = (f' <span class="pk bug">{icon("bug", 14)} '
-                    f'{_count(known, "known bug", "known bugs")}</span>')  # fmt: skip
+                    f'{_count(known, "known vulnerability", "known vulnerabilities")}</span>')  # fmt: skip
         return (
             f'<li><details class="site"><summary><b>{e(lib.get("name"), 120)} '
             f'{e(lib.get("version"), 80)}</b> <span class="muted">· {n} file{"s" * (n != 1)}'
@@ -3049,7 +3049,11 @@ def _supply_repo(report: dict[str, Any]) -> str:
         bugs = any(m["bugs"] or m["malware"] for m in _package_marks(report).values())
         li.append(
             f"<b>{e(gone_quiet)}</b>"
-            + (" The known bugs in its packages are unlikely to be fixed." if bugs else "")
+            + (
+                " The known vulnerabilities in its packages are unlikely to be fixed."
+                if bugs
+                else ""
+            )
         )
     elif _day(prov.get("pushed_at")):
         li.append("When Barkley sniffed it, the last push to the project on GitHub was on "
@@ -3102,7 +3106,7 @@ def _supply_repo(report: dict[str, Any]) -> str:
 
 
 def _checked_line(report: dict[str, Any], analyzer: str) -> str:
-    """ "Checked for malware warnings: 0 · known bugs: 0" above a package list, from the
+    """ "Checked for malware warnings: 0 · known vulnerabilities: 0" above a package list, from the
     scan's own items, when the advisory check ran; what didn't run otherwise."""
     state = next((a.get("state") for a in report.get("analyzers") or []
                   if a.get("name") == analyzer), None)  # fmt: skip
@@ -3110,11 +3114,11 @@ def _checked_line(report: dict[str, Any], analyzer: str) -> str:
         return ""
     if state != "ok":
         return (f'<p class="pkchk">{icon("minus", 14, "muted")} Barkley couldn\'t check these '
-                "packages for malware warnings and known bugs in this scan.</p>")  # fmt: skip
+                "packages for malware warnings and known vulnerabilities in this scan.</p>")  # fmt: skip
     marks = _package_marks(report).values()
     counts = (
         ("malware warnings", sum(1 for m in marks if m["malware"])),
-        ("with known bugs", sum(1 for m in marks if m["bugs"])),
+        ("with known vulnerabilities", sum(1 for m in marks if m["bugs"])),
     )
     bits = "".join(
         f'<span class="pk {"bad" if n else "ok"}">{icon("alert" if n else "check", 14)} '
@@ -3122,7 +3126,7 @@ def _checked_line(report: dict[str, Any], analyzer: str) -> str:
         for label, n in counts
     )
     return (f'<p class="pkchk">{bits}<span class="muted">Every package checked against OSV\'s '
-            "list of malware and known bugs.</span></p>")  # fmt: skip
+            "list of malware and known vulnerabilities.</span></p>")  # fmt: skip
 
 
 # What the advisory check writes as a package finding's evidence: "name@1.2.3 (npm): IDS"
@@ -3144,7 +3148,7 @@ def _dep_of(f: dict[str, Any]) -> tuple[str, str, str, list[str]] | None:
 
 
 def _package_marks(report: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
-    """What the advisory check found, per (ecosystem, package name): how many known bugs
+    """What the advisory check found, per (ecosystem, package name): how many known vulnerabilities
     (each advisory once, however many versions have it), whether a malware warning names
     it, and the versions (a lock file can hold several)."""
     out: dict[tuple[str, str], dict[str, Any]] = {}
@@ -3172,7 +3176,7 @@ def _package_marks(report: dict[str, Any]) -> dict[tuple[str, str], dict[str, An
 
 def _mark_html(m: dict[str, Any] | None) -> str:
     """The icons beside an affected package: a warning sign for malware, a bug with the
-    number of known bugs."""
+    number of known vulnerabilities."""
     if not m:
         return ""
     out = ""
@@ -3180,7 +3184,7 @@ def _mark_html(m: dict[str, Any] | None) -> str:
         out += f'<span class="pk bad">{icon("alert", 14)} malware warning</span>'
     if m["bugs"]:
         out += (f'<span class="pk bug">{icon("bug", 14)} '
-                f'{_count(m["bugs"], "known bug", "known bugs")}</span>')  # fmt: skip
+                f'{_count(m["bugs"], "known vulnerability", "known vulnerabilities")}</span>')  # fmt: skip
     return out
 
 
@@ -3204,7 +3208,7 @@ def _supply_packages(report: dict[str, Any]) -> str:
     """Every package the app is installed or built with: for an integration what Home
     Assistant would install (worked out by uv during the scan, the packages those bring
     along included), for a card the packages its package.json lists, and the ones its lock
-    file brings along that have a known bug or a malware warning. Affected packages come
+    file brings along that have a known vulnerability or a malware warning. Affected packages come
     first, each with an icon. Names and versions come from the scanned repo's files and the
     package index: escaped."""
     g, nodes = _graph(report)
@@ -3233,7 +3237,10 @@ def _supply_packages(report: dict[str, Any]) -> str:
                 f"{_mark_html(m)}</li>")  # fmt: skip
 
     def first(m: dict[str, Any] | None) -> tuple[bool, bool]:
-        return (not (m and m["malware"]), not m)  # malware, then known bugs, then the rest
+        return (
+            not (m and m["malware"]),
+            not m,
+        )  # malware, then known vulnerabilities, then the rest
 
     out = []
     if py:
@@ -3273,7 +3280,7 @@ def _supply_packages(report: dict[str, Any]) -> str:
                    f'<div class="libs">{_zone_list(items)}</div>')  # fmt: skip
     listed = {name.lower() for name, _a, _m in npm}
     # (0.15, his report) a card's lock file brings along packages its package.json doesn't
-    # name; the ones with a known bug or a malware warning are listed too
+    # name; the ones with a known vulnerability or a malware warning are listed too
     along = sorted((m for (eco, key), m in marks.items() if eco == "npm" and key not in listed),
                    key=lambda m: (*first(m), m["name"]))  # fmt: skip
     if npm or along:
@@ -3297,7 +3304,7 @@ def _supply_packages(report: dict[str, Any]) -> str:
                    f"{_checked_line(report, 'osv-npm')}"
                    + (f'<div class="libs">{_zone_list(items)}</div>' if items else "")
                    + (f'<p class="sub">Its lock file brings along '
-                      f"{_count(len(along), 'more package', 'more packages')} with a known bug or "
+                      f"{_count(len(along), 'more package', 'more packages')} with a known vulnerability or "
                       "a malware warning. The rest of the lock file's packages aren't listed "
                       f'here.</p><div class="libs">{_zone_list(more, 25)}</div>'
                       if more else ""))  # fmt: skip
@@ -3717,15 +3724,22 @@ def _can_phrase(title: str) -> str:
     return f"{base} {rest}".strip()
 
 
-# The panel's words under each kind's heading (plain-words pass, 2026-11-20). They live
-# here, not in kinds.py, so a wording change doesn't change the scan-logic key (kinds.py
-# isn't panel-only).
+# The panel's headings and the words under them (plain-words pass, 2026-11-20; the
+# headings moved here 2026-11-23). They live here, not in kinds.py, so a wording change
+# doesn't change the scan-logic key (kinds.py isn't panel-only).
+KIND_TITLES = {
+    kinds.THREAT: "Threats",
+    kinds.CAPABILITY: "What it can do",
+    kinds.VULNERABILITY: "Known vulnerabilities in its libraries",
+    kinds.PRACTICE: "How it's made",
+    kinds.COVERAGE: "What Barkley couldn't read",
+}
 KIND_BLURBS = {
     kinds.THREAT: "Signs of malicious behavior. For example, sending your data or logins out "
     "of your home, hidden or disguised code, or known malware.",
     kinds.CAPABILITY: "Powerful things the app can do. Some apps need them. They are also what "
     "an attacker would get if this app were ever taken over.",
-    kinds.VULNERABILITY: "Security bugs that have been published in the code libraries it uses.",
+    kinds.VULNERABILITY: "Published security flaws in the code libraries it uses.",
     kinds.PRACTICE: "How the developer works and how the release was built.",
     kinds.COVERAGE: "Barkley couldn't check these parts of the code.",
 }
@@ -3750,7 +3764,7 @@ def kinds_html(
             continue
         items = by.get(k, [])
         if k == kinds.THREAT and not items:
-            out.append(f'<h3 class="kindh">{e(kinds.TITLES[k])} (0)</h3>'
+            out.append(f'<h3 class="kindh">{e(KIND_TITLES[k])} (0)</h3>'
                        f'<p class="ok">{icon("check", 14, "ok")} No signs of malicious '
                        "behavior.</p>")  # fmt: skip
             continue
@@ -3759,7 +3773,7 @@ def kinds_html(
         if k in untitled:  # the section's own title already says it
             out.extend(render(*g) for g in items)
             continue
-        out.append(f'<h3 class="kindh">{e(kinds.TITLES[k])} ({len(items)})</h3>'
+        out.append(f'<h3 class="kindh">{e(KIND_TITLES[k])} ({len(items)})</h3>'
                    f'<p class="sub small">{e(KIND_BLURBS[k])}</p>')  # fmt: skip
         out.extend(render(*g) for g in items)
     return "".join(out)

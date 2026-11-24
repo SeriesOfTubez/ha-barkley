@@ -57,7 +57,7 @@ _STYLE = (
 _KIND_WORDS = {
     kinds.THREAT: "a sign of malicious behavior (counts toward Threat)",
     kinds.CAPABILITY: "something the app can do (context, not scored)",
-    kinds.VULNERABILITY: "a known bug in a library it uses",
+    kinds.VULNERABILITY: "a known vulnerability in a library it uses",
     kinds.PRACTICE: "how the app is made and released (context, not scored)",
     kinds.COVERAGE: "code Barkley could not read",
 }

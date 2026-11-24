@@ -66,7 +66,7 @@ From top to bottom:
   dotted grey. A purple line goes to where the login you gave this app is sent. A dashed
   box is an address you entered at setup (Barkley can't tell whether it's on your home
   network or the internet). Exposure is orange and points in: a door for each way in,
-  and a strip on the app for libraries with known security bugs. A dotted orange arrow
+  and a strip on the app for libraries with known vulnerabilities. A dotted orange arrow
   is code from outside that runs here: from the site a card loads code from into your
   browser session, or from where an integration downloads Lua into Programs and the
   system. When that address comes from a server's answer, the arrow starts at a dashed

@@ -231,7 +231,7 @@ def compute(
     if bug_pts:
         pts += bug_pts
         reasons.append(_plural(len(bugs), "library it uses has", "libraries it uses have")
-                       + " published security bugs.")  # fmt: skip
+                       + " published vulnerabilities.")  # fmt: skip
     others = REMOTE_CODE | LINK_CODE
     remote = sorted((others[str(f.get("rule_id"))] for f in findings
                      if str(f.get("rule_id")) in others), reverse=True)  # fmt: skip

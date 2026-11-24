@@ -88,13 +88,13 @@ def test_every_python_package_is_listed_the_apps_own_first():
     assert ("Home Assistant installs 3 Python packages for this app. The app asks for one of "
             "them itself, and the other 2 come along with it. Home Assistant 2026.11.2 already "
             "ships 1 of them at the same version.") in html  # fmt: skip
-    # (0.15, his report) affected packages come first: malware, then known bugs, each with
-    # an icon; then the app's own, then the rest
+    # (0.15, his report) affected packages come first: malware, then known vulnerabilities,
+    # each with an icon; then the app's own, then the rest
     assert html.index("<code>zlib-extra") < html.index("<code>acme-client") < html.index(
         "<code>anyio")  # fmt: skip
     assert "the app asks for it" in html and "comes along" in html
     assert "Home Assistant already ships it" in html
-    assert 'class="pk bug">' in html and "2 known bugs</span>" in html
+    assert 'class="pk bug">' in html and "2 known vulnerabilities</span>" in html
     assert 'class="pk bad">' in html and "malware warning</span>" in html
 
 
@@ -111,10 +111,13 @@ def test_a_cards_lock_file_packages_with_a_known_bug_are_listed():
          "evidence": "<img/src=x>@1.0 (npm): GHSA-b, GHSA-c"},
     ])  # fmt: skip
     html = ui.supply_html(rep)
-    assert "Its lock file brings along 2 more packages with a known bug or a malware" in html
+    assert (
+        "Its lock file brings along 2 more packages with a known vulnerability or a malware"
+    ) in html
     assert "<code>semver</code>" in html and "5.7.1, 6.3.0 · comes along through the lock" in html
     assert "only used to build it" in html and "<img" not in html
-    assert "one known bug</span>" in html and "2 known bugs</span>" in html  # an advisory once
+    assert "one known vulnerability</span>" in html  # an advisory once
+    assert "2 known vulnerabilities</span>" in html
     assert html.index("<code>lit</code>") < html.index("<code>semver</code>")
 
 
@@ -204,7 +207,7 @@ def test_a_quiet_or_archived_project_is_said_on_the_page_and_the_card():
     assert ui.quiet({**rep, "shown": {"quiet_months": 0}}, today) == ("", "")  # never say it
     html = ui.supply_html(rep)
     assert "<b>The project has gone quiet:" in html
-    assert "The known bugs in its packages are unlikely to be fixed." in html
+    assert "The known vulnerabilities in its packages are unlikely to be fixed." in html
     fresh = {**rep, "provenance": {**PROVENANCE, "pushed_at": "2999-01-01T00:00:00Z"}}
     assert ("When Barkley sniffed it, the last push to the project on GitHub was on "
             "2999-01-01.") in ui.supply_html(fresh)  # fmt: skip

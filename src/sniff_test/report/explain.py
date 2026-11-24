@@ -499,12 +499,12 @@ RULES: dict[str, Explanation] = {
         "Empty stand-in package",
     ),
     "dep-vuln": _E(
-        "Uses a code library with known security bugs",
-        "One of the code libraries this app uses has publicly known security bugs. A newer "
+        "Uses a code library with known vulnerabilities",
+        "One of the code libraries this app uses has publicly known vulnerabilities. A newer "
         "version of that library usually fixes them.",
-        "It depends on the bug. Most only matter in situations a Home Assistant app doesn't "
-        "run into. Still, update the app when a fix comes out.",
-        "Library with known bugs",
+        "It depends on the vulnerability. Most only matter in situations a Home Assistant "
+        "app doesn't run into. Still, update the app when a fix comes out.",
+        "Vulnerable library",
     ),
     "telemetry-shadow": _E(
         "Sends usage data on its own, without telling you",
@@ -531,14 +531,14 @@ RULES: dict[str, Explanation] = {
         "Usage reporting",
     ),
     "dep-build-tool-vuln": _E(
-        "Is built with a tool that has known security bugs",
+        "Is built with a tool that has known vulnerabilities",
         "The card lists a build tool, such as rollup or babel. It turns the developer's "
-        "code into the JavaScript you download. That tool has publicly known bugs. But it "
-        "only runs on the developer's machine when the card is built, and none of its code "
-        "is in the card.",
-        "No. The bugs are in the developer's build step, not in what you install. Barkley "
-        "shows this for information and doesn't score it.",
-        "Build tool bugs",
+        "code into the JavaScript you download. That tool has publicly known "
+        "vulnerabilities. But it only runs on the developer's machine when the card is "
+        "built, and none of its code is in the card.",
+        "No. The vulnerabilities are in the developer's build step, not in what you "
+        "install. Barkley shows this for information and doesn't score it.",
+        "Build tool vulnerabilities",
     ),
     "dep-lookalike-own": _E(
         "Uses its owner's own library with a name close to a popular one",
