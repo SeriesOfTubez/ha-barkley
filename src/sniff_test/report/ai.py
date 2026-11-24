@@ -24,6 +24,7 @@ import re
 from typing import Any
 
 from sniff_test import kinds, readings
+from sniff_test import readings as readings_mod  # the `readings` parameter shadows it
 from sniff_test.report import ai_context
 
 MAX_EXPLANATION = 1200
@@ -152,6 +153,10 @@ def build_request(
         first = dict(g[0])
         kind = kinds.kind(str(first.get("rule_id")))
         first["kind"] = _KIND_WORDS[kind]
+        if kind in (kinds.CAPABILITY, kinds.PRACTICE) and any(
+            readings_mod.counts_in_exposure(x) for x in g
+        ):  # (2026-11-23) a code load or a login-free page is part of the Exposure reading
+            first["kind"] = "something the app can do (counts toward Exposure)"
         if kind not in (kinds.THREAT, kinds.VULNERABILITY):
             first.pop("severity", None)  # context isn't graded
         if len(g) > 1:

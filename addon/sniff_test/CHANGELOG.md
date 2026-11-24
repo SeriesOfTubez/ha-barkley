@@ -14,10 +14,11 @@ update the list offers one button to sniff your apps again.
   of malicious behavior: none found, possible, or found. Exposure, from 0 to 10 (Low,
   Medium or High), counts what lets someone who isn't an administrator in: pages that
   skip Home Assistant's login, login tokens the app may hand out, and published
-  vulnerabilities in its libraries. Everything else Barkley finds is listed as context and changes neither
-  reading.
-- The dog words go with Threat only: Good Boy (none found), Sus (possible), BORK BORK
-  BORK (found).
+  vulnerabilities in its libraries. Everything else Barkley finds is listed as context
+  and changes neither reading.
+- The dog words follow both readings. A possible threat is 🐕 Grrrrr and a found one
+  🚨 BORK BORK BORK. With no threat, 🦴 Good Boy needs low Exposure; medium is 🐾 Needs
+  training and high is 🦮 Needs a leash.
 - The 0–100 number stays in the technical report (raw JSON) and the command line, as the
   capability score: what the code openly uses, not a judgment.
 - Settings: "Where Home Assistant runs" (home, a shared or work network, or reachable
@@ -61,14 +62,17 @@ update the list offers one button to sniff your apps again.
   is written out, with the method, the headers and query fields, and whether there's a
   body. Map image addresses show as "Loads map images". Sites with a request or map
   images go under Where it connects; the others go under Other addresses in its code.
+- A site code comes from is listed under Where it connects too, with an orange line in
+  the words of the picture's arrow: "Loads code from here that runs in your dashboard"
+  for a card, "Sends Lua code that the app runs in Home Assistant" for an integration.
 - Environment variables it uses (integrations): which ones the code reads and sets, by
   name when the code spells the name out, and whether it reads back one it set itself.
 - Pages that open without logging in to Home Assistant are listed in the Exposure box
   with the address each one answers on, when the code spells it out.
 - A site named only in a list of sign-in return addresses (OAuth) is no longer treated
   as a place the app could send your logins to. It stays listed, with a line saying so.
-- A site the app's README mentions, or its funding file lists, says so in the site's
-  fold, as the developer's words. It doesn't change the site's group.
+- A site the app's README names, or its funding file lists, says so in the site's fold,
+  with a link to that line of the README. It doesn't change the site's group.
 - On code hosting (GitHub, GitLab, Bitbucket, Codeberg, SourceForge) a site is "the
   app's own" only when every address the code names there is under the repository
   owner's path.
@@ -95,7 +99,12 @@ update the list offers one button to sniff your apps again.
 - A dotted orange arrow shows code from outside that runs here: from the site a card
   loads code from into your browser session, and from where an integration downloads
   Lua into Programs and the system. When the address comes from a server's answer, the
-  arrow starts at a dashed box linked to the sites that answer.
+  arrow starts at a dashed box linked to the sites that answer. The "leaves your home"
+  label sits over the lines that leave, and lines behind it break around it.
+- An item that adds to the Exposure reading is marked Counts in Exposure, with a link up
+  to that box. The rest of What it can do is context.
+- The short AI text from Explain this app is labelled AI summary, apart from Explain in
+  context.
 - On a phone the same picture is stacked, one part under the other. Settings →
   Exposure bar decides when the orange strip with the Exposure reading shows: medium
   and high (default), high only, or always.

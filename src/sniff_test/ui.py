@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import html
 import re
+import urllib.parse
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -268,6 +269,8 @@ a.app-name::after { content:""; position:absolute; inset:0; border-radius:var(--
 .chip.priv { background:var(--priv-bg); color:var(--priv); }
 .chip.warn { background:var(--yellow-bg); color:var(--yellow); }
 .chip.bad { background:var(--red-bg); color:var(--red); }
+a.chip.expo { background:var(--orange-bg); color:var(--orange); text-decoration:none;
+  margin-left:var(--s2); vertical-align:middle; font-weight:600; }
 .act { position:relative; z-index:1; display:flex; gap:var(--s2); align-items:center; }
 .act form { margin:0; }
 button { font:500 var(--t-sm)/20px var(--font); padding:var(--s1) var(--s3);
@@ -431,6 +434,7 @@ details.tests > :not(summary) { margin-top:var(--s1); max-width:72ch; }
 .zone .zs { font-size:var(--t-xs); color:var(--muted); margin-bottom:var(--s2); }
 :is(.zone, .libs) ul { list-style:none; margin:0; padding:0; display:flex;
   flex-direction:column; gap:var(--s2); }
+:is(.zone, .libs) .u.codeload { color:var(--orange); font-weight:600; }
 :is(.zone, .libs) .u { font-size:var(--t-xs); color:var(--muted); display:block;
   overflow-wrap:anywhere; }
 :is(.zone, .libs) details.site > summary { color:var(--fg); font-size:var(--t-sm);
@@ -481,7 +485,8 @@ svg.does .path { fill:none; stroke:var(--muted); stroke-width:1.6; stroke-dashar
 svg.does .path.bad { stroke:var(--red); stroke-width:2.4; stroke-dasharray:none; }
 svg.does .mk { fill:var(--muted); } svg.does .mkr { fill:var(--red); }
 svg.does .mko { fill:var(--orange); }
-svg.does .cross { fill:var(--muted); font-size:12px; }
+svg.does .cross { fill:var(--muted); font-size:12px; paint-order:stroke; stroke:var(--card);
+  stroke-width:5px; stroke-linejoin:round; }  /* a halo: lines behind it break */
 svg.does .cross.bad { fill:var(--red); font-weight:600; }
 svg.does .cross.in { fill:var(--orange); font-weight:600; }
 svg.does .runs { fill:var(--brand); font-size:12px; font-weight:500; }
@@ -1391,8 +1396,10 @@ def finding_html(
     controls: str = "",
     context: bool = False,
     note: str = "",
+    counts: bool = False,
 ) -> str:
-    """`means`: text for "What it means" in place of the rule's general one (a
+    """`counts`: the item adds to the Exposure reading ("Counts in Exposure", a link up to
+    that box; his decision 2026-11-23). `means`: text for "What it means" in place of the rule's general one (a
     monkeypatch whose target the scan resolved: explain.patch_means). `controls`: the
     row under it (Report a false positive).
     (preview) `context`: shown as context, not scored: no severity, points or "Should you
@@ -1419,7 +1426,7 @@ def finding_html(
             )
             + "</details>"
         )  # fmt: skip
-    ai_html = f"<dt>{AI_BADGE}explanation</dt><dd>{e(ai, 1200)}</dd>" if ai else ""
+    ai_html = f"<dt>{AI_BADGE}summary</dt><dd>{e(ai, 1200)}</dd>" if ai else ""
     deps = [x["dependency"] for x in fs if isinstance(x.get("dependency"), dict)][:6]
     dep_html = (
         "<dt>Fix and newer versions</dt><dd>"
@@ -1435,7 +1442,9 @@ def finding_html(
     worry = "" if context else f"<dt>Should you worry?</dt><dd>{e(ex.worry, 600)}</dd>"
     return (
         f'<div class="finding{" ctx" if context else ""}">{lvl}'
-        f"<div><h3>{e(ex.title)}</h3><dl{' class=ai' if ai else ''}>"
+        f"<div><h3>{e(ex.title)}"
+        + ('<a class="chip expo" href="#exposure">Counts in Exposure</a>' if counts else "")
+        + f"</h3><dl{' class=ai' if ai else ''}>"
         f"<dt>What it means</dt><dd>{e(means or ex.means, 800)}</dd>"
         f"{worry}"
         + (f"<dt>Where Barkley saw it</dt><dd>{where}</dd>" if where else "")
@@ -2436,6 +2445,66 @@ def _fold(item_id: str, summary: str, body: str, open_: bool) -> str:
             f"</summary><div class=\"in\">{body}</div></details></li>")  # fmt: skip
 
 
+# (2026-11-23, his ask) a site code comes from is listed with the sites it connects to,
+# with the same words as the picture's dotted orange arrow
+_CODE_LOAD = {
+    "card-remote-script": "Loads code from here that runs in your dashboard, with your login. "
+    "Which version it gets is decided when it loads.",
+    "card-remote-pinned": "Loads a fixed version of code from here that runs in your dashboard.",
+    "lua-site": "Sends Lua code that the app runs in Home Assistant.",
+    "lua-answer": "Its answer gives the address of Lua code that the app runs in Home Assistant.",
+}
+
+
+_GH_REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}")
+_README_FILE = re.compile(r"(?:[A-Za-z0-9._-]{1,60}/){0,3}README(?:\.(?:md|rst|txt))?", re.I)
+
+
+def _readme_url(report: dict[str, Any]) -> str:
+    """The scanned release's README on GitHub (…/blob/<ref>/README.md), or "" when the
+    repository, the version or the README's name isn't known."""
+    t = report.get("target") or {}
+    repo, ref = str(t.get("repo") or ""), str(t.get("ref") or "")
+    doc = (report.get("context") or {}).get("readme")
+    name = str(doc.get("file") or "") if isinstance(doc, dict) else ""
+    if not (_GH_REPO.fullmatch(repo) and ref and _README_FILE.fullmatch(name)):
+        return ""
+    return (
+        f"https://github.com/{repo}/blob/{urllib.parse.quote(ref, safe='')}/"
+        f"{urllib.parse.quote(name)}"
+    )
+
+
+def code_loads(report: dict[str, Any]) -> dict[str, set[str]]:
+    """{site: {kind, …}}: a card's code loads (the findings) and the sites Lua the app runs
+    comes from, or whose answer gives its address (does.code_sources). Where in the code
+    is the site's own "In the code at" line."""
+    out: dict[str, set[str]] = {}
+    for f in report.get("findings") or []:
+        rule = str(f.get("rule_id")) if isinstance(f, dict) else ""
+        m = (
+            does._URL_HOST.search(str(f.get("evidence") or "")[:2000])
+            if rule in does.CODE_RULES
+            else None
+        )
+        if m:
+            out.setdefault(m[1].lower().rstrip("."), set()).add(rule)
+    sites, boxes = does.code_sources(report)
+    for host, (room, _words) in sites.items():
+        if room == "programs":
+            out.setdefault(host, set()).add("lua-site")
+    for _text, _room, said in boxes:
+        for host in said:
+            out.setdefault(host, set()).add("lua-answer")
+    return out
+
+
+def _code_spans(kinds_: Any) -> str:
+    """The orange lines of a site code comes from, one per kind."""
+    return "".join(f'<span class="u codeload">{e(words)}</span>'
+                   for kind, words in _CODE_LOAD.items() if kind in (kinds_ or ()))  # fmt: skip
+
+
 def _host_li(
     h: Host,
     deep: str = "",
@@ -2446,6 +2515,8 @@ def _host_li(
     elsewhere: bool = False,
     images: Any = None,
     mark: Any = None,
+    code: Any = None,
+    readme_url: str = "",
 ) -> str:
     """One line per site: the name and whether Barkley flagged it. Inside: scheme, port (the
     URL's own, else the scheme's default) and encryption, who runs it, the addresses, where
@@ -2477,19 +2548,32 @@ def _host_li(
     back = ('<span class="u">Barkley found it only in a list of sign-in return addresses '
             "(OAuth): your browser goes there after you approve access. Barkley found no "
             "code that sends anything there.</span>") if h.redirect else ""  # fmt: skip
-    said = []  # (0.15) what the developer's own docs say: shown as theirs, never scored
+    # (0.15) where the developer's own docs name it, never scored. (2026-11-23, his report)
+    # Barkley's own sentence, so no "developer's words" tag, with a link to the README line
+    # of the scanned release so the words can be read there.
+    said = []
     if h.readme_line:
-        said.append(f"Its README mentions this site (line {int(h.readme_line)}).")
+        n = int(h.readme_line)
+        line = (
+            f'<a href="{e(readme_url, 400)}?plain=1#L{n}" target="_blank" '
+            f'rel="noopener noreferrer">line {n}</a>'
+            if readme_url
+            else f"line {n}"
+        )
+        said.append(f"The README names this site too, on {line}.")
     if h.funding:
-        said.append("The repository lists it as a way to support the developer.")
+        said.append(
+            "The repository lists it as a way to support the developer (in "
+            "<code>.github/FUNDING.yml</code>)."
+        )
     # (his rule 2026-11-20) never beside a threat: not on a flagged site, nor on a page
     # with a found threat (dev_words False)
-    dev = (f'<span class="u">{src_tag("dev")} {e(" ".join(said))}</span>'
+    dev = (f'<span class="u">{" ".join(said)}</span>'
            if said and dev_words and not h.flagged and h.name not in near else "")  # fmt: skip
-    return _fold(h.edge_id, f"<code>{e(h.name, 120)}</code>{flag}", who + back + dev + how
-                 + logins.fold_lines(mark)
+    return _fold(h.edge_id, f"<code>{e(h.name, 120)}</code>{flag}", who + back + dev
+                 + _code_spans(code) + how + logins.fold_lines(mark)
                  + (_images_span(images) + _requests_spans(reqs or None, elsewhere)
-                    if images else _requests_spans(reqs, elsewhere))
+                    if images or code else _requests_spans(reqs, elsewhere))
                  + urls + where + deep, open_)  # fmt: skip
 
 
@@ -2523,6 +2607,8 @@ def zones_html(
     # to (and any site with a threat item, so none is ever tucked away), the ports and the
     # requests without a site; "mentioned" = every other address in the code. "" = all.
     imgs = site_images(report)
+    codes = code_loads(report)  # (2026-11-23) sites code comes from
+    readme_url = _readme_url(report)
     # (0.15) your login or a token goes there; a library connects there for the app
     marked = logins.marks(report)
     through = {n for n, mk in marked.items() if mk.library}
@@ -2531,8 +2617,9 @@ def zones_html(
     known = {h.name for h in hs}
     extra = [
         _fold("", f"<code>{e(name, 120)}</code>",
-              _images_span(imgs.get(name)) + _requests_spans(reqs.get(name), False), False)
-        for name in sorted((set(reqs) | set(imgs)) - known)
+              _code_spans(codes.get(name)) + _images_span(imgs.get(name))
+              + _requests_spans(reqs.get(name), False), False)
+        for name in sorted((set(reqs) | set(imgs) | set(codes)) - known)
     ] if part != "mentioned" else []  # fmt: skip
     libs_only = [  # (0.15) sites only a library's code names
         _fold("", f"<code>{e(name, 120)}</code>{logins.chips(marked[name])}",
@@ -2541,12 +2628,13 @@ def zones_html(
     ] if part != "mentioned" else []  # fmt: skip
     if part == "connects":
         hs = [h for h in hs if h.name in reqs or h.name in imgs or h.flagged or h.name in near
-              or h.name in through]  # fmt: skip
+              or h.name in through or h.name in codes]  # fmt: skip
         if not hs and not pts and not elsewhere and not extra and not libs_only:
             return '<p class="muted">Barkley read no request to a site named in the code.</p>'
     elif part == "mentioned":
         hs = [h for h in hs if not (h.name in reqs or h.name in imgs or h.flagged
-                                    or h.name in near or h.name in through)]  # fmt: skip
+                                    or h.name in near or h.name in through
+                                    or h.name in codes)]  # fmt: skip
         pts, elsewhere, read = [], "", False
         if not hs:
             return ""
@@ -2566,7 +2654,8 @@ def zones_html(
                         dev_words, near,
                         reqs.get(h.name, [] if read and not h.redirect
                                  and h.name not in through else None),
-                        bool(elsewhere), imgs.get(h.name), marked.get(h.name))
+                        bool(elsewhere), imgs.get(h.name), marked.get(h.name),
+                        codes.get(h.name), readme_url)
                for h in zh]  # fmt: skip
         out.append(f'<div class="zone {key}"><h3>{icon(ic)} {title}</h3><div class="zs">{sub}'
                    f"</div>{_zone_list(lis)}</div>")  # fmt: skip
@@ -3844,20 +3933,34 @@ _E_COLOR = {"low": "green", "medium": "yellow", "high": "orange"}
 
 def readings_band(r: dict[str, Any]) -> str:
     """The card outline with the readings shown: a found threat red, a possible one yellow,
-    high exposure orange, else no outline (green, as "no concerns" today)."""
+    high exposure orange, medium exposure yellow, else no outline (green)."""
     t, x = r.get("threat_level"), r.get("exposure_level")
     if t == "found":
         return "red"
     if t == "possible":
         return "yellow"
-    return "orange" if x == "high" else "green"
+    return {"high": "orange", "medium": "yellow"}.get(str(x), "green")
 
 
+# The dog words (his decision 2026-11-23): a threat decides them; with none, Good Boy only
+# at low exposure, then "Needs training" (medium) and "Needs a leash" (high).
 _T_VERDICT = {
-    "none": "🦴 Good Boy · no signs of malicious behavior",
-    "possible": "🐕 Sus · a possible sign of malicious behavior",
+    "possible": "🐕 Grrrrr · a possible sign of malicious behavior",
     "found": "🚨 BORK BORK BORK · malicious behavior found",
 }
+_X_VERDICT = {
+    "low": "🦴 Good Boy · no signs of malicious behavior, low exposure",
+    "medium": "🐾 Needs training · no signs of malicious behavior, medium exposure",
+    "high": "🦮 Needs a leash · no signs of malicious behavior, high exposure",
+}
+
+
+def verdict_line(r: dict[str, Any]) -> str:
+    """The dog words for both readings, as one line."""
+    t = str(r.get("threat_level") or "none")
+    if t in _T_VERDICT:
+        return _T_VERDICT[t]
+    return _X_VERDICT.get(str(r.get("exposure_level") or "low"), _X_VERDICT["low"])
 
 
 def _num(x: Any) -> str:
@@ -4143,7 +4246,7 @@ def exposure_box(r: dict[str, Any], pages: str = "", listed: str = "") -> str:
         "internet": "Based on Home Assistant being reachable from the internet (Settings).",
     }.get(str(r.get("network")), "")
     return (
-        f'<section class="box"><h2>Exposure {src_tag("scan")}</h2>'
+        f'<section class="box" id="exposure"><h2>Exposure {src_tag("scan")}</h2>'
         + ('<ul class="rdwhy">' + "".join(f"<li>{e(w, 400)}</li>" for w in why) + "</ul>"
            if why else "<p>Barkley found nothing that would let someone who isn't an admin "
                        "get in.</p>")
@@ -4187,7 +4290,7 @@ def render_app(
     )
     commit = (t.get("commit_sha") or "")[:12]
     ai = ai or {}
-    vline = _T_VERDICT.get(str(rd.get("threat_level")), "")
+    vline = verdict_line(rd)
     head = (
         f'<p class="crumb"><a href="{base}/">{icon("back")} All apps</a></p>'
         f'<section class="box dhead rdhead">'
@@ -4221,7 +4324,7 @@ def render_app(
         f'<section class="box"><h2>In short{" " + src_tag("scan")}</h2>'
         f'<p class="inshort">{in_short(report)}</p>'
         + (
-            f'<div class="aibox"><div class="small">{AI_BADGE}<b>AI explanation</b>'
+            f'<div class="aibox"><div class="small">{AI_BADGE}<b>AI summary</b>'
             f"{' ' + src_tag('ai')}</div>"
             f"<p>{e(summary, 1500)}</p></div>"
             if summary
@@ -4305,6 +4408,7 @@ def render_app(
             rfn(f, fs),
             context=ctx,
             note=note,
+            counts=rd.get("threat_level") != "found" and any(map(readings.counts_in_exposure, fs)),
         )
 
     # Threat and Exposure first; everything else is context, unscored
@@ -4320,8 +4424,10 @@ def render_app(
     )
     parts[parts.index("\0readings\0")] = boxes
     parts.append(
-        '<section class="box"><h2>What it can do <span class="muted small">(not scored)'
-        f'</span> {src_tag("scan")}</h2>'
+        f'<section class="box"><h2>What it can do {src_tag("scan")}</h2>'
+        + ('<p class="sub">Items marked Counts in Exposure make up that reading. The rest '
+           "is context.</p>" if any(readings.counts_in_exposure(x) for g in rest for x in g[1])
+           and rd.get("threat_level") != "found" else "")
         + (kinds_html(report, rest, one, skip=frozenset({kinds.THREAT}),
                       untitled=frozenset({kinds.CAPABILITY})) if rest else
            f'<p class="ok">{icon("check", 16, "ok")} Barkley found nothing notable.</p>')

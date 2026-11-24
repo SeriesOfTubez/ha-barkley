@@ -37,13 +37,14 @@ run, built or installed.
 **A sniff report per app, with two readings.** Since 0.15 there is no 0–100 score in
 the panel. Each app gets:
 
-- **Threat**: signs of malicious behavior only. None found (🦴 Good Boy), possible
-  (🐕 Sus) or found (🚨 BORK BORK BORK).
+- **Threat**: signs of malicious behavior only: none found, possible (🐕 Grrrrr) or
+  found (🚨 BORK BORK BORK). With none found, the label follows Exposure: 🦴 Good Boy
+  (low), 🐾 Needs training (medium) or 🦮 Needs a leash (high).
 - **Exposure**, from 0 to 10 (Low, Medium or High): what the app opens up to someone who
   isn't an administrator. Pages that skip Home Assistant's login, login tokens it may
-  hand out, published vulnerabilities in its libraries, and code a card loads from another site or
-  takes from the page address while it runs. It depends on where your Home Assistant
-  runs, which you set once.
+  hand out, published vulnerabilities in its libraries, and code a card loads from
+  another site or takes from the page address while it runs. It depends on where your
+  Home Assistant runs, which you set once.
 
 Everything else Barkley finds is context. It's listed in plain words and it isn't
 scored: what the app can do, a picture of what it does in your home, where the login
@@ -82,8 +83,8 @@ installed months ago becomes a new scan entry and a notification. Earlier entrie
 never edited.
 
 **Every block says where it comes from.** On an app's page each block is tagged
-**Barkley's scan**, **The developer's words** (a description quoted from the code, a
-README mention) or **AI**. The developer's words, and the AI's summary of them ("AI
+**Barkley's scan**, **The developer's words** (a description quoted from the code) or
+**AI**. The developer's words, and the AI's summary of them ("AI
 inferred"), are never shown beside a found or possible threat. Nothing from the
 developer or the AI changes a reading.
 
@@ -207,8 +208,8 @@ publishers, former names). Neither affects a reading.
 
 | Threat | Shown as | Means |
 |---|---|---|
-| 0 | 🦴 Good Boy · none found | no signs of malicious behavior |
-| above 0, under 7 | 🐕 Sus · possible | a possible sign of malicious behavior |
+| 0 | none found | no signs of malicious behavior |
+| above 0, under 7 | 🐕 Grrrrr · possible | a possible sign of malicious behavior |
 | 7 to 10 | 🚨 BORK BORK BORK · found | malicious behavior found |
 
 | Exposure | Shown as |

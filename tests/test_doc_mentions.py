@@ -52,11 +52,30 @@ def _report(attrs, findings=()):
             "findings": list(findings)}  # fmt: skip
 
 
-def test_the_fold_shows_them_as_the_developer_s_words():
-    html = ui.zones_html(_report({"class": "undeclared", "readme_line": 3, "funding": True}))
-    assert "The developer&#x27;s words" in html or "The developer's words" in html
-    assert "Its README mentions this site (line 3)." in html
+def test_the_fold_says_so_in_barkleys_words_with_a_link_to_the_line():
+    """(2026-11-23, his report) the tag promised a quote that wasn't there: Barkley's own
+    sentence now, linking to that README line of the scanned release."""
+    rep = _report({"class": "undeclared", "readme_line": 3, "funding": True})
+    html = ui.zones_html(rep)
+    assert "developer&#x27;s words" not in html and "developer's words" not in html
+    assert "The README names this site too, on line 3." in html  # no repository: no link
     assert "lists it as a way to support the developer" in html
+    rep["target"] = {"repo": "someone/thing", "ref": "v1.2.0"}
+    rep["context"] = {"readme": {"file": "README.md"}}
+    html = ui.zones_html(rep)
+    assert (
+        '<a href="https://github.com/someone/thing/blob/v1.2.0/README.md?plain=1#L3" '
+        'target="_blank" rel="noopener noreferrer">line 3</a>'
+    ) in html
+
+
+def test_no_link_from_an_odd_repository_or_readme_name():
+    rep = _report({"class": "undeclared", "readme_line": 3})
+    for target, name in (({"repo": "a/b/c", "ref": "v1"}, "README.md"),
+                         ({"repo": "a/b", "ref": ""}, "README.md"),
+                         ({"repo": "a/b", "ref": "v1"}, "../../x.md")):  # fmt: skip
+        rep["target"], rep["context"] = target, {"readme": {"file": name}}
+        assert "<a href" not in ui.zones_html(rep)
 
 
 def test_never_beside_a_threat():

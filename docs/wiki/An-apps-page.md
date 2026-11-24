@@ -20,8 +20,8 @@ Nothing from the developer or the AI changes a reading.
 
 From top to bottom:
 
-- **The head.** The app's name, then the Threat verdict on its own line (🦴 Good Boy,
-  🐕 Sus or 🚨 BORK BORK BORK), then one row of facts: the kind of app, the version and
+- **The head.** The app's name, then the verdict on its own line (🦴 Good Boy,
+  🐾 Needs training, 🦮 Needs a leash, 🐕 Grrrrr or 🚨 BORK BORK BORK), then one row of facts: the kind of app, the version and
   the day it was released, a link to the repository on GitHub, its stars, the downloads
   of the release when GitHub counts them, the last push to the project, the year the
   project started, and a link to its security habits. A chip says when a project is
@@ -44,8 +44,9 @@ From top to bottom:
 - **Privacy notes** such as telemetry, analytics or unencrypted connections. They never
   change a reading. In the Explain and read code mode a note links to the AI's reading
   of the address or port behind it.
-- **What it can do (not scored):** everything else the scan reports, grouped by kind,
-  with what it means and where in the code it is. "Technical details" under an item has
+- **What it can do:** everything else the scan reports, grouped by kind, with what it
+  means and where in the code it is. An item that adds to the Exposure reading is marked
+  **Counts in Exposure**, with a link up to that box; the rest is context. "Technical details" under an item has
   the rule name and the evidence. Several calls of the same kind in one Python function
   are one item, and a websocket command only an administrator can run says so. Under
   each item: **Report a false positive**, which opens a new public issue on Barkley's
@@ -123,8 +124,10 @@ Each site is one line that folds open. A group shows five, then "N more". Inside
 - for a site found only in a list of sign-in return addresses (OAuth), a line saying so:
   your browser goes there after you approve access, and Barkley found no code that
   sends anything there;
-- tagged as the developer's words: that the app's README mentions the site (with the
-  line), or that the repository lists it as a way to support the developer. This never
+- that the app's README names the site too, with a link to that line of the scanned
+  release's README, or that the repository lists it as a way to support the developer
+  (its `.github/FUNDING.yml`). Barkley says this in its own words, so you can read the
+  README line yourself. This never
   changes the site's group, and it isn't shown on a flagged site, on the sites a
   possible threat names, or on a page with a found threat;
 - **Explain in context**, in the Explain and read code mode.

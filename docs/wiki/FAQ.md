@@ -1,8 +1,9 @@
 # FAQ
 
 **Does Good Boy mean an app is safe?**
-No. It means Barkley's checks found no signs of malicious behavior. Barkley is a first
-pass, not a substitute for reading the code.
+No. It means Barkley's checks found no signs of malicious behavior and little that the
+app opens up (low Exposure). Barkley is a first pass, not a substitute for reading the
+code.
 
 **Where did the 0–100 score go?**
 Since 0.15 each app has two readings instead: Threat (signs of malicious behavior) and
@@ -15,10 +16,11 @@ the command line, as the capability score. See
 Removed in 0.15. With the two readings they no longer changed anything. If you think
 Barkley got something wrong, use Report a false positive under the item.
 
-**Why does an app that can do a lot read Good Boy?**
+**Why can an app that can do a lot read Good Boy?**
 A custom integration runs unsandboxed inside Home Assistant, so what its code openly uses
 says little about whether it means harm. Threat counts only signs of malicious behavior.
-What the app can do is still listed on its page, under "What it can do (not scored)".
+What the app can do is still listed on its page, under "What it can do". Only the items
+marked Counts in Exposure change a reading.
 
 **Does Barkley block or remove anything?**
 No. It reports. There is no quarantine and no install gate.

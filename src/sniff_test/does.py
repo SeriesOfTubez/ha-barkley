@@ -585,9 +585,12 @@ def wide(m: Model, key: str = "d") -> str:
         lines.append(f'<path class="{cls_l}" d="M{APP_X + APP_W} {cy:.0f} C {WALL - 20} '
                      f'{cy:.0f}, {YARD_X - 40} {mid:.0f}, {YARD_X - 2} {mid:.0f}" '
                      f'marker-end="url(#{mk}-{key})"/>')  # fmt: skip
-    if smid:
+    # (2026-11-23, his report) over the grey lines only: a site that only sends code has
+    # an orange arrow instead, and the label sat on it
+    grey = [mid for i, mid in enumerate(smid) if i not in m.code_only]
+    if grey:
         bad = any(how == "bad" for *_x, how in m.paths)
-        ly = min(_curve_y(cy, mid, WALL - 60) for mid in smid) - 8
+        ly = min(_curve_y(cy, mid, WALL - 60) for mid in grey) - 8
         lines.append(f'<text class="cross{" bad" if bad else ""}" x="{WALL - 8}" '
                      f'y="{ly:.0f}" text-anchor="end">leaves your home</text>')  # fmt: skip
     app = [f'<g class="app"><rect x="{APP_X}" y="{cy - APP_H / 2:.0f}" width="{APP_W}" '

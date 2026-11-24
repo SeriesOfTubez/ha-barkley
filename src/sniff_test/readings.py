@@ -183,6 +183,16 @@ def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
+def counts_in_exposure(f: dict[str, Any]) -> bool:
+    """Whether a finding adds to the Exposure reading in compute() (the panel marks it)."""
+    rule = str(f.get("rule_id"))
+    if in_test_script(f):
+        return False
+    if rule == DEP_VULN:
+        return str(f.get("severity")) in LIB_BUG
+    return rule in (UNAUTH_VIEW, AUTH_INTERNALS) or rule in REMOTE_CODE or rule in LINK_CODE
+
+
 def compute(
     report: dict[str, Any], network: str = "home", build_tool: float = BUILD_TOOL
 ) -> Readings:

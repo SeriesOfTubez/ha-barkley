@@ -12,9 +12,11 @@ features are only as good as the model you pick.
 
 Since 0.15 the panel shows no 0–100 score. Each app has a sniff report with two readings:
 
-- **Threat**: signs of malicious behavior only. It reads none found (🦴 Good Boy),
-  possible (🐕 Sus) or found (🚨 BORK BORK BORK). A found threat puts one sentence at the
-  top of the app's page, and the list says how many apps show malicious behavior.
+- **Threat**: signs of malicious behavior only. It reads none found, possible
+  (🐕 Grrrrr) or found (🚨 BORK BORK BORK). With none found, the label follows Exposure:
+  🦴 Good Boy (low), 🐾 Needs training (medium) or 🦮 Needs a leash (high). A found
+  threat puts one sentence at the top of the app's page, and the list says how many apps
+  show malicious behavior.
 - **Exposure**, from 0 to 10, shown as Low (under 2), Medium (2 to under 5) or High
   (5 and up): what the app opens up to someone who isn't an administrator. It counts
   pages that open without logging in to Home Assistant, login tokens the app may hand
@@ -78,11 +80,11 @@ opens a pre-filled public issue that you finish and submit.
   Turn it off, pick who else gets notified, or choose which results notify you (Notify
   when), on the Settings page.
 - **An app's page**, top to bottom: the two readings, the Threat box and the Exposure
-  box, In short, privacy notes, What it can do (not scored), What the developer says it
-  does (after an AI request), What it does, Where the login you gave this app goes,
-  Where it connects, Other addresses in its code, Where its code comes from,
-  Environment variables it uses, The developer's security habits, Everything it uses
-  inside Home Assistant, and History.
+  box, In short, privacy notes, What it can do (items that add to Exposure are marked),
+  What the developer says it does (after an AI request), What it does, Where the login
+  you gave this app goes, Where it connects, Other addresses in its code, Where its code
+  comes from, Environment variables it uses, The developer's security habits, Everything
+  it uses inside Home Assistant, and History.
 - **What it does:** a picture of the app in your home. Seven rooms, the same for every
   app (users and logins, other apps' settings, devices and entities, files, programs
   and the system, your home network, your browser session), blue where the app reaches

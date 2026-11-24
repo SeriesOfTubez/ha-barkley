@@ -190,12 +190,13 @@ def render(
 
     # (0.15) the two readings first; the capability score after them, without dog words
     # (his decision 2026-11-20: what the code openly uses, not a judgment)
-    from sniff_test.ui import _T_VERDICT
+    from sniff_test.ui import readings_band, verdict_line
 
     rd = readings_of or {}
     level = str(rd.get("threat_level") or "none")
-    style = {"none": "green", "possible": "yellow", "found": "red"}.get(level, "yellow")
-    body = Text.assemble((_T_VERDICT.get(level, ""), f"bold {style}"))
+    style = readings_band(rd) if rd else "green"
+    style = {"orange": "dark_orange"}.get(style, style)  # a Rich colour name
+    body = Text.assemble((verdict_line(rd), f"bold {style}"))
     if rd:
         body.append(
             f"\nThreat: {level} ({rd.get('threat', 0):g} of 10) · Exposure: "

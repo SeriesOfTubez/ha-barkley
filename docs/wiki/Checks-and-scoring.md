@@ -86,10 +86,11 @@ Every item a scan reports has a kind, and an app's page groups them:
 - **How it's made**: release and dependency habits, usage reporting.
 - **What Barkley couldn't read**: code files the rules couldn't parse.
 
-Threats are shown in the Threat box. Everything else is listed under "What it can do
-(not scored)". One item there still counts toward Threat: a library whose name is one
-typo away from a popular one (it's a How it's made item). Each item still has a severity (critical, high, medium or low) in the
-technical report; the kind never changes it.
+Threats are shown in the Threat box. Everything else is listed under "What it can do".
+The items that add to Exposure are marked **Counts in Exposure** there; the rest is
+context. One item there still counts toward Threat: a library whose name is one typo away
+from a popular one (it's a How it's made item). Each item still has a severity (critical,
+high, medium or low) in the technical report; the kind never changes it.
 
 ## The two readings
 
@@ -121,11 +122,19 @@ Barkley can't follow, nothing is set aside.
 
 | Threat | The panel says |
 |---|---|
-| 0 | None found · 🦴 Good Boy · no signs of malicious behavior |
-| above 0, under 7 | Possible · 🐕 Sus · a possible sign of malicious behavior |
+| 0 | None found · the label follows Exposure (below) |
+| above 0, under 7 | Possible · 🐕 Grrrrr · a possible sign of malicious behavior |
 | 7 to 10 | Found · 🚨 BORK BORK BORK · malicious behavior found |
 
-The dog words go with Threat only. A found threat puts one sentence at the top of the
+With no threat, the label says how much the app opens up:
+
+| Exposure | The panel says |
+|---|---|
+| Low (under 2) | 🦴 Good Boy · no signs of malicious behavior, low exposure |
+| Medium (2 to under 5) | 🐾 Needs training · no signs of malicious behavior, medium exposure |
+| High (5 and up) | 🦮 Needs a leash · no signs of malicious behavior, high exposure |
+
+A threat always decides the label. A found threat puts one sentence at the top of the
 app's page, saying what the app does and to remove it. The list says how many apps show
 malicious behavior.
 
