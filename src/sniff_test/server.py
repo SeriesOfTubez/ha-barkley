@@ -1287,12 +1287,6 @@ def render_settings(
               "a link to show them.",
               sel("show_minor", "1" if s.show_minor else "0",
                   [("0", "Hide (default)"), ("1", "Show")]))
-        + row("Exposure bar", "The orange strip above an app's picture with its Exposure "
-              "reading and the reasons. The doors and the strip for known vulnerabilities in "
-              "the picture always show.",
-              sel("exposure_bar", s.exposure_bar,
-                  [("medium", "Medium and high (default)"), ("high", "High only"),
-                   ("always", "Always")]))
         + row("Build tool known to be malware", "A tool the developer used to build the "
               "app is listed as malware. It runs on their machine, not in your home, but it "
               "could change what ships. How much it counts toward Threat: 7 and up is "
@@ -2967,7 +2961,6 @@ class Panel:
         s = self._inputs().settings
         return shown_mod.view(rep, network=s.network, show_minor=show_minor,
                               always=s.show_minor, quiet_months=s.quiet_months,
-                              exposure_bar=s.exposure_bar,
                               build_tool=float(s.build_tool_points))  # fmt: skip
 
     def overlay_rows(self, rows: list[ScanRow]) -> list[ScanRow]:

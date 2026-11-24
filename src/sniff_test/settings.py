@@ -58,9 +58,6 @@ class Settings:
     # at or above that level, or any sign of malicious behavior). A sniff that didn't
     # finish or couldn't run always notifies.
     notify_when: str = "all"
-    # (0.15, his decision 2026-11-21) the Exposure bar above "What it does": from medium
-    # (default), high only, or always
-    exposure_bar: str = "medium"
     # (0.15, his decision 2026-11-22) Threat points for a build tool known to be malware
     # (it runs on the developer's machine while building and could change what ships):
     # 2.5 is "possible", like any high sign
@@ -97,7 +94,6 @@ PARTS = {
         "network",
         "show_minor",
         "quiet_months",
-        "exposure_bar",
         "build_tool_points",
     ),
     "checking": (
@@ -134,7 +130,6 @@ CHOICES: dict[str, tuple[Any, ...]] = {
     "token_days": (30, 60, 90, 180),
     "quiet_months": (0, 6, 12, 24, 36),
     "notify_when": ("all", "medium", "high", "threat"),
-    "exposure_bar": ("medium", "high", "always"),
     "build_tool_points": ("2", "2.5", "3"),
     "ai_size": (6000, 12000, 18000),
     "ai_minutes": tuple(range(1, 61)),

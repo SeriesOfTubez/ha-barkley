@@ -105,9 +105,8 @@ There is nothing to accept or mark as reviewed: reviews, "Malware check only" an
 "Addresses you trust" were removed in 0.15, because they no longer changed anything
 Barkley shows.
 
-**A Settings page.** Where Home Assistant runs, whether minor items are shown, when the
-Exposure bar shows, how much a malicious build tool counts, when a project counts as
-quiet, auto-sniff and which results notify you, AI, how many scans run at once and how
+**A Settings page.** Where Home Assistant runs, whether minor items are shown, how much
+a malicious build tool counts, when a project counts as quiet, auto-sniff and which results notify you, AI, how many scans run at once and how
 much memory they may use, published libraries, the cache and the GitHub token, each
 with Barkley's default.
 

@@ -110,9 +110,7 @@ update the list offers one button to sniff your apps again.
   developer's description, after an AI request, is now part of In short.
 - The short AI text from Explain this app is labelled AI summary, apart from Explain in
   context.
-- On a phone the same picture is stacked, one part under the other. Settings →
-  Exposure bar decides when the orange strip with the Exposure reading shows: medium
-  and high (default), high only, or always.
+- On a phone the same picture is stacked, one part under the other.
 
 **Where the login you gave this app goes**
 

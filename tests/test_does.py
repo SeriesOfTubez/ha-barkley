@@ -111,16 +111,17 @@ def test_a_card_runs_in_your_browser_session():
     assert "runs in your browser session" in does.wide(m)
 
 
-def test_the_exposure_bar_follows_the_setting():
-    medium = {"exposure": 2.5, "exposure_level": "medium", "exposure_reasons": ["A reason."]}
-    high = {"exposure": 6.0, "exposure_level": "high", "exposure_reasons": ["A reason."]}
-    low = {"exposure": 0.0, "exposure_level": "low", "exposure_reasons": []}
-    assert "Exposure 2.5 of 10" in does.bar_html(medium, "medium")
-    assert does.bar_html(medium, "high") == ""
-    assert "Exposure 6 of 10" in does.bar_html(high, "high")
-    assert does.bar_html(low, "medium") == ""
-    assert "found no way in" in does.bar_html(low, "always")
-    assert does.bar_html({**high, "threat_level": "found"}, "always") == ""
+def test_no_exposure_bar_on_the_picture():
+    """(his decision 2026-11-24) the Exposure box and the items already say it: the strip
+    above the picture and its setting are gone; a stored value of it is ignored."""
+    from sniff_test import settings
+
+    html = does.section({"target": {"kind": "plugin"}, "findings": [
+        {"rule_id": "card-remote-script", "severity": "medium", "file": "c.js", "line": 3,
+         "evidence": "https://cdn.example.invalid/npm/thing@latest/x.js"}]}, "Card")  # fmt: skip
+    assert 'class="expo' not in html and "of 10" not in html
+    assert not hasattr(settings.DEFAULTS, "exposure_bar")
+    assert settings.from_dict({"exposure_bar": "always"}) == settings.DEFAULTS
 
 
 def test_names_from_the_code_are_escaped_and_the_picture_is_script_free():

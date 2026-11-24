@@ -89,7 +89,7 @@ def test_an_item_that_adds_to_exposure_says_so_and_links_up() -> None:
     html = ui.finding_html(f, [f], 0, context=True, counts=True)
     assert '<a class="chip xp" href="#exposure">Exposure</a></h3>' in html
     assert 'class="chip xp"' not in ui.finding_html(f, [f], 0, context=True)
-    # (his ask 2026-11-24) a chip, not the picture's Exposure bar (.expo)
+    # (his ask 2026-11-24) a chip, not a bar
     assert "a.chip.xp { display:inline-block;" in ui.CSS and "chip expo" not in html
 
 

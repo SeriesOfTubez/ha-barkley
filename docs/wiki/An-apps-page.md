@@ -71,8 +71,7 @@ From top to bottom:
   is code from outside that runs here: from the site a card loads code from into your
   browser session, or from where an integration downloads Lua into Programs and the
   system. When that address comes from a server's answer, the arrow starts at a dashed
-  box linked to the site that answers. The orange Exposure
-  bar on top shows from Medium by default (Settings → Exposure bar).
+  box linked to the site that answers.
 - **Where the login you gave this app goes:** the login you entered when you set up the
   app (not your Home Assistant login), and any token it gets back, followed from what is
   sent, through the app's own code or a library, to where it goes. Six places, then "and

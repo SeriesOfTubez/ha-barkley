@@ -9,8 +9,8 @@ a site that isn't the app's own runs red, from the room through the app to the s
 the app's own site it runs dotted grey. Exposure is orange and points in: a door for each
 way in (a page that opens without logging in, messages from the internet, a link that can
 run code), a bug strip on the app for libraries with known vulnerabilities, and a card's
-box says it runs in your browser session. The Exposure bar on top shows from medium by
-default (Settings → Exposure bar: medium and high, high only, always).
+box says it runs in your browser session. (His decision 2026-11-24: no Exposure bar on
+top, and no setting for it; the Exposure box and the items already say it.)
 
 Everything comes from the stored scan (findings, the graph's flows, the requests); nothing
 here is scored, and nothing is stored. Names and sites come from the scanned code:
@@ -116,7 +116,6 @@ def door(rule: str, network: str) -> tuple[str, str, bool]:
 SITES_SHOWN = 6
 OFF_BOX = "Off your Home Assistant machine"
 WRAP = 40  # characters per room line
-BAR = {"medium": readings.LOW, "high": readings.MEDIUM, "always": -1.0}
 
 
 def e(text: Any, n: int = 200) -> str:
@@ -396,30 +395,6 @@ def own_devices(kinds: list[str], actions: bool = False) -> str:
     text = ", ".join(shown[:-1]) + (" and " if len(shown) > 1 else "") + shown[-1]
     out = f"adds its own {text}" + (f" and {more} more kinds" if more > 0 else "")
     return out + (", and its own actions" if actions else "")
-
-
-# --- the Exposure bar ------------------------------------------------------------------
-
-
-def bar_html(rd: dict[str, Any], setting: str) -> str:
-    """The orange strip with the Exposure reading and its reasons, above the picture: from
-    medium by default; never for a found threat (the banner speaks then)."""
-    if rd.get("threat_level") == "found":
-        return ""
-    x = float(rd.get("exposure") or 0)
-    if x < BAR.get(setting, readings.LOW):
-        return ""
-    reasons = [str(w) for w in rd.get("exposure_reasons") or []
-               if not str(w).startswith(readings.POSSIBLE_REASON)]  # fmt: skip
-    if not reasons:
-        return (
-            f'<p class="expo none">{_ic("door")}<span><b>Exposure {x:g} of 10.</b> Barkley '
-            "found no way in: no page without a login, no library with known "
-            "vulnerabilities.</span></p>"
-        )
-    level = str(rd.get("exposure_level") or "")
-    return (f'<p class="expo">{_ic("door")}<span><b>Exposure {x:g} of 10 ({e(level)}).</b> '
-            + " ".join(e(w, 400) for w in reasons) + "</span></p>")  # fmt: skip
 
 
 def _ic(name: str) -> str:
@@ -858,8 +833,8 @@ def legend(m: Model) -> str:
     return f'<p class="sub">{" ".join(bits)}</p>'
 
 
-def section(report: dict[str, Any], name: str, rd: dict[str, Any], setting: str) -> str:
+def section(report: dict[str, Any], name: str) -> str:
     m = build(report, name)
-    return ('<section class="box"><h2>What it touches</h2>' + bar_html(rd, setting)
+    return ('<section class="box"><h2>What it touches</h2>'
             + f'<div class="flowwrap"><div class="wide">{wide(m)}</div>{narrow(m)}</div>'
             + legend(m) + "</section>")  # fmt: skip

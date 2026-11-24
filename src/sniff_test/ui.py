@@ -269,7 +269,7 @@ a.app-name::after { content:""; position:absolute; inset:0; border-radius:var(--
 .chip.priv { background:var(--priv-bg); color:var(--priv); }
 .chip.warn { background:var(--yellow-bg); color:var(--yellow); }
 .chip.bad { background:var(--red-bg); color:var(--red); }
-/* (his ask 2026-11-24) a small chip: .expo is the Exposure bar on the picture */
+/* (his ask 2026-11-24) a small chip; .expo was the picture's Exposure bar (gone) */
 a.chip.xp { display:inline-block; background:var(--orange-bg); color:var(--orange);
   text-decoration:none; margin-left:var(--s2); vertical-align:middle; font-weight:600; }
 .act { position:relative; z-index:1; display:flex; gap:var(--s2); align-items:center; }
@@ -546,13 +546,9 @@ svg.does text.co { fill:var(--orange); font-size:var(--t-xs); }
 .ndoor { border:1px dashed var(--orange-edge); background:var(--orange-bg); border-radius:8px;
   padding:8px 12px; display:grid; grid-template-columns:auto 1fr; gap:4px 8px;
   align-items:start; overflow-wrap:anywhere; }
-.ndoor .dic, .expo .dic { color:var(--orange); }
+.ndoor .dic { color:var(--orange); }
 .nrooms .ndoor { grid-column:1 / -1; }
 .ndoor .arrow-in { grid-column:1 / -1; color:var(--orange); font-size:var(--t-xs); font-weight:600; }
-.expo { margin:0 0 8px; padding:8px 12px; border-radius:8px; background:var(--orange-bg);
-  border:1px solid var(--orange-edge); display:flex; gap:8px; align-items:flex-start;
-  overflow-wrap:anywhere; }
-.expo.none { background:var(--soft); border-color:var(--line); } .expo.none .dic { color:var(--muted); }
 .privbox { border:1px solid var(--priv); background:var(--priv-bg); border-radius:var(--r4);
   padding:var(--s3) var(--s4); }
 .privbox h2 { color:var(--priv); }
@@ -4452,9 +4448,8 @@ def render_app(
     if rd.get("threat_level") == "none":  # beside a possible threat: only the placed ones
         said = said_box(loose, str(words.get("failed") or ""))
     parts = [x.replace("\0said\0", said) for x in parts]
-    # (0.15, mock-up v5) rooms, paths and ways in (does.py); the Exposure bar on top
-    shown_opts = report.get("shown") if isinstance(report.get("shown"), dict) else {}
-    parts.append(does.section(report, title, rd, str(shown_opts.get("exposure_bar") or "medium"))
+    # (0.15, mock-up v5) rooms, paths and ways in (does.py)
+    parts.append(does.section(report, title)
                  .replace("<h2>What it touches</h2>",
                           f"<h2>What it touches {src_tag('scan')}</h2>", 1))  # fmt: skip
     # (0.15, his yes 2026-11-22) where the app's own logins go, under the picture

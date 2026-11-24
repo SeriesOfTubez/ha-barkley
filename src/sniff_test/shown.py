@@ -25,7 +25,6 @@ def view(
     show_minor: bool = False,
     always: bool = False,
     quiet_months: int = 12,
-    exposure_bar: str = "medium",
     build_tool: float = 2.5,
 ) -> dict[str, Any]:
     """Keys added: `readings` (readings.compute on the stored findings, all of them but
@@ -53,6 +52,5 @@ def view(
             "show_minor": show_minor,
             "always": always,
             "quiet_months": quiet_months,
-            "exposure_bar": exposure_bar,
         },
     }

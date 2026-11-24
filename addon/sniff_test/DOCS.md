@@ -177,8 +177,8 @@ Barkley has its own **Settings** page (the Settings link on the panel's first pa
 It has two sections, each with Reset to defaults:
 
 - **Readings:** Where Home Assistant runs (Only my home network, A shared or work
-  network, Reachable from the internet), Minor items (Hide or Show), Exposure bar,
-  Build tool known to be malware (2, 2.5 or 3) and Quiet projects.
+  network, Reachable from the internet), Minor items (Hide or Show), Build tool known
+  to be malware (2, 2.5 or 3) and Quiet projects.
 - **Checking and notifications:** Auto-sniff, Notify, Notify when, AI, AI mode, AI
   answers, AI time limit,
   Parallel scans, Semgrep jobs, Published libraries, Cache of code already read, Memory

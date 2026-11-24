@@ -127,7 +127,6 @@ def test_where_home_assistant_runs_is_one_choice_stored_as_two_values():
         "network",
         "show_minor",
         "quiet_months",
-        "exposure_bar",
         "build_tool_points",
     )
     assert settings.from_dict({"quiet_months": "24"}).quiet_months == 24
