@@ -85,6 +85,12 @@ opens a pre-filled public issue that you finish and submit.
   you gave this app goes, Where it connects, Other addresses in its code, Where its code
   comes from, Environment variables it uses, The developer's security habits, Everything
   it uses inside Home Assistant, and History.
+- **On a phone** (a screen 600 px wide or narrower, such as the Home Assistant app) an
+  app's page is shorter: the two readings, the Threat and Exposure boxes, In short, and
+  every item that counts toward a reading. An item that counts toward Threat or Exposure
+  is never left out. **Show details** at the bottom shows the rest, including the AI
+  buttons, and **Hide details** at the top goes back. A wider screen always shows the
+  whole page.
 - **What it touches:** a picture of the app in your home. Seven rooms, the same for every
   app (users and logins, other apps' settings, devices and entities, files, programs
   and the system, your home network, your browser session), blue where the app reaches
@@ -154,7 +160,8 @@ while Barkley was stopped). When an integration or card is installed or updated:
   the panel, a `notify.<target>` message (for example your phone through the companion
   app): the app and version, the two readings with a coloured light each (🟢 🟡 🔴), for
   a found or possible threat one fixed sentence saying what it is, and for an update
-  counts of what changed. Nothing from the scanned project (no README text, code or
+  counts of what changed. The `notify` message is shorter: its body starts with the
+  readings, and the app's name is only in its title. Nothing from the scanned project (no README text, code or
   evidence) and nothing from an AI is ever put in a notification. A test button sends a
   sample through both.
 

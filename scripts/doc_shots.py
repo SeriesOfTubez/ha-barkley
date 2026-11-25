@@ -131,8 +131,8 @@ SHOTS = (
     ("list-phone", "list", 390, "page"),
     ("app", "app-evil_integration", 1100, "page"),
     ("ai-reading", "app-evil_integration", 1100, "sheet"),
-    ("picture", "app-evil_integration", 1100, "What it does"),
-    ("developer-says", "app-oauth_redirects", 1100, "What the developer says it does"),
+    ("picture", "app-evil_integration", 1100, "What it touches"),
+    ("developer-says", "app-oauth_redirects", 1100, "In short"),
     ("update", "update", 1100, "main"),
     ("settings-ai", "settings", 1100, "AI answers"),
 )

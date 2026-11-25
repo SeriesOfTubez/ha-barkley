@@ -1759,7 +1759,8 @@ def _ai_form(base: str, sid: int, token: str, entity: str, state: str, error: st
                 f'<input type=hidden name=token value="{token}">'
                 f'<input type=hidden name=scan value="{sid}">'
                 "<button>Stop waiting</button></form>")  # fmt: skip
-        return (f'<div class="aibox mt2"><span class="thinking">{ui.icon("sparkle", 20)}</span>'
+        return (f'<div class="aibox wait mt2">'
+                f'<span class="thinking">{ui.icon("sparkle", 20)}</span>'
                 f"<div><b>Your AI is answering…</b><br><span class=small>This can take a few "
                 f"minutes, depending on your AI.{waited} You don't have to wait here: the "
                 "answer is saved, and this page refreshes by itself.</span></div>"
@@ -1809,8 +1810,10 @@ def render_scan(
     listing: dict[str, str] | None = None,
     ai_since: float = 0.0,
     jobs: list[Job] | None = None,
+    full: bool = False,
 ) -> bytes:
     """`open_item`: the item whose AI sheet is open (`?open=`), kept open across refreshes.
+    `full` (`?all=1`, Show details): a phone shows the whole page, not the short view.
     `listing`: the Marketplace's removed list entry for this app (listings.py), if any.
     `rechecking`: an advisory re-check of this scan is queued or running (the page then
     reloads itself until it ends)."""
@@ -1907,6 +1910,7 @@ def render_scan(
         deep=deep,
         refresh_url=_scan_url(base, sid, open_item, fresh=True) if open_item else "",
         open_item=open_item,
+        full=full or bool(open_item),  # an open sheet may sit in the hidden part
     )
 
 
@@ -3258,6 +3262,7 @@ class Panel:
                                 and j.state in ("queued", "running", "waiting")
                                 for j in list(panel.worker.jobs)
                             ),
+                            full=(q.get("all") or [""])[0] == "1",
                         )  # fmt: skip
                         return self._send(200, page)
                     if url.path == "/search" and panel.catalog_fn is not None:

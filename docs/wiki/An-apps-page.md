@@ -178,6 +178,15 @@ None of this is scored.
   release, packed in its code, or a file Barkley couldn't follow) and whether that Lua
   can use Python or run programs.
 
+## On a phone
+
+On a screen 600 px wide or narrower, such as the Home Assistant app on a phone, an app's
+page is shorter. It shows the two readings, the Threat and Exposure boxes, In short, and
+every item that counts toward a reading. An item that counts toward Threat or Exposure is
+never left out. A box at the bottom lists the rest of the page, and **Show details**
+shows it, including the AI buttons. **Hide details** at the top goes back to the short
+page. A wider screen always shows the whole page.
+
 ## Actions on the page
 
 - **Sniff this version again** runs a fresh scan instead of reusing the stored one.

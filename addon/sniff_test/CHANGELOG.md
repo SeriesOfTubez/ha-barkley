@@ -27,7 +27,12 @@ update the list offers one button to sniff your apps again.
   are gone: they only changed the score.
 - Command line: `--fail-on possible` or `--fail-on found` replaces `--fail-under`.
 - Notifications show the two readings with a coloured light each (🟢 🟡 🔴), and for an
-  update the Exposure number before it.
+  update the Exposure number before it. A phone notification starts with the readings
+  and leaves the app's name to its title, so a phone doesn't cut off what matters.
+- On a phone an app's page is shorter: the readings, In short and every item that counts
+  toward a reading. Show details shows the rest of the page, including the AI buttons.
+- The developer's description and the AI summary no longer squeeze their parts side by
+  side.
 - The list sorts and filters by the readings. "Needs a look" means a found or possible
   threat, High exposure, a check that didn't finish, or an update with a change to check.
 

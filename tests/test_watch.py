@@ -85,7 +85,7 @@ def test_an_install_is_sniffed_at_its_version_and_notified(ctx):
     (title, message, nid), _offer = fakes.bell
     assert title == "Barkley: acme/b v2" and nid == "barkley_acme_b"
     assert "Card acme/b v2 was installed. Barkley sniffed it." in message
-    assert "🟢 Threat: none · 🟢 Exposure: low (0)" in message  # (0.15) no score
+    assert "🟢 Threat: none · 🟢 Exposure: low." in message  # (0.15) no score; no "(0)"
     assert "/100" not in message
     assert "[Open Barkley](/app/local_sniff_test) to see scan @1." in message
     assert HOSTILE not in message and "x.invalid" not in message
@@ -111,7 +111,10 @@ def test_an_update_reuses_the_old_scan_and_says_what_changed(ctx):
     assert f"@{old_id} → @{job.scan_ids[1]}" in message
     ((target, ptitle, plain, url),) = fakes.pushed
     assert target == "mobile_app_phone" and ptitle == title
-    assert "Open Barkley from the sidebar" in plain and "[" not in plain
+    # (2026-11-25) the push leads with the readings; the title names the app, a tap opens it
+    assert plain == (
+        "🟢 Threat: none · 🟢 Exposure: low. Changes in this update: 1 new site. Updated from v1."
+    )
     assert url == "/app/local_sniff_test"
     assert HOSTILE not in plain
 
@@ -125,7 +128,7 @@ def test_every_auto_job_leaves_one_outcome_line_in_the_log(ctx, capsys):
     worker.wait()
     err = capsys.readouterr().err
     assert "auto-sniff: acme/b installed v2" in err
-    assert ("auto-sniff: acme/b v2 sniffed: 🟢 Threat: none · 🟢 Exposure: low (0); @1; "
+    assert ("auto-sniff: acme/b v2 sniffed: 🟢 Threat: none · 🟢 Exposure: low; @1; "
             "notified bell + notify.mobile_app_phone") in err  # fmt: skip
     assert HOSTILE not in err
 
@@ -510,3 +513,35 @@ def test_an_older_stable_release_offered_on_a_pre_release_isnt_sniffed():
     assert watch.snapshot_changes(old, new) == []
     newer = watch.snapshot_of([Installed("acme/c", "card", "C", "v2.0.0-beta.3", "v2.0.0", False)])
     assert [c.action for c in watch.snapshot_changes(old, newer)] == ["available"]
+
+
+def test_the_phone_push_leads_with_the_readings():
+    """(his report 2026-11-25) A phone cut the push off before the readings: the name and
+    versions came first, though the title already has them. The push starts with the
+    readings, the Exposure number shows only when it isn't 0, and a waiting update ends
+    with when it was sniffed."""
+    rep = report(repo="acme/w", ref="v1.13.1")
+    entry = {"repo": "acme/w", "kind": "integration", "version": "v1.13.1",
+             "previous": "v1.12.3", "action": "available", "scan_ids": [933, 934]}  # fmt: skip
+    title, md, plain = watch.notification(entry, rep, {"changes": [], "what": []}, "/app/x")
+    assert title == "Barkley: acme/w v1.13.1 (update waiting)"
+    assert plain == (
+        "🟢 Threat: none · 🟢 Exposure: low. Nothing important changed since v1.12.3. "
+        "Sniffed before you install it."
+    )
+    # the bell keeps the whole sentence and the link to both scans
+    assert md.startswith("Integration acme/w has an update waiting, v1.12.3 to v1.13.1.")
+    assert "(@933 → @934)" in md
+
+
+def test_the_advisory_push_leads_with_the_readings():
+    rep = report(repo="acme/w", ref="v2")
+    entry = {"repo": "acme/w", "kind": "integration", "version": "v2", "malicious": True,
+             "changes": "1 package newly listed as malicious", "scan_ids": [5, 6]}  # fmt: skip
+    _t, md, plain = watch.advisory_notification(entry, rep, "")
+    assert plain.startswith(
+        "A package this app uses is now listed as malicious. 🟢 Threat: none · 🟢 Exposure: low. "
+        "The known security advisories for its packages have changed. What changed: "
+    )
+    assert plain.endswith("It only looked up its packages again.") and "acme/w" not in plain
+    assert "integration acme/w v2 uses" in md

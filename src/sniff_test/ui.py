@@ -427,6 +427,10 @@ details summary { cursor:pointer; color:var(--muted); font-size:var(--t-xs); }
 details.tests > :not(summary) { margin-top:var(--s1); max-width:72ch; }
 .ev { display:block; white-space:pre-wrap; background:var(--soft); padding:var(--s2);
   border-radius:var(--r2); margin-top:var(--s1); }
+/* phone: the short view (render_app, full) */
+.phone { display:none; } .short { display:contents; }
+@media (max-width:600px) { .short .ph-hide, .short .deepi form { display:none; }
+  .phone { display:block; } }
 @media (max-width:560px) { .finding { grid-template-columns:1fr; }
   .finding dl { grid-template-columns:1fr; } .finding dt { margin-top:var(--s1); } }
 .zones { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:var(--s3); }
@@ -614,9 +618,10 @@ tr.aiwork td:first-child { box-shadow:inset 2px 0 0 var(--ai); }
   color:var(--muted); }
 input[type=range] { width:100%; padding:0; border:0; background:none; accent-color:var(--ai); }
 input.mins { width:72px; }
-.aibox { display:flex; gap:var(--s3); align-items:center; padding:var(--s3) var(--s4);
-  background:var(--ai-bg); color:var(--fg); border-left:2px solid var(--ai);
-  border-radius:var(--r3); }
+/* only the "Your AI is answering…" line is a row; the other AI boxes stack */
+.aibox.wait { display:flex; flex-wrap:wrap; gap:var(--s3); align-items:center;
+  padding:var(--s3) var(--s4); color:var(--fg); border-radius:var(--r3); }
+.aibox.wait > div { flex:1 1 220px; min-width:0; }
 @media (prefers-reduced-motion: reduce) { *, ::before, ::after { animation:none !important;
   transition:none !important; } }
 .sev-critical { color:var(--red); font-weight:600; } .sev-high { color:var(--orange);
@@ -3847,10 +3852,12 @@ def kinds_html(
     render: Callable[[dict[str, Any], list[dict[str, Any]], int], str],
     skip: frozenset[str] = frozenset(),
     untitled: frozenset[str] = frozenset(),
+    phone_hidden: Callable[[list[dict[str, Any]]], bool] | None = None,
 ) -> str:
     """What we found, by kind (Threats first; "No signs of malicious behavior" when there
     are none). `render` draws one finding group. `skip`: kinds shown elsewhere on the
-    page (the preview's Threat box)."""
+    page (the preview's Threat box). `phone_hidden(fs)`: the group is left out of the
+    phone's short view, and so is a kind's heading when all its groups are."""
     by: dict[str, list[tuple[dict[str, Any], list[dict[str, Any]], int]]] = defaultdict(list)
     for g in groups:
         by[kinds.kind(str(g[0]["rule_id"]))].append(g)
@@ -3869,8 +3876,9 @@ def kinds_html(
         if k in untitled:  # the section's own title already says it
             out.extend(render(*g) for g in items)
             continue
-        out.append(f'<h3 class="kindh">{e(KIND_TITLES[k])} ({len(items)})</h3>'
-                   f'<p class="sub small">{e(KIND_BLURBS[k])}</p>')  # fmt: skip
+        hide = " ph-hide" if phone_hidden and all(phone_hidden(g[1]) for g in items) else ""
+        out.append(f'<h3 class="kindh{hide}">{e(KIND_TITLES[k])} ({len(items)})</h3>'
+                   f'<p class="sub small{hide}">{e(KIND_BLURBS[k])}</p>')  # fmt: skip
         out.extend(render(*g) for g in items)
     return "".join(out)
 
@@ -4149,6 +4157,14 @@ def _failed_part(failed: str) -> str:
     return failed if failed.endswith(".") else f"The AI didn't answer this part: {failed}"
 
 
+_H2 = re.compile(r"<h2>([^<]+)")
+
+
+def _ph_hide(html: str) -> str:
+    """(his call 2026-11-25) Left out of a phone's short view; shown under Show details."""
+    return f'<div class="ph-hide">{html}</div>' if html else ""
+
+
 def said_box(says: list[dict[str, Any]], failed: str = "") -> str:
     """The sentences that aren't about one listed item, as the last part of In short: one
     paragraph, each sentence followed by the number of the note that names the lines it
@@ -4282,11 +4298,14 @@ def render_app(
     trust: TrustFn | None = None,
     review: ReviewFn | None = None,
     open_item: str = "",
+    full: bool = False,
 ) -> bytes:
     """One app's detail page. `report` is the shown report (shown.view). `trust(finding)`
     lists the addresses an item is about; `review(finding, places)` is the row under each
     item (Report a false positive). `update`, `ai_form` and `again` (the "sniff this
-    version again" / "other versions" text actions in the head) are server-built HTML."""
+    version again" / "other versions" text actions in the head) are server-built HTML.
+    `full` (?all=1): a phone shows everything, as a wider screen always does; otherwise a
+    phone shows the short view (phone_hidden)."""
     t = report.get("target", {})
     title = name or (t.get("repo") or t.get("input") or "?").rsplit("/", 1)[-1]
     rd = report.get("readings") or readings.compute(report).to_dict()
@@ -4315,6 +4334,10 @@ def render_app(
     # a found threat's one sentence goes right under "All apps"; the reasons for the
     # readings follow the head (the capability score: the technical report)
     parts[0] = parts[0].replace("</p>", "</p>" + threat_banner(rd), 1)
+    if full:
+        parts[0] = parts[0].replace(
+            "</p>", f' <a class="phone hidedet" href="{base}/scan/{sid}">Hide details</a></p>', 1
+        )
     parts.append("\0readings\0")  # Threat and Exposure go here, once items can be drawn
     missing = [
         a for a in report.get("analyzers", []) if a.get("state") not in ("ok", "not_applicable")
@@ -4339,11 +4362,13 @@ def render_app(
             else ""
         )
         + "\0said\0"  # the developer's description, once the items have taken theirs
-        + ai_form
+        + (f'<div class="ph-hide">{ai_form}</div>' if ai_form else "")
         + "</section>"
     )
     notes = privacy.notes(report)
-    parts.append(privacy_html(notes, (lambda i: deep(i, part="inline")) if deep else None))
+    # (phone) the privacy notes are unscored context: under Show details
+    priv = privacy_html(notes, (lambda i: deep(i, part="inline")) if deep else None)
+    parts.append(_ph_hide(priv))
     # (0.14.0) an unscored usage-reporting trace is shown inside its privacy note
     groups = [g for g in scored_findings(report) if g[0]["rule_id"] != privacy.TRACED]
     expl = ai.get("findings", {})
@@ -4390,7 +4415,22 @@ def render_app(
         placed.update(id(x) for x in mine)
         return said_html(mine)
 
+    def phone_hidden(fs: list[dict[str, Any]]) -> bool:
+        """Context that counts toward neither reading. A threat item or one that counts
+        toward Exposure is never hidden, even where the chip isn't drawn."""
+        return not kinds.is_threat(str(fs[0]["rule_id"])) and not any(
+            map(readings.counts_in_exposure, fs)
+        )
+
     def one(f: dict[str, Any], fs: list[dict[str, Any]], p: int) -> str:
+        out = one_shown(f, fs, p)
+        return (
+            out.replace('<div class="finding', '<div class="ph-hide finding', 1)
+            if phone_hidden(fs)
+            else out
+        )
+
+    def one_shown(f: dict[str, Any], fs: list[dict[str, Any]], p: int) -> str:
         ctx = not kinds.is_threat(str(f["rule_id"]))
         note = note_for(fs) if ctx and notes_allowed(report, f) else ""
         if ctx and notes_allowed(report, f):
@@ -4432,17 +4472,25 @@ def render_app(
         rd, page_notes, login_free_pages(report) if rd.get("threat_level") != "found" else ""
     )
     parts[parts.index("\0readings\0")] = boxes
+    n_hidden = sum(phone_hidden(g[1]) for g in rest)
+    every = bool(rest) and n_hidden == len(rest)
     parts.append(
-        f'<section class="box"><h2>What Barkley found {src_tag("scan")}</h2>'
+        f'<section class="box{" ph-hide" if every else ""}" id="found"><h2>What Barkley found {src_tag("scan")}</h2>'
         + ('<p class="sub">Items marked Exposure make up that reading. The rest is '
            "context.</p>" if any(readings.counts_in_exposure(x) for g in rest for x in g[1])
            and rd.get("threat_level") != "found" else "")
         + (kinds_html(report, rest, one, skip=frozenset({kinds.THREAT}),
-                      untitled=frozenset({kinds.CAPABILITY})) if rest else
+                      untitled=frozenset({kinds.CAPABILITY}), phone_hidden=phone_hidden)
+           if rest else
            f'<p class="ok">{icon("check", 16, "ok")} Barkley found nothing notable.</p>')
-        + minor_line(base, sid, report)
+        + _ph_hide(minor_line(base, sid, report))
+        + (f'<p class="phone muted small mt2">{n_hidden} more item{"s" * (n_hidden != 1)} '
+           f"{'is' if n_hidden == 1 else 'are'} context. "
+           f'<a href="{base}/scan/{sid}?all=1#found">Show details</a></p>'
+           if n_hidden and not every and not full else "")
         + "</section>"
     )  # fmt: skip
+    rest_from = len(parts)  # (phone) everything after What Barkley found: Show details
     loose = [x for x in says if id(x) not in placed]
     said = ""
     if rd.get("threat_level") == "none":  # beside a possible threat: only the placed ones
@@ -4505,10 +4553,28 @@ def render_app(
         f'<p class="tech"><a href="{base}/scan/{sid}.json">Technical report (raw JSON)</a>'
         f"{tech}</p></section></div>"
     )
+    hidden = [x for x in parts[rest_from:] if x]
+    parts[rest_from:] = [_ph_hide(x) for x in hidden]
+    if hidden:
+        parts[rest_from] = parts[rest_from].replace(
+            'class="ph-hide"', 'class="ph-hide" id="more"', 1
+        )
+    if not full:
+        names = [n for x in [priv, *hidden] for n in _H2.findall(x)]
+        if every:
+            names.insert(0, f"What Barkley found ({len(rest)})")
+        parts.append(
+            '<section class="box phone"><h2>More about this app</h2>'
+            f'<p class="muted small">{e(" · ".join(n.strip() for n in names), 600)}</p>'
+            f'<p class="mt2"><a href="{base}/scan/{sid}?all=1#{"found" if n_hidden else "more"}">'
+            "Show details</a></p></section>"
+        )
     if deep:  # a note's item with no sheet on the page yet (one zones_html didn't list)
         parts.extend(
             deep(i, part="sheet")
             for i in dict.fromkeys(x for n in notes for x in n.edges)
             if i and i not in shown
         )
-    return page(f"Barkley · {title}", "".join(parts), refresh, base, refresh_url)
+    body = "".join(parts)
+    return page(f"Barkley · {title}", body if full else f'<div class="short">{body}</div>',
+                refresh, base, refresh_url)  # fmt: skip

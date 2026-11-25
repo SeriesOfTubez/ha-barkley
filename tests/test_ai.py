@@ -234,7 +234,7 @@ def test_a_running_explanation_shows_a_box_in_the_ai_colour_with_the_wait(tmp_pa
     sid = store.save(_report())
     post(f"{base}/explain", {"token": token(base), "scan": sid})
     _, _, page = get(f"{base}/scan/{sid}")
-    assert 'class="aibox' in page and "Your AI is answering…" in page and "It has been" in page
+    assert 'class="aibox wait' in page and "Your AI is answering…" in page and "It has been" in page
     assert 'class="thinking"' in page and '<meta http-equiv="refresh"' in page
     assert [(r.sid, r.item) for r in httpd.panel.ai_running()] == [(sid, "")]
     release.set()

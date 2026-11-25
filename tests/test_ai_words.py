@@ -277,3 +277,17 @@ def test_a_name_in_backticks_shows_as_code_and_stays_escaped():
     box = ui.said_box([{"text": "It calls `ws_provision` <b>first</b> (ws.py:33).",
                         "cites": [["ws.py", 33, 33]], "about": ""}])  # fmt: skip
     assert "<code>ws_provision</code>" in box and "&lt;b&gt;" in box and "`" not in box
+
+
+def test_only_the_waiting_line_lays_the_ai_box_out_as_a_row():
+    """(his phone, 2026-11-25) A second `.aibox` rule made every AI box a row, so the
+    developer's description put its label, note, text and line numbers side by side: a
+    quarter of a phone each. Only the "Your AI is answering…" line is a row."""
+    import re
+
+    css = re.sub(r"/\*.*?\*/", "", ui.CSS, flags=re.S)
+    rules = re.findall(r"([^{}]*\.aibox[^{}]*)\{([^}]*)\}", css)
+    for sel, body in rules:
+        if "display:flex" in body.replace(" ", ""):
+            assert sel.strip() == ".aibox.wait", sel
+    assert any(sel.strip() == ".aibox.wait" for sel, _ in rules)

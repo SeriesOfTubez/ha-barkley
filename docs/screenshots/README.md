@@ -13,7 +13,7 @@ answer differently.
 To make them again:
 
     for f in evil_integration evil_card hidden_card clean_integration clean_integration_v2 oauth_redirects; do
-      uv run sniff-test scan tests/fixtures/$f --json -o /tmp/reports/$f.json
+      uv run sniff-test scan tests/fixtures/$f --json --offline -o /tmp/reports/$f.json
     done
     uv run --with playwright python scripts/doc_shots.py --reports /tmp/reports \
       --answers docs/screenshots/ai-answers.json --out /tmp/doc-shots --shots

@@ -32,7 +32,8 @@ malicious behavior. Signs of malicious behavior always notify, and so does a sni
 didn't finish or couldn't run. Every result is still listed under Auto-sniff activity
 on the Settings page and on the app's page. If you pick a notify service
 on the Settings page (Notify; for example your phone through the companion app), it gets
-the same message. **Send a test notification** there sends a sample through both. Recent
+a shorter message: the app and version are in its title, the body starts with the two
+readings, and tapping it opens Barkley. **Send a test notification** there sends a sample through both. Recent
 auto-sniffs are listed on the Settings page too.
 
 A notification carries:
@@ -40,7 +41,8 @@ A notification carries:
 - the app's `owner/repo` name and version;
 - the two readings, each with a coloured light: 🟢 for no threat found or Low exposure,
   🟡 for a possible threat or Medium exposure, 🔴 for a found threat or High exposure.
-  The Exposure number is given, and for an update the number before it when it changed;
+  The Exposure number is given when it isn't 0, and for an update the number before it
+  when it changed;
 - for a found or possible threat, one fixed sentence saying what it is. For a found
   threat the title says so and the message says: "Remove it, then log out of Home
   Assistant everywhere.";

@@ -198,13 +198,15 @@ def worth_notifying(entry: dict[str, Any], when: str) -> bool:
 
 
 def readings_line(rd: dict[str, Any], was: dict[str, Any] | None = None) -> str:
-    """'🟢 Threat: none · 🟡 Exposure: medium (4.5, was 1.25)': fixed words and numbers."""
+    """'🟢 Threat: none · 🟡 Exposure: medium (4.5, was 1.25)': fixed words and numbers.
+    (his call 2026-11-25) An Exposure of 0 that didn't change has no number: "low" says it."""
     t, x = str(rd.get("threat_level")), str(rd.get("exposure_level"))
     num = _num(rd.get("exposure"))
     if was is not None and _num(was.get("exposure")) != num:
         num += f", was {_num(was.get('exposure'))}"
+    shown = "" if num == "0" else f" ({num})"
     return (f"{_LIGHT.get(t, '🟡')} Threat: {_T_WORDS.get(t, '?')} · "
-            f"{_LIGHT.get(x, '🟡')} Exposure: {x if x in _LIGHT else '?'} ({num})")  # fmt: skip
+            f"{_LIGHT.get(x, '🟡')} Exposure: {x if x in _LIGHT else '?'}{shown}")  # fmt: skip
 
 
 def _num(v: Any) -> str:
@@ -228,14 +230,16 @@ def notification(
     offered = entry.get("action") == "available"
     if offered:
         did = f"has an update waiting, {prev} to {ver}. Barkley sniffed it before you install it"
+        short = "Sniffed before you install it."
     else:
         did = (
             f"was updated from {prev} to {ver}. Barkley sniffed it"
             if prev
             else f"{ver} was installed. Barkley sniffed it"
         )
+        short = f"Updated from {prev}." if prev else "Newly installed."
     rd = report.get("readings") or readings.compute(report).to_dict()
-    return _readings_notification(entry, report, d, panel, rd, kind, did, offered)
+    return _readings_notification(entry, report, d, panel, rd, kind, did, offered, short)
 
 
 def _readings_notification(
@@ -247,12 +251,16 @@ def _readings_notification(
     kind: str,
     did: str,
     offered: bool,
+    short: str,
 ) -> tuple[str, str, str]:
     """Counts, readings, fixed phrases and validated names only: never the developer's
-    words or AI text."""
+    words or AI text. (his call 2026-11-25) The phone push starts with the readings: the
+    title already names the app and version, a tap opens Barkley, and a phone cuts the
+    body off after a few lines."""
     repo, ver, prev = entry["repo"], entry["version"], entry.get("previous")
     was = entry.get("was_readings") if isinstance(entry.get("was_readings"), dict) else None
-    lines = [f"{kind} {repo} {did}. {readings_line(rd, was)}"]
+    rline = readings_line(rd, was)
+    lines = [f"{kind} {repo} {did}. {rline}."]
     if rd.get("threat_level") in ("found", "possible") and rd.get("threat_reason"):
         lines.append(f"It {rd['threat_reason']}.")  # a fixed phrase (readings._THREAT_PHRASE)
     if rd.get("threat_level") == "found":
@@ -279,7 +287,7 @@ def _readings_notification(
         title = f"Barkley: 🔴 malicious behavior found in {repo} {ver}"
     else:
         title = f"Barkley: {repo} {ver}" + (" (update waiting)" if offered else "")
-    plain = " ".join(lines) + f" Open Barkley from the sidebar to see {where}."
+    plain = " ".join([f"{rline}.", *lines[1:], short])
     return title, "\n\n".join(lines) + f"\n\n{link} to see {where}.", plain
 
 
@@ -338,18 +346,26 @@ def advisory_notification(
         lines.append("A package this app uses is now listed as malicious.")
     lines.append(
         f"The known security advisories for the packages {kind.lower()} {repo} {ver} uses "
-        f"have changed since Barkley sniffed it. {readings_line(rd, was)}"
+        f"have changed since Barkley sniffed it. {readings_line(rd, was)}."
     )
     if entry.get("changes"):
         lines.append(f"What changed: {entry['changes']}.")
     lines.append("Barkley didn't scan the app's code again. It only looked up its packages again.")
+    # the phone push: the readings first, no name (the title has it)
+    phone = [
+        *lines[: 1 if entry.get("malicious") else 0],
+        f"{readings_line(rd, was)}.",
+        "The known security advisories for its packages have changed.",
+        *[x for x in lines if x.startswith("What changed:")],
+        lines[-1],
+    ]
     ids = entry.get("scan_ids") or []
     where = (
         f"scan @{ids[-1]} and what changed (@{ids[0]} → @{ids[-1]})" if len(ids) == 2 else "the app"
     )
     link = f"[Open Barkley]({panel})" if panel else "Open Barkley from the sidebar"
     title = f"Barkley: {repo} {ver} (advisories changed)"
-    plain = " ".join(lines) + f" Open Barkley from the sidebar to see {where}."
+    plain = " ".join(phone)
     return title, "\n\n".join(lines) + f"\n\n{link} to see {where}.", plain
 
 
@@ -894,7 +910,7 @@ class Watcher:
             title = f"Barkley: {c.repo} {c.version}"
             md = plain = (
                 f"Barkley couldn't sniff {did} of {c.repo} ({job.state}: "
-                f"{str(job.message)[:200]}). Open Barkley from the sidebar to try again."
+                f"{str(job.message)[:200]}). Open Barkley to try again."
             )
         nid = f"barkley_{c.repo.lower()}" + ("_update" if c.after_install else "")
         err = self._notify(title, md, plain, nid)
@@ -941,14 +957,11 @@ class Watcher:
         """The panel's test button: a real notification through both channels."""
         md = (
             "This is a test. When Barkley sniffs an install or update, it tells you the app, "
-            "its version, the verdict and score, what to check and, for an update, what "
+            "its version, its two readings, what to check and, for an update, what "
             "changed. "
             + (f"[Open Barkley]({self.panel_path()})" if self.panel_path() else "Open Barkley")
         )
-        plain = (
-            "This is a test. When Barkley sniffs an install or update, it tells you here. "
-            "Open Barkley from the sidebar."
-        )
+        plain = "This is a test. When Barkley sniffs an install or update, it tells you here."
         err = self._notify("Barkley: test notification", md, plain, "barkley_test")
         self.last_test = err or f"Test notification sent at {_now_iso(self.now_fn())[11:16]} UTC."
         return err

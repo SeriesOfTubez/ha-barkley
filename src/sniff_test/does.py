@@ -495,7 +495,9 @@ def wide(m: Model, key: str = "d") -> str:
     if m.more_sites:
         notes.append(f"and {m.more_sites} more site{'s' * (m.more_sites != 1)}")
     if m.elsewhere_other or (m.elsewhere and not m.entered and "network" not in m.own):
-        notes.append("and requests to addresses it works out while it runs")
+        # (2026-11-25) after site boxes it continues them; alone it starts its own sentence
+        notes.append("and requests to addresses it works out while it runs" if m.sites
+                     else "Requests to addresses it works out while it runs.")  # fmt: skip
     if not m.sites and not m.elsewhere and not m.entered:
         notes.append("Nothing leaves: no request in its code.")
     wrapped = [part for text in notes for part in textwrap.wrap(text, 38)]

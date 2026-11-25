@@ -138,3 +138,14 @@ def test_the_picture_keeps_the_design_tokens():
     for m in re.finditer(r' rx="(\d+)"', text):
         assert int(m[1]) in (0, 4, 6, 8, 12), m[0]
     assert not re.search(r"font-size:\s*(?:[0-9]|1[01])(?:\.\d+)?px", text)
+
+
+def test_a_lone_note_in_the_yard_is_a_sentence():
+    """(his desktop, 2026-11-25) With no site to follow, "and requests to addresses it
+    works out while it runs" began with "and"."""
+    r = rep([fnd(1, "ha-read-secrets")])
+    r["requests"] = {"sites": {}, "elsewhere": [{"file": "a.py", "line": 3}]}
+    m = does.build(shown.view(r), "Acme")
+    assert not m.sites and m.elsewhere
+    svg = does.wide(m)
+    assert ">Requests to addresses it works out" in svg and ">and requests" not in svg
