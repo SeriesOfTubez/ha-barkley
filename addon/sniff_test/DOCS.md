@@ -123,8 +123,10 @@ opens a pre-filled public issue that you finish and submit.
   It's context read from public signs (GitHub keeps scan alerts private) and never
   changes a reading.
 - Every scan is stored in `/data/sniff-test.db` (SQLite), which is part of the app's
-  backups. Downloaded HA constraints are cached in `/data/cache` and left out of
-  backups.
+  backups. Just before a backup, Barkley moves its recent changes into that file, so
+  the backup has them. Once a day, if a quarter or more of the file is
+  space freed by deleted scans, Barkley compacts it. Downloaded HA constraints are
+  cached in `/data/cache` and left out of backups.
 
 Scanned code is treated as hostile: it is downloaded and read, never run, built or
 installed. The readings are computed by fixed rules; no AI decides anything.
@@ -175,8 +177,10 @@ update's new code waits for the next restart, so there the auto-sniff and its di
 before the code runs. Barkley reports; it never moves, refuses or blocks anything.
 
 Scans of apps that aren't installed are deleted after 7 days (sniff-before-install scans
-included, unless the app was installed by then, in which case the scan is reused). A
-scan of anything installed, at any version, is never deleted.
+included, unless the app was installed by then, in which case the scan is reused). By
+default, a scan of anything installed, at any version, is never deleted. Settings →
+Versions kept per app can keep only the last 20, 10, 5 or 3 versions of each installed
+app; the installed version and a waiting update are always kept.
 
 ## Settings and options
 
@@ -188,8 +192,8 @@ It has two sections, each with Reset to defaults:
   to be malware (2, 2.5 or 3) and Quiet projects.
 - **Checking and notifications:** Auto-sniff, Notify, Notify when, AI, AI mode, AI
   answers, AI time limit,
-  Parallel scans, Semgrep jobs, Published libraries, Cache of code already read, Memory
-  for scans, Low memory and the GitHub token.
+  Parallel scans, Semgrep jobs, Published libraries, Cache of code already read,
+  Versions kept per app, Memory for scans, Low memory and the GitHub token.
 
 The options below are the starting values; once you save the Settings page, it wins. A
 GitHub token saved there is kept in its own file next to the database and wins over the

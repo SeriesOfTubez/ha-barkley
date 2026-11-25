@@ -10,7 +10,8 @@ Everything in a report that came from the scanned repo is untrusted text. The st
 only ever binds it as SQL parameters; whoever renders it must escape it.
 
 Not the HA recorder: see the vault's Architecture note (attribute size limit, purge
-schedule). In the add-on the file lives in `/data`, which is included in backups.
+schedule). In the add-on the file lives in `/data`, which is included in backups;
+config.yaml's backup_pre runs `sniff-test checkpoint` first (checkpoint below).
 """
 
 from __future__ import annotations
@@ -19,9 +20,10 @@ import hashlib
 import json
 import sqlite3
 import sys
+import time
 import zlib
 from collections.abc import Callable, Iterator
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -140,6 +142,35 @@ CREATE TABLE IF NOT EXISTS edge_findings (
 
 class StoreError(Exception):
     pass
+
+
+# (0.15, his decision 2026-11-25) VACUUM once at least this share of the file is free
+# pages: deletes leave free pages that later saves reuse, but the file never shrinks
+# without it. VACUUM also puts the pages back in order (SQLite's defragment).
+COMPACT_AT = 0.25
+
+
+def checkpoint(path: str | Path, tries: int = 5, wait: float = 1.0, timeout: float = 10) -> str:
+    """(0.15, his decision 2026-11-25) Before a Home Assistant backup (config.yaml's
+    backup_pre): write the WAL's changes into the database file and empty the WAL, so
+    the backup copies one settled file rather than a database and a WAL taken at
+    slightly different moments. Never creates the file. Returns what happened; never
+    raises, because a failed backup_pre fails the app's backup, and a backup with the
+    WAL beside it is better than none."""
+    p = Path(path)
+    if not p.is_file():
+        return f"no scan store at {p}: nothing to do"
+    try:
+        with closing(sqlite3.connect(f"file:{p}?mode=rw", uri=True, timeout=timeout)) as db:
+            for i in range(tries):
+                busy, _log, _done = db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if not busy:
+                    return "the scan store is ready for the backup"
+                if i < tries - 1:
+                    time.sleep(wait)
+    except sqlite3.Error as e:
+        return f"couldn't settle the scan store ({type(e).__name__}); backing it up as it is"
+    return "the scan store was busy; backing it up as it is"
 
 
 # (0.15) What 0.14 stored for reviews, removed once on the first start (his decision
@@ -555,6 +586,27 @@ class Store:
                            **json.loads(r["data"])}
             for r in rows
         }  # fmt: skip
+
+    def size_bytes(self) -> int:
+        """The database file and its WAL, as they take up the disk."""
+        total = 0
+        for suffix in ("", "-wal"):
+            with suppress(OSError):
+                total += (self.path.parent / (self.path.name + suffix)).stat().st_size
+        return total
+
+    def compact(self, at: float = COMPACT_AT) -> bool:
+        """VACUUM when at least `at` of the file is free pages (see COMPACT_AT); then
+        empty the WAL, which VACUUM fills with the whole database. True if it ran.
+        Runs outside a transaction (VACUUM can't run inside one)."""
+        with closing(sqlite3.connect(self.path, timeout=30, isolation_level=None)) as db:
+            pages = db.execute("PRAGMA page_count").fetchone()[0]
+            free = db.execute("PRAGMA freelist_count").fetchone()[0]
+            if not pages or free < pages * at:
+                return False
+            db.execute("VACUUM")
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return True
 
     def delete(self, scan_id: int) -> bool:
         with self._connect() as db:

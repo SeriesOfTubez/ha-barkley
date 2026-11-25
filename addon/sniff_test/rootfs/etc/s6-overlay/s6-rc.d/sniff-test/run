@@ -15,6 +15,9 @@ export SNIFF_TEST_CACHE=/data/cache
 # and /tmp, and nothing in /root is worth keeping.
 export HOME=/data/cache/home
 mkdir -p "${SNIFF_TEST_CACHE}" "${HOME}"
+# SQLite's temporary files (VACUUM's copy of the store) go to /tmp, which the AppArmor
+# profile allows; without this SQLite may pick /var/tmp, which it doesn't.
+export SQLITE_TMPDIR=/tmp
 
 bashio::log.info "Starting Barkley (exposure: $(bashio::config 'exposure'))"
 exec sniff-test serve \

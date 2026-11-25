@@ -40,6 +40,7 @@ installed list can't be read.
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import threading
 import time
@@ -398,6 +399,8 @@ class Watcher:
         # set by server.serve
         self.view_fn: Callable[[dict[str, Any]], dict[str, Any]] = shown.view
         self.notify_when_fn: Callable[[], str] = lambda: "all"  # (0.15, #29) Notify when
+        # (0.15) Versions kept per installed app (settings.keep_versions); 0: all of them
+        self.keep_versions_fn: Callable[[], int] = lambda: 0
         self.worker = worker
         self.installed_fn = installed_fn
         self.subscribe_fn = subscribe_fn
@@ -967,7 +970,10 @@ class Watcher:
         return err
 
     def sweep(self) -> int:
-        """Delete scans of apps that aren't installed once they're `age_out_days` old."""
+        """Delete scans of apps that aren't installed once they're `age_out_days` old,
+        then older versions' scans past "Versions kept" (_trim_versions), then compact the
+        store if a quarter of it is free pages (Store.compact). Returns how many scans
+        were deleted."""
         try:
             items, _other = self.installed_fn()
         except SupervisorError:
@@ -998,6 +1004,49 @@ class Watcher:
             )
         self.swept += n
         self._drop_old_sources(items)
+        trimmed = self._trim_versions(items, busy)
+        if trimmed:
+            print(
+                f"auto-sniff: deleted {trimmed} scan(s) of older versions of installed apps "
+                f"(keeping the last {self.keep_versions_fn()} versions)",
+                file=sys.stderr,
+                flush=True,
+            )
+        self.swept += trimmed
+        try:
+            if self.store.compact():
+                print("auto-sniff: compacted the scan store", file=sys.stderr, flush=True)
+        except sqlite3.Error as e:
+            print(f"auto-sniff: couldn't compact the scan store ({type(e).__name__})",
+                  file=sys.stderr, flush=True)  # fmt: skip
+        return n + trimmed
+
+    def _trim_versions(self, items: list[Installed], busy: set[str]) -> int:
+        """(0.15, his decision 2026-11-25) With "Versions kept" set, an installed app keeps
+        the scans of its newest N versions (newest scan first), its installed version and
+        a waiting update; the older versions' scans are deleted. Every scan of a kept
+        version stays (re-sniffs, advisory re-checks). An app with a job queued or running
+        is left alone, and so is a scan with no version."""
+        keep_n = self.keep_versions_fn()
+        if keep_n <= 0:
+            return 0
+        pinned = {it.repo.lower(): {it.installed, it.available} for it in items}
+        refs: dict[str, list[str]] = {}
+        rows = []
+        for r in self.store.history(limit=100000):  # newest first
+            repo = (r.repo or "").lower()
+            if repo not in pinned or repo in busy or not r.ref:
+                continue
+            seen = refs.setdefault(repo, [])
+            if r.ref not in seen:
+                seen.append(r.ref)
+            rows.append((repo, r))
+        n = 0
+        for repo, r in rows:
+            if r.ref in pinned[repo] or r.ref in refs[repo][:keep_n]:
+                continue
+            if self.store.delete(r.id):
+                n += 1
         return n
 
     def _drop_old_sources(self, items: list[Installed]) -> None:

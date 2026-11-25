@@ -70,6 +70,11 @@ class Settings:
     ai_size: int = 12000
     ai_limit: bool = True
     ai_minutes: int = 6
+    # (0.15, his decision 2026-11-25) how many versions of an installed app keep their
+    # scans; 0 keeps them all. The installed version and a waiting update are always kept.
+    # Keeping them all is the default because a short history would limit what can be
+    # looked back on later (comparing two scans, changes over time).
+    keep_versions: int = 0
 
     @property
     def where(self) -> str:
@@ -103,6 +108,7 @@ PARTS = {
         "memory_floor_mb",
         "libraries",
         "cache_mb",
+        "keep_versions",
         "token_days",
         "ai_size",
         "ai_limit",
@@ -127,6 +133,7 @@ CHOICES: dict[str, tuple[Any, ...]] = {
     "memory_gb": (0, 2, 3, 4, 6, 8, 12, 16),
     "memory_floor_mb": (1024, 512, 0),
     "cache_mb": (0, 512, 1024, 2048, 4096),
+    "keep_versions": (0, 20, 10, 5, 3),
     "token_days": (30, 60, 90, 180),
     "quiet_months": (0, 6, 12, 24, 36),
     "notify_when": ("all", "medium", "high", "threat"),

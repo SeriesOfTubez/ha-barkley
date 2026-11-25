@@ -299,6 +299,12 @@ change below is a general check applied to every app, not an exception for one:
   high, or only signs of malicious behavior. A sniff that didn't finish always notifies.
 - On a pre-release track, only a newer version counts as an update.
 - History shows each scan's Threat and Exposure.
+- Settings → Versions kept per app: all of them (default), or the last 20, 10, 5 or 3
+  versions of each installed app. The installed version and a waiting update are always
+  kept. The row shows how much space the scan store uses.
+- Before a Home Assistant backup, Barkley moves the scan store's recent changes into
+  its file, so the backup has them. Once a day, if a quarter or more of
+  the file is space freed by deleted scans, Barkley compacts it.
 
 **Scanner tools are more tightly confined**
 

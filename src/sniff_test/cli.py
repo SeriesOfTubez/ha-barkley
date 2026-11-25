@@ -27,7 +27,7 @@ from sniff_test.report import human
 from sniff_test.report.json_report import to_dict
 from sniff_test.scanner import scan
 from sniff_test.scoring import Exposure
-from sniff_test.store import Store, StoreError
+from sniff_test.store import Store, StoreError, checkpoint
 from sniff_test.workspace import UnsafeArchiveError
 
 EXIT_OK = 0
@@ -220,6 +220,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     dr = sub.add_parser("doctor", help="check that every scanner tool runs on this machine")
     dr.add_argument("--json", action="store_true")
+
+    ck = sub.add_parser(
+        "checkpoint",
+        help="before a backup: write the scan store's recent changes into its main file "
+        "(the app's backup_pre); always exits 0 once given a store",
+    )
+    _add_store(ck, "the scan store to settle")
 
     r = sub.add_parser("releases", help="list a repo's releases and who published them")
     r.add_argument("source", help="GitHub URL or owner/repo")
@@ -661,6 +668,12 @@ def main(argv: list[str] | None = None) -> int:
         return _serve(args, out, err)
     if args.command == "doctor":
         return _doctor(args, out)
+    if args.command == "checkpoint":
+        if not args.store:
+            err.print(f"[red]🐕 checkpoint needs --store (or ${STORE_ENV})[/]")
+            return EXIT_ERROR
+        out.print(f"🐕 {escape(checkpoint(Path(args.store).expanduser()))}")
+        return EXIT_OK
     store = _open_store(args.store, err)
     if not args.json:
         human.sniffing(out, args.source)

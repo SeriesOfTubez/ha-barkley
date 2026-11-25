@@ -1234,6 +1234,7 @@ def render_settings(
     mem: memory.Memory | None = None,
     defaults: settings_mod.Settings = settings_mod.DEFAULTS,
     ha_token_html: str = "",
+    store_mb: float | None = None,
 ) -> bytes:
     """Barkley's Settings page (part 3, the agreed wording 2026-11-18): the readings,
     Checking and notifications (0.15: Scoring and Reviews went with the score).
@@ -1390,6 +1391,19 @@ def render_settings(
                             (f"{n // 1024} GB" if n >= 1024 else f"{n} MB")
                             + (" (default)" if n == defaults.cache_mb else ""))
                            for n in settings_mod.CHOICES["cache_mb"]]))  # fmt: skip
+    size = (
+        ""
+        if store_mb is None
+        else f" The scan store uses {store_mb:,.{1 if store_mb < 10 else 0}f} MB now."
+    )
+    check_rows += row("Versions kept per app", "Each update of an installed app adds a scan "
+                      "of the new version. This is how many versions keep their scans; older "
+                      "ones are deleted once a day. The installed version and a waiting "
+                      f"update are always kept.{size}",
+                      sel("keep_versions", s.keep_versions,
+                          [(n, ("All of them" if n == 0 else f"The last {n}")
+                            + (" (default)" if n == defaults.keep_versions else ""))
+                           for n in settings_mod.CHOICES["keep_versions"]]))  # fmt: skip
     now_free = ""
     if mem is not None and mem.available is not None and mem.total:
         total = f"{mem.total / memory.GIB:.1f} GB"
@@ -1643,12 +1657,17 @@ def render_auto_activity(base: str, w: watch.Watcher) -> str:
         else '<p class="muted small">Nothing has been installed or updated since Barkley '
         "started watching.</p>"
     )  # fmt: skip
+    kept = w.keep_versions_fn()
+    kept_text = (
+        "scans of installed apps are kept"
+        if kept <= 0
+        else f"installed apps keep the scans of their last {kept} versions"
+    )
     return (
         (f'<p class="small">{e(w.last_test, 300)}</p>' if w.last_test else "")
         + f'<p class="muted small">{"" if ok else ui.icon("alert", 14, "warn") + " "}'
         f"{e(diag, 600)}. Scans of apps that "
-        f"aren't installed are deleted after {w.age_out_days:g} days; scans of installed apps "
-        "are kept.</p>"
+        f"aren't installed are deleted after {w.age_out_days:g} days; {kept_text}.</p>"
         f"<details><summary>Recent auto-sniffs ({len(w.log())})</summary>{recent}</details>"
     )
 
@@ -3326,6 +3345,7 @@ class Panel:
                             bad_detail=(self._session() or login.Session("", "", 0)).token_error,
                             mem=panel.memory_fn(),
                             defaults=panel.start_settings,
+                            store_mb=panel.store.size_bytes() / (1024 * 1024),
                             ha_token_html=ha_token_block(base, panel.store,
                                                          panel.settings.token_days, panel.token)
                             if panel.standalone else ""))  # fmt: skip
@@ -3662,6 +3682,7 @@ def serve(
         watcher.on_list = panel.set_installed
         watcher.view_fn = panel.view
         watcher.notify_when_fn = lambda: panel.settings.notify_when
+        watcher.keep_versions_fn = lambda: panel.settings.keep_versions
         worker.on_done.append(watcher.on_job_done)
     httpd = PanelServer((host, port), panel.handler())
     httpd.panel = panel

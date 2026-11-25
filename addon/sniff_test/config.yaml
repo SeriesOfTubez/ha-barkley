@@ -44,6 +44,10 @@ homeassistant_api: true
 # HA constraints and package caches are re-downloadable: keep them out of backups.
 backup_exclude:
   - "cache/*"
+# (0.15) Backups are taken while Barkley runs. First write the scan store's recent changes
+# into its main file, so the backup holds one settled database (store.checkpoint; it
+# always exits 0, so it never fails the backup).
+backup_pre: sniff-test checkpoint --store /data/sniff-test.db
 options:
   exposure: local
   jobs: 1

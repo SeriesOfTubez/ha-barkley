@@ -167,3 +167,10 @@ page (8 GB: up to 4 scans, the most Parallel scans allows).
 Change the version in `image:` and run `docker compose up -d`. The scans in `data/` are
 kept. The image's signature can be checked as for the app; see
 [Installing and updating](Installing-and-updating).
+
+## Backups
+
+Everything Barkley keeps is in `data/`. Back it up while Barkley is stopped, or first
+run `docker compose exec barkley sniff-test checkpoint`, which moves the scan store's
+recent changes into `data/sniff-test.db` so the copy has them. The
+app does this by itself before each Home Assistant backup.
