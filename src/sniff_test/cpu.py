@@ -16,9 +16,11 @@ LOADER_TEXT = "CPU ISA level is lower than required"
 V2_FLAGS = ("cx16", "lahf_lm", "popcnt", "pni", "sse4_1", "sse4_2", "ssse3")
 FIX = (
     "This machine's CPU, as Barkley sees it, lacks the x86-64-v2 instructions the "
-    "scanner tools need. In a virtual machine, set its CPU type to one that passes them "
-    "through (on Proxmox: x86-64-v2-AES or host), shut the VM down completely and start "
-    "it again; a restart from inside isn't enough."
+    "scanner tools need. In a virtual machine, set its CPU type to one that includes "
+    "them, shut the VM down completely and start it again; a restart from inside isn't "
+    "enough. On Proxmox with one node, use host. With several nodes, use the highest "
+    "x86-64 level every node supports (x86-64-v2-AES or above), so the VM can still "
+    "move between them."
 )
 
 

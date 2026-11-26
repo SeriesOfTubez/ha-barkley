@@ -338,7 +338,14 @@ change below is a general check applied to every app, not an exception for one:
   star.
 - A full temporary folder says "out of temporary space: N MB free".
 - A CPU without the x86-64-v2 instructions (a VM's default CPU type) says so, with the
-  fix, on the scan and in Diagnostics.
+  fix, on the scan and in Diagnostics: on Proxmox, `host` on a single node, or with
+  several nodes the highest x86-64 level all of them support.
+- A release zip whose only change is the version stamp no longer reads as different
+  from the tagged source when the stamp also dropped a comment on that line. Code is
+  compared without its comments.
+- Code that saves an original, patches it for a moment and puts it back is one
+  monkeypatch, not two. The patch says it's put back, and that until then it applies
+  to all of Home Assistant.
 - Code inside a JavaScript class static block (`static { … }`) is now read. Semgrep
   couldn't parse it, so Barkley rewrites the block in its own copy, with the same
   meaning, before scanning.

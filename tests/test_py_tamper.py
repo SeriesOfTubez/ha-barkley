@@ -3,6 +3,7 @@
 import ast
 import textwrap
 
+import pytest
 import yaml
 from conftest import requires_semgrep
 
@@ -171,3 +172,84 @@ def test_semgrep_and_ast_together_flag_each_form_once(tmp_path):
     res = semgrep.run(t, work)
     lines = sorted(f.line for f in res.findings if f.rule_id == "ha-monkeypatch")
     assert lines == PATCH_LINES
+
+
+# (0.15, #32) A real integration forces IPv4 for one request and puts the original back.
+PUT_BACK = """\
+import socket
+import urllib3.util.connection as conn
+
+
+def ipv4_only():
+    original = getattr(conn, "allowed_gai_family", None)
+    try:
+        conn.allowed_gai_family = lambda: socket.AF_INET
+        yield
+    finally:
+        if original is not None:
+            conn.allowed_gai_family = original
+"""
+
+
+def test_putting_the_original_back_is_not_a_second_patch():
+    tree = ast.parse(PUT_BACK)
+    assert sorted(line for line, _ in py_tamper.check_tree(tree)) == [8, 12]
+    assert py_tamper.temporary(tree) == ({12}, {8})
+
+
+def test_the_patch_that_is_put_back_says_so(tmp_path):
+    (tmp_path / "a.py").write_text(PUT_BACK)
+    found = py_tamper.find(tmp_path, set(), {})
+    assert [f.line for f in found] == [8]
+    assert found[0].message.endswith(py_tamper.PUT_BACK)
+    assert "all of Home Assistant" in found[0].message
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        # the saved name is bound twice: it may hold anything by then
+        PUT_BACK.replace("        yield\n", "        yield\n        original = evil\n"),
+        # another attribute is written with the saved original
+        PUT_BACK.replace("conn.allowed_gai_family = original", "conn.create_connection = original"),
+        # the restore comes before the save
+        "import urllib3.util.connection as conn\n\ndef f(orig, w):\n"
+        "    conn.x = orig\n    conn.x = w\n",
+        # the object's first name is rebound in the function
+        PUT_BACK.replace("    try:\n", "    conn = other\n    try:\n"),
+    ],
+)
+def test_anything_short_of_a_clean_put_back_keeps_every_line(src):
+    tree = ast.parse(src)
+    restores, _undone = py_tamper.temporary(tree)
+    assert restores == set()
+
+
+def test_setattr_put_back_counts_too():
+    src = (
+        "import ssl\n\ndef f(w):\n"
+        "    saved = ssl.SSLContext.wrap_socket\n"
+        "    setattr(ssl.SSLContext, 'wrap_socket', w)\n"
+        "    setattr(ssl.SSLContext, 'wrap_socket', saved)\n"
+    )
+    assert py_tamper.temporary(ast.parse(src)) == ({6}, {5})
+
+
+@requires_semgrep
+def test_semgrep_lines_follow_the_same_put_back_rule(tmp_path):
+    root = tmp_path / "custom_components" / "x"
+    root.mkdir(parents=True)
+    (root / "net.py").write_text(
+        "import socket\n\ndef f(w):\n"
+        "    orig = socket.socket\n"
+        "    socket.socket = w\n"
+        "    try:\n        pass\n    finally:\n"
+        "        socket.socket = orig\n"
+    )
+    t = Target(source=str(root), kind=TargetKind.INTEGRATION, root=root, domain="x")
+    work = tmp_path / "work"
+    work.mkdir()
+    res = semgrep.run(t, work)
+    hits = [f for f in res.findings if f.rule_id == "ha-monkeypatch"]
+    assert [f.line for f in hits] == [5]
+    assert hits[0].message.endswith(py_tamper.PUT_BACK)

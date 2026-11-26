@@ -375,6 +375,25 @@ def _only_rebinds_names(f: Finding, root: Path, trees: dict[str, Any]) -> bool:
     return all(names_only(t) for t in targets)
 
 
+def _put_back(findings: list[Finding], trees: dict[str, Any]) -> list[Finding]:
+    """(0.15, #32) py_tamper.temporary for the `ha-monkeypatch` lines Semgrep matched:
+    a line that puts a saved original back is dropped, and a patch the same function
+    undoes says so. Uses the trees `_only_rebinds_names` parsed (never run)."""
+    out: list[Finding] = []
+    for f in findings:
+        tree = trees.get(f.file) if f.rule_id == py_tamper.RULE_ID and f.file else None
+        if tree is None:
+            out.append(f)
+            continue
+        restores, undone = py_tamper.temporary(tree)
+        if f.line in restores:
+            continue
+        if f.line in undone and py_tamper.PUT_BACK not in f.message:
+            f = dataclasses.replace(f, message=f"{f.message} {py_tamper.PUT_BACK}")
+        out.append(f)
+    return out
+
+
 def _precise(findings: list[Finding], root: Path, target: Target) -> list[Finding]:
     """(0.14.0) analyzers/py_precision: whose config entries, which .storage file, which
     packages. Fixed-list package installs go to Target.runtime_requirements."""
@@ -996,6 +1015,7 @@ def _run(
     findings += fold.findings
     trees: dict[str, Any] = {}
     findings = [f for f in findings if not _only_rebinds_names(f, root, trees)]
+    findings = _put_back(findings, trees)
     findings = _precise(findings, root, target)
     # The assignment forms the ha-monkeypatch rule can't see (chained, `+=`, aliased
     # from-imports, ...), from the same parsed trees. Skips lines Semgrep kept.

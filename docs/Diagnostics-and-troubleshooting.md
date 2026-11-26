@@ -42,7 +42,14 @@ On a small box keep Parallel scans at 1.
 The scanner tools need a CPU with the x86-64-v2 instructions. A virtual machine whose
 CPU type hides them (Proxmox's default, `kvm64`, does) can't run them, so every scan is
 Unfinished. Since 0.15 the scan says so with the fix, and Diagnostics checks the CPU
-before any scan runs. To fix it, set the VM's CPU type to one that passes the instructions through (on Proxmox, x86-64-v2-AES or host), then shut the VM down completely and start it again. A restart from inside the VM isn't enough.
+before any scan runs.
+
+To fix it, set the VM's CPU type to one that includes the instructions, then shut the VM
+down completely and start it again. A restart from inside the VM isn't enough. On
+Proxmox with a single node, use `host`: the VM gets everything the real CPU has. With
+several nodes, use the highest x86-64 level that every node supports (`x86-64-v2-AES`
+or above), so the VM can still move between them. `x86-64-v3` adds more instructions
+on top of v2, so it works too, as long as every node's CPU has them.
 
 ## "Out of temporary space"
 

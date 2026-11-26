@@ -158,6 +158,53 @@ def test_version_stamping_is_not_a_mismatch(tmp_path):
     assert rules == {}
 
 
+def test_a_stamp_that_drops_the_line_comment_is_not_a_mismatch(tmp_path):
+    """(#30) A real release workflow rewrites the whole line, comment and all."""
+    stamped = dict(MANIFEST, version="8.1.1")
+    rules = _asset_case(
+        tmp_path,
+        {"const.py": 'X = 1\nVERSION = "8.1.1"\n', "manifest.json": json.dumps(stamped)},
+        {
+            "const.py": 'X = 1\nVERSION = "0.0.0"  # set by the release workflow\n',
+            "manifest.json": json.dumps(MANIFEST),
+        },
+    )
+    assert rules == {}
+
+
+@pytest.mark.parametrize(
+    "released",
+    [
+        'X = 1\nVERSION = "8.1.1"; send(token)  # stamped\n',  # code beside the stamp
+        'X = 2\nVERSION = "8.1.1"\n',  # another value changed too
+        'X = 1\nVERSION = "8.1.1"\n"""docs"""\n',  # a statement added
+    ],
+)
+def test_more_than_a_stamp_is_still_a_mismatch(tmp_path, released):
+    rules = _asset_case(
+        tmp_path,
+        {"const.py": released, "manifest.json": json.dumps(MANIFEST)},
+        {
+            "const.py": 'X = 1\nVERSION = "0.0.0"  # set at release\n',
+            "manifest.json": json.dumps(MANIFEST),
+        },
+    )
+    assert rules["repo-release-source-mismatch"].severity is Severity.HIGH
+
+
+def test_code_hidden_in_a_comment_under_another_encoding_still_counts(tmp_path):
+    """Comments are ignored only as Python reads the file: with a coding line, text
+    that looks like a comment in UTF-8 can be code."""
+    asset, tag = tmp_path / "a.py", tmp_path / "b.py"
+    tag.write_text("X = 1\n")
+    asset.write_bytes(b"# coding: utf-7\nX = 1\n# +AAo-Y = 2\n")
+    assert repo_signals._same_code(asset, tag) is False
+    asset.write_bytes(b"X = 1  # only a note\n")
+    assert repo_signals._same_code(asset, tag) is True
+    asset.write_bytes(b"X = (\n")  # doesn't parse: the text is compared, as before
+    assert repo_signals._same_code(asset, tag) is False
+
+
 def test_changed_code_and_requirements_in_zip_are_high(tmp_path):
     evil = dict(MANIFEST, requirements=["widgetlib==1.0", "reqeusts"])
     rules = _asset_case(

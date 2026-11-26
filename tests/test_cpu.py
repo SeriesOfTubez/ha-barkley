@@ -29,7 +29,8 @@ def test_the_missing_v2_flags_are_named():
 def test_a_failed_scan_says_why_and_the_fix():
     out = cpu.explain(LOADER)
     assert out.startswith(LOADER)
-    assert "x86-64-v2-AES or host" in out and "shut the VM down completely" in out
+    assert "use host" in out and "x86-64-v2-AES or above" in out
+    assert "shut the VM down completely" in out
     assert cpu.explain(out) == out  # said once
     assert cpu.explain("semgrep exit 2: something else") == "semgrep exit 2: something else"
 

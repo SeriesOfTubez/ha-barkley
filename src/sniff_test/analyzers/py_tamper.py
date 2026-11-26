@@ -14,6 +14,9 @@ object's first name through the file's imports, and matches the rule's own objec
 A name the enclosing function rebinds (a parameter or a local assignment) is that local
 object, not the import, the same scoping Python uses (a false positive on a real
 integration was Semgrep ignoring that). Lines Semgrep already flagged are skipped.
+
+(0.15, #32) A line that puts back the original a function saved isn't reported, and the
+patch it undoes says so (`temporary`).
 """
 
 from __future__ import annotations
@@ -129,6 +132,110 @@ def _patched_objects(tree: ast.AST) -> list[tuple[ast.AST, ast.expr]]:
     return out
 
 
+# (0.15, #32) Added to a patch the same function undoes.
+PUT_BACK = (
+    "The same function puts the original back afterwards. Until it does, the change "
+    "applies to all of Home Assistant, not just this app."
+)
+
+
+def _scope_nodes(func: ast.AST) -> list[ast.AST]:
+    """Every node of `func`'s own scope (nested functions and classes left out)."""
+    out: list[ast.AST] = []
+    todo = list(func.body) if isinstance(func.body, list) else [func.body]
+    while todo:
+        n = todo.pop()
+        out.append(n)
+        if isinstance(n, (*_FUNCS, ast.ClassDef)):
+            continue
+        todo.extend(ast.iter_child_nodes(n))
+    return out
+
+
+def _key(obj: ast.expr, attr: ast.expr | str) -> tuple[str, ...] | None:
+    """(object parts..., attribute) for `obj.attr`, or `obj` and a literal name."""
+    parts = _dotted(obj)
+    if isinstance(attr, ast.Constant):
+        attr = attr.value
+    if not parts or not isinstance(attr, str):
+        return None
+    return (*parts, attr)
+
+
+def temporary(tree: ast.AST) -> tuple[set[int], set[int]]:
+    """(0.15, #32) (restore lines, patch lines a restore undoes) in one module.
+
+    A real integration forces IPv4 for one request: `original = getattr(conn,
+    "allowed_gai_family", None)`, then `conn.allowed_gai_family = <its own>` in a `try`,
+    and `conn.allowed_gai_family = original` in the `finally`. Putting the saved original
+    back isn't a second patch. All three must be in one function, the saved name bound
+    exactly once there (not a parameter, `global` or `nonlocal`), the restore after the
+    save, and the object's first name not rebound in that function; anything else keeps
+    every line.
+    """
+    restores: set[int] = set()
+    undone: set[int] = set()
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        nodes = _scope_nodes(func)
+        own = _locals(func)
+        args = func.args
+        params = {
+            a.arg
+            for a in (*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg)
+            if a is not None
+        }
+        stores: dict[str, int] = {}
+        for n in nodes:
+            if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+                stores[n.id] = stores.get(n.id, 0) + 1
+        saved: dict[str, tuple[tuple[str, ...], int]] = {}
+        writes: list[tuple[tuple[str, ...], int, ast.expr]] = []  # (key, line, value)
+        for n in nodes:
+            if isinstance(n, ast.Assign) and len(n.targets) == 1:
+                t, v = n.targets[0], n.value
+                if isinstance(t, ast.Name):
+                    key = None
+                    if isinstance(v, ast.Attribute):
+                        key = _key(v.value, v.attr)
+                    elif (
+                        isinstance(v, ast.Call)
+                        and isinstance(v.func, ast.Name)
+                        and v.func.id == "getattr"
+                        and len(v.args) in (2, 3)
+                        and not v.keywords
+                    ):
+                        key = _key(v.args[0], v.args[1])
+                    if key:
+                        saved[t.id] = (key, n.lineno)
+                elif isinstance(t, ast.Attribute) and (key := _key(t.value, t.attr)):
+                    writes.append((key, n.lineno, v))
+            elif (
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name)
+                and n.func.id == "setattr"
+                and len(n.args) == 3
+                and (key := _key(n.args[0], n.args[1]))
+            ):
+                writes.append((key, n.lineno, n.args[2]))
+        for key, line, value in writes:
+            if not isinstance(value, ast.Name) or value.id not in saved:
+                continue
+            skey, sline = saved[value.id]
+            if (
+                skey == key
+                and sline < line
+                and stores.get(value.id) == 1
+                and value.id in own
+                and value.id not in params
+                and key[0] not in own
+            ):
+                restores.add(line)
+                undone.update(w for k, w, _ in writes if k == key and w != line)
+    return restores, undone - restores
+
+
 def _evidence(lines: list[str], line: int) -> str:
     text = lines[line - 1].strip() if 0 < line <= len(lines) else ""
     return text[:_EVIDENCE_MAX] + ("…" if len(text) > _EVIDENCE_MAX else "")
@@ -191,17 +298,19 @@ def find(root: Path, skip: set[tuple[str, int]], trees: dict[str, Any]) -> list[
         if tree is None:
             continue
         lines = data.decode("utf-8", errors="replace").splitlines()
+        restores, undone = temporary(tree)
         for line, resolved in check_tree(tree):
-            if (rel, line) in seen:
+            if (rel, line) in seen or line in restores:
                 continue
             seen.add((rel, line))
+            note = f" {PUT_BACK}" if line in undone else ""
             out.append(
                 Finding(
                     rule_id=RULE_ID,
                     title=TITLE,
                     severity=Severity.HIGH,
                     category=Category.TAMPER,
-                    message=f"{MESSAGE} Patched object: {resolved}.",
+                    message=f"{MESSAGE} Patched object: {resolved}.{note}",
                     file=rel,
                     line=line,
                     evidence=_evidence(lines, line),
