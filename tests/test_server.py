@@ -598,10 +598,14 @@ def test_send_notifications_to_offers_the_bell_the_service_either_or_disabled(au
     assert (w.notify_target, w.notify_bell) == ("", False) and store.setting("notify_bell") == "off"
     _, _, page = get(base + "/settings")
     assert '<option value=":disabled" selected>' in page
-    assert post(base + "/notify-test", {"token": tok})[0] == 303
+    code, headers = post(base + "/notify-test", {"token": tok})
+    assert code == 303 and headers["Location"].endswith("/settings#notify-test")
     assert sent == []
     _, _, page = get(base + "/settings")
-    assert "Notifications are disabled, so nothing was sent." in page
+    said = "Notifications are disabled, so nothing was sent."
+    assert page.count(said) == 1  # (his report) right under the button, not further down
+    button = page.index('id="notify-test"')
+    assert button < page.index(said) < page.index("Notify when")
     assert post(base + "/notify-target", {"token": tok, "target": ""})[0] == 303
     assert (w.notify_target, w.notify_bell) == ("", True)
 

@@ -1365,9 +1365,13 @@ def render_settings(
         check_rows += row("Auto-sniff", "Check new installs and offered updates on its own.",
                           sel("auto_scan", "on" if watcher.enabled else "off",
                               [("on", "On (default)"), ("off", "Off")]))  # fmt: skip
-        test = (f'<form method=post action="{base}/notify-test" class="setform">'
-                f'<input type=hidden name=token value="{token}">'
-                "<button>Send a test notification</button></form>")  # fmt: skip
+        # (0.15, his report) the test's result sits under its button, and the button
+        # comes back to this spot (#notify-test), not to the top of the page
+        test = (f'<form method=post action="{base}/notify-test" class="setform" '
+                f'id="notify-test"><input type=hidden name=token value="{token}">'
+                "<button>Send a test notification</button></form>"
+                + (f'<p class="small">{e(watcher.last_test, 300)}</p>'
+                   if watcher.last_test else ""))  # fmt: skip
         check_rows += row("Send notifications to", "Where auto-sniff results go. With "
                           "Disabled nothing is sent; every result is still listed under "
                           "Auto-sniff activity and on the app's page. Notifications carry "
@@ -1721,8 +1725,7 @@ def render_auto_activity(base: str, w: watch.Watcher) -> str:
         else f"installed apps keep the scans of their last {kept} versions"
     )
     return (
-        (f'<p class="small">{e(w.last_test, 300)}</p>' if w.last_test else "")
-        + f'<p class="muted small">{"" if ok else ui.icon("alert", 14, "warn") + " "}'
+        f'<p class="muted small">{"" if ok else ui.icon("alert", 14, "warn") + " "}'
         f"{e(diag, 600)}. Scans of apps that "
         f"aren't installed are deleted after {w.age_out_days:g} days; {kept_text}.</p>"
         f"<details><summary>Recent auto-sniffs ({len(w.log())})</summary>{recent}</details>"
@@ -3484,6 +3487,7 @@ class Panel:
                                               "offers")  # fmt: skip
                     else:
                         w.notify_test()
+                        return self._redirect(f"{self._base()}/settings#notify-test")
                     return self._redirect(f"{self._base()}/settings")
                 if path == "/settings":
                     panel.save_settings({k: v[0] for k, v in form.items() if v})
