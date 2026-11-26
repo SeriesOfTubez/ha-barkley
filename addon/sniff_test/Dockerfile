@@ -30,6 +30,12 @@ ARG TARGETARCH
 ARG BUILD_ARCH
 
 ARG SEMGREP_VERSION=1.185.0
+# (0.15) Semgrep pins mcp==1.29.0 exactly (1.185.0 and 1.187.0 both), which has a high
+# CVE fixed in 1.30.0 (CVE-2026-115563, in the MCP SDK's OAuth client). Barkley only
+# runs `semgrep scan`, never its MCP server, but the image scan fails on it, so uv
+# overrides the pin. Keep it the same here, in ci.yaml and in security.yaml; drop it
+# once Semgrep's own pin is 1.30.0 or later.
+ARG SEMGREP_OVERRIDES="mcp==1.30.0"
 ARG OSV_SCANNER_VERSION=2.7.1
 ARG UV_VERSION=0.13.7
 # Barkley's own interpreter: CPython from python-build-standalone, installed by uv, which
@@ -89,8 +95,10 @@ ENV UV_TOOL_DIR=/opt/tools \
     UV_NO_CACHE=1 \
     SEMGREP_SEND_METRICS=off \
     SEMGREP_ENABLE_VERSION_CHECK=0
-RUN uv tool install --python /usr/bin/python3 --no-build "semgrep==${SEMGREP_VERSION}" \
-    && rm -f /usr/local/bin/uvx
+RUN printf '%s\n' "${SEMGREP_OVERRIDES}" > /tmp/semgrep-overrides.txt \
+    && uv tool install --python /usr/bin/python3 --no-build \
+         --overrides /tmp/semgrep-overrides.txt "semgrep==${SEMGREP_VERSION}" \
+    && rm -f /usr/local/bin/uvx /tmp/semgrep-overrides.txt
 # Barkley's Python (see BARKLEY_PYTHON), with the parts nothing here runs left out.
 ENV UV_PYTHON_INSTALL_DIR=/opt/python
 RUN set -eu; \

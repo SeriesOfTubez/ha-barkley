@@ -317,6 +317,9 @@ change below is a general check applied to every app, not an exception for one:
   Landlock is available, Barkley's Landlock sandbox confines the tools as before. With
   neither, Barkley won't start unless you set `BARKLEY_UNSANDBOXED=1`. Diagnostics has
   a Tool sandbox line.
+- Semgrep comes with the `mcp` library pinned at 1.29.0, which has a high CVE fixed
+  in 1.30.0. The image now installs 1.30.0 in its place. Barkley never runs the part
+  of Semgrep that uses it.
 
 **Removed**
 
