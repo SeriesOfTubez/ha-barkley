@@ -5,8 +5,7 @@ package found to be malicious, can be published after the scan was made.
 
 So each scan keeps the exact list of packages it resolved, and **once a day** Barkley
 asks the advisory database (OSV, through osv-scanner) about those packages again, for
-every installed version and every update waiting. This takes seconds: the app's code is
-not fetched or scanned again, and GitHub is not asked anything.
+every installed version and every update waiting. This takes seconds, because the app's code isn't fetched or scanned again and GitHub isn't asked anything.
 
 - **Nothing changed:** you hear nothing. The app's page notes when advisories were last
   asked.

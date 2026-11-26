@@ -25,7 +25,7 @@ of the options (see [Standalone](Standalone)).
 | AI time limit | Stop waiting after 6 minutes | How long Barkley waits for an answer (1 to 60 minutes), or "Wait as long as it takes" for a slow model on your own machine. While it waits, the page has a Stop waiting button. Home Assistant may still finish an answer Barkley stopped waiting for, but Barkley won't use it. |
 | AI mode | Explain and read code | Explain only: the AI explains what Barkley found. Explain and read code: it can also read the code around one item when you ask, and sum up what the developer's README and code descriptions say. See [AI explanations](AI-explanations). |
 | Parallel scans | 2 (app), 1 (standalone) | How many apps are scanned at the same time (1 to 4). Another scan starts only while there's memory for it (Memory for scans); otherwise it waits. Keep it times Semgrep jobs at or below the CPU cores. |
-| Semgrep jobs | 1 | Inside one scan, how many files Semgrep reads at once (1 to 4). Helps apps that ship many files, such as cards split into chunks, not one big file. Barkley's passes over the code still run one after another. Each extra job needs its own memory. |
+| Semgrep jobs | 1 | Inside one scan, how many files Semgrep reads at once (1 to 4). Helps apps that ship many files, such as cards split into chunks. Barkley's passes over the code still run one after another. Each extra job needs its own memory. |
 | Published libraries | On | Integrations only. A JavaScript file of 64 KB or more that is byte for byte a file of a well-known npm package (that version at least 30 days old, 10,000 downloads in the last week, no malware advisory) isn't read as code; it's listed as a library and checked for advisories. Barkley sends the SHA-256 of up to 40 such files per scan to jsDelivr, and the package name to npm. No answer, an error or a rate limit means the file is read. Off: every file is read and nothing is asked. Applies to the next sniff. |
 | Cache of code already read | 1 GB | What Barkley found in each file, kept by the file's content (and its path in the app), so a file it has read before isn't read again: most of an integration's files when a new release comes out, or everything on Sniff again. Kept under `/data/cache/scan-cache`; the least recently used answers go first when it's full. New rules or scanner tools start a fresh cache. Only Barkley writes there, and an answer is kept only from a run that finished (a timeout is always read again). An app's page says how many files came from it. Off: every file is read every time. |
 | Versions kept per app | All of them | Each update of an installed app adds a scan of the new version. Or the last 20, 10, 5 or 3 versions: older versions' scans are deleted once a day. The last versions are the ones sniffed most recently. The installed version and a waiting update are always kept, with every scan of a kept version. Apps that aren't installed are deleted after 7 days either way. The row shows how much space the scan store uses. |
@@ -50,8 +50,7 @@ Settings page opens GitHub's new fine-grained token page with a name, a descript
 a one-year expiry (365 days, the longest GitHub's form takes) filled in. Leave **Repository access** on **Public
 repositories**, add no permissions, click **Generate token**, and paste the token on
 Barkley's Settings page. (By hand: GitHub's Settings → Developer settings → Personal
-access tokens → Fine-grained tokens → Generate new token.) GitHub can't hand the token
-to Barkley itself, and Barkley can't renew it: make a new one before it expires. Barkley keeps it in its own file next to its database (never in the
+access tokens → Fine-grained tokens → Generate new token.) GitHub can't hand the token to Barkley itself, and Barkley can't renew it, so make a new one before it expires. Barkley keeps it in its own file next to its database (never in the
 database) and never shows it again; **Remove** deletes it. A token in the app's
 `github_token` option still works, and one saved on the Settings page wins over it.
 
@@ -68,5 +67,4 @@ database) and never shows it again; **Remove** deletes it. A token in the app's
 | `auto_scan` | `true` | Auto-sniff |
 | `notify_target` | empty | Notify |
 
-There is no light or dark setting: the panel follows the mode of your Home Assistant
-profile.
+There's no light or dark setting, because the panel follows the mode of your Home Assistant profile.

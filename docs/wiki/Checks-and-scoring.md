@@ -61,7 +61,7 @@ the newest release, else the default branch pinned to one commit.
 - **A card's login token:** sending it to Home Assistant itself is fine, and Barkley
   follows helpers, guards and Home Assistant's websocket to prove where it goes. Sent to
   the address in the card's own settings, where the card's default is one of Home
-  Assistant's own paths (or there is none), it's a note, not a Threat (since 0.15).
+  Assistant's own paths (or there is none), it's listed as a note and doesn't count toward Threat (since 0.15).
 - **Scanner evasion:** forms that hide code from the scanner are rewritten in Barkley's
   copy (with the same meaning) or flagged. Since 0.15 that includes JavaScript class
   static blocks (`static { … }`), which Semgrep can't parse. A code file the rules still
@@ -113,8 +113,7 @@ whose name is one typo away from a popular one.
 
 Each repeat of the same rule adds a quarter of its points. The total stops at 10, and
 any critical sign makes it at least 7. A build tool known to be malware counts 2.5
-whatever its severity (Settings → Build tool known to be malware: 2, 2.5 or 3), so on
-its own it reads Possible: it runs on the developer's machine, not in your home.
+whatever its severity (Settings → Build tool known to be malware: 2, 2.5 or 3), so on its own it reads Possible, because it runs on the developer's machine rather than in your home.
 
 Neither reading counts anything in the developer's test scripts that Home Assistant
 never loads. The app's page lists them apart. When the app imports code by a name
@@ -155,7 +154,7 @@ can already do everything in Home Assistant, so nothing else is counted.
 | An integration downloads Lua code while it runs and runs it through the lupa package, where that code can reach Python or run programs | 5 |
 
 - **Pages:** the strongest page counts in full and each further page a quarter.
-- **Tokens:** a token handed to another machine is only as safe as that machine. Barkley
+- **Tokens:** a token handed to another machine is exposed to anything that happens on that machine. Barkley
   can't tell yet who gets a token or how long it lasts. So it counts one token for a
   user who isn't an administrator, lasting over a year, once per app. An app that only
   checks tokens sent to it isn't counted here.
@@ -167,13 +166,12 @@ can already do everything in Home Assistant, so nothing else is counted.
   Lua's standard libraries (so Lua can run programs) and gives Lua Python's `eval` and
   builtins. A runner that switches both off, guards attribute access and removes Lua's
   `os` and `io` isn't counted. The Exposure box names the site the code comes from and
-  says what the app relies on: that site, and whoever publishes the code. That code can
+  says that the app relies on that site and on whoever publishes the code. That code can
   load more code of its own. Barkley never downloads it, so it hasn't checked any of it.
 
 Pages, tokens and library vulnerabilities are multiplied by where Home Assistant runs: 1 on a home network, 1.25 on a
 shared or work network, 1.5 when it's reachable from the internet. Code a card loads,
-and Lua an integration downloads, is added after that, unmultiplied: where Home
-Assistant runs doesn't change who publishes that code. The total stops at 10.
+and Lua an integration downloads, is added after that, unmultiplied, because where Home Assistant runs doesn't change who publishes that code. The total stops at 10.
 
 | Exposure | The panel says |
 |---|---|
@@ -181,10 +179,10 @@ Assistant runs doesn't change who publishes that code. The total stops at 10.
 | 2 to under 5 | Medium |
 | 5 to 10 | High |
 
-A found threat sets Exposure to 10: the app itself sends your data out. The Exposure
+A found threat sets Exposure to 10, because the app itself sends your data out. The Exposure
 box on an app's page lists the reasons in words, and the pages with their addresses.
 
-Not counted yet: ports the app listens on. The page lists them under Where it connects.
+Ports the app listens on aren't counted yet. The page lists them under Where it connects.
 
 ### Why these numbers
 
@@ -200,7 +198,7 @@ a release that says so.
 
 ### What isn't scored
 
-Everything else: what the app can do, what it touches, where it connects, how it sends
+Everything else is context and isn't scored. That covers what the app can do, what it touches, where it connects, how it sends
 requests, environment variables, where its code comes from, privacy notes, the
 developer's security habits, the developer's own words and anything from the AI.
 

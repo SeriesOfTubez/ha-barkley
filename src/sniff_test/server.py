@@ -1351,8 +1351,8 @@ def render_settings(
                       "descriptions one request may carry. More gives your AI more to go on, "
                       "and it may write up to 6 sentences (4 at 6,000). A bigger request can "
                       "take your AI longer. Picking a size fills in its minutes below.",
-                      f'<input type=range name=ai_size min=6000 max=18000 step=6000 '
-                      f'value="{s.ai_size}" aria-label="AI answers size">'
+                      '<input form="settings" type=range name=ai_size min=6000 max=18000 '
+                      f'step=6000 value="{s.ai_size}" aria-label="AI answers size">'
                       f'<div class="stops">{marks}</div>')  # fmt: skip
     check_rows += row("AI time limit", "How long Barkley waits for an answer. Off waits as "
                       "long as your model takes, for a slow model on your own machine; the "
@@ -1361,7 +1361,8 @@ def render_settings(
                       sel("ai_limit", "1" if s.ai_limit else "0",
                           [("1", "Stop waiting after (default)"),
                            ("0", "Wait as long as it takes")])
-                      + f' <input type=number name=ai_minutes min=1 max=60 value="{s.ai_minutes}"'
+                      + ' <input form="settings" type=number name=ai_minutes min=1 max=60 '
+                      f'value="{s.ai_minutes}"'
                       ' class="mins" aria-label="minutes"> minutes')  # fmt: skip
     check_rows += row("Parallel scans", "How many apps Barkley scans at the same time.",
                       sel("parallel", s.parallel,

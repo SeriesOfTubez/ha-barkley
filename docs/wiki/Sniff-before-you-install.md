@@ -1,10 +1,6 @@
 # Sniff before you install
 
-**This is the protection for a new install.** Since Home Assistant 2026.11 the
-Marketplace opens a new integration's setup right after its files land, and starting
-the setup loads its code. Auto-sniff comes
-after that, so for a brand-new install it can only tell you about what is already
-running. Sniff first, then install.
+Since Home Assistant 2026.11, the Marketplace opens a new integration's setup right after its files land, and starting the setup loads its code. Auto-sniff runs after that, so for a brand-new install it can only tell you about code that's already running. To check a new app before it runs, sniff it from search first and install it afterwards.
 
 ## How
 

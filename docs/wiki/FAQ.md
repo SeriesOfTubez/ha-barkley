@@ -2,8 +2,7 @@
 
 **Does Good Boy mean an app is safe?**
 No. It means Barkley's checks found no signs of malicious behavior and little that the
-app opens up (low Exposure). Barkley is a first pass, not a substitute for reading the
-code.
+app opens up (low Exposure). Barkley doesn't replace reading the code yourself.
 
 **Where did the 0–100 score go?**
 Since 0.15 each app has two readings instead: Threat (signs of malicious behavior) and
@@ -23,7 +22,7 @@ What the app can do is still listed on its page, under "What Barkley found". Onl
 items marked Exposure change a reading.
 
 **Does Barkley block or remove anything?**
-No. It reports. There is no quarantine and no install gate.
+No. It only reports, and there's no quarantine or install gate.
 
 **Does Barkley run the code it scans?**
 No. The code is downloaded and read. It is never executed, imported, built or installed.
@@ -70,8 +69,7 @@ list offers one button to sniff everything again with the new rules. An update t
 changed none of them keeps the stored scans.
 
 **Why is a brand-new install sniffed only after it ran?**
-Home Assistant sets a new integration up as soon as it is installed. Sniff it from
-search first: see [Sniff before you install](Sniff-before-you-install).
+Home Assistant sets a new integration up as soon as it is installed. To check it before it runs, sniff it from search first, as [Sniff before you install](Sniff-before-you-install) describes.
 
 **Do I have to verify the image's signature?**
 No, it is optional. See [Installing and updating](Installing-and-updating).

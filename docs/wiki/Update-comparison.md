@@ -1,7 +1,6 @@
 # What an update would change
 
-An update is new code from the same project. The question that matters is what the new
-version does that the old one didn't.
+An update is new code from the same project, so Barkley shows what the new version does that the old one didn't.
 
 ## How
 
@@ -39,8 +38,7 @@ the ones that come with them), sites it sends requests to, sites the login you g
 goes to, and environment variables it reads. **Which ones** names them. A package that
 only changes version isn't counted.
 
-Barkley counts kinds of entity (switches, sensors), not entities: how many an app
-creates depends on your devices, so the code can't say. An update notification carries
+Barkley counts kinds of entity (switches, sensors) rather than entities, because how many entities an app creates depends on your devices. An update notification carries
 the same sentence with counts only, never names. Both versions must be sniffed by 0.15
 or later; otherwise the page says so. None of this changes a reading or the changes to
 check.
@@ -63,5 +61,4 @@ by 0.15 or later.
 - **Test scripts Home Assistant never loads:** a change in one is listed, but it's never
   a change to check.
 
-Requests, environment variables and published libraries are facts, not warnings. They
-are listed under the smaller changes and never send a notification on their own.
+Requests, environment variables and published libraries are listed for information. They go under the smaller changes and never send a notification on their own.

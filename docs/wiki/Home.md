@@ -1,23 +1,14 @@
 # Barkley
 
-Barkley gives Home Assistant Marketplace (formerly HACS) custom integrations and frontend
-cards a sniff test before they get into the house. It runs as an app (add-on) in your
-Home Assistant sidebar. It downloads the code and reads it; it never runs, builds or
-installs it.
+Barkley reads the code of Home Assistant Marketplace (formerly HACS) custom integrations and frontend cards before they run in your home. It runs as an app (add-on) in your Home Assistant sidebar. It downloads the code and reads it, and never runs, builds or installs it.
 
-**Three things to know first**
+**Before you rely on it**
 
-- **Barkley is a first pass, not a verdict.** A clean sniff means its checks found
-  nothing, not that the code is safe. It reports; it never blocks, moves or removes
-  anything.
+- **A clean result doesn't make an app safe.** Barkley only catches what its rules describe, so a clean sniff means none of them matched. It reports what it finds and never blocks, moves or removes anything.
 - **Barkley was built with AI assistance** (Claude, via Claude Code) under human direction
   and review. Most of the code and these pages are AI-generated. If that is a dealbreaker
-  for you, this project isn't for you. The source and the checks that run on every change
-  are public: see [Permissions and how Barkley is secured](Permissions-and-security).
-- **The readings come from fixed rules.** Each app gets two: Threat (signs of malicious
-  behavior) and Exposure (what it opens up to someone who isn't an administrator). The
-  optional AI features can explain what a scan found. They can never set, clear or change
-  a reading, and they are only as good as the model you pick.
+  for you, this project isn't for you. The source and the checks that run on every change are public, and [Permissions and how Barkley is secured](Permissions-and-security) describes them.
+- **The readings come from fixed rules.** Each app gets two, Threat (signs of malicious behavior) and Exposure (what it opens up to someone who isn't an administrator). The optional AI features can explain what a scan found. They can't change a reading, and they're only as good as the model you pick.
 
 ## Pages
 
@@ -43,5 +34,4 @@ installs it.
 - [Permissions and how Barkley is secured](Permissions-and-security)
 - [FAQ](FAQ)
 
-Found a security problem in Barkley itself? Please report it privately: the repository's
-Security tab → "Report a vulnerability".
+Found a security problem in Barkley itself? Please report it privately through the repository's Security tab → "Report a vulnerability".

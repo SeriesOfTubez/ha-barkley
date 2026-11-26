@@ -27,8 +27,7 @@ Something that may work next time went wrong, such as a timeout or an unreachabl
 service. The app's page says which part didn't finish, Threat reads "None found so far"
 when nothing was found in the part that did, and the scan isn't reused. Click **Sniff
 again**, or
-**Sniff N unfinished again** on the first page. If it keeps happening, open
-Diagnostics: a tool that fails there fails in every scan.
+**Sniff N unfinished again** on the first page. If it keeps happening, open Diagnostics, because a tool that fails there fails in every scan.
 
 ## Scans wait or are refused: memory
 
@@ -43,9 +42,7 @@ On a small box keep Parallel scans at 1.
 The scanner tools need a CPU with the x86-64-v2 instructions. A virtual machine whose
 CPU type hides them (Proxmox's default, `kvm64`, does) can't run them, so every scan is
 Unfinished. Since 0.15 the scan says so with the fix, and Diagnostics checks the CPU
-before any scan runs. The fix: set the VM's CPU type to one that passes the instructions
-through (on Proxmox: x86-64-v2-AES or host), then shut the VM down completely and start
-it again; a restart from inside the VM isn't enough.
+before any scan runs. To fix it, set the VM's CPU type to one that passes the instructions through (on Proxmox, x86-64-v2-AES or host), then shut the VM down completely and start it again. A restart from inside the VM isn't enough.
 
 ## "Out of temporary space"
 
@@ -53,9 +50,7 @@ Each scan keeps its copy of the app in the temporary folder while it reads it, p
 packed files it unpacks (at most 32 MB) and, for a library that is published only as
 source, that library's archive (its list of dependencies is read from it; nothing is
 built). Since 0.15 GuardDog is gone, so Barkley no longer downloads every library of an
-integration, and a scan needs far less room than before. It downloads only the libraries
-an integration hands the login you gave it (or an address) to: at most four per scan, up
-to 40 MB each, read as text. A very large app still needs space for its copy. When the folder fills up, the scan is Unfinished and says "out of temporary space:
+integration, and a scan needs far less room than before. It downloads only the libraries an integration hands the login you gave it (or an address) to, at most four per scan and up to 40 MB each, and reads them as text. A very large app still needs space for its copy. When the folder fills up, the scan is Unfinished and says "out of temporary space:
 N MB free in …". Diagnostics shows the free space next to `TMPDIR`. In the app the temporary folder is on
 Home Assistant's data disk. Standalone uses `/data/tmp`; on the command line, set
 `TMPDIR` to a folder with about 1 GB free.

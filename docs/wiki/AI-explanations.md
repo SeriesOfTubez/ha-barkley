@@ -1,9 +1,9 @@
 # AI explanations
 
-Optional. Barkley works without any AI, and both readings come from fixed rules.
+AI explanations are optional. Barkley works without any AI, and both readings come from fixed rules.
 
 **The explanations are only as good as the model behind the AI Task entity you pick, and
-they can be wrong.** In testing, GLM 5.3 and GLM 5.3 Flash both gave quality results.
+they can be wrong.** In testing, GLM 5.3 and GLM 5.3 Flash both gave good results.
 
 ## Setting it up
 
@@ -71,8 +71,7 @@ end with the lines it rests on. Barkley shows a sentence only if:
 
 A shown sentence is tagged **AI inferred**, with the lines, under the item it is about.
 Sentences that aren't about one listed item go under **In short**, as **The developer's
-description**. The page says it plainly: the developer wrote those lines, and Barkley checked
-that each line exists and holds these words, not that they are true. A README can
+description**. The page says plainly that the developer wrote those lines. Barkley checked that each line exists and holds these words, but it can't check whether they're true. A README can
 describe a harmful feature in friendly words.
 
 Limits that are always on:
@@ -95,8 +94,7 @@ your AI.
 
 A privacy note (telemetry, analytics, a server the developer runs, unencrypted
 addresses, MQTT without encryption) shows the button, or the AI's reading, of the
-address or port behind it. It is the same reading as under "Where it connects", not a
-second one. A note whose addresses are all the app's own has no reading, and says so.
+address or port behind it. It's the same reading as under "Where it connects". A note whose addresses are all the app's own has no reading, and says so.
 
 What the code is, for an integration: the function the item is in; the functions
 and classes of the app that it calls or refers to, starting with the ones named on the
@@ -108,9 +106,7 @@ card it is the lines around the item in the bundle.
 
 For integrations, the AI may ask once to see more of the app's code. It can only pick
 from a list of names Barkley offers (functions, classes, methods and constants of the
-app, at most 40 names, three picks). It can't name a file path, and anything that isn't
-on the list is ignored: code from a scanned project can contain text aimed at the AI, and
-that text must not decide what Barkley reads. When the AI writes its pick as a sentence,
+app, at most 40 names, three picks). It can't name a file path, and anything that isn't on the list is ignored, because code from a scanned project can contain text aimed at the AI, and that text must not decide what Barkley reads. When the AI writes its pick as a sentence,
 only the names in backticks or quotes that are on the list count. Barkley adds the code
 it picked (at most 150 more lines) and asks again. The sheet then shows the checked
 statements of both readings together, and the questions of the second. A statement of
@@ -126,7 +122,7 @@ of an integration's Python files beside its scan: one copy per version, for the
 installed version and an update that is waiting. Copies of older versions are deleted
 (their scans stay), a copy of an app you only sniffed from search goes when its scan
 ages out, and an app whose Python is over 1 MB compressed (or more than 3,000 files) gets no
-copy; its sheet then says the AI can't ask for more. Dashboard cards get no copy: their bundles are minified.
+copy; its sheet then says the AI can't ask for more. Dashboard cards get no copy, because their bundles are minified.
 
 ### An item about replaced Home Assistant code
 
@@ -144,8 +140,7 @@ comparison itself opens underneath. No AI is involved. When there is no comparis
 page says why (for example GitHub did not answer, or the replacement is not a function);
 that is never counted for or against the app. **The rest of the replacement** says
 whether the scan has any other item, address or port on the replacement's own lines.
-That sentence describes what Barkley's rules look for; it is not a statement that the
-code is safe. The readings are the same with or without a comparison.
+That sentence describes what Barkley's rules look for and doesn't say the code is safe. The readings are the same with or without a comparison.
 
 On such an item, "Explain in context" also sends the comparison, so the AI can say
 what the replacement does differently and cite the lines.
@@ -156,14 +151,11 @@ For the item "Changes how Home Assistant itself works", "Explain in context" als
 sends the first lines of the repository's README (at most 80), as what the app's author
 says the app does. The AI
 may then add one sentence saying that the code is consistent with the README. Barkley
-shows it only if it cites README lines and lines of the app's code, and gives no verdict:
-a sentence that calls the code safe, fine, expected or the like is dropped. It is shown
+shows it only if it cites README lines and lines of the app's code, and gives no verdict. A sentence that calls the code safe, fine, expected or the like is dropped. It is shown
 apart from the statements, under **The AI thinks the code matches the README**.
 
-Read it for what it is. The README is written by the same person as the code, so code
-that matches it does what the author says, which is not the same as safe. The item and
-the readings do not change. No other item gets this opinion: not one about data
-leaving your Home Assistant or where it goes, and no address, port or package.
+The README is written by the same person as the code, so code that matches it does what the author says, and that doesn't make it safe. The item and
+the readings do not change. No other item gets this opinion, including items about data leaving your Home Assistant or where it goes, and addresses, ports and packages.
 
 ### How answers are checked
 
@@ -177,8 +169,7 @@ can close the sheet and come back.
 
 - It can't set, clear or change a reading or an item. A statement that calls an item a
   false positive, safe or harmless is dropped.
-- It gets nothing from your Home Assistant: only what the scan found, and code and text
-  from the public project.
+- It gets nothing from your Home Assistant, only what the scan found and code and text from the public project.
 - Its text is never put in a notification.
 
 ## Where the request goes

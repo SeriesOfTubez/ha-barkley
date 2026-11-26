@@ -1,6 +1,6 @@
 # An app's page
 
-Every scan has a page: the app's **sniff report**. Each block on it is tagged with where
+Every scan has a page, the app's **sniff report**. Each block on it is tagged with where
 its sentences come from:
 
 - **Barkley's scan**: what Barkley read in the code and the project's public data.
@@ -56,7 +56,7 @@ From top to bottom:
   GitHub with the versions, the rule, the file and the line filled in; you write why
   it's wrong and submit it yourself. Minor items are left out unless you show them (a
   link on the page, or Settings → Minor items).
-- **What it touches:** a picture. Inside your Home Assistant are seven rooms, the same for
+- **What it touches** is a picture. Inside your Home Assistant are seven rooms, the same for
   every app: users and logins, other apps' settings, devices and entities, files,
   programs and the system, your home network, and your browser session. A room is blue
   when the app reads (eye) or changes (pencil) something there beyond its own job, and
@@ -74,8 +74,7 @@ From top to bottom:
   box linked to the site that answers.
 - **Where the login you gave this app goes:** the login you entered when you set up the
   app (not your Home Assistant login), and any token it gets back, followed from what is
-  sent, through the app's own code or a library, to where it goes. Six places, then "and
-  N more". Context only.
+  sent, through the app's own code or a library, to where it goes. It lists six places, then "and N more". It's context and doesn't change a reading.
 - **Where it connects** and **Other addresses in its code:** see below.
 - **Where its code comes from:** see below.
 - **Environment variables it uses** (integrations): which ones the code reads and sets,
@@ -103,8 +102,7 @@ From top to bottom:
 The sites Barkley read a request to, grouped: your home network, the app's own sites,
 servers the developer runs, analytics and crash reports, and other sites. Flagged sites
 and ports are listed here too. Other addresses the code only mentions, such as project
-and help links, are under **Other addresses in its code**: a site there is listed
-because the code names it, not because Barkley saw a request to it. (For an older scan
+and help links, are under **Other addresses in its code**: a site there is listed because the code names it, and Barkley didn't see a request to it. (For an older scan
 without the requests, every site is under Where it connects.) A well-known service is named as a hint, and no address is
 ever sent anywhere to be looked up.
 
@@ -116,13 +114,10 @@ Each site is one line that folds open. A group shows five, then "N more". Inside
 - **how the code sends requests to it**: the method (GET, POST and so on), from how
   many places, and the names of what the call puts into the body, the headers and the
   address. For a card, also "Loads map images" when its map pictures come from there.
-  Values are never recorded. GET or POST alone doesn't tell you what is sent: a GET can
-  carry data too, in the address or in a header;
+  Values are never recorded. GET or POST alone doesn't tell you what is sent, because a GET can carry data too, in the address or in a header;
 - chips when **the login you gave this app** or **a token** goes there, and **through a
   library** when a library the app hands it to makes the request;
-- for a site found only in a list of sign-in return addresses (OAuth), a line saying so:
-  your browser goes there after you approve access, and Barkley found no code that
-  sends anything there;
+- for a site found only in a list of sign-in return addresses (OAuth), a line saying that your browser goes there after you approve access and that Barkley found no code that sends anything there;
 - that the app's README names the site too, with a link to that line of the scanned
   release's README, or that the repository lists it as a way to support the developer
   (its `.github/FUNDING.yml`). Barkley says this in its own words, so you can read the
@@ -131,7 +126,7 @@ Each site is one line that folds open. A group shows five, then "N more". Inside
   possible threat names, or on a page with a found threat;
 - **Explain in context**, in the Explain and read code mode.
 
-Two more groups follow when there is something to list:
+More groups follow when there is something to list:
 
 - **Connections whose address isn't in the code:** ports the code sets while the
   server's address comes from setup or from another server.
@@ -197,9 +192,7 @@ page. A wider screen always shows the whole page.
 
 ## "Unfinished"
 
-A scan is unfinished when something that may work next time went wrong: a tool timed out
-or a service couldn't be reached. The page says which part didn't finish, Threat reads
+A scan is unfinished when something that may work next time went wrong, such as a tool timing out or a service that couldn't be reached. The page says which part didn't finish, Threat reads
 "None found so far" when nothing was found, the scan is never reused, and the page
-offers **Sniff again**. A file Barkley's code rules can't read at all is different: it
-happens on every sniff, so it is listed in a finished scan under "What Barkley couldn't
+offers **Sniff again**. A file Barkley's code rules can't read at all is different. That happens on every sniff, so the file is listed in a finished scan under "What Barkley couldn't
 read".

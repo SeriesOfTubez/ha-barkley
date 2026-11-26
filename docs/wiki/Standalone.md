@@ -45,8 +45,7 @@ is the one used, and Barkley stores no AI key of its own.
    ```
 3. **Two addresses** in `compose.yaml`:
    - `HA_URL`: Home Assistant, as the container reaches it, such as
-     `http://homeassistant.local:8123`. Use `https` if Home Assistant has it: with plain
-     http, the token crosses your network unencrypted.
+     `http://homeassistant.local:8123`. Use `https` if Home Assistant has it, because with plain http the token crosses your network unencrypted.
    - `BARKLEY_URL`: Barkley, as your browser reaches it, such as
      `http://192.168.1.20:8099`. The login and the links in notifications use it.
 4. `docker compose up -d`, open `BARKLEY_URL` and log in with Home Assistant. The first
@@ -56,7 +55,7 @@ is the one used, and Barkley stores no AI key of its own.
 
 ## Barkley's Home Assistant token
 
-Three ways, the last one wins:
+There are three ways to give Barkley its token, and the last one wins:
 
 - **Create token** in the first-time setup, or later on the Settings page (one more
   login). Barkley uses your login to make a long-lived access token named "Barkley" and
@@ -68,8 +67,7 @@ Three ways, the last one wins:
 - **`HA_TOKEN_FILE`** (or `HA_TOKEN`) in `compose.yaml`: a token you manage. Barkley uses
   it as it is and never rotates it.
 
-**The token belongs to the Home Assistant account it was made for**: the one that logged
-in, or whoever made the token you pasted. It lists under that account's profile →
+**The token belongs to the Home Assistant account it was made for**, which is the account that logged in or whoever made the token you pasted. It lists under that account's profile →
 Security → Long-lived access tokens, where deleting it cuts Barkley off at once. Deleting
 the account deletes its tokens too, and Barkley needs the account to stay an
 administrator. If that changes, create or paste a new token on the Settings page.
@@ -81,11 +79,7 @@ the period plus a week, so a missed rotation breaks nothing. If a rotation fails
 current token keeps working, the panel shows why and you get a notification; it's tried
 again a day later. **Rotate now** does it at once.
 
-Where it's kept: in its own file next to Barkley's database in `data/` (mode 600), never
-in the database, an export or Diagnostics, and out of reach of the scanner tools (the
-sandbox gives them nothing under `data/` except their caches). It isn't encrypted: the
-key would have to sit next to it, on the same disk, readable by the same process, so it
-would protect nothing. Protect the `data/` folder instead.
+Barkley keeps it in its own file next to its database in `data/` (mode 600). It's never in the database, an export or Diagnostics, and it's out of reach of the scanner tools (the sandbox gives them nothing under `data/` except their caches). It isn't encrypted, because the key would have to sit next to it on the same disk, readable by the same process, so encryption would protect nothing. Protect the `data/` folder instead.
 
 ## The login
 
@@ -134,13 +128,13 @@ around it. To run anyway, knowing that, add `BARKLEY_UNSANDBOXED: "1"` under
 
 ## Settings
 
-Environment variables. Settings you can change in the panel (the AI entity, AI mode,
+Standalone Barkley is set up with environment variables. Settings you can change in the panel (the AI entity, AI mode,
 auto-sniff and the notify target) are kept there once you change them.
 
 | Variable | What it does |
 |---|---|
 | `HA_URL` | Home Assistant, as the container reaches it: scheme, host and port only |
-| `HA_TOKEN_FILE` or `HA_TOKEN` | Optional: a long-lived access token you manage (a file is better: it stays out of `docker inspect`). Without one, create or paste Barkley's own on the Settings page |
+| `HA_TOKEN_FILE` or `HA_TOKEN` | Optional: a long-lived access token you manage (a file is better, because it stays out of `docker inspect`). Without one, create or paste Barkley's own on the Settings page |
 | `HA_CA_FILE` | A CA certificate, when an `https` Home Assistant uses a private CA |
 | `HA_BROWSER_URL` | Home Assistant, as your browser reaches it, if different |
 | `BARKLEY_URL` | Barkley, as your browser reaches it |
@@ -156,7 +150,7 @@ auto-sniff and the notify target) are kept there once you change them.
 The memory guard reads the container's limit (`mem_limit` in the compose file) as well
 as the machine's free memory, and goes by the lower one. Under 2 GB available it warns,
 and by default it doesn't start a scan with under 1 GB free (Settings → Low memory can
-lower that). Barkley counts 1.5 GB per scan: with **Memory for scans** on Auto
+lower that). Barkley counts 1.5 GB per scan. With **Memory for scans** on Auto
 (Settings), inside the 3 GB the compose file sets, a second scan starts while 2 GB is
 still free, and a third never does. On a
 machine with memory to spare, raise `mem_limit` and pick a fixed amount on the Settings
