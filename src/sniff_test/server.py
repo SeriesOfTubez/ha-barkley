@@ -32,6 +32,7 @@ from typing import Any
 
 from sniff_test import (
     __version__,
+    cpu,
     doctor,
     ha_token,
     listings,
@@ -811,6 +812,20 @@ def _memory_banner(mem: memory.Memory) -> str:
     return ""
 
 
+def _cpu_banner(gap: list[str] | None) -> str:
+    """(0.15, #18) At the top of the page from the start, not only in Diagnostics and on a
+    failed scan: a VM's default CPU type hides the x86-64-v2 instructions and every scan
+    fails until it's changed. `gap`: cpu.missing_v2() at startup ([] or None: nothing)."""
+    if not gap:
+        return ""
+    return (
+        f'<div class="banner bad">{ui.icon("alert")} <b>Scans can\'t run on this CPU.</b> '
+        f"{e(cpu.FIX, 600)} Missing: {e(', '.join(gap), 100)}. "
+        f'<a href="{DOCS_CPU}" target="_blank" rel="noopener noreferrer">How to fix it</a>'
+        "</div>"
+    )
+
+
 def _github_banner(wait: str) -> str:
     return f'<div class="banner warn">{ui.icon("clock")} {e(wait, 400)}</div>' if wait else ""
 
@@ -961,6 +976,7 @@ def render_index(
     account: str = "",
     token_banner: str = "",
     ai_busy: bool = False,
+    cpu_gap: list[str] | None = None,
 ) -> bytes:
     rows = store.history(limit=100)
     against = f", checking against Home Assistant {e(ha)}" if ha else ""
@@ -969,6 +985,7 @@ def render_index(
         f'<a class="small" href="{base}/?{here}">{ui.icon("refresh")} Refresh</a>'
         f'<a class="small" href="{base}/settings">{ui.icon("wrench")} Settings</a></div>',
         status,
+        _cpu_banner(cpu_gap),
         _memory_banner(mem) if mem else "",
         _github_banner(github_wait),
         token_banner,
@@ -1048,6 +1065,10 @@ def render_index(
 
 DOCS_GITHUB_HELP = "https://ha-barkley.github.io/docs/options/#github-token"
 DOCS_HA_SETUP = "https://ha-barkley.github.io/docs/standalone/#barkleys-home-assistant-token"
+DOCS_CPU = (
+    "https://ha-barkley.github.io/docs/diagnostics-and-troubleshooting/"
+    "#every-scan-fails-cpu-isa-level-is-lower-than-required"
+)
 
 
 def github_token_url(now: datetime | None = None) -> str:
@@ -2517,6 +2538,7 @@ class Panel:
         self.listings: listings.Listings | None = None
         self.allow = allow  # None: any address (standalone, behind the login)
         self.login: login.Login | None = None  # standalone: "log in with Home Assistant"
+        self.cpu_gap: list[str] | None = None  # set by `serve`: cpu.missing_v2() at startup
         self.csp = _CSP
         self.setup_errors: dict[str, str] = {}  # session id: why Create token failed
         self.token = secrets.token_urlsafe(24)
@@ -3246,6 +3268,7 @@ class Panel:
                             if (s := self._session()) else "",
                             _token_banner(base, panel),
                             ai_busy=bool(thinking),
+                            cpu_gap=panel.cpu_gap,
                         )  # fmt: skip
                         return self._send(200, body)
                     if m := re.fullmatch(r"/fonts/([A-Za-z-]+\.woff2)", url.path):
@@ -3656,6 +3679,10 @@ def serve(
     worker.memory_gb_fn = lambda: panel.settings.memory_gb
     worker.floor_fn = lambda: panel.settings.memory_floor_mb * 1024 * 1024
     panel.login = login_cfg
+    # (0.15, #18) checked once: a VM's CPU type only changes with a full stop and start
+    panel.cpu_gap = cpu.missing_v2()
+    if panel.cpu_gap:
+        print(f"CPU: missing {', '.join(panel.cpu_gap)}. {cpu.FIX}", file=sys.stderr)
     if login_cfg is not None:
         panel.csp = csp_with_login(login_cfg.ha_url)
     if ai_entity and not supervisor.ai_entity_ok(ai_entity):

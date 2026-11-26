@@ -338,8 +338,9 @@ change below is a general check applied to every app, not an exception for one:
   star.
 - A full temporary folder says "out of temporary space: N MB free".
 - A CPU without the x86-64-v2 instructions (a VM's default CPU type) says so, with the
-  fix, on the scan and in Diagnostics: on Proxmox, `host` on a single node, or with
-  several nodes the highest x86-64 level all of them support.
+  fix, as soon as Barkley starts: at the top of its page, in its log, in Diagnostics and
+  on each failed scan. On Proxmox: `host` on a single node, or with several nodes the
+  highest x86-64 level all of them support.
 - A release zip whose only change is the version stamp no longer reads as different
   from the tagged source when the stamp also dropped a comment on that line. Code is
   compared without its comments.

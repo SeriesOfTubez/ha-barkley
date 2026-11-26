@@ -40,3 +40,56 @@ def test_diagnostics_warns_before_a_scan_fails():
     assert not bad.ok and "missing popcnt, sse4_2" in bad.summary and "x86-64-v2-AES" in bad.summary
     assert doctor.cpu_check([]).ok
     assert doctor.cpu_check(None).ok
+
+
+# (0.15, #18 follow-up) "flag this problem ... at the top of the page": a notice from the
+# start, not only in Diagnostics and on a failed scan.
+
+
+def test_the_page_says_so_at_the_top_from_the_start(tmp_path):
+    from sniff_test import server
+    from sniff_test.store import Store
+
+    store = Store(tmp_path / "s.db")
+    page = server.render_index("", store, [], "t", cpu_gap=["popcnt", "sse4_2"]).decode()
+    head_end = page.index("</div>", page.index("</h1>")) + len("</div>")
+    assert page[head_end:].startswith('<div class="banner bad">')  # first, under the heading
+    assert "Scans can't run on this CPU." in page[head_end : head_end + 1200]
+    assert "Missing: popcnt, sse4_2." in page and server.e(cpu.FIX, 600) in page
+    assert f'href="{server.DOCS_CPU}"' in page and 'rel="noopener noreferrer"' in page
+    for nothing in ([], None):
+        quiet = server.render_index("", store, [], "t", cpu_gap=nothing).decode()
+        assert "Scans can't run on this CPU" not in quiet
+
+
+def test_the_docs_link_points_at_the_cpu_section():
+    from pathlib import Path
+
+    from sniff_test import server
+
+    page = Path(__file__).resolve().parents[1] / "docs" / "Diagnostics-and-troubleshooting.md"
+    assert '## Every scan fails: "CPU ISA level is lower than required"' in page.read_text()
+    assert server.DOCS_CPU.endswith(
+        "/docs/diagnostics-and-troubleshooting/"
+        "#every-scan-fails-cpu-isa-level-is-lower-than-required"
+    )
+
+
+def test_startup_checks_the_cpu_once_and_logs_it(tmp_path, monkeypatch, capsys):
+    import threading
+
+    from test_server import Calls, get
+
+    from sniff_test import server
+    from sniff_test.store import Store
+
+    monkeypatch.setattr(cpu, "missing_v2", lambda *a, **k: ["popcnt"])
+    httpd = server.serve(Store(tmp_path / "s.db"), Calls(), "127.0.0.1", 0, {"127.0.0.1"})
+    try:
+        assert httpd.panel.cpu_gap == ["popcnt"]
+        assert "CPU: missing popcnt." in capsys.readouterr().err
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        _, _, index = get(f"http://127.0.0.1:{httpd.server_address[1]}/")
+        assert "Scans can't run on this CPU." in index
+    finally:
+        httpd.shutdown()

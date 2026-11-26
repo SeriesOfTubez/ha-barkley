@@ -41,8 +41,9 @@ On a small box keep Parallel scans at 1.
 
 The scanner tools need a CPU with the x86-64-v2 instructions. A virtual machine whose
 CPU type hides them (Proxmox's default, `kvm64`, does) can't run them, so every scan is
-Unfinished. Since 0.15 the scan says so with the fix, and Diagnostics checks the CPU
-before any scan runs.
+Unfinished. Since 0.15 Barkley says so as soon as it starts: a notice at the top of its
+page names the missing instructions and the fix, and so do its log, Diagnostics and each
+failed scan.
 
 To fix it, set the VM's CPU type to one that includes the instructions, then shut the VM
 down completely and start it again. A restart from inside the VM isn't enough. On
@@ -50,6 +51,12 @@ Proxmox with a single node, use `host`: the VM gets everything the real CPU has.
 several nodes, use the highest x86-64 level that every node supports (`x86-64-v2-AES`
 or above), so the VM can still move between them. `x86-64-v3` adds more instructions
 on top of v2, so it works too, as long as every node's CPU has them.
+
+If the VM won't start after you change the CPU type, or Home Assistant gets stuck while
+starting, the host's CPU may not support that level. Use `host`, or a lower level. A VM
+stopped without shutting it down can also come back stuck, whatever its CPU type, so
+use Shutdown, not Stop. Barkley can't tell you about either case, since it never gets
+to run.
 
 ## "Out of temporary space"
 
