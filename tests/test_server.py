@@ -574,6 +574,44 @@ def test_auto_settings_are_stored_and_the_test_button_notifies(auto):
     assert post(base + "/notify-test", {"token": "bad"})[0] == 403
 
 
+def test_send_notifications_to_offers_the_bell_the_service_either_or_disabled(auto):
+    """(0.15, #29 follow-up) one choice for where results go, with Disabled."""
+    store, base, _httpd, w, sent = auto
+    _, _, page = get(base + "/settings")
+    assert "Send notifications to" in page and ">Notify<" not in page
+    for value, label in (
+        ("", "Home Assistant&#x27;s bell (default)"),
+        ("mobile_app_phone", "The bell and notify.mobile_app_phone"),
+        (":only:mobile_app_phone", "Only notify.mobile_app_phone"),
+        (":disabled", "Disabled"),
+    ):
+        assert f'value="{value}"' in page and label in page
+    tok = token(base)
+    assert (
+        post(base + "/notify-target", {"token": tok, "target": ":only:mobile_app_phone"})[0] == 303
+    )
+    assert (w.notify_target, w.notify_bell) == ("mobile_app_phone", False)
+    for bad in (":only:not_offered", ":only:", ":only:../x", ":nope"):
+        assert post(base + "/notify-target", {"token": tok, "target": bad})[0] == 400
+    assert (w.notify_target, w.notify_bell) == ("mobile_app_phone", False)
+    assert post(base + "/notify-target", {"token": tok, "target": ":disabled"})[0] == 303
+    assert (w.notify_target, w.notify_bell) == ("", False) and store.setting("notify_bell") == "off"
+    _, _, page = get(base + "/settings")
+    assert '<option value=":disabled" selected>' in page
+    assert post(base + "/notify-test", {"token": tok})[0] == 303
+    assert sent == []
+    _, _, page = get(base + "/settings")
+    assert "Notifications are disabled, so nothing was sent." in page
+    assert post(base + "/notify-target", {"token": tok, "target": ""})[0] == 303
+    assert (w.notify_target, w.notify_bell) == ("", True)
+
+
+def test_send_to_value_and_parse_round_trip():
+    for target, bell in (("", True), ("x_1", True), ("x_1", False), ("", False)):
+        assert server.parse_send_to(server.send_to_value(target, bell)) == (target, bell)
+    assert server.parse_send_to(None) is None and server.parse_send_to(":only:") is None
+
+
 def test_auto_jobs_show_in_the_jobs_table_and_doctor_names_the_watcher(auto, monkeypatch):
     _store, base, httpd, _w, _sent = auto
     job = httpd.panel.worker.submit("auto", "acme/quiet", "v2", prev="v1")

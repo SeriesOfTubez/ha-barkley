@@ -9,8 +9,8 @@ Barkley reads code it treats as hostile, so this page lists what it can do on yo
 - **What it uses the API for** is a fixed list: reading your Home Assistant version, and
   whether an external URL is set (yes or no; the address isn't kept); asking the
   Marketplace for its installed list and its catalog; subscribing to two Marketplace
-  signals for auto-sniff; creating the bell notification and, if you picked
-  one, calling your notify service; listing your AI Task entities and notify services
+  signals for auto-sniff; creating the bell notification and calling your notify
+  service, as Send notifications to says; listing your AI Task entities and notify services
   for the two dropdowns; and calling `ai_task.generate_data` only when you click an AI
   button (over Home Assistant's websocket, because a request through the Supervisor's
   API ends after 5 minutes and a slow model can take longer).

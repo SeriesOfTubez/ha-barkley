@@ -23,8 +23,8 @@ the first start; the [options](Options.md) all have defaults.
 - Barkley lists what you have installed through the Marketplace. One button sniffs
   everything that hasn't been sniffed yet. See [The list](The-list.md).
 - Auto-sniff is on by default: installs, updates and offered updates are sniffed and you
-  get a notification. To also get them on your phone, pick a notify service on
-  the Settings page. See [Auto-sniff and notifications](Auto-sniff-and-notifications.md).
+  get a notification. To get them on your phone as well or instead, or to turn them
+  off, use Send notifications to on the Settings page. See [Auto-sniff and notifications](Auto-sniff-and-notifications.md).
 - A GitHub token is optional but useful when you sniff many apps in a row. See
   [Options](Options.md).
 

@@ -62,8 +62,8 @@ the list shows as cards or a table, and Sniff again (on each app, or for all of 
 runs fresh scans.
 
 **Auto-sniff, on by default.** When the Marketplace installs or updates an integration
-or card, Barkley sniffs the version that landed and sends a notification (the bell, and
-your phone if you pick a notify service). When the Marketplace starts *offering* an
+or card, Barkley sniffs the version that landed and sends a notification (the bell,
+your phone if you pick a notify service, either, or none). When the Marketplace starts *offering* an
 update, Barkley sniffs that version right away, so the heads-up comes before you click
 Update. Notifications carry the two readings, counts and the app's name, never text
 taken from the scanned code. One thing to know: Home Assistant runs a new integration

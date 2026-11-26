@@ -21,9 +21,10 @@ for a new install is sniffing it from search first. An update's code waits for a
 so its sniff and diff come before it runs. Barkley reports; it never moves, refuses or
 blocks anything (user decision 2026-11-10).
 
-Notifications go through HA's own services (persistent_notification always, an optional
-notify.<target>). Their text is built from validated repo names and versions, scores,
-verdicts and the fixed titles of rules: never from scanned text (README, code, evidence).
+Notifications go through HA's own services: persistent_notification (the bell) and an
+optional notify.<target>, either or both, or neither (0.15, #29: Send notifications to,
+Disabled). Their text is built from validated repo names and versions, scores, verdicts
+and the fixed titles of rules: never from scanned text (README, code, evidence).
 
 A restart in the middle of a sniff (an app rebuild, a host reboot) can't lose the change:
 the snapshot is written as soon as the list is read, so the next start wouldn't see the
@@ -420,6 +421,9 @@ class Watcher:
         if stored_target is not None:  # "none" = bell only, chosen in the panel
             notify_target = "" if stored_target == "none" else stored_target
         self.notify_target = notify_target if supervisor.notify_target_ok(notify_target) else ""
+        # (0.15, #29) Send notifications to: the bell can be left out (a notify service
+        # only), and with no service either, notifications are disabled
+        self.notify_bell = store.setting("notify_bell") != "off"
         self.mode = "not started"
         self.error = ""
         self.since = 0.0
@@ -451,15 +455,26 @@ class Watcher:
         print(f"auto-sniff: {'on' if on else 'off'} (chosen in the panel)", file=sys.stderr,
               flush=True)  # fmt: skip
 
-    def set_target(self, target: str) -> bool:
-        """Only a target HA listed can be chosen ("" = bell only)."""
+    def set_target(self, target: str, bell: bool = True) -> bool:
+        """Only a target HA listed can be chosen ("" = no notify service). `bell` False
+        leaves the bell out; with no service too, notifications are disabled."""
         if target and (not supervisor.notify_target_ok(target) or target not in self.targets()[0]):
             return False
         self.notify_target = target
+        self.notify_bell = bell
         self.store.set_setting("notify_target", target or "none")
-        print(f"auto-sniff notifications: bell{' + notify.' + target if target else ' only'} "
-              "(chosen in the panel)", file=sys.stderr, flush=True)  # fmt: skip
+        self.store.set_setting("notify_bell", "on" if bell else "off")
+        print(f"auto-sniff notifications: {self.channels()} (chosen in the panel)",
+              file=sys.stderr, flush=True)  # fmt: skip
         return True
+
+    def channels(self) -> str:
+        """Where notifications go, for the log: 'bell', 'bell + notify.x', 'notify.x' or
+        'disabled'."""
+        out = (["bell"] if self.notify_bell else []) + (
+            [f"notify.{self.notify_target}"] if self.notify_target else []
+        )
+        return " + ".join(out) or "disabled"
 
     def targets(self, refresh: bool = False) -> tuple[list[str], str]:
         """notify.* targets HA offers, cached 5 minutes."""
@@ -536,9 +551,13 @@ class Watcher:
             )
         if self.error:
             bits.append(f"Last error: {self.error[:200]}")
+        where = [w for w, on in (("the bell", self.notify_bell),
+                                 (f"notify.{self.notify_target}", bool(self.notify_target)))
+                 if on]  # fmt: skip
         bits.append(
-            "Notifications go to the bell"
-            + (f" and to notify.{self.notify_target}" if self.notify_target else "")
+            "Notifications go to " + " and to ".join(where)
+            if where
+            else "Notifications are disabled"
         )
         return not self.error, ". ".join(bits)
 
@@ -749,10 +768,7 @@ class Watcher:
         self._log(entry)
         title, md, plain = advisory_notification(entry, shown, self.panel_path())
         err = self._notify(title, md, plain, f"barkley_{repo.lower()}")
-        sent = (
-            f"notification failed: {err}" if err
-            else "notified bell" + (f" + notify.{self.notify_target}" if self.notify_target else "")
-        )  # fmt: skip
+        sent = self._sent(err)
         now = readings_line(entry.get("readings") or {}, entry.get("was_readings"))
         print(f"auto-sniff: advisories of {repo} {ver} changed: {now}, {entry['changes']}; "
               f"{ids}; {sent}", file=sys.stderr, flush=True)  # fmt: skip
@@ -932,17 +948,25 @@ class Watcher:
                 what += " (incomplete)"
         else:
             what = f"{entry['state']}: {entry['message'][:200]}"
-        sent = (
-            f"notification failed: {err}" if err
-            else "notified bell" + (f" + notify.{self.notify_target}" if self.notify_target else "")
-        )  # fmt: skip
+        sent = self._sent(err)
         print(f"auto-sniff: {c.repo} {ver} {what}; {ids}; {sent}", file=sys.stderr, flush=True)
 
+    def _sent(self, err: str) -> str:
+        if err:
+            return f"notification failed: {err}"
+        where = self.channels()
+        return (
+            "not notified (notifications disabled in Settings)"
+            if where == "disabled"
+            else (f"notified {where}")
+        )
+
     def _notify(self, title: str, md: str, plain: str, nid: str) -> str:
-        """Both channels; errors are logged and returned, never raised into the worker."""
+        """The chosen channels; errors are logged and returned, never raised into the
+        worker. Nothing is sent when notifications are disabled."""
         errors = []
         nid = "".join(ch if ch.isalnum() else "_" for ch in nid)[:100]
-        if self.notify_fn is not None:
+        if self.notify_bell and self.notify_fn is not None:
             try:
                 self.notify_fn(title, md, nid)
             except SupervisorError as ex:
@@ -965,6 +989,9 @@ class Watcher:
             + (f"[Open Barkley]({self.panel_path()})" if self.panel_path() else "Open Barkley")
         )
         plain = "This is a test. When Barkley sniffs an install or update, it tells you here."
+        if self.channels() == "disabled":
+            self.last_test = "Notifications are disabled, so nothing was sent."
+            return ""
         err = self._notify("Barkley: test notification", md, plain, "barkley_test")
         self.last_test = err or f"Test notification sent at {_now_iso(self.now_fn())[11:16]} UTC."
         return err

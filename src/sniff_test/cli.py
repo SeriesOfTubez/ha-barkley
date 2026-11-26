@@ -594,8 +594,8 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     if watcher is not None:
         watcher.start()
         out.print(
-            f"🐕 Auto-sniff: {'on' if watcher.enabled else 'off'}; notifications: bell"
-            + (f" + notify.{watcher.notify_target}" if watcher.notify_target else "")
+            f"🐕 Auto-sniff: {'on' if watcher.enabled else 'off'}; notifications: "
+            f"{watcher.channels()}"
         )
     ai = httpd.panel.ai_entity
     if args.ai_entity.strip() and not ai:

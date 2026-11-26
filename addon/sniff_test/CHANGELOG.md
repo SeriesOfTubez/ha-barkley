@@ -297,6 +297,9 @@ change below is a general check applied to every app, not an exception for one:
   to 0.5 GB or scan anyway, if you accept that Home Assistant may run short.
 - Settings → Notify when: every result (default), Exposure medium or high, Exposure
   high, or only signs of malicious behavior. A sniff that didn't finish always notifies.
+- Settings → Send notifications to (was Notify): Home Assistant's bell (default), the
+  bell and a notify service, only the notify service, or Disabled. With Disabled,
+  auto-sniff still sniffs and lists every result, and sends nothing.
 - On a pre-release track, only a newer version counts as an update.
 - History shows each scan's Threat and Exposure.
 - Settings → Versions kept per app: all of them (default), or the last 20, 10, 5 or 3

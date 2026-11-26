@@ -77,8 +77,8 @@ opens a pre-filled public issue that you finish and submit.
   the stored one.
 - **Auto-sniff (on by default):** when the Marketplace installs or updates an integration
   or card, Barkley sniffs the version that landed and sends a notification (see below).
-  Turn it off, pick who else gets notified, or choose which results notify you (Notify
-  when), on the Settings page.
+  Turn it off, pick where notifications go or turn them off (Send notifications to), or
+  choose which results notify you (Notify when), on the Settings page.
 - **An app's page**, top to bottom: the two readings, the Threat box and the Exposure
   box, In short (with the developer's description after an AI request), privacy notes,
   What Barkley found (items that add to Exposure are marked), What it touches, Where the login
@@ -158,8 +158,8 @@ while Barkley was stopped). When an integration or card is installed or updated:
   before, and counts of what changed, with a link to the comparison. If OSV can't be reached nothing changes and
   Barkley tries again an hour later. "Check advisories again" on an app's page does the
   same on request.
-- It sends a **bell notification** in Home Assistant (always) and, if you picked one in
-  the panel, a `notify.<target>` message (for example your phone through the companion
+- It sends a **bell notification** in Home Assistant and, if you picked one in the
+  panel, a `notify.<target>` message (Send notifications to: either, both, or Disabled) (for example your phone through the companion
   app): the app and version, the two readings with a coloured light each (🟢 🟡 🔴), for
   a found or possible threat one fixed sentence saying what it is, and for an update
   counts of what changed. The `notify` message is shorter: its body starts with the
@@ -208,7 +208,7 @@ option's.
 | `ai_entity` | empty | Optional. Easier: pick your AI in the panel (any app's page, "Explain this app with AI"), which lists your AI Task entities. A choice made in the panel wins over this option. |
 | `ai_mode` | `deep` | `summary` (Explain only): the AI explains what the scan found. `deep` (Explain and read code): it can also read the code around one item, port or unknown address when you click **Explain in context**. Also set in the panel (wins over this option). |
 | `auto_scan` | `true` | Sniff every Marketplace install, update and offered update, and send a notification. Also set in the panel (wins over this option). |
-| `notify_target` | empty | A `notify` service name (for example `mobile_app_my_phone`) that gets each auto-sniff result besides the bell notification. Easier: pick it in the panel, which lists your notify services (wins over this option). |
+| `notify_target` | empty | A `notify` service name (for example `mobile_app_my_phone`) that gets each auto-sniff result besides the bell notification. Easier: pick it in the panel (Send notifications to), which lists your notify services and can also leave out the bell or turn notifications off (wins over this option). |
 
 ### AI explanations
 

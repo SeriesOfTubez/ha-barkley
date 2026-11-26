@@ -18,8 +18,8 @@ of the options (see [Standalone](Standalone.md)).
 | Build tool known to be malware | 2.5 | How much a build tool listed as malware counts toward Threat: 2, 2.5 or 3 (7 and up is found, anything under is possible). It runs on the developer's machine, not in your home, but it could change what ships. Changes the reading of stored scans too. |
 | Quiet projects | 12 months | An app's page and card say when nothing has been pushed to its project on GitHub for this long: 6 months, 12 months, 2 years, 3 years, or Never say it. It changes no reading. |
 | Auto-sniff | On | Sniff installs, updates and offered updates, and notify. |
-| Notify | Bell only | A `notify` service that gets each result besides the bell. **Send a test notification** is beside it. |
-| Notify when | Every result | Or "Exposure medium or high, or signs of malicious behavior", "Exposure high, or signs of malicious behavior", or "Only signs of malicious behavior". A sniff that didn't finish or couldn't run always notifies. Every result is still listed under Auto-sniff activity and on the app's page. |
+| Send notifications to | Home Assistant's bell | Or the bell and a `notify` service, only the `notify` service, or Disabled. With Disabled nothing is sent, and every result is still listed under Auto-sniff activity and on the app's page. **Send a test notification** is beside it. |
+| Notify when | Every result | Or "Exposure medium or high, or signs of malicious behavior", "Exposure high, or signs of malicious behavior", or "Only signs of malicious behavior". A sniff that didn't finish or couldn't run always notifies, unless notifications are disabled. Every result is still listed under Auto-sniff activity and on the app's page. |
 | AI | Off | The AI Task entity for explanations. Only as good as the model you pick. |
 | AI answers | 12,000 characters | How much of the developer's README and code descriptions one request may carry: 6,000, 12,000 or 18,000 characters, with one code description per 1,000 characters. The AI may write up to 4 sentences at 6,000 and up to 6 above. A bigger request can take your AI longer. Picking a size fills in its time limit below (3, 6 or 9 minutes). |
 | AI time limit | Stop waiting after 6 minutes | How long Barkley waits for an answer (1 to 60 minutes), or "Wait as long as it takes" for a slow model on your own machine. While it waits, the page has a Stop waiting button. Home Assistant may still finish an answer Barkley stopped waiting for, but Barkley won't use it. |
@@ -65,6 +65,6 @@ database) and never shows it again; **Remove** deletes it. A token in the app's
 | `ai_entity` | empty | AI |
 | `ai_mode` | `deep` | AI mode |
 | `auto_scan` | `true` | Auto-sniff |
-| `notify_target` | empty | Notify |
+| `notify_target` | empty | Send notifications to |
 
 There's no light or dark setting, because the panel follows the mode of your Home Assistant profile.

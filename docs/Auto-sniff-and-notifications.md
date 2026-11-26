@@ -24,14 +24,17 @@ Barkley only reports. It never moves, refuses or blocks an app.
 
 ## Notifications
 
-By default every result sends a bell notification in Home Assistant. Settings → Notify
-when can limit that to Exposure medium or high, Exposure high, or only signs of
-malicious behavior. Signs of malicious behavior always notify, and so does a sniff that
-didn't finish or couldn't run. Every result is still listed under Auto-sniff activity
-on the Settings page and on the app's page. If you pick a notify service
-on the Settings page (Notify; for example your phone through the companion app), it gets
+By default every result sends a bell notification in Home Assistant. Settings → Send
+notifications to picks where they go: the bell, the bell and a notify service, only the
+notify service, or Disabled. With Disabled, auto-sniff still sniffs everything but sends
+nothing, which suits you if you keep the bell for things that need attention now.
+Settings → Notify when can limit what's sent to Exposure medium or high, Exposure high,
+or only signs of malicious behavior. Signs of malicious behavior always notify, and so
+does a sniff that didn't finish or couldn't run, unless notifications are disabled.
+Every result is still listed under Auto-sniff activity on the Settings page and on the
+app's page. A notify service (for example your phone through the companion app) gets
 a shorter message: the app and version are in its title, the body starts with the two
-readings, and tapping it opens Barkley. **Send a test notification** there sends a sample through both. Recent
+readings, and tapping it opens Barkley. **Send a test notification** there sends a sample to what you picked. Recent
 auto-sniffs are listed on the Settings page too.
 
 A notification carries:

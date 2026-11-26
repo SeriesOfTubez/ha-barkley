@@ -1070,6 +1070,33 @@ DOCS_CPU = (
     "#every-scan-fails-cpu-isa-level-is-lower-than-required"
 )
 
+# (0.15, #29) Send notifications to: one choice for the bell and the notify service.
+# "" is the bell only, "<service>" the bell and the service, SEND_ONLY + "<service>" the
+# service only, SEND_DISABLED nothing. The two prefixes can't be service names (those
+# are [a-z0-9_] only).
+SEND_ONLY = ":only:"
+SEND_DISABLED = ":disabled"
+
+
+def send_to_value(target: str, bell: bool) -> str:
+    if not bell:
+        return f"{SEND_ONLY}{target}" if target else SEND_DISABLED
+    return target
+
+
+def parse_send_to(value: str | None) -> tuple[str, bool] | None:
+    """(service, bell) from the form, or None for anything else. Whether the service is
+    one Home Assistant offers is checked by Watcher.set_target."""
+    if value is None:
+        return None
+    value = value[:120]
+    if value == SEND_DISABLED:
+        return "", False
+    if value.startswith(SEND_ONLY):
+        target = value[len(SEND_ONLY) :]
+        return (target, False) if target else None
+    return value, True
+
 
 def github_token_url(now: datetime | None = None) -> str:
     """(0.14.0) GitHub's new fine-grained token page, filled in (its template URL: name up
@@ -1324,21 +1351,31 @@ def render_settings(
     check_rows = ""
     if watcher is not None:
         targets, _terr = watcher.targets()
-        chosen = watcher.notify_target
-        opts = [("", "Bell only")] + [(t, f"notify.{t}") for t in targets]
-        if chosen and chosen not in targets:
-            opts.append((chosen, f"notify.{chosen} (not offered now)"))
+        chosen = send_to_value(watcher.notify_target, watcher.notify_bell)
+        services = list(targets)
+        if watcher.notify_target and watcher.notify_target not in services:
+            services.append(watcher.notify_target)
+        later = " (not offered now)"
+        opts = [("", "Home Assistant's bell (default)")]
+        for t in services:
+            gone = later if t not in targets else ""
+            opts += [(t, f"The bell and notify.{t}{gone}"),
+                     (f"{SEND_ONLY}{t}", f"Only notify.{t}{gone}")]  # fmt: skip
+        opts.append((SEND_DISABLED, "Disabled"))
         check_rows += row("Auto-sniff", "Check new installs and offered updates on its own.",
                           sel("auto_scan", "on" if watcher.enabled else "off",
                               [("on", "On (default)"), ("off", "Off")]))  # fmt: skip
         test = (f'<form method=post action="{base}/notify-test" class="setform">'
                 f'<input type=hidden name=token value="{token}">'
                 "<button>Send a test notification</button></form>")  # fmt: skip
-        check_rows += row("Notify", "Choose where results go. Notifications carry only app "
-                          "names, versions, counts, readings and Barkley's own fixed words.",
+        check_rows += row("Send notifications to", "Where auto-sniff results go. With "
+                          "Disabled nothing is sent; every result is still listed under "
+                          "Auto-sniff activity and on the app's page. Notifications carry "
+                          "only app names, versions, counts, readings and Barkley's own "
+                          "fixed words.",
                           sel("notify_target", chosen, opts) + test)  # fmt: skip
-        check_rows += row("Notify when", "Which results reach the bell and your notify "
-                          "service. A sniff that didn't finish always does.",
+        check_rows += row("Notify when", "Which results are sent. A sniff that didn't "
+                          "finish always is, unless notifications are disabled.",
                           sel("notify_when", s.notify_when, [
                               ("all", "Every result (default)"),
                               ("medium", "Exposure medium or high, or signs of malicious "
@@ -3040,9 +3077,9 @@ class Panel:
             on = raw.get("auto_scan")
             if on in ("on", "off") and (on == "on") != self.watcher.enabled:
                 self.watcher.set_enabled(on == "on")
-            target = raw.get("notify_target")
-            if target is not None and target != self.watcher.notify_target:
-                self.watcher.set_target(target[:100])
+            send = parse_send_to(raw.get("notify_target"))
+            if send is not None and send != (self.watcher.notify_target, self.watcher.notify_bell):
+                self.watcher.set_target(*send)
         entity = raw.get("ai_entity")
         if entity is not None and entity != self.ai_entity:
             choices, _err = self.ai_choices(refresh=True)
@@ -3440,7 +3477,8 @@ class Panel:
                     if path == "/auto-scan":
                         w.set_enabled(get("on") == "1")
                     elif path == "/notify-target":
-                        if not w.set_target(get("target")[:100]):
+                        send = parse_send_to(get("target"))
+                        if send is None or not w.set_target(*send):
                             return self._text(HTTPStatus.BAD_REQUEST,
                                               "not one of the notify targets Home Assistant "
                                               "offers")  # fmt: skip

@@ -545,3 +545,41 @@ def test_the_advisory_push_leads_with_the_readings():
     )
     assert plain.endswith("It only looked up its packages again.") and "acme/w" not in plain
     assert "integration acme/w v2 uses" in md
+
+
+# (0.15, #29 follow-up) "Send notifications to": the bell and the notify service, either,
+# or Disabled. A user who keeps the bell for things that need attention now can leave
+# Barkley out of it and still have every result sniffed and listed.
+
+
+def test_send_to_the_notify_service_only(ctx, capsys):
+    store, worker, fakes, w = ctx
+    assert w.set_target("mobile_app_phone", bell=False) is True
+    assert store.setting("notify_bell") == "off" and w.channels() == "notify.mobile_app_phone"
+    w.check()
+    fakes.items.append(Installed("acme/b", "card", "B", "v2", "v2", False))
+    w.check()
+    worker.wait()
+    assert fakes.bell == [] and len(fakes.pushed) == 1
+    assert "notified notify.mobile_app_phone" in capsys.readouterr().err
+    again = watch.Watcher(store, worker, fakes.installed)
+    assert (again.notify_target, again.notify_bell) == ("mobile_app_phone", False)
+
+
+def test_disabled_sends_nothing_but_still_sniffs_and_lists(ctx, capsys):
+    store, worker, fakes, w = ctx
+    assert w.set_target("", bell=False) is True and w.channels() == "disabled"
+    w.check()
+    fakes.items.append(Installed("acme/b", "card", "B", "v2", "v2", False))
+    w.check()
+    worker.wait()
+    assert fakes.bell == [] and fakes.pushed == []
+    assert worker.jobs[0].state == "done"
+    assert any(x["action"] == "install" for x in w.log())  # still under Auto-sniff activity
+    err = capsys.readouterr().err
+    assert "not notified (notifications disabled in Settings)" in err
+    assert w.notify_test() == "" and fakes.bell == [] and fakes.pushed == []
+    assert w.last_test == "Notifications are disabled, so nothing was sent."
+    assert "Notifications are disabled" in w.diagnostics()[1]
+    again = watch.Watcher(store, worker, fakes.installed, notify_target="mobile_app_phone")
+    assert again.channels() == "disabled"  # the panel's choice wins over the option
