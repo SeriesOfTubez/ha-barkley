@@ -40,11 +40,11 @@ From top to bottom:
   in the code. An address the code builds while it runs is said to be so. The last line
   says which "Where Home Assistant runs" choice the reading is based on.
 - **In short:** a few sentences built from the scan by fixed rules (no AI). An AI
-  summary, if you asked for one, sits here, tagged AI. After an AI request in the Explain
-  and read code mode, and only when no threat was found or possible, **The developer's
+  summary, if you asked for one, sits here, tagged AI. After an AI request in the **Explain
+  and read code** mode, and only when no threat was found or possible, **The developer's
   description** follows: sentences tagged AI inferred.
 - **Privacy notes** such as telemetry, analytics or unencrypted connections. They never
-  change a reading. In the Explain and read code mode a note links to the AI's reading
+  change a reading. In the **Explain and read code** mode a note links to the AI's reading
   of the address or port behind it.
 - **What Barkley found:** everything else the scan reports, grouped by kind, with what
   it means and where in the code it is. An item that adds to the Exposure reading is
@@ -124,7 +124,7 @@ Each site is one line that folds open. A group shows five, then "N more". Inside
   README line yourself. This never
   changes the site's group, and it isn't shown on a flagged site, on the sites a
   possible threat names, or on a page with a found threat;
-- **Explain in context**, in the Explain and read code mode.
+- **Explain in context**, in the **Explain and read code** mode.
 
 More groups follow when there is something to list:
 
@@ -187,7 +187,7 @@ page. A wider screen always shows the whole page.
 - **Sniff this version again** runs a fresh scan instead of reusing the stored one.
 - **Other versions** lists the 10 newest releases, betas included.
 - **Check advisories again**: see [Advisory re-checks](Advisory-re-checks.md).
-- **Explain this app** and, in the Explain and read code mode, **Explain in context**:
+- **Explain this app** and, in the **Explain and read code** mode, **Explain in context**:
   see [AI explanations](AI-explanations.md).
 
 ## "Unfinished"

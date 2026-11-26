@@ -49,7 +49,7 @@ a separate, deeper request about one item.
 
 ## The developer's description (AI inferred)
 
-New in 0.15, in the Explain and read code mode only. The same click on **Explain this
+New in 0.15, in the **Explain and read code** mode only. The same click on **Explain this
 app** makes one more request. It carries what the scan stored of the developer's own
 words, with their line numbers: the start of the README, the README passages about
 logins, accounts, where data goes, privacy and what the app runs on the system, and the
@@ -86,7 +86,7 @@ Limits that are always on:
 
 ## Explain in context
 
-In the Explain and read code mode (Settings → AI mode; the default). Each item, each
+In the **Explain and read code** mode (Settings → AI mode; the default). Each item, each
 port and each address that isn't one of the app's own sites gets an **Explain in
 context** button. During the scan Barkley keeps the code around it, and you can open it under
 "The code it reads" before you click. On your click, that code and the question go to
