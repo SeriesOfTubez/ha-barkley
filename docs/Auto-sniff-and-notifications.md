@@ -17,7 +17,7 @@ missed while it was stopped.
 ## Read this before you rely on it
 
 **A new integration runs as soon as it is installed.** Home Assistant opens its setup
-dialog right after the files land, which loads its code. For a new install, auto-sniff can only report on what you already let in. To check a new app before it runs, [sniff it from search first](Sniff-before-you-install). An update's new code waits for
+dialog right after the files land, which loads its code. For a new install, auto-sniff can only report on what you already let in. To check a new app before it runs, [sniff it from search first](Sniff-before-you-install.md). An update's new code waits for
 the next restart, so there the sniff and the comparison come before the code runs.
 
 Barkley only reports. It never moves, refuses or blocks an app.

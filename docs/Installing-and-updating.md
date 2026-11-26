@@ -4,10 +4,10 @@
 
 - Home Assistant OS or Supervised (Barkley is an app, so it needs the Supervisor), on
   amd64 or aarch64. With Home Assistant Container or Core, or to run Barkley on another
-  machine than a small box, see [Standalone (no Supervisor)](Standalone).
+  machine than a small box, see [Standalone (no Supervisor)](Standalone.md).
 - About 200 MB for the download. Most scans use under 0.5 GB of memory, a few big apps
   far more; by default Barkley won't start a scan with under 1 GB free. See
-  [Diagnostics and troubleshooting](Diagnostics-and-troubleshooting) for the memory guard.
+  [Diagnostics and troubleshooting](Diagnostics-and-troubleshooting.md) for the memory guard.
 
 ## Install
 
@@ -16,17 +16,17 @@
 2. Install **Barkley**, start it, and open it from the sidebar.
 
 Home Assistant downloads a prebuilt image for your box. Nothing needs configuring before
-the first start; the [options](Options) all have defaults.
+the first start; the [options](Options.md) all have defaults.
 
 ## First steps
 
 - Barkley lists what you have installed through the Marketplace. One button sniffs
-  everything that hasn't been sniffed yet. See [The list](The-list).
+  everything that hasn't been sniffed yet. See [The list](The-list.md).
 - Auto-sniff is on by default: installs, updates and offered updates are sniffed and you
   get a notification. To also get them on your phone, pick a notify service on
-  the Settings page. See [Auto-sniff and notifications](Auto-sniff-and-notifications).
+  the Settings page. See [Auto-sniff and notifications](Auto-sniff-and-notifications.md).
 - A GitHub token is optional but useful when you sniff many apps in a row. See
-  [Options](Options).
+  [Options](Options.md).
 
 ## Updating
 
@@ -37,7 +37,7 @@ rules. Your stored scans and their history are kept either way.
 
 **Updating from 0.14 to 0.15:** 0.15 changes what a scan finds, so the list offers that
 button once. The 0–100 score is replaced by two readings, Threat and Exposure (see
-[An app's page](An-apps-page)). Reviews, Malware check only and Addresses you trust are
+[An app's page](An-apps-page.md)). Reviews, Malware check only and Addresses you trust are
 removed, and on its first start 0.15 deletes what 0.14 stored for them: the findings you
 accepted, the addresses you trusted and the apps set to Malware check only. Stored scans
 and your other settings stay.

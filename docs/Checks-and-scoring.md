@@ -27,7 +27,7 @@ the newest release, else the default branch pinned to one commit.
   code. It's listed on the app's page as a library and checked for advisories like any
   dependency. Barkley asks jsDelivr by the file's SHA-256. Anything else, including no
   answer or a rate limit, means the file is read in full; skipping by folder or file name
-  never happens. Off with [Published libraries](Options) on the Settings page.
+  never happens. Off with [Published libraries](Options.md) on the Settings page.
 - **Addresses:** every host and IP in the shipped code, grouped as on your home network,
   the app's own sites, servers the developer runs, analytics, other sites, or project
   and help links. A site is "the app's own" when the app's `manifest.json` or

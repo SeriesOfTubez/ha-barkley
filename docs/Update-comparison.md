@@ -9,7 +9,7 @@ An update is new code from the same project, so Barkley shows what the new versi
   and shows the comparison.
 - Auto-sniff does the same on its own as soon as the Marketplace offers an update, so
   the comparison is usually there before you look. See
-  [Auto-sniff and notifications](Auto-sniff-and-notifications).
+  [Auto-sniff and notifications](Auto-sniff-and-notifications.md).
 - **What would updating change?** on the first page does it for any repository and tag.
 
 The first check of an app takes a few minutes, because two versions may need scanning.
@@ -25,7 +25,7 @@ The status box shows progress.
 - **Smaller changes** folds everything else into one line you can open. None is a
   concern on its own.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/update-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/update-light.png" alt="What an update changes"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/update-dark.png"><img src="images/update-light.png" alt="What an update changes"></picture>
 
 <sub>Screenshots from Barkley's own made-up test apps, not real projects. The AI text is real output from Claude Sonnet 5.5, standing in for the AI Task model you pick; your model's answers will differ.</sub>
 

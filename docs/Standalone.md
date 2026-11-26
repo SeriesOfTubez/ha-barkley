@@ -38,7 +38,7 @@ is the one used, and Barkley stores no AI key of its own.
 
 1. **A Home Assistant administrator.** Barkley needs an administrator's token, since the
    Marketplace's list is for administrators, and only administrators can log in to it.
-2. **The files.** Copy [`standalone/compose.yaml`](https://github.com/SeriesOfTubez/ha-barkley/blob/main/standalone/compose.yaml)
+2. **The files.** Copy [`standalone/compose.yaml`](../standalone/compose.yaml)
    into a new folder, then:
    ```sh
    mkdir -p data && sudo chown 1000:1000 data
@@ -140,7 +140,7 @@ auto-sniff and the notify target) are kept there once you change them.
 | `BARKLEY_URL` | Barkley, as your browser reaches it |
 | `BARKLEY_ALLOW` | Client addresses to let in, comma-separated (instead of the login, behind a proxy that does its own) |
 | `BARKLEY_PORT` | The port inside the container (8099) |
-| `BARKLEY_EXPOSURE`, `BARKLEY_PARALLEL`, `BARKLEY_JOBS` | Starting values for the Settings page, as the app's [options](Options) `exposure`, `parallel_scans`, `jobs` |
+| `BARKLEY_EXPOSURE`, `BARKLEY_PARALLEL`, `BARKLEY_JOBS` | Starting values for the Settings page, as the app's [options](Options.md) `exposure`, `parallel_scans`, `jobs` |
 | `BARKLEY_AI_ENTITY`, `BARKLEY_AI_MODE`, `BARKLEY_AUTO_SCAN`, `BARKLEY_NOTIFY_TARGET` | Starting values for the panel's settings |
 | `GITHUB_TOKEN_FILE` or `GITHUB_TOKEN` | Optional, as the app's `github_token` |
 | `BARKLEY_UNSANDBOXED` | `1` starts Barkley on a kernel without Landlock, with the scanner tools unsandboxed |
@@ -160,7 +160,7 @@ page (8 GB: up to 4 scans, the most Parallel scans allows).
 
 Change the version in `image:` and run `docker compose up -d`. The scans in `data/` are
 kept. The image's signature can be checked as for the app; see
-[Installing and updating](Installing-and-updating).
+[Installing and updating](Installing-and-updating.md).
 
 ## Backups
 

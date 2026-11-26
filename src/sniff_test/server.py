@@ -1046,10 +1046,8 @@ def render_index(
     return ui.page("Barkley", "".join(out), refresh=5 if active or ai_busy else 0, base=base)
 
 
-WIKI_GITHUB_HELP = "https://github.com/SeriesOfTubez/ha-barkley/wiki/Options#github-token"
-WIKI_HA_SETUP = (
-    "https://github.com/SeriesOfTubez/ha-barkley/wiki/Standalone#barkleys-home-assistant-token"
-)
+DOCS_GITHUB_HELP = "https://ha-barkley.github.io/docs/options/#github-token"
+DOCS_HA_SETUP = "https://ha-barkley.github.io/docs/standalone/#barkleys-home-assistant-token"
 
 
 def github_token_url(now: datetime | None = None) -> str:
@@ -1442,7 +1440,7 @@ def render_settings(
         "GitHub token",
         "A token is optional. It raises GitHub's limit from 60 to 5,000 requests an hour, "
         f"and it needs no permissions. {GITHUB_STEPS} "
-        f'<a href="{WIKI_GITHUB_HELP}" target="_blank" rel="noopener noreferrer">'
+        f'<a href="{DOCS_GITHUB_HELP}" target="_blank" rel="noopener noreferrer">'
         "More about it</a>",
         github_create_link() + token_ctl,
     )
@@ -1592,7 +1590,7 @@ def render_setup(
         nxt = (f'<form method=post action="{base}/setup/next" class="setform">{hidden}'
                + ("<button class=primary>Next</button>" if src
                   else "<button>Skip for now</button>") + "</form>")  # fmt: skip
-        body = (f"{state}{ctl}<p class=\"muted small\"><a href=\"{WIKI_HA_SETUP}\" "
+        body = (f"{state}{ctl}<p class=\"muted small\"><a href=\"{DOCS_HA_SETUP}\" "
                 'target="_blank" rel="noopener noreferrer">About this token</a></p>'
                 f'<p class="actions">{nxt}</p>')  # fmt: skip
     page = (f'<div class="head"><h1>{ui.logo_img()}Set up Barkley</h1></div>'

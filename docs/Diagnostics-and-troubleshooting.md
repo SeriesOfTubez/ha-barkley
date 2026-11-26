@@ -65,7 +65,7 @@ limit to 5,000.
 ## The AI button shows an error
 
 The model behind your AI Task entity must support structured output. See
-[AI explanations](AI-explanations).
+[AI explanations](AI-explanations.md).
 
 ## An update check takes minutes
 

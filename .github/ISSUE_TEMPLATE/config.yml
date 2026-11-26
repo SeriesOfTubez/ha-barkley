@@ -6,5 +6,5 @@ contact_links:
       A way to hide code from Barkley, make it run what it scans, or reach outside its
       container. Report it privately here, not as an issue. See SECURITY.md.
   - name: Documentation
-    url: https://github.com/SeriesOfTubez/ha-barkley/wiki
+    url: https://ha-barkley.github.io/docs/
     about: Install, standalone setup and how scoring works.

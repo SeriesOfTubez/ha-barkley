@@ -35,7 +35,7 @@ Barkley reads code it treats as hostile, so this page lists what it can do on yo
   neither sandbox works, Barkley won't start unless you set `BARKLEY_UNSANDBOXED=1`. The
   Tool sandbox line on the Diagnostics page says which one is on.
 
-When you run Barkley [standalone](Standalone), there's no Supervisor around it. It reaches Home
+When you run Barkley [standalone](Standalone.md), there's no Supervisor around it. It reaches Home
 Assistant with a long-lived token of an administrator, sends it only to `HA_URL`, follows
 no redirects and ignores proxy settings. The same fixed list of calls applies, plus the
 ones for logging in and for its own token: who logged in, and making, listing and
@@ -65,7 +65,7 @@ tag. Every tool is pinned by version, the downloaded binaries by checksum, and n
 is compiled during the build. The base image's signature is checked before the build,
 and a published version is never overwritten. Each image is signed with Cosign;
 checking that signature is optional, see
-[Installing and updating](Installing-and-updating).
+[Installing and updating](Installing-and-updating.md).
 
 ## Checks on every change
 

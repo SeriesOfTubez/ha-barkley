@@ -321,6 +321,8 @@ change below is a general check applied to every app, not an exception for one:
   right, and none was malware. Barkley no longer downloads every library of an
   integration to run GuardDog on it, so a scan needs far less temporary space. (It
   still downloads the few libraries the app hands the login you gave it to; see above.)
+- The GitHub wiki. The docs moved from the GitHub wiki to `docs/` in the repository and
+  the website, https://ha-barkley.github.io/docs/.
 
 **Fixes from the issue tracker**
 

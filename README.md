@@ -52,8 +52,8 @@ you gave it goes, where it connects, where its code comes from, privacy notes, a
 developer's security habits. A custom integration already
 runs unsandboxed inside Home Assistant, so what its code openly uses says little about
 whether it's trying to hurt you. Barkley gives you the facts and scores only the two
-things above. How both readings are worked out is on the wiki page
-[Checks and readings](https://github.com/SeriesOfTubez/ha-barkley/wiki/Checks-and-scoring).
+things above. How both readings are worked out is in
+[Checks and readings](docs/Checks-and-scoring.md).
 
 **See what you already have.** Barkley asks the Marketplace what is installed and leads
 with what needs a look: a found or possible threat, High exposure, a check that didn't
@@ -125,9 +125,10 @@ entity you pick**, and they can be wrong.
 a scan can't push Home Assistant out of memory. A
 Diagnostics page shows each tool, the memory figure and the AppArmor profile in use.
 
-The [wiki](https://github.com/SeriesOfTubez/ha-barkley/wiki) walks through every feature,
-page by page. The app's own [documentation](addon/sniff_test/DOCS.md) has the details:
-every option, how auto-sniff and the AI features work, and what the app is allowed to do.
+The [docs](docs/README.md) walk through every feature, page by page. They're also on
+[the website](https://ha-barkley.github.io/docs/). The app's own
+[documentation](addon/sniff_test/DOCS.md) has the details: every option, how auto-sniff
+and the AI features work, and what the app is allowed to do.
 
 ## Install on Home Assistant
 
@@ -144,8 +145,8 @@ about 8.5 GB.
 
 **Home Assistant Container or Core, or a small box?** The same image runs as a container
 next to Home Assistant or on another machine, with a login through Home Assistant:
-[`standalone/compose.yaml`](standalone/compose.yaml) and the wiki page
-[Standalone (no Supervisor)](https://github.com/SeriesOfTubez/ha-barkley/wiki/Standalone).
+[`standalone/compose.yaml`](standalone/compose.yaml) and the docs page
+[Standalone (no Supervisor)](docs/Standalone.md).
 
 ## What gets checked
 
@@ -270,7 +271,7 @@ layers, each of which you can check in this repository.
   store, the token or other scans, run only what the image ships, and connect only to
   port 443 (Semgrep: nowhere). It also can't read Barkley's environment, or signal it
   (on Linux 6.12 or later). Barkley sets this up itself, so it applies on top of the
-  app's main AppArmor profile (in place of `tools`) and on its own when Barkley runs [standalone](https://github.com/SeriesOfTubez/ha-barkley/wiki/Standalone),
+  app's main AppArmor profile (in place of `tools`) and on its own when Barkley runs [standalone](docs/Standalone.md),
   which won't start without it unless you say so. Home Assistant OS's kernel is built
   without Landlock (checked on 6.18), so there the `tools` profile confines the tools.
   Diagnostics says which.

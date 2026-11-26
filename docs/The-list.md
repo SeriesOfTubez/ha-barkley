@@ -4,7 +4,7 @@ Barkley's first page shows what you have installed through the Marketplace, with
 version you run and the version the Marketplace would install now. Each app shows its
 two readings, Threat and Exposure.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/list-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/list-light.png" alt="The list of installed apps"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/list-dark.png"><img src="images/list-light.png" alt="The list of installed apps"></picture>
 
 <sub>Screenshots from Barkley's own made-up test apps, not real projects. The AI text is real output from Claude Sonnet 5.5, standing in for the AI Task model you pick; your model's answers will differ.</sub>
 
@@ -47,7 +47,7 @@ check). A purple chip marks a privacy note. Privacy notes never change a reading
 - **Sniff it** on an app scans the version you have installed; **Sniff again** runs a
   fresh scan of it instead of reusing the stored one.
 - **Check update** scans the offered version and shows what the update would change. See
-  [What an update would change](Update-comparison).
+  [What an update would change](Update-comparison.md).
 - **Sniff N apps not yet sniffed with the current rules** scans every installed app that
   has no scan with Barkley's current rules. A Barkley update keeps its stored scans
   unless it changed what a scan finds (its rules, its checks or the scanner tools).

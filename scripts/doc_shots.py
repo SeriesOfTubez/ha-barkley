@@ -1,4 +1,4 @@
-"""Screenshots for the README and the wiki, made from Barkley's own made-up test apps
+"""Screenshots for the README and the docs, made from Barkley's own made-up test apps
 (tests/fixtures), never from a real project.
 
     uv run python scripts/doc_shots.py --reports DIR --answers docs/screenshots/ai-answers.json

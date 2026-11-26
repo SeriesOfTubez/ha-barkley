@@ -3,18 +3,18 @@
 Barkley has its own **Settings** page (the Settings link on the panel's first page). The
 app's options (Settings → Apps → Barkley → Configuration) give the starting values; once
 you save the Settings page, it wins. Standalone, the `BARKLEY_*` variables play the part
-of the options (see [Standalone](Standalone)).
+of the options (see [Standalone](Standalone.md)).
 
 ## The Settings page
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/settings-ai-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/settings-ai-light.png" alt="The AI answers settings"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/settings-ai-dark.png"><img src="images/settings-ai-light.png" alt="The AI answers settings"></picture>
 
 <sub>Screenshots from Barkley's own made-up test apps, not real projects. The AI text is real output from Claude Sonnet 5.5, standing in for the AI Task model you pick; your model's answers will differ.</sub>
 
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Where Home Assistant runs | Only my home network | Or "A shared or work network", or "Reachable from the internet". It changes the Exposure reading: up by a quarter on a shared or work network, up by half when reachable from the internet. Reachable from the internet also changes what new sniffs find: pages that work without a login, pages other websites may call and webhooks count one level higher, and a known vulnerability in a library keeps its rating instead of being medium at most, and is critical when CISA lists it as exploited in the wild, automatable and of total impact (see [Where Home Assistant runs](Checks-and-scoring#where-home-assistant-runs)). A stored scan keeps the choice it was made with. Signs of malicious behavior count the same either way. A hint under it says whether Home Assistant has an external URL set. |
-| Minor items | Hide | Hide or Show the items that touch no password or login and change nothing, such as listing user names. Hidden items are counted on each app's page, with a link to show them. They never change the readings. See [Minor items](Checks-and-scoring#minor-items). |
+| Where Home Assistant runs | Only my home network | Or "A shared or work network", or "Reachable from the internet". It changes the Exposure reading: up by a quarter on a shared or work network, up by half when reachable from the internet. Reachable from the internet also changes what new sniffs find: pages that work without a login, pages other websites may call and webhooks count one level higher, and a known vulnerability in a library keeps its rating instead of being medium at most, and is critical when CISA lists it as exploited in the wild, automatable and of total impact (see [Where Home Assistant runs](Checks-and-scoring.md#where-home-assistant-runs)). A stored scan keeps the choice it was made with. Signs of malicious behavior count the same either way. A hint under it says whether Home Assistant has an external URL set. |
+| Minor items | Hide | Hide or Show the items that touch no password or login and change nothing, such as listing user names. Hidden items are counted on each app's page, with a link to show them. They never change the readings. See [Minor items](Checks-and-scoring.md#minor-items). |
 | Build tool known to be malware | 2.5 | How much a build tool listed as malware counts toward Threat: 2, 2.5 or 3 (7 and up is found, anything under is possible). It runs on the developer's machine, not in your home, but it could change what ships. Changes the reading of stored scans too. |
 | Quiet projects | 12 months | An app's page and card say when nothing has been pushed to its project on GitHub for this long: 6 months, 12 months, 2 years, 3 years, or Never say it. It changes no reading. |
 | Auto-sniff | On | Sniff installs, updates and offered updates, and notify. |
@@ -23,7 +23,7 @@ of the options (see [Standalone](Standalone)).
 | AI | Off | The AI Task entity for explanations. Only as good as the model you pick. |
 | AI answers | 12,000 characters | How much of the developer's README and code descriptions one request may carry: 6,000, 12,000 or 18,000 characters, with one code description per 1,000 characters. The AI may write up to 4 sentences at 6,000 and up to 6 above. A bigger request can take your AI longer. Picking a size fills in its time limit below (3, 6 or 9 minutes). |
 | AI time limit | Stop waiting after 6 minutes | How long Barkley waits for an answer (1 to 60 minutes), or "Wait as long as it takes" for a slow model on your own machine. While it waits, the page has a Stop waiting button. Home Assistant may still finish an answer Barkley stopped waiting for, but Barkley won't use it. |
-| AI mode | Explain and read code | Explain only: the AI explains what Barkley found. Explain and read code: it can also read the code around one item when you ask, and sum up what the developer's README and code descriptions say. See [AI explanations](AI-explanations). |
+| AI mode | Explain and read code | Explain only: the AI explains what Barkley found. Explain and read code: it can also read the code around one item when you ask, and sum up what the developer's README and code descriptions say. See [AI explanations](AI-explanations.md). |
 | Parallel scans | 2 (app), 1 (standalone) | How many apps are scanned at the same time (1 to 4). Another scan starts only while there's memory for it (Memory for scans); otherwise it waits. Keep it times Semgrep jobs at or below the CPU cores. |
 | Semgrep jobs | 1 | Inside one scan, how many files Semgrep reads at once (1 to 4). Helps apps that ship many files, such as cards split into chunks. Barkley's passes over the code still run one after another. Each extra job needs its own memory. |
 | Published libraries | On | Integrations only. A JavaScript file of 64 KB or more that is byte for byte a file of a well-known npm package (that version at least 30 days old, 10,000 downloads in the last week, no malware advisory) isn't read as code; it's listed as a library and checked for advisories. Barkley sends the SHA-256 of up to 40 such files per scan to jsDelivr, and the package name to npm. No answer, an error or a rate limit means the file is read. Off: every file is read and nothing is asked. Applies to the next sniff. |
@@ -36,7 +36,7 @@ of the options (see [Standalone](Standalone)).
 The page has two sections, **Readings** and **Checking and notifications**. Each has
 **Reset to defaults**. Some settings have a **How this works** line that opens a longer
 explanation. Standalone, the page also has Barkley's Home Assistant token and **Token
-rotation** (see [Standalone](Standalone)).
+rotation** (see [Standalone](Standalone.md)).
 
 Gone in 0.15: Paranoid mode (now Minor items), Powerful no threat, Pages without a
 login, Hidden usage reporting, When an accepted finding changes, and Ask again. They

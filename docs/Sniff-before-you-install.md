@@ -8,7 +8,7 @@ Since Home Assistant 2026.11, the Marketplace opens a new integration's setup ri
    catalog, integrations and cards.
 2. Click **Sniff it** on a result. Barkley scans exactly what the Marketplace would
    install, without installing it.
-3. Read the app's sniff report. See [An app's page](An-apps-page).
+3. Read the app's sniff report. See [An app's page](An-apps-page.md).
 
 **Other versions** lists a project's 10 newest releases, betas included, each with its
 readings or a Sniff button, so you can sniff the exact version you plan to pick.

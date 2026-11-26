@@ -8,13 +8,13 @@ its sentences come from:
   description in the code (shown as "The developer's note"), or a README or funding-file
   mention of a site.
 - **AI** and **AI inferred**: text from the AI you picked. See
-  [AI explanations](AI-explanations).
+  [AI explanations](AI-explanations.md).
 
 The developer's words, and the AI's summary of them ("AI inferred"), are never shown
 beside a found or possible threat. On a page with a found threat there are none at all.
 Nothing from the developer or the AI changes a reading.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/app-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/app-light.png" alt="The top of an app's page with a found threat"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/app-dark.png"><img src="images/app-light.png" alt="The top of an app's page with a found threat"></picture>
 
 <sub>Screenshots from Barkley's own made-up test apps, not real projects. The AI text is real output from Claude Sonnet 5.5, standing in for the AI Task model you pick; your model's answers will differ.</sub>
 
@@ -31,7 +31,7 @@ From top to bottom:
   don't count toward the readings. When the Marketplace has removed the app, the page
   says so.
 - **The two readings**, Threat and Exposure, as dials in the head. See
-  [What gets checked and how the readings work](Checks-and-scoring).
+  [What gets checked and how the readings work](Checks-and-scoring.md).
 - **Threat:** the signs of malicious behavior Barkley found, each in plain words with
   where in the code it is. When there are none, it says what Barkley looked for and
   didn't find.
@@ -93,7 +93,7 @@ From top to bottom:
 - **History:** every stored scan of this app, newest first, and the link to the
   technical report (raw JSON), which includes the capability score.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/picture-dark.png"><img src="https://raw.githubusercontent.com/SeriesOfTubez/ha-barkley/main/docs/images/picture-light.png" alt="What it touches: the picture of an app with a found threat"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/picture-dark.png"><img src="images/picture-light.png" alt="What it touches: the picture of an app with a found threat"></picture>
 
 <sub>The "What it touches" picture for one of Barkley's made-up test apps.</sub>
 
@@ -186,9 +186,9 @@ page. A wider screen always shows the whole page.
 
 - **Sniff this version again** runs a fresh scan instead of reusing the stored one.
 - **Other versions** lists the 10 newest releases, betas included.
-- **Check advisories again**: see [Advisory re-checks](Advisory-re-checks).
+- **Check advisories again**: see [Advisory re-checks](Advisory-re-checks.md).
 - **Explain this app** and, in the Explain and read code mode, **Explain in context**:
-  see [AI explanations](AI-explanations).
+  see [AI explanations](AI-explanations.md).
 
 ## "Unfinished"
 
