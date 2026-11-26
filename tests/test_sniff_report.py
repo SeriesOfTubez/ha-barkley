@@ -263,5 +263,5 @@ def test_the_card_sentence_leads_with_a_threat():
          "severity": "high", "points": 10.0},
     ]  # fmt: skip
     assert ui.card_sentence(_card(r)).startswith(
-        "Reads private data and talks to a site that isn't the app's own."
+        "Reads private data and talks to a site the app doesn't account for."
     )

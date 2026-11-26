@@ -1,16 +1,17 @@
 """(0.15, his decision 2026-11-21: mock-up v5) "What it touches" (named "What it does"
 until 2026-11-24): the app's page picture.
 
-Inside your Home Assistant, a column of seven fixed rooms (the same for every app, so apps
-can be compared at a glance): blue when the app reads (eye) or changes (pencil) something
-there, dashed when Barkley saw it do nothing. The app sits to their right, still inside.
-Outside your home, the sites it sends requests to. A path Barkley found from your data to
-a site that isn't the app's own runs red, from the room through the app to the site; to
-the app's own site it runs dotted grey. Exposure is orange and points in: a door for each
-way in (a page that opens without logging in, messages from the internet, a link that can
-run code), a bug strip on the app for libraries with known vulnerabilities, and a card's
-box says it runs in your browser session. (His decision 2026-11-24: no Exposure bar on
-top, and no setting for it; the Exposure box and the items already say it.)
+Inside your Home Assistant, a column of seven fixed rooms (the same for every app, so
+apps can be compared at a glance): blue when the app reads (eye) or changes (pencil)
+something there, dashed when Barkley saw it do nothing. The app sits to their right,
+still inside. Outside your home, the sites it sends requests to. A path Barkley found
+from your data to a site runs red, from the room through the app to the site; to a site
+the app's own files link to (or, since 0.15, one named like the app) it runs dotted grey.
+Exposure is orange and points in: a door for each way in (a page that opens without
+logging in, messages from the internet, a link that can run code), a bug strip on the app
+for libraries with known vulnerabilities, and a card's box says it runs in your browser
+session. (His decision 2026-11-24: no Exposure bar on top, and no setting for it; the
+Exposure box and the items already say it.)
 
 Everything comes from the stored scan (findings, the graph's flows, the requests); nothing
 here is scored, and nothing is stored. Names and sites come from the scanned code:
@@ -153,6 +154,8 @@ class Model:
     code_paths: list[tuple[int, str]] = field(default_factory=list)
     code_only: set[int] = field(default_factory=set)  # code sites with no request drawn
     code_boxes: list[tuple[str, str, list[str]]] = field(default_factory=list)
+    # (0.15) sites that are "the app's" only because their name matches its name
+    named: set[str] = field(default_factory=set)
 
 
 def _site_lines(calls: Any) -> list[str]:
@@ -260,6 +263,7 @@ def build(report: dict[str, Any], name: str) -> Model:
             (READS, f"uses {len(pts)} network port{'s' * (len(pts) != 1)}")
         )
     own = {h.name for h in hs if h.cls == "declared"}
+    m.named = {h.name for h in hs if h.zone == "named"}
     sites = ui.all_site_requests(report)  # (0.15) with the sites it picks from a list
     named = ui.site_requests(report)
     flows = ui.flows(report)
@@ -824,10 +828,14 @@ def legend(m: Model) -> str:
             "Dashed box: an address you entered when you set it up. Barkley can't "
             "tell if it's on your home network or the internet."
         )
-    if any(how == "own" for *_x, how in m.paths):
-        bits.append("Dotted line: your data goes through the app to its own site.")
+    owns = [m.sites[i][0] for _r, i, how in m.paths if how == "own"]
+    if owns:
+        bits.append(
+            "Dotted line: your data goes through the app to a site its own files link to"
+            + (", or one named like the app." if any(h in m.named for h in owns) else ".")
+        )
     if any(how == "bad" for *_x, how in m.paths):
-        bits.append("Red line: your data goes through the app to a site that isn't the app's own.")
+        bits.append("Red line: your data goes through the app to any other site.")
     if m.code_paths or m.code_boxes:
         bits.append("Dotted orange arrow: code from outside that runs here.")
     if m.doors or m.bugs:

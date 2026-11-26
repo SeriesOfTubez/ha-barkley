@@ -7,6 +7,9 @@ requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
     "jsbeautifier==2.0.3",
+    # (0.15) reads a scanned repo's disclosure.yaml with the safe loader, after refusing
+    # anchors, aliases and tags (analyzers/disclosure.py)
+    "pyyaml==6.0.3",
     "rich>=13.7",
 ]
 

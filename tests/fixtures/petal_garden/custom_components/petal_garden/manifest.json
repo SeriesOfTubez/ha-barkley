@@ -1,0 +1,12 @@
+{
+  "domain": "petal_garden",
+  "name": "Petal Garden",
+  "codeowners": ["@petal-example"],
+  "config_flow": true,
+  "dependencies": ["webhook"],
+  "documentation": "https://github.com/petal-example/petal-garden",
+  "issue_tracker": "https://github.com/petal-example/petal-garden/issues",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "1.4.0"
+}

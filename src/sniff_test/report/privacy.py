@@ -4,8 +4,11 @@ Worked out from a stored report when a page renders, so they work on every store
 (0.4.0 reports have no URL samples or port facts; their notes are just thinner).
 
 Notes:
-- `telemetry` / `developer`: a server the developer runs (serverless hosting such as
-  workers.dev), titled telemetry when the host or URL path says so;
+- `telemetry` / `developer`: a server on free app hosting (such as workers.dev), titled
+  telemetry when the host or URL path says so. (0.15) "The developer runs it" only when
+  the address carries the repo owner's name or the repo's name
+  (endpoints.developer_evidence); otherwise a telemetry-looking one keeps a note that
+  names nobody, and any other one gets no note;
 - `analytics`: analytics, tag-manager or crash-report services;
 - `unencrypted`: a site on the internet the code only ever addresses with `http://` or
   `ws://`. A host that also appears with `https://` is left out: on 25 real repos those
@@ -28,6 +31,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from sniff_test.analyzers.endpoints import developer_evidence
 
 _TELEMETRY = re.compile(
     r"(?i)telemetry|analytic|metric|(?:^|[./_-])(?:ping|stats?|track|beacon)(?:$|[./_-])"
@@ -162,7 +167,7 @@ def notes(report: dict[str, Any]) -> list[Note]:
         note = Note(
             "telemetry",
             "Telemetry",
-            "Can send usage statistics to the developer",
+            "Can send usage statistics",
             "The code has what looks like usage reporting. Any server it contacts sees your "
             "home's internet address.",
             "",
@@ -183,11 +188,20 @@ def _notes(report: dict[str, Any]) -> list[Note]:
     analytics: list[tuple[dict, dict]] = []
     plain: list[tuple[dict, dict]] = []
     web = 0
+    repo = str((report.get("target") or {}).get("repo") or "")
+    tel_other: list[tuple[dict, dict]] = []
     for e, n in _host_edges(report):
         cls = e["attrs"].get("class")
         if cls == "developer_hosted":
+            # (0.15, his decision 2026-11-26) "the developer runs it" only with evidence in
+            # the address; otherwise a statistics-looking address keeps a note that says
+            # nothing about who runs it, and any other one gets none
             text = " ".join([n["label"], *e["attrs"].get("urls", [])])
-            (dev_tel if _TELEMETRY.search(text) else dev_other).append((e, n))
+            mine = developer_evidence(str(n["label"]), repo)
+            if _TELEMETRY.search(text):
+                (dev_tel if mine else tel_other).append((e, n))
+            elif mine:
+                dev_other.append((e, n))
         elif cls == "analytics":
             analytics.append((e, n))
         schemes = set(e["attrs"].get("schemes", []))
@@ -216,14 +230,31 @@ def _notes(report: dict[str, Any]) -> list[Note]:
                 *_ids([e for e, _ in dev_tel]),
             )
         )
+    if tel_other:
+        out.append(
+            Note(
+                "telemetry",
+                "Telemetry",
+                "Can send usage statistics",
+                "The app can contact a server on a free app-hosting service. The server's "
+                "address says it collects statistics. Any server it contacts sees your "
+                "home's internet address.",
+                "Barkley can't tell who runs the server, whether it's switched on, or exactly "
+                "what it sends. Check the app's options in Settings > Devices & services.",
+                [n["label"] for _, n in tel_other],
+                _where([e for e, _ in tel_other]),
+                *_ids([e for e, _ in tel_other]),
+            )
+        )
     if dev_other:
         out.append(
             Note(
                 "developer",
                 "Developer server",
                 "Talks to a server the developer runs",
-                "The app can contact a server on a free app-hosting service. That usually "
-                "means the developer runs it, not the device maker. Any server it contacts "
+                "The app can contact a server on a free app-hosting service, and the "
+                "address carries the developer's GitHub name or the repo's name. So the "
+                "developer most likely runs it, not the device maker. Any server it contacts "
                 "sees your home's internet address.",
                 "Barkley can't tell what it sends there, or when. It may be a harmless "
                 "helper, such as a server that passes on a sign-in.",

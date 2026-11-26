@@ -87,14 +87,15 @@ Limits that are always on:
 ## Explain in context
 
 In the **Explain and read code** mode (Settings → AI mode; the default). Each item, each
-port and each address that isn't one of the app's own sites gets an **Explain in
+port and each address the app doesn't account for (its files don't link to it and it
+isn't named like the app) gets an **Explain in
 context** button. During the scan Barkley keeps the code around it, and you can open it under
 "The code it reads" before you click. On your click, that code and the question go to
 your AI.
 
 A privacy note (telemetry, analytics, a server the developer runs, unencrypted
 addresses, MQTT without encryption) shows the button, or the AI's reading, of the
-address or port behind it. It's the same reading as under "Where it connects". A note whose addresses are all the app's own has no reading, and says so.
+address or port behind it. It's the same reading as under "Where it connects". A note whose addresses are all linked from the app's files or named like it has no reading, and says so.
 
 What the code is, for an integration: the function the item is in; the functions
 and classes of the app that it calls or refers to, starting with the ones named on the

@@ -440,14 +440,16 @@ def _finding(rule: str, sev: Severity, s: Send, how: str, disclosed: bool) -> Fi
     title = {
         "telemetry-shadow": "Sends usage data on its own, without telling you",
         "telemetry-opt-out": "Sends usage data unless you turn it off",
-        "telemetry-usage": "Can send usage data to the developer",
+        "telemetry-usage": "Can send usage data",
     }[rule]
     return Finding(
         rule_id=rule,
         title=title,
         severity=sev,
         category=Category.ENDPOINT,
-        message=f"Sends what looks like usage reporting to {s.host}. {how} {told}".strip(),
+        # (0.15) said once: some reasons already say the description mentions it
+        message=f"Sends what looks like usage reporting to {s.host}. {how}"
+        + ("" if "description mentions it" in how else f" {told}").rstrip(),
         file=s.fn[0],
         line=s.line,
         evidence=f"{s.host} from {s.fn[1]}",

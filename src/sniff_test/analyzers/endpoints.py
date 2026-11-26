@@ -167,17 +167,42 @@ class Declared:
     owners: set[str] = field(default_factory=set)
 
     def matches(self, host: str) -> bool:
+        return self.why(host) is not None
+
+    def why(self, host: str) -> str | None:
+        """(0.15, his decision 2026-11-26) How a host came to be one of the app's:
+        "files" (its manifest or package.json links to the domain), "owner" (the repo
+        owner's Pages site), "name" (only its name matches the app's), else None. A name
+        match says nothing about who runs the site: an integration is often named after
+        the company whose service it uses."""
         reg = registrable(host)
         if reg in self.hosts:
-            return True
+            return "owner" if reg in {f"{o}.github.io" for o in self.owners} else "files"
         first = _norm(reg.split(".")[0])
         if first and first in self.names:
-            return True
+            return "name"
         # (0.14.0) A name that spans the top-level domain: `acme.energy` for an
         # integration named acme_energy. The whole registrable domain must equal the
         # name; no prefix matching.
         whole = _norm(reg)
-        return bool(whole) and whole in self.names
+        return "name" if whole and whole in self.names else None
+
+
+def developer_evidence(host: str, repo: str | None) -> bool:
+    """(0.15, his decision 2026-11-26) Whether a host on a free app-hosting service is
+    shown as the developer's server: the repo owner's name is one of its labels
+    (`api.<owner>.workers.dev`), or it contains the whole repo name. The app's short
+    name isn't enough: on real apps half of those were the company's own backend. Worked
+    out when a page is shown, so it never changes the scan or a reading."""
+    hit = _suffix_class(host.lower(), host_classes())
+    if not hit or hit[0] != "developer_hosted" or not repo or "/" not in repo:
+        return False
+    head = host.lower()[: -len(hit[1]) - 1] if host.lower() != hit[1] else ""
+    labels = [_norm(x) for x in head.split(".") if x]
+    owner, name = (_norm(x) for x in repo.split("/", 1))
+    if owner and owner in labels:
+        return True
+    return len(name) >= 6 and any(name in label for label in labels)
 
 
 # (0.15, his decision 2026-11-20) Shared hosting: anyone can put anything there, so a site
@@ -1105,6 +1130,10 @@ def run(target: Target) -> AnalyzerResult:
                 )
             )
         attrs: dict[str, Any] = {"class": cls}
+        if cls == "declared":
+            attrs["declared_by"] = (
+                "owner" if ref.host in shared else declared.why(ref.host) or "files"
+            )
         if svc := known.lookup(ref.host):  # a name only; the class above is untouched
             attrs["service"] = svc.label
         if ref.scheme:

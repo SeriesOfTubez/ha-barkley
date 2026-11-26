@@ -121,6 +121,50 @@ def test_classification(tmp_path, monkeypatch):
     }  # w3.org and onvif.org (namespaces) are dropped entirely
 
 
+def test_why_a_host_is_the_apps(tmp_path):
+    """(0.15, his decision 2026-11-26) The scan says how a host came to be the app's: a
+    name match alone says nothing about who runs it (a third party's integration named
+    after a phone company read the company's API as "the app's own site")."""
+    root = _write(
+        tmp_path,
+        "x.py",
+        'A = "https://api.acme-weather.example/v2"\n'  # only the name matches
+        'B = "https://github.com/acme/acme-weather/issues"\n'  # under the owner's path
+        'C = "https://acme.github.io/acme-weather"\n'  # the owner's Pages site
+        'D = "https://cdn.weather-docs.example/x"\n',  # its manifest links to the domain
+        {"domain": "acme_weather", "documentation": "https://weather-docs.example/start"},
+    )
+    by = {
+        f.key: f.attrs.get("declared_by")
+        for f in endpoints.run(_target(root, repo="acme/acme-weather")).facts
+        if f.kind == "host"
+    }
+    assert by == {
+        "api.acme-weather.example": "name",
+        "github.com": "owner",
+        "acme.github.io": "owner",
+        "cdn.weather-docs.example": "files",
+    }
+
+
+@pytest.mark.parametrize(
+    ("host", "repo", "mine"),
+    [
+        ("quizgame-api.someone.workers.dev", "someone/quizgame", True),  # owner's account
+        ("api.some-one.workers.dev", "Some-One/x", True),  # names are compared plainly
+        ("homeassistant-acme-cars-worker.onrender.com", "x/homeassistant-acme-cars", True),
+        ("acmedk-app-acme-prod.azurewebsites.net", "x/ha-acme", False),  # short name only
+        ("council-api-prod.azurewebsites.net", "x/waste-days", False),
+        ("workers.dev", "workers/dev", False),  # the bare suffix, from a list of services
+        ("api.someone.example", "someone/x", False),  # not free hosting at all
+        ("api.someone.workers.dev", None, False),
+        ("acme.workers.dev", "x/acme", False),  # a repo name under 6 letters isn't enough
+    ],
+)
+def test_developer_evidence(host, repo, mine):
+    assert endpoints.developer_evidence(host, repo) is mine
+
+
 def test_exfil_service_table_is_a_finding(tmp_path, monkeypatch):
     monkeypatch.setattr(endpoints, "host_classes", lambda: (("exfil_service", "drop.invalid"),))
     root = _write(tmp_path, "x.py", 'URL = "https://abc.drop.invalid/upload"\n')

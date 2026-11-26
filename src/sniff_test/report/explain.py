@@ -51,10 +51,10 @@ RULES: dict[str, Explanation] = {
         "Sends your data out",
     ),
     "possible-exfil": _E(
-        "Reads private data and talks to a site that isn't the app's own",
+        "Reads private data and talks to a site the app doesn't account for",
         "The app reads something private, for example your secrets file or other apps' "
-        "passwords. It also contacts a site that isn't its own: its manifest or package.json "
-        "doesn't link to it, and it doesn't match the app's name. Barkley "
+        "passwords. It also contacts a site its manifest or package.json doesn't link to, "
+        "and whose name doesn't match the app's. Barkley "
         "couldn't trace a direct path between the two, so this is a warning sign, not proof.",
         "Take it seriously. Before you trust it, check what the app reads and why, and what "
         "that site is.",
@@ -512,7 +512,7 @@ RULES: dict[str, Explanation] = {
     ),
     "telemetry-shadow": _E(
         "Sends usage data on its own, without telling you",
-        "The app reports how it's used to a server the developer runs. It does this on its "
+        "The app reports how it's used to a server on the internet. It does this on its "
         "own, when Home Assistant starts or on a timer. Barkley found no option in the code "
         "to turn it off, and the app's description doesn't mention it.",
         "It's a privacy matter. It isn't an attack. The server learns your home's internet "
@@ -521,15 +521,15 @@ RULES: dict[str, Explanation] = {
     ),
     "telemetry-opt-out": _E(
         "Sends usage data unless you turn it off",
-        "The app reports how it's used to a server the developer runs. It does this on its "
+        "The app reports how it's used to a server on the internet. It does this on its "
         "own. Either it's on by default with an option to turn it off, or the app's "
         "description mentions it.",
         "It's a privacy choice. If you'd rather it didn't, check the app's options.",
         "Usage reports, on by default",
     ),
     "telemetry-usage": _E(
-        "Can send usage data to the developer",
-        "The code has what looks like usage reporting to a server the developer runs. "
+        "Can send usage data",
+        "The code has what looks like usage reporting to a server on the internet. "
         "Below, Barkley says what it could tell about when it's sent.",
         "Barkley shows this for information and doesn't score it.",
         "Usage reporting",

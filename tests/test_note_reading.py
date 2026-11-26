@@ -87,7 +87,7 @@ def test_a_note_opens_the_same_reading_as_its_address(tmp_path):
     store, base, httpd = _serve(tmp_path, fake_ai)
     sid = store.save(_report(tmp_path))
     _, _, page = get(f"{base}/scan/{sid}")
-    tele = _note(page, "Can send usage statistics to the developer")
+    tele = _note(page, "Can send usage statistics")
     assert f'name=item value="{TELE}"' in tele and "Explain in context</button>" in tele
     assert "same one as under “Where it connects”" in tele
     assert f'name=item value="{MQTT}"' in _note(page, "May use unencrypted MQTT")
@@ -103,7 +103,7 @@ def test_a_note_opens_the_same_reading_as_its_address(tmp_path):
     _wait(httpd, sid)
     assert len(calls) == 1 and "tele.py:3| " in calls[0]
     _, _, page = get(f"{base}/scan/{sid}")
-    tele = _note(page, "Can send usage statistics to the developer")
+    tele = _note(page, "Can send usage statistics")
     assert f'class="aichip" href="#ai-{TELE}"' in tele
     assert "reading of the code (1 statement" in tele
     assert page.count(f'id="ai-{TELE}"') == 1
@@ -119,8 +119,8 @@ def test_a_note_without_a_reading_says_why(tmp_path):
     plain = _note(page, "Reaches 1 of its 2 sites without encryption")
     assert "Explain in context</button>" not in plain
     assert (
-        "This note has no “Explain in context”. Its addresses are linked from the app's "
-        "manifest or package.json" in plain
+        "This note has no “Explain in context”. Its addresses are linked from the app's own "
+        "files or named like the app" in plain
     )
     httpd.shutdown()
 
@@ -148,7 +148,7 @@ def test_an_address_past_the_five_shown_still_has_its_sheet(tmp_path):
     sid = store.save(_report(tmp_path, hosts=hosts, declared=False))
     _, _, page = get(f"{base}/scan/{sid}")
     assert "<summary>10 more</summary>" in page  # 15 developer hosts, 5 on show (0.15)
-    tele = _note(page, "Can send usage statistics to the developer")
+    tele = _note(page, "Can send usage statistics")
     linked = re.findall(r'name=item value="([0-9a-f]{16})"', tele)
     assert len(linked) == 4  # the note links the first four, as it lists four addresses
     for eid in [TELE, *(h for h, _ in hosts)]:

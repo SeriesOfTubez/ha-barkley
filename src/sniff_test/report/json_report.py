@@ -79,6 +79,9 @@ class ScanResult:
     platforms: list[str] | None = None
     # (0.15) Lua it runs through lupa and where that Lua comes from (analyzers/py_lua)
     lua: dict[str, Any] | None = None
+    # (0.15) the developer's disclosure.yaml, read as hostile input (analyzers/disclosure);
+    # shown beside the scan, never scored
+    disclosure: dict[str, Any] | None = None
     # (0.15) how far behind each package is: {"pypi": {name: …}, "npm": {name: …}}
     # (pypi_meta.versions_behind, npm_meta.lookup); context on the package lines only
     package_versions: dict[str, Any] | None = None
@@ -228,6 +231,9 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
         # (0.15) Lua runners and the Lua they run; names are plain-checked file and module
         # names from the code, sites come from py_flow (untrusted, escaped in the panel)
         "lua": scan.lua,
+        # (0.15) the developer's disclosure.yaml: {"state": "read", "data": …} or
+        # {"state": "ignored", "problems": […]}; text from the scanned repo (untrusted)
+        "disclosure": scan.disclosure,
         # (0.15) newest release of each package and how many are newer; versions come
         # from PyPI and npm (untrusted text, escaped in the panel)
         "package_versions": scan.package_versions,

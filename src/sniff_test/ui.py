@@ -23,10 +23,10 @@ from typing import TYPE_CHECKING, Any
 from sniff_test import __version__, devnote, does, kinds, known, readings, scancache
 from sniff_test.analyzers import py_lua
 from sniff_test.analyzers.correlate import CREDENTIAL_SOURCES, SENSITIVE_NODES
-from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
+from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS, developer_evidence
 from sniff_test.fetch import retry
 from sniff_test.models import STALE_YEARS, fix_phrase, version_key, years_since
-from sniff_test.report import explain, logins, privacy
+from sniff_test.report import disclosed, explain, logins, privacy
 from sniff_test.report.json_report import sanitize_untrusted
 
 if TYPE_CHECKING:
@@ -680,6 +680,20 @@ class Host:
     redirect: bool = False  # (0.15) only an OAuth return address (endpoints.redirect_only)
     readme_line: int | None = None  # (0.15) the README names it (the developer's words)
     funding: bool = False  # (0.15) .github/FUNDING.yml lists it
+    # (0.15) why a "declared" host is the app's: files / owner / name (none on older scans)
+    declared_by: str = ""
+    # (0.15) a free-hosting host shown as the developer's (endpoints.developer_evidence)
+    dev_owned: bool = False
+
+    @property
+    def zone(self) -> str:
+        """The "Where it connects" group (ZONES): a name match and a free-hosting host
+        without evidence claim nothing about who runs them (his decision 2026-11-26)."""
+        if self.cls == "declared":
+            return "named" if self.declared_by == "name" else "own"
+        if self.cls == "developer_hosted":
+            return "dev" if self.dev_owned else "other"
+        return _ZONE_OF.get(self.cls, "other")
 
 
 @dataclass
@@ -707,6 +721,7 @@ def _graph(report: dict[str, Any]) -> tuple[dict[str, Any], dict[str, dict[str, 
 
 def hosts(report: dict[str, Any]) -> list[Host]:
     g, nodes = _graph(report)
+    repo = str((report.get("target") or {}).get("repo") or "")
     out = []
     for edge in g.get("edges", []):
         if edge["relation"] != "connects_to" or edge["source"] != g.get("subject"):
@@ -727,6 +742,9 @@ def hosts(report: dict[str, Any]) -> list[Host]:
                 bool(a.get("redirect_only")),
                 a.get("readme_line") if isinstance(a.get("readme_line"), int) else None,
                 bool(a.get("funding")),
+                str(a.get("declared_by") or ""),
+                str(a.get("class")) == "developer_hosted"
+                and developer_evidence(str(n.get("label", "")), repo),
             )
         )
     return sorted(out, key=lambda h: h.name)
@@ -1916,8 +1934,8 @@ def note_reading(note: privacy.Note, inline: DeepFn) -> str:
         return f'<div class="noteai">{lead}{body}</div>'
     if note.classes and all(c == "declared" for c in note.classes):
         why = (
-            ". Its addresses are linked from the app's manifest or package.json, and Barkley "
-            "only offers a reading for addresses that aren't"
+            ". Its addresses are linked from the app's own files or named like the app, and "
+            "Barkley only offers a reading for addresses that aren't"
         )
     else:
         why = ", because none of its addresses has one on this page"
@@ -1957,9 +1975,9 @@ def privacy_html(notes: list[privacy.Note], inline: DeepFn | None = None) -> str
 # --- what an update changes, in plain words ------------------------------------------------------
 
 _HOST_CLASS_WORDS = {
-    "declared": "one of the app's own",
-    "undeclared": "not one of the app's own sites",
-    "developer_hosted": "run by the developer",
+    "declared": "linked from the app's own files or named like the app",
+    "undeclared": "not linked from the app's own files",
+    "developer_hosted": "on a free app-hosting service",
     "analytics": "an analytics or crash-report service",
     "exfil_service": "a data-collection site",
     "messaging": "a messaging service",
@@ -2152,43 +2170,26 @@ def change_line(c: dict[str, Any]) -> tuple[str, str, str]:
 # --- where it connects -------------------------------------------------------------------------
 
 ZONES = [
-    ("home", "home", "Your home network", "Addresses on your own network", {"local"}),
-    (
-        "own",
-        "cloud",
-        "The app's own sites",
-        "Its manifest or package.json links to them, or they match its name",
-        {"declared"},
-    ),
-    (
-        "dev",
-        "wrench",
-        "Servers the developer runs",
-        "On free app-hosting services",
-        {"developer_hosted"},
-    ),
-    (
-        "ana",
-        "chart",
-        "Analytics and crash reports",
-        "Services that collect usage or errors",
-        {"analytics"},
-    ),
-    (
-        "other",
-        "globe",
-        "Other sites",
-        "Not linked from its manifest or package.json",
-        {"undeclared", "public_ip", "exfil_service", "messaging"},
-    ),
-    (
-        "links",
-        "link",
-        "Project and help links",
-        "GitHub, Home Assistant, package sites, donations",
-        {"infrastructure", "link", "resolver"},
-    ),
-]
+    ("home", "home", "Your home network", "Addresses on your own network"),
+    ("own", "cloud", "Sites its files link to",
+     "Its manifest or package.json links to them, or they're under the developer's GitHub name"),
+    ("named", "cloud", "Sites named like the app",
+     "Their address contains the app's name. Barkley can't tell who runs them"),
+    ("dev", "wrench", "Servers the developer runs",
+     "On free app-hosting services, with the developer's GitHub name or the repo's name in "
+     "the address"),
+    ("ana", "chart", "Analytics and crash reports", "Services that collect usage or errors"),
+    ("other", "globe", "Other sites", "Not linked from its manifest or package.json"),
+    ("links", "link", "Project and help links",
+     "GitHub, Home Assistant, package sites, donations"),
+]  # fmt: skip
+_ZONE_OF = {
+    "local": "home",
+    "analytics": "ana",
+    "infrastructure": "links",
+    "link": "links",
+    "resolver": "links",
+}
 
 
 def _lock(scheme_or_port: str | int) -> str:
@@ -2522,6 +2523,7 @@ def _host_li(
     mark: Any = None,
     code: Any = None,
     readme_url: str = "",
+    disc: disclosed.HostNote | None = None,
 ) -> str:
     """One line per site: the name and whether Barkley flagged it. Inside: scheme, port (the
     URL's own, else the scheme's default) and encryption, who runs it, the addresses, where
@@ -2538,6 +2540,21 @@ def _host_li(
         bits.append("port " + ", ".join(map(str, explicit)))
     flag = ' <span class="chip bad">see findings</span>' if h.flagged else ""
     flag += logins.chips(mark)
+    # (0.15) the developer's disclosure.yaml beside it: Barkley's words on whether it's
+    # listed, the developer's words on why (never beside a threat, like the README's)
+    if disc is not None and (disc.mismatch or not disc.listed):
+        flag += (' <span class="chip">doesn\'t match disclosure.yaml</span>' if disc.mismatch
+                 else ' <span class="chip">not in disclosure.yaml</span>')  # fmt: skip
+    disc_html = ""
+    if disc is not None:
+        if not disc.listed:
+            disc_html = ('<span class="u">The developer\'s disclosure.yaml doesn\'t list this '
+                         "site.</span>")  # fmt: skip
+        elif disc.mismatch:
+            disc_html = f'<span class="u">{e(disc.mismatch, 300)}</span>'
+        if disc.said and dev_words and not h.flagged and h.name not in near:
+            disc_html += (f'<span class="u">{src_tag("dev", "disclosure.yaml")} '
+                          f"{e(disc.said, 400)}</span>")  # fmt: skip
     # whose address it is: a name from our own list, never a verdict
     who = f'<span class="u">{e(h.service, 120)}</span>' if h.service else ""
     how = f'<span class="u">{" · ".join(bits)}</span>' if bits else ""
@@ -2576,7 +2593,7 @@ def _host_li(
     dev = (f'<span class="u">{" ".join(said)}</span>'
            if said and dev_words and not h.flagged and h.name not in near else "")  # fmt: skip
     return _fold(h.edge_id, f"<code>{e(h.name, 120)}</code>{flag}", who + back + dev
-                 + _code_spans(code) + how + logins.fold_lines(mark)
+                 + disc_html + _code_spans(code) + how + logins.fold_lines(mark)
                  + (_images_span(images) + _requests_spans(reqs or None, elsewhere)
                     if images or code else _requests_spans(reqs, elsewhere))
                  + urls + where + deep, open_)  # fmt: skip
@@ -2651,8 +2668,9 @@ def zones_html(
         return deep(item_id, part="inline") if deep and item_id else ""
 
     out = ['<div class="zones">']
-    for key, ic, title, sub, classes in ZONES:
-        zh = [h for h in hs if h.cls in classes]
+    cmp = disclosure_compare(report)
+    for key, ic, title, sub in ZONES:
+        zh = [h for h in hs if h.zone == key]
         if not zh:
             continue
         lis = [_host_li(h, inline(h.edge_id), bool(open_id) and h.edge_id == open_id,
@@ -2660,7 +2678,8 @@ def zones_html(
                         reqs.get(h.name, [] if read and not h.redirect
                                  and h.name not in through else None),
                         bool(elsewhere), imgs.get(h.name), marked.get(h.name),
-                        codes.get(h.name), readme_url)
+                        codes.get(h.name), readme_url,
+                        cmp.hosts.get(h.name) if cmp is not None else None)
                for h in zh]  # fmt: skip
         out.append(f'<div class="zone {key}"><h3>{icon(ic)} {title}</h3><div class="zs">{sub}'
                    f"</div>{_zone_list(lis)}</div>")  # fmt: skip
@@ -3752,25 +3771,21 @@ def _in_short_plain(report: dict[str, Any]) -> str:
     out: list[str] = []
     net = internet(hosts(report))
     home = any(h.cls == "local" for h in hosts(report))
-    own = sum(1 for h in net if h.cls == "declared")
+    # (0.15) only the sites its own files link to, never a site that just shares its name
+    own = sum(1 for h in net if h.zone == "own")
     n = len(net)
+    linked = "linked from the app's own files or GitHub."
     if not n:
         out.append("Its code mentions no websites.")
     elif own == n:
         out.append(
             f"Its code mentions {n} website{'s' * (n != 1)}, "
-            + (
-                "the app's own."
-                if n == 1
-                else "all of them the app's own."
-                if n > 2
-                else "both the app's own."
-            )
+            + ("" if n == 1 else "all " if n > 2 else "both ")
+            + linked
         )
     elif own:
         out.append(
-            f"Its code mentions {n} websites. {own} of them {'is' if own == 1 else 'are'} "
-            "the app's own."
+            f"Its code mentions {n} websites. {own} of them {'is' if own == 1 else 'are'} " + linked
         )
     else:
         out.append(f"Its code mentions {n} website{'s' * (n != 1)}.")
@@ -4226,6 +4241,150 @@ def threat_box(r: dict[str, Any], items: str) -> str:
 _VIEW_CLASS = re.compile(r"\s*class\s+([A-Za-z_][A-Za-z0-9_]{0,99})")
 
 
+def disclosure_compare(report: dict[str, Any]) -> disclosed.Comparison | None:
+    """(0.15) The developer's disclosure.yaml beside this scan (report/disclosed.py)."""
+    if not isinstance(report.get("disclosure"), dict):
+        return None
+    hs = internet(hosts(report))
+    names = {h.name: set(h.schemes) for h in hs}
+    if isinstance(report.get("requests"), dict):
+        reqs, imgs = all_site_requests(report), site_images(report)
+        requested = {h.name for h in hs if h.name in reqs or h.name in imgs}
+    else:  # an older scan without the requests: every site it names
+        requested = set(names)
+    return disclosed.compare(report, names, requested)
+
+
+_DISC_SECTIONS = {
+    "links": "Links",
+    "credentials": "Credentials it asks for",
+    "login_tokens": "Home Assistant login tokens",
+    "home_assistant_access": "What it uses in Home Assistant",
+    "embedded_keys": "Keys in its code",
+    "encoded_content": "Encoded content",
+    "compiled_code": "Compiled code",
+    "runtime_downloads": "Code it downloads while it runs",
+    "generated_files": "Files it writes",
+}
+_DISC_FIRST = ("what", "file", "path", "kind", "uses", "url", "host")
+
+
+def _disc_value(v: Any) -> str:
+    if isinstance(v, bool):
+        return "yes" if v else "no"
+    if isinstance(v, list):
+        return ", ".join(_disc_value(x) for x in v) or "none"
+    return str(v).replace("_", " ") if isinstance(v, str) and " " not in v else str(v)
+
+
+def _disc_entry(entry: dict[str, Any]) -> str:
+    """One entry of a section Barkley doesn't compare, as the developer wrote it."""
+    first = next((k for k in _DISC_FIRST if k in entry), "")
+    head = f"<code>{e(_disc_value(entry[first]), 200)}</code>" if first else ""
+    rest = [f"{e(k.replace('_', ' '))}: {e(_disc_value(v), 300)}"
+            for k, v in entry.items() if k != first]  # fmt: skip
+    return f'<li>{head}<span class="u">{" · ".join(rest)}</span></li>'
+
+
+def _disc_line(x: disclosed.Line) -> str:
+    chip = ' <span class="chip">doesn\'t match</span>' if x.mismatch else ""
+    subject = f"<code>{e(x.subject, 200)}</code>" if x.subject else ""
+    scan = f'<span class="u">{src_tag("scan")} {e(x.scan, 400)}</span>' if x.scan else ""
+    said = (f'<span class="u">{src_tag("dev", "disclosure.yaml")} {e(x.said, 400)}</span>'
+            if x.said.strip() else "")  # fmt: skip
+    return f"<li>{subject}{chip}{scan}{said}</li>"
+
+
+def disclosure_html(report: dict[str, Any], dev_ok: bool = True) -> str:
+    """(0.15, his decision 2026-11-26) The section after "Where it connects": what the
+    developer's disclosure.yaml says beside what the scan found. Never scored. Nothing
+    when the repo has no such file."""
+    c = disclosure_compare(report)
+    if c is None:
+        return ""
+    spec = (f'<a href="{disclosed.SPEC}" target="_blank" rel="noopener noreferrer">'
+            "version 1 of the spec</a>")  # fmt: skip
+    head = ('<section class="box"><h2>What the developer\'s disclosure.yaml says</h2>'
+            '<p class="sub">The repository has a <code>disclosure.yaml</code>: the developer\'s '
+            "own account of what the app connects to and handles. Barkley shows it beside "
+            "what the scan found. It never changes the readings.</p>")  # fmt: skip
+    if c.state == "ignored":
+        items = "".join(f"<li>{e(p, 200)}</li>" for p in c.problems)
+        return (f"{head}<p>Barkley didn't use it, because it doesn't follow {spec}:</p>"
+                f'<ul class="plain">{items}</ul></section>')  # fmt: skip
+    if not dev_ok:
+        return (f"{head}<p class=\"muted\">Barkley found a threat in this app, so it doesn't "
+                "show the developer's words on this page.</p></section>")  # fmt: skip
+    out = [head]
+    bits = []
+    missing = sorted(n for n, h in c.hosts.items() if not h.listed)
+    odd = sorted(n for n, h in c.hosts.items() if h.listed and h.mismatch)
+    n_odd = len(missing) + len(odd) + sum(1 for x in [*c.telemetry, *c.pages] if x.mismatch)
+    if "connections" in c.data:
+        compared = len(c.hosts)
+        listed = sum(1 for h in c.hosts.values() if h.listed)
+        if not compared:
+            bits.append("Barkley read no request to a site named in the code.")
+        elif listed == compared:
+            bits.append(f"{'The' if compared == 1 else f'All {compared}'} site"
+                        f"{'s' * (compared != 1)} Barkley read a request to "
+                        f"{'is' if compared == 1 else 'are'} in the file.")  # fmt: skip
+        else:
+            bits.append(f"Of the {compared} sites Barkley read a request to, {listed} "
+                        f"{'is' if listed == 1 else 'are'} in the file.")  # fmt: skip
+    if n_odd:
+        bits.append(f"In {n_odd} place{'s' * (n_odd != 1)} the file and the scan don't match.")
+    elif c.hosts or c.telemetry or c.pages:
+        bits.append("Everything Barkley compared matches the scan.")
+    out.append(f"<p>{src_tag('scan')} {e(' '.join(bits))}</p>" if bits else "")
+
+    def block(title: str, lines: list[str]) -> None:
+        if lines:
+            out.append(
+                f'<h3 class="mt2">{e(title)}</h3><div class="libs">{_zone_list(lines)}</div>'
+            )
+
+    if "connections" in c.data:
+        hosts_lines = [
+            _disc_line(disclosed.Line(n, "Barkley read a request to this site.",
+                                      "The file doesn't list it.", mismatch=True))
+            for n in missing
+        ] + [
+            _disc_line(disclosed.Line(n, c.hosts[n].mismatch, c.hosts[n].said, mismatch=True))
+            for n in odd
+        ]  # fmt: skip
+        block("Sites", hosts_lines)
+        block("In the file, but not in the code", [_disc_line(x) for x in c.unseen])
+        block("Addresses the code doesn't hold", [_disc_line(x) for x in c.set_by])
+    if "telemetry" in c.data:
+        block("Telemetry", [_disc_line(x) for x in c.telemetry]
+              or [f"<li>{src_tag('dev', 'disclosure.yaml')} The file says it sends none, and "
+                  "Barkley found no usage reporting.</li>"])  # fmt: skip
+    if "pages" in c.data:
+        block("Pages that open without a login", [_disc_line(x) for x in c.pages]
+              or [f"<li>{src_tag('dev', 'disclosure.yaml')} The file says there are none, and "
+                  "Barkley found none.</li>"])  # fmt: skip
+    unsaid = [x for x in ("connections", "telemetry", "pages") if x not in c.data]
+    if unsaid:
+        out.append(f'<p class="small muted mt2">The file says nothing about '
+                   f"{e(', '.join(unsaid))}, so Barkley compared none.</p>")  # fmt: skip
+    other = []
+    for key, title in _DISC_SECTIONS.items():
+        if key not in c.data:
+            continue
+        entries = c.data[key]
+        body = ("".join(_disc_entry(x) for x in entries) if entries
+                else '<li class="muted">None, the file says.</li>')  # fmt: skip
+        other.append(f'<h4>{e(title)}</h4><div class="libs"><ul>{body}</ul></div>')
+    if other:
+        out.append(f'<details class="more mt2"><summary>The rest of the file '
+                   f"{src_tag('dev', 'disclosure.yaml')}</summary><div class=\"in\">"
+                   f'<p class="small muted">Barkley doesn\'t compare these with the scan '
+                   f"yet.</p>{''.join(other)}</div></details>")  # fmt: skip
+    out.append("</section>")
+    return "".join(out)
+
+
 def login_free_pages(report: dict[str, Any]) -> str:
     """(0.15, his question) The pages behind "N pages open without logging in": each one's
     view class and where it is, 5 then "N more". The scan keeps the class line, not the
@@ -4523,6 +4682,7 @@ def render_app(
                      "connects" if split else "")
         + "</section>"
     )  # fmt: skip
+    parts.append(disclosure_html(report, dev_ok))  # (0.15) the developer's own account
     other = (
         zones_html(report, zdeep if deep else None, open_item, dev_ok, "mentioned") if split else ""
     )

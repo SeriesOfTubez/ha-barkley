@@ -48,6 +48,7 @@ PANEL_ONLY = frozenset(
         "report/human.py",
         "report/explain.py",
         "report/privacy.py",
+        "report/disclosed.py",  # (0.15) disclosure.yaml beside the scan, on the page
     }
 )
 _SUFFIXES = (".py", ".txt", ".yaml", ".yml", ".json")

@@ -1,0 +1,18 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Petal Garden",
+        "description": "Help: {support}",
+        "data": {"email": "Email", "password": "Password", "hub_host": "Hub address", "hub_password": "Hub password"}
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {"skip_when_rain": "Skip watering when rain is due", "share_usage": "Share anonymous usage"}
+      }
+    }
+  }
+}

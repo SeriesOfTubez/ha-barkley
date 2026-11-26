@@ -1,0 +1,119 @@
+# disclosure.yaml for Petal Garden, a made-up integration with a map card.
+# Spec: https://ha-barkley.github.io/disclosure/
+# Checked against a copy of the schema in .github/disclosure.schema.json
+version: 1
+
+connections:
+  - destination: api.petalgarden.example
+    source: home_assistant
+    purpose: Reads soil moisture and sets watering schedules.
+    run_by: vendor
+    run_by_name: Petal Garden
+    network: internet
+    encrypted: always
+    when: always
+    sends: [credentials, device_ids, entity_states]
+  - destination_set_by: setup
+    source: home_assistant
+    purpose: The Petal Garden hub on the local network.
+    run_by: user
+    network: home
+    encrypted: never
+    when: always
+    sends: [credentials]
+    note: The hub only speaks plain HTTP. The password is the hub's own, not the account's.
+  - destination: "*.tile.openmaps.example"
+    source: browser
+    purpose: Map tiles for the garden map card.
+    run_by: third_party
+    run_by_name: OpenMaps
+    network: internet
+    encrypted: always
+    when: setting
+    setting: map_style
+    condition: "map_style: Streets or Terrain"
+    on_by_default: true
+    sends: [ip_address, map_area, ha_address]
+  - destination_set_by: setting
+    setting: custom_tile_url
+    source: browser
+    purpose: Your own map tiles.
+    run_by: user
+    network: either
+    when: setting
+    condition: "map_style: Custom"
+    sends: [ip_address, map_area, ha_address]
+  - destination:
+      - weather.petalgarden.example
+      - weather-eu.petalgarden.example
+    source: home_assistant
+    purpose: Rain forecast, so watering can be skipped before rain.
+    run_by: vendor
+    run_by_name: Petal Garden
+    network: internet
+    encrypted: always
+    when: setting
+    setting: Skip watering when rain is due
+    on_by_default: false
+    sends: [physical_location]
+
+links:
+  - url: https://petalgarden.example/support
+    purpose: Help link in the setup dialog.
+  - host: openmaps.example
+    purpose: Map credits.
+
+pages:
+  - path: /api/petal_garden/zones
+    protection: own_token
+    local_only: true
+    purpose: Lets the Petal phone app list and water zones.
+    checks: The hub's token in the X-Petal-Token header.
+  - path: /api/webhook/
+    protection: webhook
+    purpose: The cloud reports a finished watering run.
+
+credentials:
+  - what: Petal Garden account password
+    asked_in: config_flow
+    stored_in: config_entry
+    sent_to: [api.petalgarden.example]
+  - what: Hub password
+    asked_in: config_flow
+    stored_in: config_entry
+    sent_to: [setup_address]
+
+login_tokens:
+  - kind: dashboard_session
+    given_to: []
+    purpose: The map card reads zone states over Home Assistant's own websocket.
+
+home_assistant_access: []
+
+embedded_keys:
+  - file: custom_components/petal_garden/const.py
+    kind: vendor_client_key
+    same_for_every_user: true
+    note: The Petal Garden phone app's own client id.
+
+telemetry:
+  - destination: stats.petalgarden.example
+    type: usage_stats
+    contents: Its version and the number of zones, once a day.
+    on_by_default: false
+    setting: Share anonymous usage
+    run_by: developer
+    sends: [ip_address, versions]
+
+encoded_content:
+  - file: custom_components/petal_garden/icons.py
+    kind: image
+    note: Base64 PNG icons for the zone types.
+
+compiled_code: []
+
+runtime_downloads: []
+
+generated_files:
+  - path: www/community/petal-garden/garden-map.js
+    note: The map card, copied here at setup for the dashboard.

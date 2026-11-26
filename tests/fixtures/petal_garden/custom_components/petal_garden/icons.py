@@ -1,0 +1,3 @@
+"""Small PNG icons for the zone types, as base64."""
+
+LAWN = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="

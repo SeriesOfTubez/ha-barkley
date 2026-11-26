@@ -39,6 +39,9 @@ NAMES = {
     "clean_integration": ("Example: weather station", "integration"),
     "oauth_redirects": ("Example: cloud sign-in", "integration"),
 }
+# (0.15) Pages only, not on the list: the made-up app behind the disclosure.yaml spec's
+# screenshots (its file is the spec's sample, with one planted difference)
+EXTRA = {"petal_garden": ("Example: Petal Garden (made up)", "integration")}
 SIZE = 12000  # Settings → AI answers, the default
 
 
@@ -105,7 +108,18 @@ def build(reports_dir: Path, answers_file: Path, out: Path) -> dict[str, bytes]:
         "settings": server.render_settings("", settings.Settings(), TOKEN, ai_entity=entity,
                                            ai_choices=[(entity, "Claude Sonnet")]),
     }  # fmt: skip
-    for key in ("evil_integration", "oauth_redirects", "evil_card"):
+    for key, (name, kind) in EXTRA.items():
+        if key in reports:
+            it = supervisor.Installed(repo=f"example/{key.replace('_', '-')}", kind=kind,
+                                      name=name, installed="v1.0.0", available="v1.0.0",
+                                      custom=False)  # fmt: skip
+            scan = store.get(ids[key])
+            rd = readings.compute(reports[key])
+            scan = replace(scan, readings=rd.to_dict()) if scan else None
+            by_key[key] = server.Row(it, "current", scan, None, [])
+    for key in ("evil_integration", "oauth_redirects", "evil_card", *EXTRA):
+        if key not in reports:
+            continue
         pages[f"app-{key}"] = server.render_scan(
             "", ids[key], store.report(ids[key]), store, by_key[key], TOKEN, ai_entity=entity,
             ai_choices=[(entity, "Claude Sonnet")], ai_mode="deep",
@@ -135,6 +149,8 @@ SHOTS = (
     ("developer-says", "app-oauth_redirects", 1100, "In short"),
     ("update", "update", 1100, "main"),
     ("settings-ai", "settings", 1100, "AI answers"),
+    # (0.15) for the disclosure.yaml spec page: the made-up Petal Garden
+    ("disclosure", "app-petal_garden", 1100, "What the developer"),
 )
 
 
@@ -148,6 +164,8 @@ def shoot(out: Path, chromium: str | None) -> list[Path]:
         b = p.chromium.launch(**({"executable_path": chromium} if chromium else {}))
         for scheme in ("light", "dark"):
             for stem, page_name, width, what in SHOTS:
+                if not (out / f"{page_name}.html").exists():
+                    continue  # (0.15) a made-up app whose report wasn't given
                 ctx = b.new_context(viewport={"width": width, "height": 900},
                                     color_scheme=scheme, device_scale_factor=2)  # fmt: skip
                 ctx.route("**/fonts/*", lambda r: r.fulfill(

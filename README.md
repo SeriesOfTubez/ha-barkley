@@ -72,7 +72,7 @@ from search first.
 
 **"What would updating change?"** Barkley compares the version you run with the one you
 would get and puts the few changes that matter first: new threats and other new items,
-new data flows, new publishers, sites that aren't the app's own, a release commit that
+new data flows, new publishers, sites the app doesn't account for, a release commit that
 is no longer signed. Smaller changes, such as a new kind of request to a site or a new
 environment variable, are listed under them. The comparison never changes a reading.
 
@@ -166,18 +166,24 @@ next to Home Assistant or on another machine, with a login through Home Assistan
   downloads a week, no malware advisory), asked from jsDelivr by its SHA-256, isn't read
   as code: it's listed and checked for advisories instead. No answer means the file is
   read. Off on the Settings page or with `--no-library-lookup`.
-- **Endpoints**: every host and IP literal in the shipped code, grouped as the app's own
-  (linked from its `manifest.json` or `package.json`, or matching its name; on code
-  hosting only when every address is under the repository owner's path), local,
-  infrastructure, or other sites. Paste sites, request catchers, tunnels, chat webhooks
+- **Endpoints**: every host and IP literal in the shipped code, grouped as sites its files
+  link to (its `manifest.json` or `package.json`; on code hosting only when every address
+  is under the repository owner's path), sites named like the app (Barkley doesn't say
+  who runs those), servers the developer runs (free app hosting, only when the address
+  carries the repository owner's or the repository's name), local, infrastructure, or
+  other sites. Paste sites, request catchers, tunnels, chat webhooks
   with a baked-in token, and URLs with a hardcoded public IP are reported. A shipped
   list (`src/sniff_test/data/known_services.txt`) names who runs well-known hosts as a
   hint; it is matched locally and no host is ever sent anywhere to be looked up.
 - **Possible exfiltration**: reading secrets, auth data or other integrations'
-  credentials *and* being able to send data to a site that isn't the app's own is a
+  credentials *and* being able to send data to a site the app doesn't account for is a
   possible threat, even when the read and the send are in different files. An address
   that only appears in a list of sign-in return addresses (OAuth), and that no code
   sends anything to, doesn't count as such a site.
+- **The developer's `disclosure.yaml`** ([the spec](https://ha-barkley.github.io/disclosure/)):
+  shown beside the scan, with where the two don't match (sites, encryption, telemetry,
+  pages without a login). It never changes a reading. Only version 1 files up to 64 KB
+  are read, and YAML anchors, aliases and tags are refused.
 - **Requests** (integrations and cards) **and environment variables** (integrations):
   for each request the code sends, the method and the names of what goes into the body,
   the headers and the address, and which environment variables the code reads and
@@ -375,7 +381,7 @@ uv run sniff-test serve --store scans.db --allow 127.0.0.1      # the add-on's w
 `--fail-under` in 0.15.
 
 `diff` puts the few changes that matter first (new items, new data flows, evidence
-going from possible to proven, new publishers, new sites that aren't the app's own) and
+going from possible to proven, new publishers, new sites the app doesn't account for) and
 summarizes the rest in one line. It compares; it never changes either scan's readings.
 
 ## Requirements

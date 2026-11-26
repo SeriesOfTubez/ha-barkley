@@ -12,9 +12,14 @@ answer differently.
 
 To make them again:
 
-    for f in evil_integration evil_card hidden_card clean_integration clean_integration_v2 oauth_redirects; do
+    for f in evil_integration evil_card hidden_card clean_integration clean_integration_v2 oauth_redirects petal_garden; do
       uv run sniff-test scan tests/fixtures/$f --json --offline -o /tmp/reports/$f.json
     done
     uv run --with playwright python scripts/doc_shots.py --reports /tmp/reports \
       --answers docs/screenshots/ai-answers.json --out /tmp/doc-shots --shots
     # then copy the chosen PNGs into docs/images/
+
+`disclosure-light.png` and `disclosure-dark.png` are for the disclosure.yaml spec page on
+the website, not for these docs. They show the made-up Petal Garden
+(`tests/fixtures/petal_garden`), whose `disclosure.yaml` is the spec's sample with one
+planted difference, so the caption there says it's made up.

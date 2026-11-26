@@ -77,7 +77,7 @@ def test_diff_changes_read_as_plain_english():
         ({"kind": "new_host", "sign": "+", "rank": 70,
           "text": "undeclared: status.weather-mirror.invalid (const.py:4)",
           "detail": {"target": "host:status.weather-mirror.invalid", "class": "undeclared"}},
-         "New", "not one of the app's own sites"),
+         "New", "not linked from the app's own files"),
         ({"kind": "new_package", "sign": "+", "rank": 45, "text": "depends on requests 2.32.0",
           "detail": {"target": "package:pypi/requests", "attrs": {}}},
          "New", "A new dependency"),
@@ -128,6 +128,42 @@ def test_usage_trace_shows_once_as_a_privacy_note():
         edges=[_edge("connects_to", f"host:{h}", {"class": "developer_hosted", "urls": []})],
     )
     page = ui.render_app("", 1, rep, []).decode()
-    assert page.count("usage statistics to the developer") == 1
+    # (0.15) no owner or repo name in the address: the note doesn't say who runs it
+    assert page.count("<h3>Can send usage statistics</h3>") == 1
+    assert "to the developer" not in page
     assert "Can send usage data to the developer" not in page
     assert "It runs when you use the app." in page
+
+
+def test_where_it_connects_claims_only_what_the_scan_shows():
+    """(0.15, his decision 2026-11-26) A site whose name only matches the app's has a
+    group of its own that names nobody, and a free-hosting site is "the developer's"
+    only with the owner's or the repo's name in it; the readings never move."""
+    sites = {
+        "api.acme.example": {"class": "declared", "declared_by": "name"},
+        "docs.acme-docs.example": {"class": "declared", "declared_by": "files"},
+        "quizgame-api.acme.workers.dev": {"class": "developer_hosted"},  # owner "acme"
+        "council-api-prod.azurewebsites.net": {"class": "developer_hosted"},
+    }
+    rep = _with(
+        report(repo="acme/acme"),
+        nodes=[{"id": f"host:{h}", "kind": "host", "label": h} for h in sites],
+        edges=[_edge("connects_to", f"host:{h}", a) for h, a in sites.items()],
+    )
+    zones = {h.name: h.zone for h in ui.hosts(rep)}
+    assert zones == {
+        "api.acme.example": "named",
+        "docs.acme-docs.example": "own",
+        "quizgame-api.acme.workers.dev": "dev",
+        "council-api-prod.azurewebsites.net": "other",
+    }
+    page = unescape(ui.render_app("", 1, rep, []).decode())
+    for title in ("Sites its files link to", "Sites named like the app",
+                  "Servers the developer runs", "Other sites"):  # fmt: skip
+        assert f"{title}</h3>" in page
+    assert "The app's own sites" not in page
+    assert "Barkley can't tell who runs them" in page
+    # In short counts only the sites its own files link to
+    assert "1 of them is linked from the app's own files or GitHub." in page
+    # an older scan (no declared_by) keeps its sites in the first group
+    assert ui.Host("api.acme.example", "declared").zone == "own"

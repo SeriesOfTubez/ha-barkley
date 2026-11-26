@@ -63,8 +63,8 @@ From top to bottom:
   dashed when Barkley saw it do nothing there. What the app does in its own space, such
   as the kinds of entity it adds or its own storage file, is said in grey with a thin
   dashed line. Outside are the sites it sends requests to. A red line is a path Barkley
-  found from your data to a site that isn't the app's own; to its own site the line is
-  dotted grey. A purple line goes to where the login you gave this app is sent. A dashed
+  found from your data to a site; to a site its own files link to, or one named like
+  the app, the line is dotted grey. A purple line goes to where the login you gave this app is sent. A dashed
   box is an address you entered at setup (Barkley can't tell whether it's on your home
   network or the internet). Exposure is orange and points in: a door for each way in,
   and a strip on the app for libraries with known vulnerabilities. A dotted orange arrow
@@ -76,6 +76,8 @@ From top to bottom:
   app (not your Home Assistant login), and any token it gets back, followed from what is
   sent, through the app's own code or a library, to where it goes. It lists six places, then "and N more". It's context and doesn't change a reading.
 - **Where it connects** and **Other addresses in its code:** see below.
+- **What the developer's disclosure.yaml says**, when the repository has one: see
+  [below](#what-the-developers-disclosureyaml-says).
 - **Where its code comes from:** see below.
 - **Environment variables it uses** (integrations): which ones the code reads and sets,
   by name when the code spells the name out, whether it reads one it set itself, and
@@ -99,8 +101,10 @@ From top to bottom:
 
 ## Where it connects
 
-The sites Barkley read a request to, grouped: your home network, the app's own sites,
-servers the developer runs, analytics and crash reports, and other sites. Flagged sites
+The sites Barkley read a request to, grouped: your home network, sites its files link
+to, sites named like the app, servers the developer runs, analytics and crash reports,
+and other sites. [Checks and scoring](Checks-and-scoring.md) says what puts a site in
+each group. Flagged sites
 and ports are listed here too. Other addresses the code only mentions, such as project
 and help links, are under **Other addresses in its code**: a site there is listed because the code names it, and Barkley didn't see a request to it. (For an older scan
 without the requests, every site is under Where it connects.) A well-known service is named as a hint, and no address is
@@ -143,6 +147,31 @@ More groups follow when there is something to list:
   deep; it never installs or runs it.
 - **Sites named by an address pattern:** addresses the code writes with a placeholder
   in them, such as a map server's `{s}` part, so they aren't in the groups above.
+
+## What the developer's disclosure.yaml says
+
+A [`disclosure.yaml`](https://ha-barkley.github.io/disclosure/) at the root of the
+repository is the developer's own account of what the app connects to and handles.
+Barkley shows it after Where it connects, beside what the scan found. The file never
+changes a reading, and nothing in it is sent to your AI.
+
+- **Compared with the scan:** the sites Barkley read a request to (each one says under
+  Where it connects whether the file lists it, with the file's reason), whether the file
+  says a connection is encrypted, telemetry (the usage reporting Barkley traced, and
+  whether it's on out of the box), and pages that open without a login (the addresses
+  Barkley found, and webhooks). Where the two differ, the page says they don't match, and
+  shows what the scan found and what the file says. A difference isn't a sign of bad
+  intent: often the developer didn't know.
+- **In the file, but not in the code:** a site the file lists that the code never names.
+  The app may still work out that address while it runs.
+- **Shown as the developer's words only:** addresses you enter at setup or set in a
+  setting, and the other sections (credentials, login tokens, what it uses in Home
+  Assistant, keys, encoded content, compiled code, downloads, files it writes).
+- A section the file leaves out isn't compared. An empty list in the file means "none".
+- Barkley reads only a file that follows version 1 of the spec, up to 64 KB. It refuses
+  YAML anchors, aliases and tags, and anything that isn't a plain file. When it doesn't
+  use a file, the page says why.
+- On a page with a found threat, the developer's words aren't shown.
 
 ## Where its code comes from
 

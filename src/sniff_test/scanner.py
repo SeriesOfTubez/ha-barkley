@@ -10,6 +10,7 @@ from sniff_test import cpu, logic, recheck, scancache, sources
 from sniff_test.analyzers import (
     bytecode,
     correlate,
+    disclosure,
     endpoints,
     js_address,
     js_remote,
@@ -333,6 +334,8 @@ def scan(
             result.package_versions = {"pypi": py} if py else None
         # Built while the workspace still exists: it reads manifests and parses files.
         result.graph = graph.build(result)
+        # (0.15) the developer's own account, if the repo has one; never scored
+        result.disclosure = disclosure.read(target.source_root)
         if target.kind is TargetKind.INTEGRATION:
             say("web requests")  # (0.15) the method and what each call carries; never scored
             tests = loadable_tests(findings, py_precision.test_only_files(

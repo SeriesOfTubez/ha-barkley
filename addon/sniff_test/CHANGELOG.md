@@ -78,9 +78,28 @@ update the list offers one button to sniff your apps again.
   as a place the app could send your logins to. It stays listed, with a line saying so.
 - A site the app's README names, or its funding file lists, says so in the site's fold,
   with a link to that line of the README. It doesn't change the site's group.
-- On code hosting (GitHub, GitLab, Bitbucket, Codeberg, SourceForge) a site is "the
-  app's own" only when every address the code names there is under the repository
-  owner's path.
+- On code hosting (GitHub, GitLab, Bitbucket, Codeberg, SourceForge) a site counts as
+  one the app's files link to only when every address the code names there is under the
+  repository owner's path.
+- Where it connects claims only what the scan shows about who runs a site. "The app's
+  own sites" is now **Sites its files link to** (its manifest or package.json, or the
+  repository owner's GitHub). A site whose name only matches the app's goes under **Sites
+  named like the app**, which says Barkley can't tell who runs it: an integration is often
+  named after the company whose service it uses. A site on a free app-hosting service is a
+  **server the developer runs** only when its address carries the repository owner's or
+  the repository's name; otherwise it's one of the other sites, with no note of its own.
+  The readings don't change.
+- **What the developer's disclosure.yaml says:** when the repository has a
+  `disclosure.yaml` ([the spec](https://ha-barkley.github.io/disclosure/)), Barkley shows
+  it after Where it connects, beside what the scan found, and says where the two don't
+  match: a site Barkley read a request to that the file doesn't list, a connection the
+  file says is encrypted that the code reaches without encryption, usage reporting the
+  file says is off by default that the code sends on its own, a page that opens without a
+  login that the file doesn't list. The sites under Where it connects say whether the
+  file lists them. Connections, telemetry and pages are compared; the rest of the file is
+  shown as the developer's words. The file never changes a reading. Barkley reads only
+  files that follow version 1 of the spec, at most 64 KB, and refuses YAML anchors,
+  aliases and tags; a file it doesn't use is named, with why.
 - Sites, ports and libraries are one line each and fold open. A long list shows five,
   then "N more".
 - Under the app's name: the kind of app, the version, a link to the repository, stars,

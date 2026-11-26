@@ -29,15 +29,21 @@ the newest release, else the default branch pinned to one commit.
   answer or a rate limit, means the file is read in full; skipping by folder or file name
   never happens. Off with [Published libraries](Options.md) on the Settings page.
 - **Addresses:** every host and IP in the shipped code, grouped as on your home network,
-  the app's own sites, servers the developer runs, analytics, other sites, or project
-  and help links. A site is "the app's own" when the app's `manifest.json` or
-  `package.json` links to it or it matches the app's name. On code hosting (GitHub,
-  GitLab, Bitbucket, Codeberg, SourceForge) that holds only when every address the code
-  names there is under the repository owner's path. Paste sites, request catchers,
+  sites its files link to, sites named like the app, servers the developer runs,
+  analytics, other sites, or project and help links. "Sites its files link to" are the
+  ones the app's `manifest.json` or `package.json` links to, and the repository owner's
+  GitHub Pages site. On code hosting (GitHub, GitLab, Bitbucket, Codeberg, SourceForge) a
+  site counts only when every address the code names there is under the repository
+  owner's path. "Sites named like the app" only share its name: an integration is often
+  named after the company whose service it uses, so Barkley doesn't say who runs them. A
+  site on a free app-hosting service (such as workers.dev or azurewebsites.net) is a
+  "server the developer runs" only when its address carries the repository owner's name
+  or the repository's name; otherwise it's one of the other sites. Paste sites, request catchers,
   tunnels, chat webhooks with a built-in token and URLs with a hardcoded public IP are
   reported.
 - **Possible exfiltration:** reading secrets, auth data or other integrations'
-  credentials, plus a request from the code to a site that isn't the app's own, is a
+  credentials, plus a request from the code to a site the app doesn't account for (its
+  files don't link to it and it isn't named like the app), is a
   possible threat, even when the two are in different files. A site the code only names,
   such as a link in a message, doesn't count, unless some request's address couldn't be
   read. Another integration's saved data counts only for a field named like a login

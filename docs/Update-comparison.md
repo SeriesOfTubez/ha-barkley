@@ -20,8 +20,8 @@ The status box shows progress.
 - The top shows the readings **Before** and **After**. Each version has its own
   readings; the comparison itself doesn't change them.
 - **Changes to check** lists the few changes that matter, most important first: new
-  threats and other new items rated medium or higher, new data flows, a new publisher, new sites that aren't
-  the app's own. When there are none, **In short** says "Nothing important changed."
+  threats and other new items rated medium or higher, new data flows, a new publisher, new sites the app
+  doesn't account for. When there are none, **In short** says "Nothing important changed."
 - **Smaller changes** folds everything else into one line you can open. None is a
   concern on its own.
 

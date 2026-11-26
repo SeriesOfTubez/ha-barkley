@@ -35,7 +35,7 @@ import re
 import secrets
 from typing import Any
 
-from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS
+from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS, developer_evidence
 from sniff_test.models import years_since
 from sniff_test.report import compare, context, explain
 from sniff_test.report.json_report import sanitize_untrusted
@@ -235,6 +235,16 @@ def _edge(report: dict[str, Any], edge_id: str) -> dict[str, Any]:
     return next((x for x in g.get("edges", []) if x.get("id") == edge_id), {})
 
 
+def _host_words(cls: str, host: str, report: dict[str, Any]) -> str:
+    repo = str((report.get("target") or {}).get("repo") or "")
+    if cls == "developer_hosted" and developer_evidence(host, repo):
+        return (
+            "on a free app-hosting service, with the developer's GitHub name or the repo's "
+            "name in the address, so most likely run by the developer"
+        )
+    return _HOST_CLASS.get(cls, "not linked from the app's own files")
+
+
 def _label(report: dict[str, Any], node_id: str) -> str:
     g = report.get("graph") or {}
     return next((n.get("label", "") for n in g.get("nodes", []) if n.get("id") == node_id), "")
@@ -242,7 +252,8 @@ def _label(report: dict[str, Any], node_id: str) -> str:
 
 _HOST_CLASS = {
     "undeclared": "not linked from the app's manifest or package.json, and not matching its name",
-    "developer_hosted": "on a free app-hosting service, so likely run by the developer",
+    # (0.15) who runs it is said only with evidence in the address (see _host_words)
+    "developer_hosted": "on a free app-hosting service; Barkley can't tell who runs it",
     "analytics": "a usage-statistics or crash-report service",
     "public_ip": "a public IP address written into the code",
     "exfil_service": "a service often used to collect stolen data (webhooks, paste sites)",
@@ -314,8 +325,8 @@ def describe(report: dict[str, Any], item_id: str) -> tuple[str, dict[str, Any]]
         host = sanitize_untrusted(_label(report, edge.get("target", "")), 200)
         facts = {
             "address_untrusted": host,
-            "what_we_know": _HOST_CLASS.get(
-                str(attrs.get("class")), "not one of the app's own sites"
+            "what_we_know": _host_words(
+                str(attrs.get("class")), _label(report, edge.get("target", "")), report
             ),
             "urls_untrusted": [sanitize_untrusted(u, 200) for u in attrs.get("urls", [])[:5]],
             "location_untrusted": sanitize_untrusted(where, 200),
