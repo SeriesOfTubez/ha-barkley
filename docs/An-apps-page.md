@@ -155,6 +155,11 @@ repository is the developer's own account of what the app connects to and handle
 Barkley shows it after Where it connects, beside what the scan found. The file never
 changes a reading, and nothing in it is sent to your AI.
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/disclosure-dark.png"><img src="images/disclosure-light.png" alt="What the developer's disclosure.yaml says, beside the scan, on a made-up app with one place where the two don't match"></picture>
+
+*Petal Garden is a made-up app from Barkley's tests. Its file is the spec's sample, and its
+code sends usage reporting the file says is off until you turn it on.*
+
 - **Compared with the scan:** the sites Barkley read a request to (each one says under
   Where it connects whether the file lists it, with the file's reason), whether the file
   says a connection is encrypted, telemetry (the usage reporting Barkley traced, and

@@ -19,7 +19,7 @@ To make them again:
       --answers docs/screenshots/ai-answers.json --out /tmp/doc-shots --shots
     # then copy the chosen PNGs into docs/images/
 
-`disclosure-light.png` and `disclosure-dark.png` are for the disclosure.yaml spec page on
-the website, not for these docs. They show the made-up Petal Garden
+`disclosure-light.png` and `disclosure-dark.png` are in An app's page and on the
+disclosure.yaml spec page on the website. They show the made-up Petal Garden
 (`tests/fixtures/petal_garden`), whose `disclosure.yaml` is the spec's sample with one
-planted difference, so the caption there says it's made up.
+planted difference, so the caption in both places says it's made up.
