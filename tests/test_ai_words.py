@@ -60,10 +60,42 @@ def test_a_checked_sentence_is_kept_with_its_lines_and_its_item():
     out = ai_words.accept(rep, {"says_1": GOOD, "about_1": "1"})
     assert out["dropped"] == []
     (s,) = out["says"]
-    assert s["cites"] == [["README.md", 124, 124]] and s["about"] == "ha-auth-change-users"
+    # (2026-11-26) a README sentence sits under no item, whatever the AI picked
+    assert s["cites"] == [["README.md", 124, 124]] and s["about"] == ""
     assert "(README.md" not in s["text"] and s["text"].startswith("The README says")
-    # a number that isn't on the list attaches to nothing
-    assert ai_words.accept(rep, {"says_1": GOOD, "about_1": "9"})["says"][0]["about"] == ""
+    # a docstring sentence sits under the item in the file it cites, even with no pick
+    doc = ai_words.accept(rep, {"says_1": DOC_SAYS, "about_1": "9"})["says"][0]
+    assert doc["about"] == "ha-auth-change-users"
+
+
+DOC_SAYS = ("A description in the code says a PC gets a user of its own and a token after "
+            "`ws_provision` ran (ws.py:33).")  # fmt: skip
+
+
+def test_a_sentence_sits_only_under_an_item_in_a_file_it_cites():
+    """On his box the AI put a README sentence about YAML set-up under a finding on the
+    network library. The page now places by the citation, stored answers too."""
+    patch = {"id": "p", "rule_id": "ha-monkeypatch", "file": "net.py", "line": 37}
+    near = {"id": "f2", "rule_id": "ha-unauth-view", "file": "ws.py", "line": 34}
+    rep = _report([USERS, patch, near])
+    says = [
+        {"text": "a", "cites": [["README.md", 124, 124]], "about": "ha-monkeypatch"},
+        {"text": "b", "cites": [["ws.py", 33, 33]], "about": "ha-monkeypatch"},
+        {"text": "c", "cites": [["ws.py", 33, 33]], "about": "ha-auth-change-users"},
+        {"text": "d", "cites": [["ws.py", 33, 33]], "about": ""},
+        {"text": "e", "cites": "junk", "about": "ha-monkeypatch"},
+    ]
+    assert ai_words.place(rep, says) == [
+        "", "ha-unauth-view", "ha-auth-change-users", "ha-unauth-view", ""
+    ]  # fmt: skip
+    # a stored answer the AI placed under the patch shows in "In short" instead
+    stored = [{**says[0], "text": "YAML set-up is deprecated"}]
+    full = {"severity": "medium", "title": "T", "message": "m", "category": "practice",
+            "analyzer": "semgrep"}  # fmt: skip
+    rep["findings"] = [{**full, **f} for f in rep["findings"]]
+    page = ui.render_app("", 1, rep, [], ai={"words": {"says": stored}}).decode()
+    assert page.count("YAML set-up is deprecated") == 1
+    assert page.index("YAML set-up") < page.index("What Barkley found")
 
 
 def test_what_the_lines_dont_say_is_left_out():
@@ -122,11 +154,12 @@ def test_beside_a_possible_threat_only_another_items_words_stay():
     assert "ws.py:33|" not in text and "ws.py:1|" not in text and "README.md:124|" in text
     titles = [m["rule_id"] for m in ai_words.listed(rep)]
     assert titles == ["ha-unauth-view"]
+    # (2026-11-26) a README sentence is about no item, so beside a possible threat it goes
     out = ai_words.accept(
         rep, {"says_1": GOOD, "says_2": GOOD.replace("says", "says that"), "about_2": "1"}
     )
-    assert out["dropped"] == ["not about a listed item, beside a possible threat"]
-    assert [s["about"] for s in out["says"]] == ["ha-unauth-view"]
+    assert out["dropped"] == ["not about a listed item, beside a possible threat"] * 2
+    assert out["says"] == []
 
 
 def test_a_scan_without_stored_text_asks_nothing():

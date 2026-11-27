@@ -4,6 +4,7 @@ import json
 import threading
 import time
 
+import pytest
 from test_server import HOSTILE, get, post, token
 from test_store import FINDING, report
 
@@ -65,7 +66,7 @@ def test_accept_drops_everything_but_known_text():
         rep,
         {
             "summary": "  fine overall  ",
-            "f_" + "f" * 16: "x" * 5000,
+            "f_" + "f" * 16: "letter " * 1000,
             "f_" + "0" * 16: "unknown finding",
             "score": 100,
             "verdict": "Good Boy",
@@ -74,6 +75,17 @@ def test_accept_drops_everything_but_known_text():
     assert out["summary"] == "fine overall"
     assert set(out["findings"]) == {"f" * 16}
     assert len(out["findings"]["f" * 16]) == ai.MAX_EXPLANATION
+
+
+@pytest.mark.parametrize("said", ["ffffffffffffffff", "  ffffffffffffffff.  ",
+                                  "Item ffffffffffffffff", "ha-monkeypatch", "ok"])  # fmt: skip
+def test_an_echo_of_the_item_is_no_explanation(said):
+    """(2026-11-26, on his box) a model answered an item's field with its id."""
+    rep = _report()
+    rep["findings"][0] = {**rep["findings"][0], "rule_id": "ha-monkeypatch"}
+    assert ai.accept(rep, {"summary": "s", "f_" + "f" * 16: said})["findings"] == {}
+    good = "It replaces how addresses are looked up."
+    assert ai.accept(rep, {"summary": "s", "f_" + "f" * 16: good})["findings"]
     assert ai.accept(rep, "not a dict") == {
         "summary": "",
         "findings": {},

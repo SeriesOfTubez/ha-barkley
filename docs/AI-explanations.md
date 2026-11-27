@@ -69,9 +69,10 @@ end with the lines it rests on. Barkley shows a sentence only if:
   line doesn't carry a made-up statement;
 - it gives no verdict (safe, fine, secure, no problem and the like).
 
-A shown sentence is tagged **AI inferred**, with the lines, under the item it is about.
-Sentences that aren't about one listed item go under **In short**, as **The developer's
-description**. The page says plainly that the developer wrote those lines. Barkley checked that each line exists and holds these words, but it can't check whether they're true. A README can
+A shown sentence is tagged **AI inferred**, with the lines it cites. Barkley places it by
+those lines, not by the AI's choice: under an item only when it cites the file where
+Barkley found that item. Sentences that cite only the README, or no item's file, go under
+**In short**, as **The developer's description**. The page says plainly that the developer wrote those lines. Barkley checked that each line exists and holds these words, but it can't check whether they're true. A README can
 describe a harmful feature in friendly words.
 
 Limits that are always on:

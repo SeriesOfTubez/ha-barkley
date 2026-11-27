@@ -26,7 +26,7 @@ from sniff_test.analyzers.correlate import CREDENTIAL_SOURCES, SENSITIVE_NODES
 from sniff_test.analyzers.endpoints import WELL_KNOWN_PORTS, developer_evidence
 from sniff_test.fetch import retry
 from sniff_test.models import STALE_YEARS, fix_phrase, version_key, years_since
-from sniff_test.report import disclosed, explain, logins, privacy
+from sniff_test.report import ai_words, disclosed, explain, logins, privacy
 from sniff_test.report.json_report import sanitize_untrusted
 
 if TYPE_CHECKING:
@@ -4568,9 +4568,11 @@ def render_app(
     if rd.get("threat_level") == "found":
         says = []
     placed: set[int] = set()
+    # (2026-11-26) placed by what each sentence cites, stored answers too (ai_words.place)
+    about = dict(zip(map(id, says), ai_words.place(report, says), strict=True))
 
     def said_for(f: dict[str, Any]) -> str:
-        mine = [x for x in says if x.get("about") == f.get("rule_id")]
+        mine = [x for x in says if about[id(x)] == f.get("rule_id")]
         placed.update(id(x) for x in mine)
         return said_html(mine)
 

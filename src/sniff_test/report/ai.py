@@ -32,6 +32,8 @@ MAX_SUMMARY = 1500
 MAX_FIELDS = 12  # finding groups sent; the rest keep only the fixed plain-English text
 MAX_READINGS = 12  # "Explain in context" readings passed along
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
+_WORD = re.compile(r"[A-Za-z]{2,}")
+MIN_WORDS = 3  # an item's answer with fewer is no explanation (one model echoed the item id)
 TASK_NAME = "Barkley: explain a scan"
 
 # (0.15) The request speaks of the two readings, as the page does. Before, it carried the
@@ -114,11 +116,18 @@ def accept_explanations(report: dict[str, Any], ai_output: str | dict[str, Any])
             return {}
     if not isinstance(ai_output, dict):
         return {}
-    known = {f["id"] for f in report.get("findings", [])}
+    rules = {f["id"]: str(f.get("rule_id") or "") for f in report.get("findings", [])}
     accepted: dict[str, str] = {}
     for key, value in ai_output.items():
-        if key in known and isinstance(value, str) and value.strip():
-            accepted[key] = value.strip()[:MAX_EXPLANATION]
+        if key not in rules or not isinstance(value, str) or not value.strip():
+            continue
+        # (2026-11-26) a bare echo of the field's id or rule id isn't an explanation
+        rest = value.replace(key, " ")
+        if rules[key]:
+            rest = rest.replace(rules[key], " ")
+        if len(_WORD.findall(rest)) < MIN_WORDS:
+            continue
+        accepted[key] = value.strip()[:MAX_EXPLANATION]
     return accepted
 
 

@@ -155,6 +155,47 @@ def listed(report: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _by_file(report: dict[str, Any]) -> dict[str, list[tuple[int, str]]]:
+    """{file: [(line, rule id), …]} of the listed items' findings."""
+    allowed = {m["rule_id"] for m in listed(report)}
+    out: dict[str, list[tuple[int, str]]] = {}
+    for f in report.get("findings") or []:
+        rule = str(f.get("rule_id"))
+        if rule in allowed and f.get("file"):
+            try:
+                line = int(f.get("line") or 0)
+            except (TypeError, ValueError):
+                line = 0
+            out.setdefault(str(f["file"]), []).append((line, rule))
+    return out
+
+
+def place(
+    report: dict[str, Any],
+    says: list[dict[str, Any]],
+    by_file: dict[str, list[tuple[int, str]]] | None = None,
+) -> list[str]:
+    """(2026-11-26, his yes) The item each sentence sits under, by what it cites, not by
+    the AI's pick: only an item with a finding in a file the sentence cites. The AI's pick
+    stands if it is one of those; otherwise the finding nearest the cited lines. A
+    sentence that cites only the README sits under no item ("In short" holds it). On his
+    box the AI put a README sentence on YAML set-up under a network-library finding."""
+    by_file = _by_file(report) if by_file is None else by_file
+    out = []
+    for x in says:
+        hits: list[tuple[int, str]] = []
+        for c in x.get("cites") or []:
+            try:
+                f, a, b = str(c[0]), int(c[1]), int(c[2])
+            except (TypeError, ValueError, IndexError):
+                continue
+            for line, rule in by_file.get(f, []):
+                hits.append((0 if a <= line <= b else min(abs(line - a), abs(line - b)), rule))
+        picked = x.get("about")
+        out.append(picked if picked in {r for _, r in hits} else min(hits)[1] if hits else "")
+    return out
+
+
 def _segment(doc: Any) -> dict[str, Any] | None:
     if not isinstance(doc, dict) or not isinstance(doc.get("file"), str):
         return None
@@ -323,6 +364,7 @@ def accept(report: dict[str, Any], data: Any, size: int | None = None) -> dict[s
     if not snip["segments"] or not isinstance(data, dict):
         return out
     by_n = {str(m["n"]): m["rule_id"] for m in listed(report)}
+    by_file = _by_file(report)
     attached_only = _level(report) == "possible"
     seen: set[str] = set()
     for i in range(1, says_for(_size(size)) + 1):
@@ -336,6 +378,7 @@ def accept(report: dict[str, Any], data: Any, size: int | None = None) -> dict[s
             continue
         m = re.fullmatch(r"\D{0,3}(\d{1,3})\D{0,3}", str(data.get(f"about_{i}") or "").strip())
         ok["about"] = by_n.get(m[1], "") if m else ""
+        ok["about"] = place(report, [ok], by_file)[0]
         if attached_only and not ok["about"]:
             out["dropped"].append("not about a listed item, beside a possible threat")
             continue
