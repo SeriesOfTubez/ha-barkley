@@ -26,7 +26,7 @@ without it fails with an error on the page.
 
 How fast an answer comes depends on your model and how busy it is. The same request can
 take seconds one time and minutes the next. While your AI answers, the app's card on
-the list has a moving outline in the AI's colour, the box at the top of the list names
+the list has a moving outline in the AI's color, the box at the top of the list names
 the app, and the app's page shows how long it has waited, with a **Stop waiting** button.
 
 Settings → **AI time limit** decides how long Barkley waits: 6 minutes by default, or
@@ -43,7 +43,7 @@ you click it. Barkley then sends the two readings and their reasons, up to 12 of
 scan's items (the rule, the file and a short code excerpt from the public project that
 was scanned), and the checked statements of any earlier Explain in context on this app.
 A severity goes along only for a threat or a known vulnerability in a library. The answer
-is shown as plain text labelled **AI summary**: one for the app under "In short", and one
+is shown as plain text labeled **AI summary**: one for the app under "In short", and one
 under each item it explains, next to the fixed explanation. Explain in context (below) is
 a separate, deeper request about one item.
 

@@ -62,7 +62,7 @@ the newest release, else the default branch pinned to one commit.
 - **Packed files** (since 0.15): long base64 or hex text, and compressed data, is
   unpacked as data (at most 32 MB per app) and read like the app's own files. The page
   says so, says what kind of code they hold, and says when the unpacked files change
-  another app's files. Recognised pictures, fonts and keys aren't treated as hidden code.
+  another app's files. Recognized pictures, fonts and keys aren't treated as hidden code.
   Barkley has no checks for Lua code, so in packed Lua it only looks for web addresses.
 - **A card's login token:** sending it to Home Assistant itself is fine, and Barkley
   follows helpers, guards and Home Assistant's websocket to prove where it goes. Sent to

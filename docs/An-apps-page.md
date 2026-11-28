@@ -61,10 +61,10 @@ From top to bottom:
   programs and the system, your home network, and your browser session. A room is blue
   when the app reads (eye) or changes (pencil) something there beyond its own job, and
   dashed when Barkley saw it do nothing there. What the app does in its own space, such
-  as the kinds of entity it adds or its own storage file, is said in grey with a thin
+  as the kinds of entity it adds or its own storage file, is said in gray with a thin
   dashed line. Outside are the sites it sends requests to. A red line is a path Barkley
   found from your data to a site; to a site its own files link to, or one named like
-  the app, the line is dotted grey. A purple line goes to where the login you gave this app is sent. A dashed
+  the app, the line is dotted gray. A purple line goes to where the login you gave this app is sent. A dashed
   box is an address you entered at setup (Barkley can't tell whether it's on your home
   network or the internet). Exposure is orange and points in: a door for each way in,
   and a strip on the app for libraries with known vulnerabilities. A dotted orange arrow
@@ -196,7 +196,7 @@ None of this is scored.
 - **npm packages it is built from** (cards): what the card's `package.json` lists, with
   the versions it accepts.
 - **Published libraries it ships:** files that are exact copies of files npm packages
-  publish. A recognised library says **not read** (well known: at least a month old, at
+  publish. A recognized library says **not read** (well known: at least a month old, at
   least 10,000 downloads a week, no malware warning; it's checked for known security
   problems instead) or **read as code**, with the reason. A line under them counts the
   large files that matched nothing.

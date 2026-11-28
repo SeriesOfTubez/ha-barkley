@@ -40,7 +40,7 @@ auto-sniffs are listed on the Settings page too.
 A notification carries:
 
 - the app's `owner/repo` name and version;
-- the two readings, each with a coloured light: 🟢 for no threat found or Low exposure,
+- the two readings, each with a colored light: 🟢 for no threat found or Low exposure,
   🟡 for a possible threat or Medium exposure, 🔴 for a found threat or High exposure.
   The Exposure number is given when it isn't 0, and for an update the number before it
   when it changed;

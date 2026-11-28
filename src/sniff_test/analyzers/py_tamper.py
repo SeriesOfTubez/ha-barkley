@@ -33,7 +33,7 @@ RULE_ID = "ha-monkeypatch"
 TITLE = "Monkeypatches core or network stack"
 MESSAGE = (
     "Replaces attributes on Home Assistant core, the auth system, or the network/TLS "
-    "stack at runtime. That changes behaviour for every integration, and is how code "
+    "stack at runtime. That changes behavior for every integration, and is how code "
     "hides traffic, steals credentials in flight, or disables TLS checks globally."
 )
 OBJ_REGEX = (

@@ -1448,7 +1448,7 @@ def render_settings(
                       "(SHA-256) to jsDelivr, a public library service. When off, Barkley "
                       "reads every file.",
                       sel("libraries", "1" if s.libraries else "0",
-                          [("1", "Recognise them (default)"), ("0", "Off")]))  # fmt: skip
+                          [("1", "Recognize them (default)"), ("0", "Off")]))  # fmt: skip
     used = scancache.size_mb()
     check_rows += row("Cache of code already read", "Barkley remembers what it found in "
                       "each file, matched by the file's content, so it doesn't read the same "

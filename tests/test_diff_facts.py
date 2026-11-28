@@ -74,7 +74,7 @@ def test_libraries_new_changed_read_and_gone():
     out = diff.library_changes(old, new)
     assert _texts(out) == [
         "The copied-in library chart-lib is now 4.4.1 (was 4.3.0)",
-        "Barkley recognised the copied-in library pdf-lib before and reads it as code now",
+        "Barkley recognized the copied-in library pdf-lib before and reads it as code now",
         "A new published library is copied in: tiny 0.1. Barkley read it as code",
         "The published library old-lib is no longer copied in",
     ]

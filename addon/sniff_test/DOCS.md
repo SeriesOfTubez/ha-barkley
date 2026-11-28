@@ -94,7 +94,7 @@ opens a pre-filled public issue that you finish and submit.
 - **What it touches:** a picture of the app in your home. Seven rooms, the same for every
   app (users and logins, other apps' settings, devices and entities, files, programs
   and the system, your home network, your browser session), blue where the app reaches
-  beyond its own job and dashed where it does nothing; its own space said in grey; the
+  beyond its own job and dashed where it does nothing; its own space said in gray; the
   sites it sends requests to outside; a red line for a path from your data to a site
   that isn't the app's own, a purple one to where the login you gave this app goes, and
   orange doors for each way in.
@@ -160,7 +160,7 @@ while Barkley was stopped). When an integration or card is installed or updated:
   same on request.
 - It sends a **bell notification** in Home Assistant and, if you picked one in the
   panel, a `notify.<target>` message (Send notifications to: either, both, or Disabled) (for example your phone through the companion
-  app): the app and version, the two readings with a coloured light each (🟢 🟡 🔴), for
+  app): the app and version, the two readings with a colored light each (🟢 🟡 🔴), for
   a found or possible threat one fixed sentence saying what it is, and for an update
   counts of what changed. The `notify` message is shorter: its body starts with the
   readings, and the app's name is only in its title. Nothing from the scanned project (no README text, code or

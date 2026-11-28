@@ -779,7 +779,7 @@ def library_changes(old: dict, new: dict) -> list[Change]:
         vs = ", ".join(sorted(v for v in now if v)) or "no version given"
         read = any(now.values())
         if name not in a:
-            how = "Barkley read it as code" if read else "Barkley recognised it and didn't read it"
+            how = "Barkley read it as code" if read else "Barkley recognized it and didn't read it"
             out.append(Change("new_library", FACT_RANK, "packages",
                               f"A new published library is copied in: {name} {vs}. {how}",
                               detail={"name": name}))  # fmt: skip
@@ -792,7 +792,7 @@ def library_changes(old: dict, new: dict) -> list[Change]:
                               sign="~", detail={"name": name}))  # fmt: skip
         if read and not any(was.values()):
             out.append(Change("library_read", FACT_RANK, "packages",
-                              f"Barkley recognised the copied-in library {name} before and "
+                              f"Barkley recognized the copied-in library {name} before and "
                               "reads it as code now", sign="~", detail={"name": name}))  # fmt: skip
     for name in sorted(set(a) - set(b)):
         out.append(Change("library_gone", 2, "packages",

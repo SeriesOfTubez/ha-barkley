@@ -32,7 +32,7 @@ Skipping by path or name (vendor/, .min.js) is never done: that's where a payloa
    name from jsDelivr alone proves nothing, so OSV's answer for them is shown as data
    and never becomes a finding.
 
-Off with the "Recognise published libraries" setting, for cards, and offline.
+Off with the "Published libraries" setting, for cards, and offline.
 """
 
 from __future__ import annotations
@@ -267,7 +267,7 @@ def recognise(
     target: Target, work: Path, enabled: bool = True, now: datetime | None = None
 ) -> Result:
     if not enabled:
-        return _off("off (Settings: Recognise published libraries)")
+        return _off("off (Settings: Published libraries)")
     if target.kind is not TargetKind.INTEGRATION:
         return _off("integrations only")
     now = now or datetime.now(UTC)
@@ -376,7 +376,7 @@ def recognise(
     aside = {rel: lib for lib in libs for rel in lib.files}
     detail = (
         f"{len(digests)} looked up, {len(aside)} file(s) of {len(libs)} published "
-        f"librar{'y' if len(libs) == 1 else 'ies'} recognised and not read as code"
+        f"librar{'y' if len(libs) == 1 else 'ies'} recognized and not read as code"
     )
     if unanswered:
         detail += f"; {unanswered} lookup(s) unanswered (those files were read)"

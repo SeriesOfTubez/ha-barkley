@@ -27,7 +27,7 @@ says so.
   checked. A filter shows when its count isn't 0.
 - Switch between **cards** (12 per page) and a **table** (25 per page). Barkley
   remembers the view.
-- "What the readings and colours mean" under the list is the legend:
+- "What the readings and colors mean" under the list is the legend:
 
 | Outline | Means |
 |---|---|
@@ -35,7 +35,7 @@ says so.
 | yellow | a possible threat |
 | orange | High exposure |
 | none | no concerns found |
-| dashed grey | not checked |
+| dashed gray | not checked |
 
 On a card, only a threat's chip is red, and "Removed as critical" when the Marketplace
 removed the app for that; the other chips are neutral ("Removed from the Marketplace",

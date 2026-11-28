@@ -57,7 +57,7 @@ by 0.15 or later.
 - **Environment variables** (integrations): the new version reads or sets one the old
   one didn't, or starts using all of them at once.
 - **Published libraries copied into the app:** a new one, a changed version, or one that
-  Barkley recognised before and now reads as code.
+  Barkley recognized before and now reads as code.
 - **Test scripts Home Assistant never loads:** a change in one is listed, but it's never
   a change to check.
 

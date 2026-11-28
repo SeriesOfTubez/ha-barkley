@@ -4,7 +4,7 @@ rules:
     severity: ERROR
     message: >-
       Replaces attributes on Home Assistant core, the auth system, or the network/TLS
-      stack at runtime. That changes behaviour for every integration, and is how
+      stack at runtime. That changes behavior for every integration, and is how
       code hides traffic, steals credentials in flight, or disables TLS checks globally.
     metadata:
       sniff: {title: Monkeypatches core or network stack, severity: high, category: tamper}

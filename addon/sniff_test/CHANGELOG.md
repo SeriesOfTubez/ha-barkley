@@ -26,7 +26,7 @@ update the list offers one button to sniff your apps again.
   Paranoid mode. Powerful no threat, Pages without a login and Hidden usage reporting
   are gone: they only changed the score.
 - Command line: `--fail-on possible` or `--fail-on found` replaces `--fail-under`.
-- Notifications show the two readings with a coloured light each (🟢 🟡 🔴), and for an
+- Notifications show the two readings with a colored light each (🟢 🟡 🔴), and for an
   update the Exposure number before it. A phone notification starts with the readings
   and leaves the app's name to its title, so a phone doesn't cut off what matters.
 - On a phone an app's page is shorter: the readings, In short and every item that counts
@@ -112,7 +112,7 @@ update the list offers one button to sniff your apps again.
   programs and the system, your home network, and your browser session. A room is
   blue when the app reaches into it beyond its own job, and dashed when Barkley saw it
   do nothing there.
-- What the app does in its own space is said in grey: the kinds of entity it adds, its
+- What the app does in its own space is said in gray: the kinds of entity it adds, its
   own storage file, its own sidebar page, devices Home Assistant finds for it. A card
   says it runs in your browser session with your Home Assistant login.
 - Outside are the sites it sends requests to. A path Barkley found from your data to a
@@ -127,12 +127,12 @@ update the list offers one button to sniff your apps again.
   label sits over the lines that leave, and lines behind it break around it.
 - An item that adds to the Exposure reading is marked Exposure, with a link up to that
   box. The rest of What Barkley found is context. Only the AI's own row under an item is
-  in the AI's colour.
+  in the AI's color.
 - The Exposure box names the site code is loaded from and says what the app relies on:
   that site, and whoever publishes the code. Barkley never downloads that code.
 - Page sections: What Barkley found (the items), What it touches (the picture). The
   developer's description, after an AI request, is now part of In short.
-- The short AI text from Explain this app is labelled AI summary, apart from Explain in
+- The short AI text from Explain this app is labeled AI summary, apart from Explain in
   context.
 - On a phone the same picture is stacked, one part under the other.
 
@@ -170,7 +170,7 @@ update the list offers one button to sniff your apps again.
   version with its date, or "up to date", and "pinned by Home Assistant" where Home
   Assistant's own pin holds it. For a card, "built with" names the lock file's version
   when it isn't the one `package.json` names.
-- Published libraries it ships: each recognised library says "not read" or "read as
+- Published libraries it ships: each recognized library says "not read" or "read as
   code", with the reason (too new, too few downloads, no answer from npm, a malware
   warning), and how many large files matched nothing.
 - Code it gets while it runs: packages it installs or code it loads after it's installed.
@@ -199,7 +199,7 @@ update the list offers one button to sniff your apps again.
 - Barkley now sends AI requests over Home Assistant's websocket. A request sent through
   the Supervisor's API ends after 5 minutes, and a slow model can take longer.
 - While your AI answers, the app's card on the list gets a moving outline in the AI's
-  colour, the box at the top of the list names the app and how long it has waited, and
+  color, the box at the top of the list names the app and how long it has waited, and
   the app's page shows a box with the time so far.
 
 **Update comparison**
