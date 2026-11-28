@@ -331,6 +331,8 @@ change below is a general check applied to every app, not an exception for one:
   for its latest release. When there's a newer one, the list shows the image to use and
   Home Assistant shows a notification, once per version. Settings → New Barkley
   versions turns it off. As an app, Home Assistant already shows Barkley's updates.
+- Standalone: auto-sniff starts as soon as Barkley has its Home Assistant token. Before,
+  Settings could say "no token yet" for up to 10 minutes after the first-time setup.
 
 **Scanner tools are more tightly confined**
 
