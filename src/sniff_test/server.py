@@ -38,6 +38,7 @@ from sniff_test import (
     listings,
     login,
     memory,
+    newversion,
     readings,
     recheck,
     scancache,
@@ -804,6 +805,13 @@ def _token_banner(base: str, panel: Panel) -> str:
     return ""
 
 
+def _new_version_banner(panel: Panel) -> str:
+    """Standalone, with New Barkley versions on: a newer release (newversion.py)."""
+    if not panel.standalone or not panel.settings.new_versions:
+        return ""
+    return newversion.banner_html(newversion.newer(panel.store, __version__), __version__)
+
+
 def _memory_banner(mem: memory.Memory) -> str:
     if mem.level == "refuse":
         return f'<div class="banner bad">{ui.icon("alert")} Memory: {e(mem.message(), 300)}</div>'
@@ -1512,6 +1520,12 @@ def render_settings(
                           sel("token_days", s.token_days,
                               [(n, f"Every {n} days" + (" (default)" if n == 60 else ""))
                                for n in settings_mod.CHOICES["token_days"]]))  # fmt: skip
+        check_rows += row("New Barkley versions", "Once a day Barkley asks GitHub for its "
+                          "latest release. When a newer one is out, the list says so, with "
+                          "the image to use, and Home Assistant shows one notification per "
+                          "version. When off, Barkley doesn't ask.",
+                          onoff("new_versions", s.new_versions, "Tell me", "Off",
+                                defaults.new_versions))  # fmt: skip
     note = ""
     if saved:
         note = f'<div class="banner">{ui.icon("check", 14, "ok")} Saved.</div>'
@@ -3306,7 +3320,7 @@ class Panel:
                             v.qs(), auto,
                             render_account(base, s.user, panel.token)
                             if (s := self._session()) else "",
-                            _token_banner(base, panel),
+                            _token_banner(base, panel) + _new_version_banner(panel),
                             ai_busy=bool(thinking),
                             cpu_gap=panel.cpu_gap,
                         )  # fmt: skip

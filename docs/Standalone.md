@@ -1,9 +1,9 @@
 # Standalone (no Supervisor)
 
-Barkley is an app (add-on), and apps need the Supervisor: Home Assistant OS or
-Supervised. You can still run it without one:
+Barkley is an app (add-on), and apps need the Supervisor: Home Assistant OS. You can
+still run it without one:
 
-- **Home Assistant Container or Core**, which have no Supervisor and no app store.
+- **Home Assistant Container**, which has no app store.
 - **A small box**, such as a Raspberry Pi with 1 or 2 GB, even one running Home Assistant
   OS. Most scans need under 1 GB of memory for a minute or two (a few big apps need far
   more), which a small box may not
@@ -158,9 +158,18 @@ page (8 GB: up to 4 scans, the most Parallel scans allows).
 
 ## Updating
 
-Change the version in `image:` and run `docker compose up -d`. The scans in `data/` are
-kept. The image's signature can be checked as for the app; see
-[Installing and updating](Installing-and-updating.md).
+Barkley tells you when a new version is out. Once a day it asks GitHub for its latest
+release. When there's a newer one, the list shows a banner with the image to use, and
+Home Assistant shows a notification, once per version. Settings → New Barkley versions
+turns this off, and then Barkley doesn't ask.
+
+To update, change `image:` in `compose.yaml` to the image the banner names and run
+`docker compose up -d`. Copy the whole image, not only the version: if its address has
+changed, the banner says so. The scans in `data/` are kept. The image's signature can
+be checked as for the app; see [Installing and updating](Installing-and-updating.md).
+
+To hear about new versions without Barkley asking, watch the repository on GitHub:
+Watch → Custom → Releases.
 
 ## Backups
 

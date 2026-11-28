@@ -75,6 +75,9 @@ class Settings:
     # Keeping them all is the default because a short history would limit what can be
     # looked back on later (comparing two scans, changes over time).
     keep_versions: int = 0
+    # (0.15, his decision 2026-11-27) standalone: ask GitHub once a day for a newer
+    # Barkley, and say so on the list and in one notification per version (newversion)
+    new_versions: bool = True
 
     @property
     def where(self) -> str:
@@ -110,6 +113,7 @@ PARTS = {
         "cache_mb",
         "keep_versions",
         "token_days",
+        "new_versions",
         "ai_size",
         "ai_limit",
         "ai_minutes",

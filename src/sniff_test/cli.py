@@ -437,6 +437,29 @@ def _rotation_thread(store: Any, start: Any) -> None:
     threading.Thread(target=run, name="token-rotation", daemon=True).start()
 
 
+def _new_version_thread(store: Any, start: Any, panel_url: str) -> None:
+    """Standalone: once an hour, see whether a newer Barkley is out (newversion.py asks
+    GitHub at most once a day, and notifies once per version)."""
+    import threading
+    import time
+
+    from sniff_test import newversion, supervisor
+    from sniff_test import settings as settings_mod
+
+    link = f" [Open Barkley]({panel_url})" if panel_url.startswith(("http://", "https://")) else ""
+
+    def notify(title: str, message: str) -> None:
+        supervisor.notify_persistent(title, message + link, newversion.NOTIFICATION_ID)
+
+    def run() -> None:
+        while True:
+            if settings_mod.load(store, start).new_versions:
+                newversion.check(store, __version__, notify=notify)
+            time.sleep(3600)
+
+    threading.Thread(target=run, name="new-version", daemon=True).start()
+
+
 def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     from sniff_test import server
 
@@ -579,6 +602,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
             atexit.register(login_cfg.release_all)
             signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
         _rotation_thread(store, start)
+        _new_version_thread(store, start, login_cfg.public_url if login_cfg else "")
         out.print(f"🐕 Home Assistant token: {ha_token.source() or 'none yet (Settings)'}")
     if conn is not None:
         where = "via the Supervisor" if conn.mode == "addon" else f"at {conn.base} (standalone)"

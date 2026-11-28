@@ -327,6 +327,10 @@ change below is a general check applied to every app, not an exception for one:
 - Before a Home Assistant backup, Barkley moves the scan store's recent changes into
   its file, so the backup has them. Once a day, if a quarter or more of
   the file is space freed by deleted scans, Barkley compacts it.
+- Standalone: Barkley tells you when a new version is out. Once a day it asks GitHub
+  for its latest release. When there's a newer one, the list shows the image to use and
+  Home Assistant shows a notification, once per version. Settings → New Barkley
+  versions turns it off. As an app, Home Assistant already shows Barkley's updates.
 
 **Scanner tools are more tightly confined**
 

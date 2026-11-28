@@ -48,7 +48,8 @@ registry (the newest release
 of a vulnerable card package). For a library an integration hands the login you gave
 it to, it downloads that library's published package from PyPI's file host and reads
 it as text. Once a day the panel reads the Marketplace's list of removed apps
-(`data-v2.hacs.xyz`). With Published libraries on (the default), it also sends
+(`data-v2.hacs.xyz`). Standalone, once a day, it asks GitHub for Barkley's own latest
+release (Settings → New Barkley versions). With Published libraries on (the default), it also sends
 jsDelivr the SHA-256 of an integration's larger JavaScript files and asks npm about the
 packages it names (publish date, downloads). For a dependency with a known
 vulnerability it reads the CVE record from `cveawg.mitre.org` (the CVE id only), for CISA's

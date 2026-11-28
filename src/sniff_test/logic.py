@@ -38,6 +38,7 @@ PANEL_ONLY = frozenset(
         "readings.py",  # (preview) the proposed readings, worked out when a page is shown
         "does.py",  # (0.15) the "What it does" picture, drawn from a stored scan
         "listings.py",  # (0.15) the Marketplace's removed list, fetched by the panel
+        "newversion.py",  # (0.15) standalone: a newer Barkley, asked of GitHub daily
         "devnote.py",  # (preview) the developer's note, read from stored snippets
         "diff.py",
         "releases.py",
