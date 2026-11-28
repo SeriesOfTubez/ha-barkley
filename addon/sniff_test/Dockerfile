@@ -2,10 +2,10 @@
 # carries the scanner's source in scanner/ (the Supervisor only sees this folder):
 #   uv run python scripts/stage_addon.py && docker build dist/addon/sniff_test
 #
-# Debian, not Alpine: GuardDog 3.2 needs nono-py (its sandbox), which ships only
-# manylinux wheels, and every tool here is installed from wheels only (nothing is
-# compiled in the image). yara-python 4.5.4 has wheels up to cp313, so GuardDog and
-# Semgrep run on Debian trixie's Python 3.13. (0.14.0) Barkley itself runs on the Python
+# Debian, not Alpine: every tool here is installed from wheels only (nothing is compiled
+# in the image), and Semgrep ships manylinux wheels, so it runs on Debian trixie's
+# Python 3.13. (0.15) GuardDog was removed: on 600 real apps 22 of its 23 heuristic hits
+# were wrong; Barkley's own package checks come later. (0.14.0) Barkley itself runs on the Python
 # Home Assistant runs (BARKLEY_PYTHON, HA's .python-version), so its parse-only checks
 # read every syntax HA's Python accepts (3.14's t-strings don't parse on 3.13). The
 # scanner resolves *scanned* dependencies for HA's musl platforms with uv regardless of
@@ -13,22 +13,29 @@
 #
 # Two stages (M8, image slimming): tools are installed and trimmed in `build`, and only
 # the results are copied into a fresh base, so build-only packages (binutils) and
-# anything deleted never ship. Measured on amd64 before trimming: 695 MB unpacked, of
-# which semgrep-core 255 MB and GuardDog 120 MB (boto3/botocore 33 MB, used only by its
-# S3 upload helper, imported lazily there).
+# anything deleted never ship. Measured on amd64 before trimming (with GuardDog, removed
+# in 0.15): 695 MB unpacked, of which semgrep-core 255 MB.
 # Do NOT strip semgrep-core: its sections are laid out unusually (".dynstr not in
 # segment"), and every binutils mode, even --strip-debug, leaves it failing with
 # "symbol lookup error: undefined symbol: , version" (tried 2026-11-10).
-FROM ghcr.io/home-assistant/base-debian:trixie AS build
+# (0.15, his decision 2026-11-23) The base image is pinned by digest (the multi-arch
+# index), so a rebuild gets exactly the image whose Cosign signature was checked;
+# Dependabot offers a newer one as a pull request after a week (.github/dependabot.yml).
+# Keep it the same in both stages and in build.yaml's BASE_IMAGE.
+FROM ghcr.io/home-assistant/base-debian:trixie@sha256:d996c8f8ef0096a1ac3756766149b31b8171afc663068cc192f2bcab20f1b8c9 AS build
 
 # TARGETARCH comes from BuildKit (amd64/arm64); the Supervisor passes BUILD_ARCH
 # (amd64/aarch64). Either is enough.
 ARG TARGETARCH
-ARG BUILD_VERSION=0.3.0
 ARG BUILD_ARCH
 
 ARG SEMGREP_VERSION=1.185.0
-ARG GUARDDOG_VERSION=3.2.0
+# (0.15) Semgrep pins mcp==1.29.0 exactly (1.185.0 and 1.187.0 both), which has a high
+# CVE fixed in 1.30.0 (CVE-2026-115563, in the MCP SDK's OAuth client). Barkley only
+# runs `semgrep scan`, never its MCP server, but the image scan fails on it, so uv
+# overrides the pin. Keep it the same here, in ci.yaml and in security.yaml; drop it
+# once Semgrep's own pin is 1.30.0 or later.
+ARG SEMGREP_OVERRIDES="mcp==1.30.0"
 ARG OSV_SCANNER_VERSION=2.7.1
 ARG UV_VERSION=0.13.7
 # Barkley's own interpreter: CPython from python-build-standalone, installed by uv, which
@@ -81,24 +88,17 @@ RUN set -eu; \
       "https://api.github.com/repos/google/osv-scanner/releases/assets/${osv_id}" "${osv_sha}"; \
     chmod +x /usr/local/bin/osv-scanner
 
-# Semgrep and GuardDog, each in its own venv, wheels only.
+# Semgrep in its own venv, wheels only.
 ENV UV_TOOL_DIR=/opt/tools \
     UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_DOWNLOADS=never \
     UV_NO_CACHE=1 \
     SEMGREP_SEND_METRICS=off \
     SEMGREP_ENABLE_VERSION_CHECK=0
-RUN uv tool install --python /usr/bin/python3 --no-build "semgrep==${SEMGREP_VERSION}" \
-    && uv tool install --python /usr/bin/python3 --no-build "guarddog==${GUARDDOG_VERSION}"
-
-# Trim what never runs. GuardDog: boto3 and friends serve only guarddog/utils/s3.py,
-# which imports them lazily for S3 uploads; local scans never load them (Diagnostics
-# runs a GuardDog scan in the image).
-RUN set -eu; \
-    gd="$(echo /opt/tools/guarddog/lib/python3*/site-packages)"; \
-    rm -rf "${gd}"/boto3 "${gd}"/boto3-* "${gd}"/botocore "${gd}"/botocore-* \
-           "${gd}"/s3transfer "${gd}"/s3transfer-* "${gd}"/jmespath "${gd}"/jmespath-*; \
-    rm -f /usr/local/bin/uvx
+RUN printf '%s\n' "${SEMGREP_OVERRIDES}" > /tmp/semgrep-overrides.txt \
+    && uv tool install --python /usr/bin/python3 --no-build \
+         --overrides /tmp/semgrep-overrides.txt "semgrep==${SEMGREP_VERSION}" \
+    && rm -f /usr/local/bin/uvx /tmp/semgrep-overrides.txt
 # Barkley's Python (see BARKLEY_PYTHON), with the parts nothing here runs left out.
 ENV UV_PYTHON_INSTALL_DIR=/opt/python
 RUN set -eu; \
@@ -121,8 +121,7 @@ RUN uv venv --python /opt/python/barkley-python /opt/sniff-test \
     && rm -rf /src /tmp/req.txt
 
 # --- the shipped image: base + Python + the trimmed tools ---------------------------
-FROM ghcr.io/home-assistant/base-debian:trixie
-ARG BUILD_VERSION=0.3.0
+FROM ghcr.io/home-assistant/base-debian:trixie@sha256:d996c8f8ef0096a1ac3756766149b31b8171afc663068cc192f2bcab20f1b8c9
 ARG BUILD_ARCH
 # `upgrade`: the base image is rebuilt less often than Debian ships security fixes
 # (2026-11-13: zlib1g had two high CVEs fixed in trixie-security that the base lacked).
@@ -151,6 +150,9 @@ RUN python3 -m compileall -q -j 0 /opt/tools \
 
 COPY rootfs /
 
+# Declared here, where only the label uses it: every RUN after an ARG takes it as an input,
+# so a new version number made Docker rebuild every tool layer on each Update.
+ARG BUILD_VERSION=0.3.0
 LABEL \
     io.hass.version="${BUILD_VERSION}" \
     io.hass.arch="${BUILD_ARCH}" \

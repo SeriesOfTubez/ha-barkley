@@ -6,14 +6,27 @@ import dataclasses
 from collections.abc import Callable
 from pathlib import Path
 
-from sniff_test import recheck, sources
+from sniff_test import cpu, logic, recheck, scancache, sources
 from sniff_test.analyzers import (
     bytecode,
     correlate,
+    disclosure,
     endpoints,
-    guarddog,
+    js_address,
+    js_remote,
+    js_requests,
+    libraries,
+    npm_meta,
     osv,
+    packed,
+    platforms,
+    py_env,
+    py_group,
+    py_library,
+    py_lua,
+    py_pages,
     py_precision,
+    py_requests,
     pypi_meta,
     python_deps,
     repo_hygiene,
@@ -23,6 +36,7 @@ from sniff_test.analyzers import (
 )
 from sniff_test.analyzers.py_resolve import Resolver
 from sniff_test.deps import ha_env
+from sniff_test.deps.reqs import normalize as pep503
 from sniff_test.fetch.hacs import fetch
 from sniff_test.models import (
     AnalyzerResult,
@@ -80,7 +94,9 @@ def _dependency_analyzers(
         say("osv (npm)")
         if offline:
             return [AnalyzerResult("osv-npm", AnalyzerState.SKIPPED, detail="offline")], None, None
-        return [osv.run_npm(target, ws)], None, None
+        from sniff_test.fetch.github import GitHub
+
+        return [osv.run_npm(target, ws, GitHub.from_env())], None, None
 
     env, env_error = None, "offline"
     if not offline:
@@ -97,18 +113,39 @@ def _dependency_analyzers(
         deps_result.detail = f"HA {env.version}, Python {env.python_version}: {deps_result.detail}"
     requirements = resolution.requirements if resolution else []
     say("package metadata")
-    results = [deps_result, pypi_meta.run(requirements, resolution, env, online=not offline)]
+    results = [
+        deps_result,
+        pypi_meta.run(
+            requirements,
+            resolution,
+            env,
+            online=not offline,
+            owner=(target.repo or "").split("/", 1)[0] or None,
+        ),
+    ]
     if resolution and resolution.lockfiles:
         say("osv (python)")
         results.append(osv.run_python(resolution, ws))
-        say("guarddog")
-        results.append(guarddog.run(resolution, ws, jobs=jobs))
     return results, resolution, env
 
 
+DYNAMIC_IMPORT = "py-dynamic-import"
+
+
+def loadable_tests(findings: list[Finding], tests: frozenset[str]) -> frozenset[str]:
+    """(0.15, his decision 2026-11-21) Test files stay test files only while nothing could
+    load them: a computed import in the app's own code (the module name worked out while
+    it runs, which Barkley can't follow) could name one, so then none is set aside."""
+    if any(f.rule_id == DYNAMIC_IMPORT and f.file not in tests for f in findings):
+        return frozenset()
+    return tests
+
+
 def _label_test_code(findings: list[Finding], target: Target) -> list[Finding]:
-    """(0.14.0) Tag findings in test files no runtime module imports (py_precision)."""
-    tests = py_precision.test_only_files(Resolver(target.root))
+    """(0.14.0) Tag findings in test files no runtime module imports (py_precision).
+    (0.15) A tagged finding is left out of the readings and of "What it can do"; the panel
+    lists it apart (shown.py)."""
+    tests = loadable_tests(findings, py_precision.test_only_files(Resolver(target.root)))
     return [
         dataclasses.replace(f, tags=f.tags | {Tag.TEST_CODE}) if f.file in tests else f
         for f in findings
@@ -120,7 +157,7 @@ _DEP_RULES = ("dep-vuln", "dep-malicious", "dep-build-tool-vuln")
 
 def _fingerprints(findings: list[Finding], target: Target) -> list[Finding]:
     """(0.14.0) report/fingerprint.py, for every finding that doesn't have one yet (the
-    JavaScript ones come from semgrep.py, GuardDog's from guarddog.py)."""
+    JavaScript ones come from semgrep.py)."""
     texts: dict[str, str | None] = {}
     out = []
     for f in findings:
@@ -159,15 +196,48 @@ def scan(
     progress: Callable[[str], None] | None = None,
     ha_version: str | None = None,
     offline: bool = False,
+    recognise_libraries: bool = True,
+    cache_mb: int = 0,
 ) -> ScanResult:
     say = progress or (lambda _msg: None)
     with workspace(keep=keep_workspace) as ws:
         say("fetching")
         target = fetch(source, ws, ref=ref, kind=kind)
-        say("semgrep")
-        results: list[AnalyzerResult] = [semgrep.run(target, ws, jobs=jobs)]
-        say("endpoints")
-        results.append(endpoints.run(target))
+        # (0.14.1) unchanged published libraries (analyzers/libraries.py): set aside while
+        # the code is read, put back before anything compares files
+        if offline:
+            libs = libraries.Result(
+                AnalyzerResult(libraries.NAME, AnalyzerState.NOT_APPLICABLE, detail="offline")
+            )
+        else:
+            say("published libraries")
+            libs = libraries.recognise(target, ws, enabled=recognise_libraries)
+        # (0.15) packed text unpacked next to the app's files while they are read
+        with (
+            libraries.set_aside(target.root, libs.aside, ws),
+            packed.unpacked(target.root) as unpacked,
+        ):
+            say("semgrep")
+            # (0.14.1) answers for code already read (scancache); 0 MB: off
+            cache = scancache.Cache(logic.key(), cache_mb) if cache_mb > 0 else None
+            results: list[AnalyzerResult] = [semgrep.run(target, ws, jobs=jobs, cache=cache)]
+            if cache is not None:
+                cache.prune()
+            say("endpoints")
+            results.append(endpoints.run(target))
+            for r in results:  # a decode Barkley unpacked and read, or a picture or key
+                r.findings = [f for f in r.findings
+                              if not packed.explained(f, target.root, unpacked)]  # fmt: skip
+        results.append(libs.analyzer)
+        packed_lua = sum(1 for f in unpacked.files if f.endswith(".lua"))  # (0.15) py_lua
+        results.append(
+            AnalyzerResult(
+                packed.NAME,
+                AnalyzerState.OK,
+                packed.notes(unpacked, target.domain),
+                detail=f"{len(unpacked.files)} unpacked",
+            )
+        )
         say("repo signals")
         repo_result, provenance = repo_signals.run(target)
         results.append(repo_result)
@@ -188,11 +258,46 @@ def scan(
         for r in results:
             findings.extend(r.findings)
             facts.extend(r.facts)
-        findings += correlate.correlate(findings, facts, target.root)
+        # (0.15) the requests are read first: a pairing needs a site the code really calls
+        # (an address it couldn't read may be any host the code names: then every one counts)
+        if target.kind is TargetKind.INTEGRATION:
+            py_reqs, handoffs = py_requests.read_flow(target.root)
+            # (0.15) where a login goes inside the library the app hands it to: the wheel
+            # of the version resolved above, unpacked and read as text; context only
+            say("libraries it hands logins to")
+            py_library.read_inside(handoffs, resolution, ws, offline)
+            reqs = py_reqs
+            called: set[str] | None = {r.host for r in py_reqs if r.host}
+        else:
+            js_reqs = js_requests.requests_in(target.root)
+            reqs = js_reqs[0]
+            called = {r.host for r in js_reqs[0] if r.host} | set(js_reqs[1])
+        addressed = None
+        if any(r.host is None for r in reqs):
+            called = None
+            if target.kind is TargetKind.INTEGRATION:
+                addressed = endpoints.addressed_hosts(target.root)
+        findings += correlate.correlate(findings, facts, target.root, called, addressed)
+        lua = None
+        if target.kind is TargetKind.INTEGRATION:
+            # (0.15, his decision 2026-11-23) Lua it runs through lupa: where it comes from;
+            # Lua it downloads counts like a card's code from another site
+            say("lua")
+            lua = py_lua.read(target.root, packed_lua)
+            findings += py_lua.findings(lua)
+        if target.kind is TargetKind.PLUGIN:  # (0.15) code it loads from a code CDN
+            findings = js_remote.merge(findings, js_remote.loads_in(target.root))
+            findings = js_address.add(findings, target.root)  # settings from the address
         if target.kind is TargetKind.INTEGRATION:
             findings = _label_test_code(findings, target)
         findings = apply_exposure(_dedupe(findings), exposure)
+        # (#19) one "What it can do" finding per Python function (py_group)
+        findings = py_group.group(findings, target.root)
+        findings = py_pages.annotate(findings, target.root)  # (0.15) login-free pages
         findings = _fingerprints(findings, target)
+        for r in results:  # (#18) a tool that can't load on this CPU: say why and the fix
+            if r.state is AnalyzerState.ERROR and r.detail:
+                r.detail = cpu.explain(r.detail)
         complete = all(r.state in (AnalyzerState.OK, AnalyzerState.NOT_APPLICABLE) for r in results)
         result = ScanResult(
             target=target,
@@ -205,9 +310,46 @@ def scan(
             hygiene=hygiene,
             resolution=resolution,
             ha_version=env.version if env else None,
+            libraries=libs.libraries,
+            library_lookups=libs.lookups,
+            logic=logic.key(),
+            cache=(
+                {
+                    "files": cache.stats.files,
+                    "hits": cache.stats.hits,
+                    "saved_secs": round(cache.stats.saved, 1),
+                }
+                if cache is not None
+                else None
+            ),
         )
+        # (0.15) how far behind each package is: context on the package lines; never scored
+        if target.kind is TargetKind.PLUGIN and not offline:
+            say("package versions")
+            npm = npm_meta.lookup(target.source_root)
+            result.package_versions = {"npm": npm} if npm else None
+        elif resolution is not None:
+            py = {pep503(p.name): p.behind
+                  for p in resolution.packages.values() if p.behind}  # fmt: skip
+            result.package_versions = {"pypi": py} if py else None
         # Built while the workspace still exists: it reads manifests and parses files.
         result.graph = graph.build(result)
+        # (0.15) the developer's own account, if the repo has one; never scored
+        result.disclosure = disclosure.read(target.source_root)
+        if target.kind is TargetKind.INTEGRATION:
+            say("web requests")  # (0.15) the method and what each call carries; never scored
+            tests = loadable_tests(findings, py_precision.test_only_files(
+                Resolver(target.root), also=py_precision.looks_like_a_script
+            ))  # fmt: skip
+            result.requests = py_requests.summary(py_reqs, tests, handoffs)
+            # (0.15) which environment variables it reads and sets, by name
+            result.environment = py_env.summary(py_env.uses_in(target.root))
+            # (0.15) the kinds of entity it sets up for itself, from its module names
+            result.platforms = platforms.platforms_in(target.root)
+            result.lua = lua.section() if lua is not None else None
+        else:
+            say("web requests")  # (0.15) a card's built file: fetch calls and map-tile sites
+            result.requests = js_requests.summary(*js_reqs)
         result.inputs = recheck.capture(target, resolution) if not offline else None
         result.context = context.build(
             target.root,

@@ -6,8 +6,10 @@ must never offset something we found (decided with the user, 2026-11-10).
 Two sources:
 - Files in the downloaded source tree at the release (read as plain text, never run):
   workflows that run a security scanner, Dependabot or Renovate config, SECURITY.md.
-- Two GitHub requests: open pull requests (to count Dependabot/Renovate ones and their
-  age), and open issues (to count ones labeled or titled as security issues).
+- Three GitHub requests: open pull requests (to count Dependabot/Renovate ones and their
+  age), open issues (to count ones labeled or titled as security issues), and the list of
+  workflows (0.15: CodeQL's "default setup" and Dependabot's updates are switched on in
+  the repository's settings and have no file in the repo; GitHub lists them there).
 
 GitHub keeps Dependabot and code-scanning *alerts* private (repo admins only), so
 whether findings get fixed is inferred from public signals, and labeled as inferred.
@@ -21,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sniff_test.fetch.github import GitHub, GitHubError, RateLimitError
+from sniff_test.fetch.github import GitHub, GitHubError, NotFoundError, RateLimitError
 from sniff_test.models import Target
 
 _MAX_FILE = 256 * 1024
@@ -46,6 +48,36 @@ SCANNERS: list[tuple[re.Pattern[str], str, str]] = [
         (r"ossf/scorecard-action", "OpenSSF Scorecard", "practices"),
     )
 ]
+# (0.14.1, #21) Security hooks run through pre-commit (`id:` in .pre-commit-config.yaml)
+PRE_COMMIT_HOOKS: dict[str, tuple[str, str]] = {
+    "gitleaks": ("Gitleaks", "secrets"),
+    "detect-private-key": ("detect-private-key", "secrets"),
+    "detect-secrets": ("detect-secrets", "secrets"),
+    "trufflehog": ("TruffleHog", "secrets"),
+    "bandit": ("Bandit", "code"),
+    "semgrep": ("Semgrep", "code"),
+    "pip-audit": ("pip-audit", "deps"),
+    "osv-scanner": ("OSV-Scanner", "deps"),
+}
+_PRE_COMMIT = (".pre-commit-config.yaml", ".pre-commit-config.yml")
+# (0.15) the other places hooks and Ruff's settings live (his list, 2026-11-20)
+_RUFF_CONFIGS = ("pyproject.toml", "ruff.toml", ".ruff.toml")
+_LEFTHOOK = ("lefthook.yml", "lefthook.yaml", ".lefthook.yml", ".lefthook.yaml")
+_HUSKY = (".husky/pre-commit", ".husky/pre-push")
+# A command that runs a known scanner: the tool's name as a whole word (linear: a fixed
+# alternation between non-word guards)
+_TOOL = re.compile(r"(?<![\w-])(gitleaks|trufflehog|detect-secrets|bandit|semgrep|pip-audit|"
+                   r"osv-scanner)(?![\w-])")  # fmt: skip
+_RUFF_CMD = re.compile(r"(?<![\w-])ruff(?![\w-])")
+# `entry:` of a `repo: local` hook, a lefthook `run:` line (one line each; no \s)
+_ENTRY = re.compile(r"^[ \t]*+(?:-[ \t]*+)?(?:entry|run)[ \t]*+:[ \t]*+(.{1,300})", re.M)
+# Linear on hostile files: no \\s (it would run across newlines from every line start).
+_HOOK_ID = re.compile(r"^[ \t]*+(?:-[ \t]*+)?id[ \t]*+:[ \t]*+[\"']?([A-Za-z0-9_.-]{1,60})", re.M)
+_RUFF_IDS = frozenset({"ruff", "ruff-check"})
+_SELECT_OPEN = re.compile(r"select[ \t]*+=[ \t]*+$")
+_S_RULE = re.compile(r"[\"']S\d{0,3}[\"']")
+# a workflow runs pre-commit: `pre-commit run`, pre-commit/action, `tox -e precommit`
+_RUNS_PRE_COMMIT = re.compile(r"pre-commit/action|\bpre-?commit\b", re.I)
 _DEPENDABOT = (".github/dependabot.yml", ".github/dependabot.yaml")
 _RENOVATE = (
     "renovate.json", "renovate.json5", ".renovaterc", ".renovaterc.json",
@@ -58,6 +90,10 @@ _SECURITY_TITLE = re.compile(
     r"\b(security|vulnerab\w*|CVE-\d{4}-\d{3,}|exploit\w*|XSS|RCE|injection)\b", re.I
 )
 _SECURITY_LABEL = re.compile(r"security|vulnerab|cve", re.I)
+# (0.15) What GitHub runs from a repository's settings, with no workflow file: the path
+# GitHub's workflow list gives it. Only an "active" one counts.
+_CODEQL_DEFAULT = "dynamic/github-code-scanning/codeql"
+_DEPENDABOT_UPDATES = "dynamic/dependabot/dependabot-updates"
 ISSUES_SHOWN = 5
 
 
@@ -69,6 +105,7 @@ class Hygiene:
     security_policy: str | None = None  # path of SECURITY.md
     update_prs: dict[str, Any] | None = None  # open, oldest_days, by bot; None: not checked
     security_issues: dict[str, Any] | None = None  # open, of, items
+    dependabot_updates: bool = False  # (0.15) Dependabot's updates run from the settings
     errors: list[str] = field(default_factory=list)
 
 
@@ -100,6 +137,55 @@ def scan_files(root: Path) -> Hygiene:
                 if name not in seen and pat.search(lines):
                     seen.add(name)
                     h.scanners.append({"name": name, "kind": kind, "workflow": p.name[:100]})
+    ci_pre_commit = False
+    if wf.is_dir() and not wf.is_symlink():
+        for p in sorted(p for p in wf.iterdir() if p.suffix in (".yml", ".yaml"))[:_MAX_WORKFLOWS]:
+            text = _read(root, f".github/workflows/{p.name}") or ""
+            # what runs, not what a step is called or a comment
+            commands = "\n".join(
+                ln
+                for ln in text.splitlines()
+                if not ln.lstrip().startswith("#")
+                and not ln.lstrip().lstrip("- ").startswith("name:")
+            )
+            if _RUNS_PRE_COMMIT.search(commands):
+                ci_pre_commit = True
+                break
+    ruff_s = any(ruff_security_rules(_read(root, rel) or "") for rel in _RUFF_CONFIGS)
+
+    def add(found: list[tuple[str, str]], where: str, via: str, ci: bool) -> None:
+        for name, kind in found:
+            if name not in seen:
+                seen.add(name)
+                h.scanners.append({"name": name, "kind": kind, "workflow": where[:100],
+                                   "via": via, "ci": ci})  # fmt: skip
+
+    for rel in _PRE_COMMIT:
+        pc = _read(root, rel)
+        if pc is None:
+            continue
+        lines = "\n".join(ln for ln in pc.splitlines() if not ln.lstrip().startswith("#"))
+        ids = _HOOK_ID.findall(lines)
+        found = [PRE_COMMIT_HOOKS[i] for i in ids if i in PRE_COMMIT_HOOKS]
+        entries = _ENTRY.findall(lines)  # (0.15) `repo: local` hooks name their command
+        found += _tools("\n".join(entries))
+        if ruff_s and (_RUFF_IDS & set(ids) or any(_RUFF_CMD.search(x) for x in entries)):
+            found.append(("Ruff security rules", "code"))
+        add(found, rel, "pre-commit", ci_pre_commit)
+        break
+    for rel in _LEFTHOOK:  # (0.15) lefthook: `run:` commands
+        if (text := _read(root, rel)) is not None:
+            runs = "\n".join(_ENTRY.findall(_uncommented(text)))
+            found = _tools(runs) + ([("Ruff security rules", "code")]
+                                    if ruff_s and _RUFF_CMD.search(runs) else [])  # fmt: skip
+            add(found, rel, "lefthook", False)
+            break
+    for rel in _HUSKY:  # (0.15) husky: the hook is a shell script
+        if (text := _read(root, rel)) is not None:
+            cmds = _uncommented(text)
+            found = _tools(cmds) + ([("Ruff security rules", "code")]
+                                    if ruff_s and _RUFF_CMD.search(cmds) else [])  # fmt: skip
+            add(found, rel, "husky", False)
     for rel in _DEPENDABOT:
         if (text := _read(root, rel)) is not None:
             h.dependabot = sorted({m.lower() for m in _ECOSYSTEM.findall(text)})
@@ -107,6 +193,34 @@ def scan_files(root: Path) -> Hygiene:
     h.renovate = any(_read(root, rel) is not None for rel in _RENOVATE)
     h.security_policy = next((rel for rel in _SECURITY_MD if _read(root, rel) is not None), None)
     return h
+
+
+_TOOL_NAMES = PRE_COMMIT_HOOKS
+
+
+def _uncommented(text: str) -> str:
+    return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+
+
+def _tools(commands: str) -> list[tuple[str, str]]:
+    """Known scanners a hook's commands run, by name (once each, in order)."""
+    names = dict.fromkeys(m.lower() for m in _TOOL.findall(commands))
+    return [_TOOL_NAMES[n] for n in names if n in _TOOL_NAMES]
+
+
+def ruff_security_rules(pyproject: str) -> bool:
+    """Ruff's flake8-bandit rules ("S", "S102", …) in a `select`/`extend-select` list.
+    One pass over the text: each list is the piece before a "]", and only the last 200
+    characters before its "[" are looked at."""
+    for piece in pyproject.split("]"):
+        i = piece.rfind("[")
+        if i < 0 or not _SELECT_OPEN.search(
+            piece[max(0, i - 200) : i].rstrip("\n").split("\n")[-1]
+        ):
+            continue
+        if _S_RULE.search(piece[i + 1 :]):
+            return True
+    return False
 
 
 def _days(ts: str | None, now: datetime) -> int | None:
@@ -148,6 +262,19 @@ def security_issues(issues: list[dict[str, Any]], now: datetime) -> dict[str, An
     return {"open": len(hits), "of": len(real), "items": hits[:ISSUES_SHOWN]}
 
 
+def settings_workflows(h: Hygiene, listing: Any) -> None:
+    """Add what GitHub's workflow list shows running from the repository's settings."""
+    rows = listing.get("workflows") if isinstance(listing, dict) else None
+    for w in rows if isinstance(rows, list) else []:
+        if not isinstance(w, dict) or w.get("state") != "active":
+            continue
+        path = str(w.get("path") or "")
+        if path == _CODEQL_DEFAULT and not any(x["name"] == "CodeQL" for x in h.scanners):
+            h.scanners.append({"name": "CodeQL", "kind": "code", "workflow": "", "via": "github"})
+        elif path == _DEPENDABOT_UPDATES:
+            h.dependabot_updates = True
+
+
 def run(
     target: Target, gh: GitHub | None = None, now: datetime | None = None, offline: bool = False
 ) -> Hygiene | None:
@@ -177,6 +304,14 @@ def run(
         raise  # the job waits for the reset and runs again; never stored as a result
     except GitHubError as ex:
         h.errors.append(f"GitHub didn't answer ({ex})"[:300])
+    try:
+        settings_workflows(h, gh.get_json(f"/repos/{full}/actions/workflows?per_page=100"))
+    except RateLimitError:
+        raise
+    except NotFoundError:
+        pass  # Actions is off for this repository: nothing runs from its settings either
+    except GitHubError as ex:
+        h.errors.append(f"GitHub didn't list the workflows ({ex})"[:300])
     return h
 
 
@@ -192,6 +327,7 @@ def to_dict(h: Hygiene | None, findings_rules: set[str], kind: str) -> dict[str,
         "scored": False,
         "scanners": h.scanners,
         "dependabot": h.dependabot,
+        "dependabot_updates": h.dependabot_updates,
         "renovate": h.renovate,
         "security_policy": h.security_policy,
         "update_prs": h.update_prs,

@@ -146,6 +146,22 @@ def test_ci_runs_the_semgrep_the_image_ships():
     assert f"ARG SEMGREP_VERSION={pinned}" in (ADDON / "Dockerfile").read_text()
 
 
+def test_semgreps_mcp_pin_is_overridden_the_same_everywhere():
+    """(0.15) Semgrep pins mcp==1.29.0, which carries a high CVE fixed in 1.30.0; the
+    image, CI and the Security workflow install Semgrep with the same exact override."""
+    docker = (ADDON / "Dockerfile").read_text()
+    m = re.search(r'^ARG SEMGREP_OVERRIDES="([^"]+)"$', docker, re.M)
+    assert m and re.fullmatch(r"mcp==\d+\.\d+\.\d+", m[1])
+    assert '--overrides /tmp/semgrep-overrides.txt "semgrep==${SEMGREP_VERSION}"' in docker
+    ci = _yaml(WORKFLOWS / "ci.yaml")["jobs"]["test"]["env"]["SEMGREP_OVERRIDES"]
+    sec = _yaml(WORKFLOWS / "security.yaml")["env"]["SEMGREP_OVERRIDES"]
+    assert ci == sec == m[1]
+    for wf in ("ci.yaml", "security.yaml"):
+        text = (WORKFLOWS / wf).read_text()
+        installs = re.findall(r"uv tool install[^\n]*(?:\\\n[^\n]*)?\"semgrep==", text)
+        assert installs and all("--overrides" in i for i in installs), wf
+
+
 def test_security_workflow_runs_the_four_kinds_of_check():
     """Secrets, SAST, SCA and container scanning (the owner's standard set, 2026-11-13),
     each failing the job on a finding, none of them reading the hostile samples as if
@@ -235,7 +251,9 @@ def test_accepted_findings_carry_a_reason_and_dates():
 
 def test_dependabot_waits_a_week():
     bot = _yaml(ROOT / ".github" / "dependabot.yml")
-    assert [u["cooldown"] for u in bot["updates"]] == [{"default-days": 7}] * 2
+    assert all(u["cooldown"] == {"default-days": 7} for u in bot["updates"])
+    ecosystems = {u["package-ecosystem"] for u in bot["updates"]}
+    assert ecosystems == {"github-actions", "uv", "docker"}  # docker: the pinned base image
 
 
 @requires_semgrep

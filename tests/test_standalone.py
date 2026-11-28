@@ -271,7 +271,7 @@ def test_an_admin_gets_a_session_and_ha_tokens_are_revoked_at_once():
     sid, s = lg.finish("abc", state, state)
     assert (s.user, ha.codes, ha.revoked) == ("Pat", [("abc", lg.client_id)], ["refresh-abc"])
     assert lg.session(sid) == s
-    with pytest.raises(login.LoginError, match="stale"):
+    with pytest.raises(login.LoginError, match="expired"):
         lg.finish("abc", state, state)  # a state works once
     clock[0] += login.SESSION_SECONDS + 1
     assert lg.session(sid) is None
@@ -300,7 +300,7 @@ def test_the_state_must_be_ours_this_browsers_and_fresh(case):
         q_state = cookie = "made-up"
     else:
         clock[0] += login.STATE_SECONDS + 1
-    with pytest.raises(login.LoginError, match="stale"):
+    with pytest.raises(login.LoginError, match="expired"):
         lg.finish("abc", q_state, cookie)
     assert ha.codes == []  # nothing was sent to HA
 
@@ -406,7 +406,7 @@ def test_every_page_needs_the_login_and_the_whole_round_trip_works(gated):
     assert _cookie(cookies, login.STATE_COOKIE) == ""  # the state cookie is cleared
 
     status, _, _, page = _req(port, "GET", "/", f"{login.SESSION_COOKIE}={sid}")
-    assert status == 200 and b"Logged in with Home Assistant as Pat" in page
+    assert status == 200 and b"You're logged in with Home Assistant as Pat" in page
     import re
 
     tok = re.search(rb'name=token value="([^"]+)"', page)[1].decode()

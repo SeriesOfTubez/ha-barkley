@@ -7,7 +7,8 @@ what Barkley could and couldn't tell. Parse only (py_resolve): nothing here runs
 
 A send is an HTTP call (`.post/.get/.put/.patch/.request`, `urlopen`) whose URL starts
 with a fixed `http(s)://` address on the internet and whose fixed text says it collects
-usage (telemetry, analytics, metrics, stats, ping, track, beacon, usage, heartbeat).
+usage (telemetry, analytics, ping, beacon, usage, heartbeat; on a call that sends data,
+also metrics, stats and track).
 
 - Automatic: a chain of plain calls (`f()`, `self.m()`, functions imported from the app's
   own modules, tasks made from those) leads to it from setup (`async_setup`,
@@ -38,9 +39,14 @@ from sniff_test.models import AnalyzerResult, AnalyzerState, Category, Finding, 
 
 NAME = "telemetry"
 MARKER = re.compile(
-    r"(?i)telemetry|analytic|metric|usage|heartbeat|"
-    r"(?:^|[./_?&=-])(?:ping|stats?|track|beacon)(?:$|[./_?&=-])"
+    r"(?i)telemetry|analytic|usage|heartbeat|(?:^|[./_?&=-])(?:ping|beacon)(?:$|[./_?&=-])"
 )
+# (0.15, batch 2026-11-21) Words that also name what an app reads: an integration GETting
+# `https://<game api>/v2/stats/…` fetches the player's statistics it shows; a parcel
+# API's `/track/` reads a delivery. They mark usage reporting only on a call that sends
+# data (POST, PUT, PATCH).
+WEAK_MARKER = re.compile(r"(?i)metric|(?:^|[./_?&=-])(?:stats?|track)(?:$|[./_?&=-])")
+_SENDS_DATA = frozenset({"post", "put", "patch"})
 _HTTP = frozenset({"post", "get", "put", "patch", "request", "urlopen"})
 _LOCAL = re.compile(
     r"^(?:localhost|127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|\[?::1|[^.]+$|.*\.local$)"
@@ -282,11 +288,23 @@ def _sends(res: Resolver, files: list[str], g: _Graph) -> list[Send]:
         for sub in ast.walk(node):
             if not isinstance(sub, ast.Call):
                 continue
-            if _dotted(sub.func).rsplit(".", 1)[-1] not in _HTTP:
+            verb = _dotted(sub.func).rsplit(".", 1)[-1]
+            if verb not in _HTTP:
                 continue
+            args = list(sub.args)
+            if verb == "request" and args and isinstance(args[0], ast.Constant):
+                verb = str(args.pop(0).value).lower()  # session.request("POST", url)
+            elif verb == "request":
+                method = next((k.value for k in sub.keywords if k.arg == "method"), None)
+                if isinstance(method, ast.Constant):
+                    verb = str(method.value).lower()
+            elif verb == "urlopen":  # a Request with data= or a data argument sends data
+                verb = (
+                    "post" if len(args) > 1 or any(k.arg == "data" for k in sub.keywords) else "get"
+                )
             url = (
-                sub.args[0]
-                if sub.args
+                args[0]
+                if args
                 else next((k.value for k in sub.keywords if k.arg in ("url", "str_or_url")), None)
             )
             if url is None:
@@ -296,7 +314,8 @@ def _sends(res: Resolver, files: list[str], g: _Graph) -> list[Send]:
             if not m or _LOCAL.match(m.group(1).lower()):
                 continue
             path_text = prefix[m.end() :] + " " + fixed.replace(prefix, "", 1)
-            if not MARKER.search(m.group(1)) and not MARKER.search(path_text):
+            marks = (MARKER,) + ((WEAK_MARKER,) if verb in _SENDS_DATA else ())
+            if not any(x.search(m.group(1)) or x.search(path_text) for x in marks):
                 continue
             out.append(Send((rel, qual), sub, m.group(1).lower(), sub.lineno))
     return out
@@ -421,14 +440,16 @@ def _finding(rule: str, sev: Severity, s: Send, how: str, disclosed: bool) -> Fi
     title = {
         "telemetry-shadow": "Sends usage data on its own, without telling you",
         "telemetry-opt-out": "Sends usage data unless you turn it off",
-        "telemetry-usage": "Can send usage data to the developer",
+        "telemetry-usage": "Can send usage data",
     }[rule]
     return Finding(
         rule_id=rule,
         title=title,
         severity=sev,
         category=Category.ENDPOINT,
-        message=f"Sends what looks like usage reporting to {s.host}. {how} {told}".strip(),
+        # (0.15) said once: some reasons already say the description mentions it
+        message=f"Sends what looks like usage reporting to {s.host}. {how}"
+        + ("" if "description mentions it" in how else f" {told}").rstrip(),
         file=s.fn[0],
         line=s.line,
         evidence=f"{s.host} from {s.fn[1]}",

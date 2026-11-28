@@ -1,8 +1,8 @@
 """The panel's design tokens (vault: UI Design Guidelines, Sniff Test — Design Decisions
 "The panel against the UI Design Guidelines", decided 2026-11-12): four text sizes 12 / 13 /
-15 / 20 px plus 24 for the score ring, nothing under 12; spacing on the 4/8 scale; four
-radii 4 / 6 / 8 / 12. This fails on any size or gap off the scale, in the stylesheet or in
-an inline style, so the next "a bit smaller" never creeps back in."""
+15 / 20 px (0.15: the score ring's 24 went with the score), nothing under 12; spacing on
+the 4/8 scale; four radii 4 / 6 / 8 / 12. This fails on any size or gap off the scale, in
+the stylesheet or in an inline style, so the next "a bit smaller" never creeps back in."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 from sniff_test import server, ui
 
 SRC = Path(server.__file__).parent
-TEXT_PX = {12, 13, 15, 20, 24}
+TEXT_PX = {12, 13, 15, 20}
 SPACE_PX = {0, 4, 8, 12, 16, 24, 32, 48}
 RADIUS_PX = {0, 4, 6, 8, 12}
 _VAR = re.compile(r"--([\w-]+):\s*([^;{}]+);")
@@ -53,7 +53,7 @@ def px_values(value: str) -> list[float]:
     return out
 
 
-def test_text_sizes_are_the_four_tokens_plus_the_ring():
+def test_text_sizes_are_the_four_tokens():
     toks = tokens()
     seen = set()
     for sel, prop, val in declarations(ui.CSS):
@@ -65,7 +65,7 @@ def test_text_sizes_are_the_four_tokens_plus_the_ring():
             for px in sizes:
                 assert px in TEXT_PX, f"{sel} {{ {prop}: {val} }} → {px}px is off the scale"
                 seen.add(px)
-    assert seen >= {12, 13, 15, 20, 24}
+    assert seen == {12, 13, 15, 20}
 
 
 def test_inline_styles_and_svg_never_go_under_12px():

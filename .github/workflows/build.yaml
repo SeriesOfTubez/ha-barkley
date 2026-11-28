@@ -30,7 +30,9 @@ on:
 env:
   ARCHITECTURES: '["amd64", "aarch64"]'
   IMAGE_NAME: barkley
-  BASE_IMAGE: ghcr.io/home-assistant/base-debian:trixie
+  # (0.15) the same digest as both FROM lines of the Dockerfile: the builder checks
+  # this image's Cosign signature
+  BASE_IMAGE: ghcr.io/home-assistant/base-debian:trixie@sha256:d996c8f8ef0096a1ac3756766149b31b8171afc663068cc192f2bcab20f1b8c9
 
 permissions:
   contents: read

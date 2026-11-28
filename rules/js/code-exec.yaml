@@ -65,43 +65,109 @@ rules:
     languages: [javascript, typescript]
     severity: ERROR
     message: >-
-      Runs code that comes from outside the card (a download, a message, the page
-      address or browser storage). That code was never part of what was scanned, and it
-      runs with the logged-in user's full HA access.
+      Runs code that comes from outside the card (a download, a message or browser
+      storage). That code was never part of what was scanned, and it runs with the
+      logged-in user's full HA access.
     metadata:
       sniff:
         title: Card runs code from outside the card
         severity: high
         category: code_exec
         supersedes: [card-eval]
+    # (0.15, full Marketplace run 2026-11-22) Labels: any promise's value counts for eval
+    # and Function, but a timer only takes code from a download, a message or storage. A
+    # real card handed the unsubscribe function a subscription promise gives to
+    # `setTimeout(unsub, 0)`: a function, not code.
     pattern-sources:
-      - pattern: fetch(...)
-      - pattern: $G.fetch(...)
+      - label: OUTSIDE
+        pattern: fetch(...)
+      - label: OUTSIDE
+        pattern: $G.fetch(...)
       # the value a promise chain hands on: fetch(u).then(r => r.text()).then(code => …)
-      - patterns:
+      - label: OUTSIDE
+        patterns:
+          - pattern-either:
+              - pattern: $F(...).then(($T) => $B)
+              - pattern: $F(...).then(function ($T) { ... })
+          - metavariable-pattern:
+              metavariable: $F
+              pattern-either:
+                - pattern: <... fetch(...) ...>
+                - pattern: <... $G.fetch(...) ...>
+          - focus-metavariable: $T
+      - label: PROMISE
+        patterns:
           - pattern-either:
               - pattern: $F(...).then(($T) => $B)
               - pattern: $F(...).then(function ($T) { ... })
           - focus-metavariable: $T
-      - pattern: $X.responseText
-      - pattern: $X.response
-      - patterns:
+      - label: OUTSIDE
+        pattern: $X.responseText
+      - label: OUTSIDE
+        pattern: $X.response
+      - label: OUTSIDE
+        patterns:
           - pattern-either:
               - pattern-inside: $W.addEventListener("message", ($E) => { ... })
               - pattern-inside: $W.addEventListener("message", function ($E) { ... })
               - pattern-inside: $W.onmessage = ($E) => { ... }
               - pattern-inside: $W.onmessage = function ($E) { ... }
           - pattern: $E.data
-      - pattern: location
-      - pattern: $G.location
-      - pattern: document.cookie
-      - pattern: document.URL
-      - pattern: document.referrer
-      - patterns:
+      - label: OUTSIDE
+        pattern: document.cookie
+      - label: OUTSIDE
+        patterns:
           - pattern: $LS.getItem(...)
           - metavariable-regex:
               metavariable: $LS
               regex: (localStorage|sessionStorage)$
+    pattern-sinks:
+      - requires: OUTSIDE or PROMISE
+        patterns:
+          - pattern-either:
+              - pattern: eval($ARG)
+              - pattern: new Function(..., $ARG)
+              - pattern: Function(..., $ARG)
+              - patterns:
+                  - pattern-either:
+                      - pattern: $G.eval($ARG)
+                      - pattern: $G["eval"]($ARG)
+                      - pattern: new $G.Function(..., $ARG)
+                      - pattern: $G.Function(..., $ARG)
+                  - metavariable-regex:
+                      metavariable: $G
+                      regex: ^(window|globalThis|self|top|parent|frames)$
+          - focus-metavariable: $ARG
+      - requires: OUTSIDE
+        patterns:
+          - pattern-either:
+              - pattern: setTimeout($ARG, ...)
+              - pattern: setInterval($ARG, ...)
+          - focus-metavariable: $ARG
+
+  # (0.15, his decision 2026-11-21) Code taken from the page address: anyone who gets a
+  # logged-in user to open a link can make the card run code. A door someone else can use,
+  # not a sign of malice: Exposure 5, not Threat (it was part of card-eval-remote before).
+  # analyzers/js_address.py adds the same finding when the address reaches the code
+  # through the card's settings.
+  - id: card-eval-address
+    mode: taint
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Runs code taken from the page address. Anyone who gets you to open a link to your
+      dashboard can make the card run code there, with your Home Assistant login.
+    metadata:
+      sniff:
+        title: A link can make the card run code
+        severity: high
+        category: code_exec
+        supersedes: [card-eval]
+    pattern-sources:
+      - pattern: location
+      - pattern: $G.location
+      - pattern: document.URL
+      - pattern: document.referrer
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -177,6 +243,24 @@ rules:
           # Bundler shim: Function('return require("' + name + '")')
           - pattern-not: Function("=~/^return require\(/" + $M + "...")
           - pattern-not: new Function("=~/^return require\(/" + $M + "...")
+          # (0.15, batch 2026-11-21) Bundled polyfills that build no code a card chooses:
+          # a validation library's probe whether the page allows eval at all (empty code);
+          - pattern-not: Function(``)
+          - pattern-not: new Function(``)
+          # a setImmediate polyfill's path for a string callback (it builds code only from
+          # what a caller hands it; card-eval-remote and card-eval-config still follow
+          # downloaded or configured text into it);
+          - pattern-not-inside: '"function" == typeof $T ? $T : $F'
+          - pattern-not-inside: 'typeof $T == "function" ? $T : $F'
+          - pattern-not-inside: '"function" === typeof $T ? $T : $F'
+          - pattern-not-inside: 'typeof $T === "function" ? $T : $F'
+          - pattern-not-inside: '"function" != typeof $T && ($T = $F)'
+          - pattern-not-inside: 'typeof $T != "function" && ($T = $F)'
+          - pattern-not-inside: '"function" !== typeof $T && ($T = $F)'
+          - pattern-not-inside: 'typeof $T !== "function" && ($T = $F)'
+          # an old-engine Function.prototype.bind shim: `new F(a[0],a[1],…)` from constants
+          - pattern-not: Function("...", "return new F(" + $R.join(",") + ")")
+          - pattern-not: new Function("...", "return new F(" + $R.join(",") + ")")
       # setTimeout/setInterval only count when handed a *string* to evaluate.
       - pattern: setTimeout("..." + $Y, ...)
       - pattern: setTimeout($Y + "...", ...)
@@ -232,6 +316,9 @@ rules:
     pattern-either:
       - pattern: import("=~/^(https?:)?\/\//")
       - pattern: importScripts("=~/^(https?:)?\/\//")
+      # (0.15) a Web Worker started from a remote address
+      - pattern: new Worker("=~/^(https?:)?\/\//", ...)
+      - pattern: new SharedWorker("=~/^(https?:)?\/\//", ...)
       - patterns:
           - pattern-inside: |
               $S = document.createElement("script");

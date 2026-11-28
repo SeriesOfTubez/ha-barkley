@@ -22,52 +22,105 @@ from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
-from sniff_test import review
-
 KEY = "settings"
-MALWARE_ONLY_KEY = "malware_only"
 TOKEN_FILE = "github-token"  # noqa: S105 - a file name, not a secret
 _TOKEN = re.compile(r"[A-Za-z0-9_]{20,255}")
-_REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_.-]{1,100}")
-_MAX_APPS = 500
 
 
 @dataclass(frozen=True)
 class Settings:
     # Scoring
     exposure: str = "local"  # local | public
-    paranoid: bool = False
-    floor: bool = True
-    unauth_views: bool = False
-    shadow_telemetry: bool = True
-    # Reviews
-    notify_reopen: bool = True
-    reconfirm_months: int = 0  # 0 (never), 6, 12
+    # (0.15) minor items (kinds.MINOR) on an app's page: hidden with a "Show them" link
+    # unless this is on (Paranoid mode before; with no score it only decides what's shown)
+    show_minor: bool = False
     # Checking (parallel and jobs: the add-on's defaults)
     parallel: int = 2
     jobs: int = 1
     # (0.14.0) memory Barkley may give scans, in GB; 0 is Auto (what's free, less a reserve)
     memory_gb: int = 0
+    # (0.15, #20) scans don't start with less free than this, in MB; 0: never refused
+    memory_floor_mb: int = 1024
+    # (0.14.1) analyzers/libraries.py: unchanged published npm files aren't read as code
+    libraries: bool = True
+    # (0.14.1) disk for answers about code already read (scancache), in MB; 0: off
+    cache_mb: int = 1024
     # Standalone: how often Barkley replaces its own Home Assistant token (ha_token.py)
     token_days: int = 60
+    # (preview 2026-11-19, the default in 0.15) where Home Assistant runs, for the Exposure
+    # reading. The page shows it with `exposure` as one choice: home, shared or work
+    # network, or reachable from the internet (exposure "public")
+    network: str = "home"  # home | shared
+    # (0.15, his report) months without a push after which an app's page and card say the
+    # project has gone quiet; 0: never say it. Context only, never a reading.
+    quiet_months: int = 12
+    # (0.15, #29) which auto-sniff results notify: all | medium | high | threat (Exposure
+    # at or above that level, or any sign of malicious behavior). A sniff that didn't
+    # finish or couldn't run always notifies.
+    notify_when: str = "all"
+    # (0.15, his decision 2026-11-22) Threat points for a build tool known to be malware
+    # (it runs on the developer's machine while building and could change what ships):
+    # 2.5 is "possible", like any high sign
+    build_tool_points: str = "2.5"
+    # (0.15, his design 2026-11-23) AI answers: how much of the developer's text one request
+    # may carry (ai_words.SIZES; docstrings and sentences follow), and how long Barkley
+    # waits for an answer: ai_minutes when ai_limit is on, as long as the model takes when
+    # it's off. Picking a size fills in its paired minutes (3, 6, 9); the minutes stay the
+    # user's to edit.
+    ai_size: int = 12000
+    ai_limit: bool = True
+    ai_minutes: int = 6
+    # (0.15, his decision 2026-11-25) how many versions of an installed app keep their
+    # scans; 0 keeps them all. The installed version and a waiting update are always kept.
+    # Keeping them all is the default because a short history would limit what can be
+    # looked back on later (comparing two scans, changes over time).
+    keep_versions: int = 0
+    # (0.15, his decision 2026-11-27) standalone: ask GitHub once a day for a newer
+    # Barkley, and say so on the list and in one notification per version (newversion)
+    new_versions: bool = True
 
-    def review(self) -> review.Settings:
-        return review.Settings(
-            paranoid=self.paranoid,
-            floor=self.floor,
-            unauth_views=self.unauth_views,
-            shadow_telemetry=self.shadow_telemetry,
-            reconfirm_months=self.reconfirm_months,
-        )
+    @property
+    def where(self) -> str:
+        return "internet" if self.exposure == "public" else self.network
+
+
+WHERE = ("home", "shared", "internet")
+
+
+def where_values(where: str) -> dict[str, str]:
+    """The one "Where Home Assistant runs" choice as the two stored values."""
+    if where == "internet":
+        return {"exposure": "public"}
+    return {"exposure": "local", "network": where} if where in WHERE else {}
 
 
 DEFAULTS = Settings()
 # "Reset to defaults" per section of the page
 PARTS = {
-    "scoring": ("exposure", "paranoid", "floor", "unauth_views", "shadow_telemetry"),
-    "reviews": ("notify_reopen", "reconfirm_months"),
-    "checking": ("parallel", "jobs", "memory_gb", "token_days"),
+    "readings": (
+        "exposure",
+        "network",
+        "show_minor",
+        "quiet_months",
+        "build_tool_points",
+    ),
+    "checking": (
+        "parallel",
+        "jobs",
+        "memory_gb",
+        "memory_floor_mb",
+        "libraries",
+        "cache_mb",
+        "keep_versions",
+        "token_days",
+        "new_versions",
+        "ai_size",
+        "ai_limit",
+        "ai_minutes",
+    ),
 }
+# the minutes that go with each size (his design: 6,000 / 3 min, 12,000 / 6, 18,000 / 9)
+AI_PAIRED_MINUTES = {6000: 3, 12000: 6, 18000: 9}
 
 
 def describe(s: Settings) -> str:
@@ -78,11 +131,19 @@ def describe(s: Settings) -> str:
 
 CHOICES: dict[str, tuple[Any, ...]] = {
     "exposure": ("local", "public"),
-    "reconfirm_months": (0, 6, 12),
+    "network": ("home", "shared"),
     "parallel": (1, 2, 3, 4),
     "jobs": (1, 2, 3, 4),
     "memory_gb": (0, 2, 3, 4, 6, 8, 12, 16),
+    "memory_floor_mb": (1024, 512, 0),
+    "cache_mb": (0, 512, 1024, 2048, 4096),
+    "keep_versions": (0, 20, 10, 5, 3),
     "token_days": (30, 60, 90, 180),
+    "quiet_months": (0, 6, 12, 24, 36),
+    "notify_when": ("all", "medium", "high", "threat"),
+    "build_tool_points": ("2", "2.5", "3"),
+    "ai_size": (6000, 12000, 18000),
+    "ai_minutes": tuple(range(1, 61)),
 }
 
 
@@ -103,6 +164,8 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
 
 def from_dict(raw: dict[str, Any], base: Settings = DEFAULTS) -> Settings:
     """Known keys only, each checked; anything else keeps `base`'s value."""
+    if "where" in raw:  # the page's one choice for where Home Assistant runs
+        raw = {**raw, **where_values(str(raw["where"]))}
     vals = {}
     for f in fields(Settings):
         if f.name in raw:
@@ -128,35 +191,6 @@ def save(store: Any, s: Settings) -> None:
 
 def saved(store: Any) -> bool:
     return bool(store.setting(KEY))
-
-
-# --- Malware check only, per app --------------------------------------------------------
-
-
-def malware_only(store: Any) -> set[str]:
-    try:
-        raw = json.loads(store.setting(MALWARE_ONLY_KEY) or "[]")
-    except ValueError:
-        return set()
-    return (
-        {x.lower() for x in raw if isinstance(x, str) and _REPO.fullmatch(x)}
-        if isinstance(raw, list)
-        else set()
-    )
-
-
-def set_malware_only(store: Any, repo: str, on: bool) -> bool:
-    if not _REPO.fullmatch(repo or ""):
-        return False
-    apps = malware_only(store)
-    if on:
-        if len(apps) >= _MAX_APPS:
-            return False
-        apps.add(repo.lower())
-    else:
-        apps.discard(repo.lower())
-    store.set_setting(MALWARE_ONLY_KEY, json.dumps(sorted(apps)))
-    return True
 
 
 # --- the GitHub token (never in the database) ---------------------------------------------

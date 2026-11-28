@@ -80,6 +80,10 @@ class Provenance:
     releases: list[Release] = field(default_factory=list)  # newest first
     installed_tag: str | None = None
     publishers: list[dict[str, Any]] = field(default_factory=list)
+    # (0.15, his report) how alive the project is, as GitHub's repository record says it
+    # when the scan ran: the last push to any branch, and whether the owner archived it
+    pushed_at: str | None = None
+    archived: bool = False
 
 
 def _parse_time(s: str | None) -> datetime | None:
@@ -270,6 +274,44 @@ def _normalized(p: Path) -> str:
     return _VERSIONISH.sub('"<v>"', p.read_text(encoding="utf-8", errors="replace"))
 
 
+_VERSION_VALUE = re.compile(r"v?\d+(?:\.\d+){1,3}(?:[-+.][0-9A-Za-z.]+)?")
+
+
+def _code_sans_versions(p: Path) -> str | None:
+    """(0.15, #30) The parsed code, comments gone and version strings blanked; None
+    when it doesn't parse. A real release workflow rewrites the whole line to stamp the
+    version: `VERSION = "0.0.0"  # set by the release workflow` becomes
+    `VERSION = "8.1.1"`, comment and all, and comments don't change what runs. The
+    bytes are parsed as Python reads them, coding line included, so text hidden in a
+    "comment" under another encoding still counts. Parse only, never run."""
+    import ast
+
+    try:
+        tree = ast.parse(p.read_bytes())
+    except (OSError, SyntaxError, ValueError, RecursionError, MemoryError, LookupError):
+        return None
+    for n in ast.walk(tree):
+        if (
+            isinstance(n, ast.Constant)
+            and isinstance(n.value, str)
+            and len(n.value) <= 64
+            and _VERSION_VALUE.fullmatch(n.value)
+        ):
+            n.value = "<v>"
+    try:
+        return ast.dump(tree)
+    except (RecursionError, MemoryError):
+        return None
+
+
+def _same_code(released: Path, tagged: Path) -> bool:
+    """Same code apart from version stamping and comments; text when either won't parse."""
+    a, b = _code_sans_versions(released), _code_sans_versions(tagged)
+    if a is not None and b is not None:
+        return a == b
+    return _normalized(released) == _normalized(tagged)
+
+
 def _manifest_sans_version(p: Path) -> Any:
     import json
 
@@ -362,7 +404,7 @@ def compare_integration_asset(asset: Path, tree: Path) -> list[Finding]:
     changed = []
     for rel in sorted(set(a) & set(b)):
         if rel.endswith(".py") and _sha(a[rel]) != _sha(b[rel]):
-            if _normalized(a[rel]) != _normalized(b[rel]):
+            if not _same_code(a[rel], b[rel]):
                 changed.append(rel)
         elif rel == "manifest.json" and _manifest_sans_version(a[rel]) != _manifest_sans_version(
             b[rel]
@@ -517,6 +559,8 @@ def run(target: Target, gh: GitHub | None = None) -> tuple[AnalyzerResult, Prove
         releases=releases[:_TIMELINE_MAX],
         installed_tag=installed.tag if installed else None,
         publishers=publisher_summary(releases, installed.tag if installed else None),
+        pushed_at=meta.get("pushed_at") if isinstance(meta.get("pushed_at"), str) else None,
+        archived=meta.get("archived") is True,
     )
     cont = continuity(releases, installed)
 

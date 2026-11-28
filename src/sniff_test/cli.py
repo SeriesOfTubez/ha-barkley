@@ -16,7 +16,7 @@ from typing import Any
 from rich.console import Console
 from rich.markup import escape
 
-from sniff_test import __version__, recheck, releases, sources
+from sniff_test import __version__, logic, readings, recheck, releases, sources
 from sniff_test.deps import ha_env
 from sniff_test.deps.ha_env import valid_version
 from sniff_test.diff import diff as diff_reports
@@ -27,7 +27,7 @@ from sniff_test.report import human
 from sniff_test.report.json_report import to_dict
 from sniff_test.scanner import scan
 from sniff_test.scoring import Exposure
-from sniff_test.store import Store, StoreError
+from sniff_test.store import Store, StoreError, checkpoint
 from sniff_test.workspace import UnsafeArchiveError
 
 EXIT_OK = 0
@@ -69,7 +69,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true", help="print the JSON report to stdout")
     s.add_argument("-o", "--output", help="also write the JSON report to this file")
     s.add_argument("-v", "--verbose", action="store_true", help="show low/info findings too")
-    s.add_argument("--fail-under", type=int, metavar="SCORE", help="exit 3 if score < SCORE")
+    s.add_argument(
+        "--fail-on",
+        choices=("possible", "found"),
+        help="exit 3 if Threat is at least this level (possible: any sign of malicious "
+        "behavior; found: malicious behavior found)",
+    )
     s.add_argument("--jobs", type=int, help="parallel jobs for semgrep (lower = less RAM)")
     s.add_argument("--keep-workspace", action="store_true", help="don't delete the temp dir")
     s.add_argument(
@@ -81,6 +86,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--offline",
         action="store_true",
         help="skip checks that need PyPI/OSV (local scans only; the scan is marked incomplete)",
+    )
+    s.add_argument(
+        "--no-library-lookup",
+        action="store_true",
+        help="read every JavaScript file as code; don't ask jsDelivr which published "
+        "library a file is (sends the SHA-256 of larger JS files of an integration)",
+    )
+    s.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="read every file again; don't use or fill the cache of code already read",
     )
     _add_store(s, "also save the scan in this SQLite scan store")
     d = sub.add_parser(
@@ -205,6 +221,13 @@ def build_parser() -> argparse.ArgumentParser:
     dr = sub.add_parser("doctor", help="check that every scanner tool runs on this machine")
     dr.add_argument("--json", action="store_true")
 
+    ck = sub.add_parser(
+        "checkpoint",
+        help="before a backup: write the scan store's recent changes into its main file "
+        "(the app's backup_pre); always exits 0 once given a store",
+    )
+    _add_store(ck, "the scan store to settle")
+
     r = sub.add_parser("releases", help="list a repo's releases and who published them")
     r.add_argument("source", help="GitHub URL or owner/repo")
     r.add_argument("--all", action="store_true", help="list every release (default: newest 20)")
@@ -277,7 +300,7 @@ def _load_or_scan(
             repo,
             ref,
             exposure=args.exposure,
-            tool_version=__version__,
+            tool_version=logic.key(),
             ha_version=ha or _requested_ha(args),
         )
         if hit is not None:
@@ -295,6 +318,7 @@ def _load_or_scan(
             jobs=args.jobs,
             ha_version=ha or args.ha_version,
             offline=args.offline,
+            recognise_libraries=not getattr(args, "no_library_lookup", False),
         )
     except (FetchError, GitHubError, UnsafeArchiveError) as e:
         err.print(f"[red]🐕 couldn't get a sniff of {escape(spec)}:[/] {e}")
@@ -413,6 +437,29 @@ def _rotation_thread(store: Any, start: Any) -> None:
     threading.Thread(target=run, name="token-rotation", daemon=True).start()
 
 
+def _new_version_thread(store: Any, start: Any, panel_url: str) -> None:
+    """Standalone: once an hour, see whether a newer Barkley is out (newversion.py asks
+    GitHub at most once a day, and notifies once per version)."""
+    import threading
+    import time
+
+    from sniff_test import newversion, supervisor
+    from sniff_test import settings as settings_mod
+
+    link = f" [Open Barkley]({panel_url})" if panel_url.startswith(("http://", "https://")) else ""
+
+    def notify(title: str, message: str) -> None:
+        supervisor.notify_persistent(title, message + link, newversion.NOTIFICATION_ID)
+
+    def run() -> None:
+        while True:
+            if settings_mod.load(store, start).new_versions:
+                newversion.check(store, __version__, notify=notify)
+            time.sleep(3600)
+
+    threading.Thread(target=run, name="new-version", daemon=True).start()
+
+
 def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     from sniff_test import server
 
@@ -456,12 +503,17 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
             return EXIT_ERROR
     from sniff_test import sandbox
 
-    abi, sandbox_line = sandbox.status()
-    if standalone and not abi and os.environ.get(sandbox.UNSANDBOXED_ENV) != "1":
+    _, sandbox_line = sandbox.status()
+    sandboxed = sandbox.enabled()
+    if not sandboxed and os.environ.get(sandbox.UNSANDBOXED_ENV) != "1":
+        need = (
+            "Landlock (Linux 5.13 or later)"
+            if standalone
+            else "Landlock, or the app's AppArmor profile (loaded on install and Update)"
+        )
         err.print(
-            f"[red]🐕 {escape(sandbox_line)}. Standalone, Barkley has no AppArmor profile of "
-            "its own, so it doesn't scan hostile code without Landlock (Linux 5.13 or later). "
-            f"To run anyway, set {sandbox.UNSANDBOXED_ENV}=1.[/]"
+            f"[red]🐕 {escape(sandbox_line)}. Barkley doesn't scan hostile code without "
+            f"{need}. To run anyway, set {sandbox.UNSANDBOXED_ENV}=1.[/]"
         )
         return EXIT_ERROR
     # Standalone the image runs without the add-on's start script, which made these.
@@ -488,7 +540,8 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
     def scan_fn(repo: str, ref: str | None) -> dict:
         now = settings_mod.load(store, start)
         result = scan(repo, ref=ref, exposure=Exposure(now.exposure), jobs=now.jobs,
-                      ha_version=ha_fn())  # fmt: skip
+                      ha_version=ha_fn(), recognise_libraries=now.libraries,
+                      cache_mb=now.cache_mb)  # fmt: skip
         # the lockfiles for later advisory re-checks ride along; Store.save takes them out
         return {**to_dict(result), recheck.KEY: result.inputs, sources.KEY: result.source}
 
@@ -527,10 +580,14 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
         releases_fn=lambda repo: releases.recent(repo),
         watcher=watcher,
         login_cfg=login_cfg,
+        tool_version=logic.key(),
     )  # fmt: skip
     httpd.panel.start_settings = start
     httpd.panel.option_token = option_token
     httpd.panel.standalone = standalone
+    from sniff_test import listings
+
+    httpd.panel.listings = listings.Listings()  # (0.15) the Marketplace's removed list
     if standalone:
         if login_cfg is not None:  # Create token: made with the login, before it's revoked
 
@@ -538,6 +595,8 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
                 period = settings_mod.load(store, start).token_days
                 tok, name = ha_token.create(access, period)
                 ha_token.adopt(store, tok, "created", name)
+                if watcher is not None:  # auto-sniff subscribes now, not at its next retry
+                    watcher.retry_now()
 
             login_cfg.token_fn = make_token
             # A held first login is revoked on shutdown: docker stop sends SIGTERM, which
@@ -545,6 +604,7 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
             atexit.register(login_cfg.release_all)
             signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
         _rotation_thread(store, start)
+        _new_version_thread(store, start, login_cfg.public_url if login_cfg else "")
         out.print(f"🐕 Home Assistant token: {ha_token.source() or 'none yet (Settings)'}")
     if conn is not None:
         where = "via the Supervisor" if conn.mode == "addon" else f"at {conn.base} (standalone)"
@@ -553,15 +613,15 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
             out.print("🐕 [yellow]HA_URL is plain http: the token crosses your network "
                       "unencrypted. Use https if Home Assistant offers it.[/]")  # fmt: skip
     out.print(f"🐕 Tool sandbox: {sandbox_line}"
-              + ("" if abi or not standalone else f" ({sandbox.UNSANDBOXED_ENV}=1)"))  # fmt: skip
+              + ("" if sandboxed else f" ({sandbox.UNSANDBOXED_ENV}=1)"))  # fmt: skip
     if login_cfg is not None:
         out.print(f"🐕 Login with Home Assistant ({login_cfg.ha_url}), administrators only; "
                   f"Barkley's address: {login_cfg.public_url}")  # fmt: skip
     if watcher is not None:
         watcher.start()
         out.print(
-            f"🐕 Auto-sniff: {'on' if watcher.enabled else 'off'}; notifications: bell"
-            + (f" + notify.{watcher.notify_target}" if watcher.notify_target else "")
+            f"🐕 Auto-sniff: {'on' if watcher.enabled else 'off'}; notifications: "
+            f"{watcher.channels()}"
         )
     ai = httpd.panel.ai_entity
     if args.ai_entity.strip() and not ai:
@@ -634,6 +694,12 @@ def main(argv: list[str] | None = None) -> int:
         return _serve(args, out, err)
     if args.command == "doctor":
         return _doctor(args, out)
+    if args.command == "checkpoint":
+        if not args.store:
+            err.print(f"[red]🐕 checkpoint needs --store (or ${STORE_ENV})[/]")
+            return EXIT_ERROR
+        out.print(f"🐕 {escape(checkpoint(Path(args.store).expanduser()))}")
+        return EXIT_OK
     store = _open_store(args.store, err)
     if not args.json:
         human.sniffing(out, args.source)
@@ -647,6 +713,8 @@ def main(argv: list[str] | None = None) -> int:
             jobs=args.jobs,
             ha_version=args.ha_version,
             offline=args.offline,
+            recognise_libraries=not args.no_library_lookup,
+            cache_mb=0 if args.no_cache else 1024,
         )
     except (FetchError, GitHubError, UnsafeArchiveError) as e:
         err.print(f"[red]🐕 couldn't get a sniff:[/] {e}")
@@ -662,9 +730,11 @@ def main(argv: list[str] | None = None) -> int:
             json.dump(report, fh, indent=2)
     if args.json:
         sys.stdout.write(json.dumps(report, indent=2) + "\n")
-    else:
-        human.render(result, out, verbose=args.verbose)
-    if args.fail_under is not None and result.score.score < args.fail_under:
+    rd = readings.compute(report).to_dict()  # --exposure public counts as on the internet
+    if not args.json:
+        human.render(result, out, verbose=args.verbose, readings_of=rd)
+    level = {"none": 0, "possible": 1, "found": 2}.get(str(rd["threat_level"]), 0)
+    if args.fail_on and level >= {"possible": 1, "found": 2}[args.fail_on]:
         return EXIT_BELOW_THRESHOLD
     return EXIT_OK
 

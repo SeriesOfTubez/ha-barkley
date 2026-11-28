@@ -10,7 +10,8 @@ Everything in a report that came from the scanned repo is untrusted text. The st
 only ever binds it as SQL parameters; whoever renders it must escape it.
 
 Not the HA recorder: see the vault's Architecture note (attribute size limit, purge
-schedule). In the add-on the file lives in `/data`, which is included in backups.
+schedule). In the add-on the file lives in `/data`, which is included in backups;
+config.yaml's backup_pre runs `sniff-test checkpoint` first (checkpoint below).
 """
 
 from __future__ import annotations
@@ -18,15 +19,15 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import sys
+import time
 import zlib
 from collections.abc import Callable, Iterator
-from contextlib import closing, contextmanager
-from dataclasses import dataclass, replace
+from contextlib import closing, contextmanager, suppress
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
-from sniff_test import review, trust
 
 STORE_VERSION = 1
 _INPUTS_KEY = "_recheck_inputs"  # recheck.KEY (not imported: the store stays a leaf)
@@ -105,12 +106,6 @@ CREATE TABLE IF NOT EXISTS settings (  -- panel settings (M8), e.g. the chosen A
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS finding_addresses (  -- (0.9.0) addresses a finding is about
-    scan_id    INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
-    finding_id TEXT NOT NULL,
-    address    TEXT NOT NULL,   -- host or IP the user may mark trusted (see trust.py)
-    PRIMARY KEY (scan_id, finding_id, address)
-);
 CREATE TABLE IF NOT EXISTS scan_inputs (  -- (0.10.0) the lockfiles of a scan, for re-checks
     scan_id INTEGER PRIMARY KEY REFERENCES scans (id) ON DELETE CASCADE,
     data    BLOB NOT NULL    -- zlib(JSON), recheck.capture(); text from the scan, only parsed
@@ -120,19 +115,6 @@ CREATE TABLE IF NOT EXISTS advisory_checks (  -- (0.10.0) the last advisory re-c
     checked_at TEXT NOT NULL,
     result     TEXT NOT NULL  -- same | changed:<new scan id> | failed: <why>
 );
-CREATE TABLE IF NOT EXISTS reviews (  -- (0.14.0) findings the user accepted, per app
-    repo        TEXT NOT NULL,     -- lowercase owner/name
-    fingerprint TEXT NOT NULL,     -- report/fingerprint.py: same code, same hash
-    rule_id     TEXT NOT NULL,
-    file        TEXT NOT NULL,
-    note        TEXT NOT NULL,     -- the user's own text
-    who         TEXT NOT NULL,     -- HA display name of who accepted it
-    at          TEXT NOT NULL,     -- ISO 8601 UTC
-    scan_id     INTEGER NOT NULL,  -- the scan it was accepted in (no FK: kept after age-out)
-    finding_id  TEXT NOT NULL,
-    ref         TEXT NOT NULL,
-    PRIMARY KEY (repo, fingerprint)
-);
 CREATE TABLE IF NOT EXISTS sources (  -- (0.11.0) an app version's own Python, once per content
     hash    TEXT PRIMARY KEY,   -- sha256 of the JSON before compression
     data    BLOB NOT NULL,      -- zlib(JSON), sources.capture(); text from the scan, never run
@@ -141,6 +123,13 @@ CREATE TABLE IF NOT EXISTS sources (  -- (0.11.0) an app version's own Python, o
 CREATE TABLE IF NOT EXISTS scan_sources (  -- (0.11.0) which stored source a scan reads from
     scan_id INTEGER PRIMARY KEY REFERENCES scans (id) ON DELETE CASCADE,
     hash    TEXT NOT NULL
+);
+-- (0.15) findings in a test script Home Assistant never loads (tag "test-code" in the
+-- report): the list's readings leave them out, as the page does (readings.in_test_script)
+CREATE TABLE IF NOT EXISTS test_findings (
+    scan_id INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
+    id      TEXT NOT NULL,
+    PRIMARY KEY (scan_id, id)
 );
 CREATE TABLE IF NOT EXISTS edge_findings (
     scan_id    INTEGER NOT NULL REFERENCES scans (id) ON DELETE CASCADE,
@@ -153,6 +142,76 @@ CREATE TABLE IF NOT EXISTS edge_findings (
 
 class StoreError(Exception):
     pass
+
+
+# (0.15, his decision 2026-11-25) VACUUM once at least this share of the file is free
+# pages: deletes leave free pages that later saves reuse, but the file never shrinks
+# without it. VACUUM also puts the pages back in order (SQLite's defragment).
+COMPACT_AT = 0.25
+
+
+def checkpoint(path: str | Path, tries: int = 5, wait: float = 1.0, timeout: float = 10) -> str:
+    """(0.15, his decision 2026-11-25) Before a Home Assistant backup (config.yaml's
+    backup_pre): write the WAL's changes into the database file and empty the WAL, so
+    the backup copies one settled file rather than a database and a WAL taken at
+    slightly different moments. Never creates the file. Returns what happened; never
+    raises, because a failed backup_pre fails the app's backup, and a backup with the
+    WAL beside it is better than none."""
+    p = Path(path)
+    if not p.is_file():
+        return f"no scan store at {p}: nothing to do"
+    try:
+        with closing(sqlite3.connect(f"file:{p}?mode=rw", uri=True, timeout=timeout)) as db:
+            for i in range(tries):
+                busy, _log, _done = db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if not busy:
+                    return "the scan store is ready for the backup"
+                if i < tries - 1:
+                    time.sleep(wait)
+    except sqlite3.Error as e:
+        return f"couldn't settle the scan store ({type(e).__name__}); backing it up as it is"
+    return "the scan store was busy; backing it up as it is"
+
+
+# (0.15) What 0.14 stored for reviews, removed once on the first start (his decision
+# 2026-11-20): the accepted findings, the addresses the user trusted and the apps set to
+# Malware check only. Nothing reads them any more; dropping is a no-op after the first time.
+_REVIEW_SETTINGS = ("trusted_addresses", "malware_only")
+
+
+def _remove_reviews(db: sqlite3.Connection) -> list[str]:
+    gone = []
+    n = db.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'reviews'"
+    ).fetchone()[0]
+    if n:
+        rows = db.execute("SELECT count(*) FROM reviews").fetchone()[0]
+        db.execute("DROP TABLE reviews")
+        gone.append(f"{rows} accepted finding{'s' * (rows != 1)}")
+    # the index of addresses a user could mark trusted: nothing has read it since
+    db.execute("DROP TABLE IF EXISTS finding_addresses")
+    for key in _REVIEW_SETTINGS:
+        if db.execute("DELETE FROM settings WHERE key = ?", (key,)).rowcount:
+            gone.append("trusted addresses" if key == "trusted_addresses"
+                        else "Malware check only")  # fmt: skip
+    return gone
+
+
+def _has_table(db: sqlite3.Connection, name: str) -> bool:
+    return bool(db.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    ).fetchone()[0])  # fmt: skip
+
+
+# One literal query: every stored finding tagged "test-code", read from the reports
+# themselves (json_each). The reports are only read.
+_INDEX_TEST_FINDINGS = (
+    "INSERT OR IGNORE INTO test_findings (scan_id, id) "
+    "SELECT s.id, json_extract(f.value, '$.id') FROM scans s, "
+    "json_each(s.report, '$.findings') f, json_each(f.value, '$.tags') t "
+    "WHERE json_valid(s.report) AND t.value = 'test-code' "
+    "AND json_extract(f.value, '$.id') IS NOT NULL"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,11 +229,10 @@ class ScanRow:
     ha_version: str | None
     tool_version: str
     complete: bool
-    score: int
+    score: int  # the capability score: technical report and CLI only since 0.15
     verdict: str
-    # Set only by a store with `trust_overlay` on, when addresses the user trusts changed
-    # the shown score: Barkley's own score for the scan (`score` is then the shown one).
-    own_score: int | None = None
+    # (0.15) the Threat and Exposure readings, set only by the panel's overlay
+    readings: dict[str, Any] | None = field(default=None, compare=False)
 
     def label(self) -> str:
         return f"#{self.id} {self.repo or self.source}@{self.ref or '?'}"
@@ -207,14 +265,11 @@ def _row(r: sqlite3.Row) -> ScanRow:
 
 class Store:
     def __init__(self, path: str | Path):
-        # The panel turns this on: rows then show the score with the user's trusted
-        # addresses set aside (trust.py). Off for the CLI: its scores are the scanner's.
-        self.trust_overlay = False
-        # (0.14.0) The panel sets this instead: each row as the panel shows it (Barkley's
-        # score with the user's scoring settings, the reviewed score once there is one).
-        self.overlay: Callable[[ScanRow], ScanRow] | None = None
-        # Bumped by every write a shown score can depend on (settings, trusted addresses,
-        # reviews), so the panel can keep what it read until one of them changes.
+        # The panel sets this: rows as the panel shows them (0.15: with their readings).
+        # None for the CLI: its rows are as stored.
+        self.overlay: Callable[[list[ScanRow]], list[ScanRow]] | None = None
+        # Bumped by every write a shown score can depend on (the settings), so the panel
+        # can keep what it read until one of them changes.
         self.generation = 0
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -224,8 +279,15 @@ class Store:
                 raise StoreError(
                     f"{self.path} was written by a newer sniff-test (store v{version})"
                 )
+            had_tests = _has_table(db, "test_findings")
             db.executescript(_SCHEMA)
             db.execute(f"PRAGMA user_version = {STORE_VERSION}")
+            if not had_tests:  # (0.15) once: index the scans stored before, from their reports
+                db.execute(_INDEX_TEST_FINDINGS)
+            gone = _remove_reviews(db)
+        if gone:
+            print(f"removed what 0.14 stored for reviews: {', '.join(gone)}", file=sys.stderr,
+                  flush=True)  # fmt: skip
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -283,7 +345,9 @@ class Store:
                 t.get("domain"),
                 report["exposure"],
                 report.get("ha_version"),
-                report["tool"]["version"],
+                # (0.14.1) the scan-logic key decides reuse (logic.py); older reports
+                # have only the tool version, which no current key equals
+                report["tool"].get("logic") or report["tool"]["version"],
                 report["schema_version"],
                 int(bool(report["complete"])),
                 int(report["score"]),
@@ -319,6 +383,11 @@ class Store:
                 ],
             )  # fmt: skip
             db.executemany(
+                "INSERT OR IGNORE INTO test_findings (scan_id, id) VALUES (?,?)",
+                [(sid, f["id"]) for f in report.get("findings", [])
+                 if "test-code" in (f.get("tags") or ())],
+            )  # fmt: skip
+            db.executemany(
                 "INSERT OR IGNORE INTO nodes VALUES (?,?,?,?,?)",
                 [
                     (sid, n["id"], n["kind"], n.get("ring"), n.get("label"))
@@ -334,15 +403,6 @@ class Store:
                     for e in edges
                 ],
             )  # fmt: skip
-            db.executemany(
-                "INSERT OR IGNORE INTO finding_addresses VALUES (?,?,?)",
-                [
-                    (sid, f["id"], a)
-                    for f in report.get("findings", [])
-                    for a in f.get("addresses") or []
-                    if isinstance(a, str)
-                ],
-            )
             db.executemany(
                 "INSERT OR IGNORE INTO edge_findings VALUES (?,?,?)",
                 [(sid, e["id"], fid) for e in edges for fid in e.get("finding_ids", [])],
@@ -457,118 +517,33 @@ class Store:
             db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
         self.generation += 1
 
-    # --- trusted addresses (trust.py) ----------------------------------------------
-
-    def trusted(self) -> trust.Trusted:
-        return trust.Trusted.loads(self.setting(trust.SETTING))
-
-    def set_trusted(self, trusted: trust.Trusted) -> None:
-        self.set_setting(trust.SETTING, trusted.dumps())
-
     def _shown(self, rows: list[ScanRow]) -> list[ScanRow]:
-        """With `trust_overlay` on: each row's score as the panel shows it. Uses the
-        indexes only (no report is parsed): a scan changes only when it has findings
-        with addresses and the user trusts every address of at least one of them."""
-        if self.overlay is not None:
-            return [self.overlay(r) for r in rows]
-        if not self.trust_overlay or not rows:
-            return rows
-        trusted = self.trusted()
-        if not trusted:
-            return rows
-        by_id = {r.id: r for r in rows}
-        with self._connect() as db:
-            # The whole table, as a literal query: it only holds findings that are about
-            # an address, a handful of rows on a real box.
-            addr: dict[int, dict[str, list[str]]] = {}
-            for r in db.execute("SELECT scan_id, finding_id, address FROM finding_addresses"):
-                if r["scan_id"] in by_id:
-                    addr.setdefault(r["scan_id"], {}).setdefault(r["finding_id"], []).append(
-                        r["address"]
-                    )
-            out = dict(by_id)
-            for sid, per_finding in addr.items():
-                row = by_id[sid]
-                gone = {fid for fid, xs in per_finding.items() if trusted.covers(row.repo, xs)}
-                if not gone:
-                    continue
-                kept = [
-                    (f["id"], f["rule_id"], f["severity"])
-                    for f in db.execute(
-                        "SELECT id, rule_id, severity FROM findings WHERE scan_id = ?", (sid,)
-                    )
-                    if f["id"] not in gone
-                ]
-                r2 = trust.rescore(kept, row.complete)
-                out[sid] = replace(row, score=r2.score, verdict=r2.verdict_key, own_score=row.score)
-        return [out[r.id] for r in rows]
+        """Each row as the panel shows it (`overlay`), or as stored."""
+        if self.overlay is not None and rows:
+            return self.overlay(rows)
+        return rows
 
-    # --- reviews (0.14.0) ---------------------------------------------------------------
-
-    def all_accepts(self) -> dict[str, list[review.Accept]]:
-        """Every app's acceptances in one read, by lowercase owner/name."""
+    def findings_index(self, scan_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+        """(0.15) Each scan's findings as the index keeps them (rule, severity, file, and
+        the "test-code" tag from test_findings):
+        what readings.compute reads, without parsing any report. One literal query; the
+        ids go in as one JSON parameter."""
+        out: dict[int, list[dict[str, Any]]] = {int(i): [] for i in scan_ids}
+        if not out:
+            return out
         with self._connect() as db:
             rows = db.execute(
-                "SELECT repo, fingerprint, rule_id, file, note, who, at, scan_id, finding_id, "
-                "ref FROM reviews ORDER BY at"
-            ).fetchall()
-        out: dict[str, list[review.Accept]] = {}
-        for r in rows:
-            out.setdefault(r["repo"], []).append(
-                review.Accept(r["repo"], r["fingerprint"], r["rule_id"], r["note"], r["who"],
-                              r["at"], r["scan_id"], r["finding_id"], r["ref"], r["file"])
-            )  # fmt: skip
+                "SELECT f.scan_id, f.rule_id, f.severity, f.file, t.id AS test FROM findings f "
+                "LEFT JOIN test_findings t ON t.scan_id = f.scan_id AND t.id = f.id "
+                "WHERE f.scan_id IN (SELECT value FROM json_each(?))",
+                (json.dumps(list(out)),),
+            )
+            for r in rows:
+                out[r["scan_id"]].append(
+                    {"rule_id": r["rule_id"], "severity": r["severity"], "file": r["file"],
+                     **({"tags": ["test-code"]} if r["test"] is not None else {})}
+                )  # fmt: skip
         return out
-
-    def accepts(self, repo: str | None) -> list[review.Accept]:
-        if not repo:
-            return []
-        with self._connect() as db:
-            rows = db.execute(
-                "SELECT repo, fingerprint, rule_id, file, note, who, at, scan_id, finding_id, "
-                "ref FROM reviews WHERE repo = ? ORDER BY at",
-                (repo.lower(),),
-            ).fetchall()
-        return [review.Accept(r["repo"], r["fingerprint"], r["rule_id"], r["note"], r["who"],
-                              r["at"], r["scan_id"], r["finding_id"], r["ref"], r["file"])
-                for r in rows]  # fmt: skip
-
-    def accept(self, items: list[review.Accept], replaces: list[str] | None = None) -> None:
-        """Save acceptances; `replaces`: fingerprints of the old acceptances whose code
-        changed (a reopened finding accepted again), dropped in the same transaction."""
-        with self._connect() as db:
-            for fp in replaces or []:
-                if items:
-                    db.execute("DELETE FROM reviews WHERE repo = ? AND fingerprint = ?",
-                               (items[0].repo, fp))  # fmt: skip
-            db.executemany(
-                "INSERT OR REPLACE INTO reviews (repo, fingerprint, rule_id, file, note, who, "
-                "at, scan_id, finding_id, ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        a.repo,
-                        a.fingerprint,
-                        a.rule_id,
-                        a.file,
-                        a.note,
-                        a.who,
-                        a.at,
-                        a.scan_id,
-                        a.finding_id,
-                        a.ref,
-                    )
-                    for a in items
-                ],
-            )
-        self.generation += 1
-
-    def unaccept(self, repo: str, fingerprints: list[str]) -> None:
-        with self._connect() as db:
-            db.executemany(
-                "DELETE FROM reviews WHERE repo = ? AND fingerprint = ?",
-                [(repo.lower(), fp) for fp in fingerprints],
-            )
-        self.generation += 1
 
     def save_explanation(self, scan_id: int, entity_id: str, data: dict[str, Any]) -> None:
         with self._connect() as db:
@@ -611,6 +586,27 @@ class Store:
                            **json.loads(r["data"])}
             for r in rows
         }  # fmt: skip
+
+    def size_bytes(self) -> int:
+        """The database file and its WAL, as they take up the disk."""
+        total = 0
+        for suffix in ("", "-wal"):
+            with suppress(OSError):
+                total += (self.path.parent / (self.path.name + suffix)).stat().st_size
+        return total
+
+    def compact(self, at: float = COMPACT_AT) -> bool:
+        """VACUUM when at least `at` of the file is free pages (see COMPACT_AT); then
+        empty the WAL, which VACUUM fills with the whole database. True if it ran.
+        Runs outside a transaction (VACUUM can't run inside one)."""
+        with closing(sqlite3.connect(self.path, timeout=30, isolation_level=None)) as db:
+            pages = db.execute("PRAGMA page_count").fetchone()[0]
+            free = db.execute("PRAGMA freelist_count").fetchone()[0]
+            if not pages or free < pages * at:
+                return False
+            db.execute("VACUUM")
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return True
 
     def delete(self, scan_id: int) -> bool:
         with self._connect() as db:
@@ -656,8 +652,9 @@ class Store:
     ) -> ScanRow | None:
         """The newest scan of `repo@ref` that a fresh scan would reproduce.
 
-        Same exposure and tool version; for integrations also the same HA release
-        (dependencies resolve against it). Cards don't depend on the HA release.
+        Same exposure and scan-logic key (logic.py; the tool version before 0.14.1); for
+        integrations also the same HA release (dependencies resolve against it). Cards
+        don't depend on the HA release.
         Incomplete scans are never reused: what stopped them (a network error, GitHub's
         rate limit) is usually gone, so a fresh scan wouldn't reproduce them.
         """

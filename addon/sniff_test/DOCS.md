@@ -1,29 +1,68 @@
 # Barkley
 
-Barkley is the dog who gives Home Assistant Marketplace (HACS) integrations and cards a
-sniff test before they get into the house. It looks for token theft, data sent off-box,
-obfuscated or compiled code that isn't the code you can read, risky dependencies, and
-repos that changed hands.
+Barkley gives Home Assistant Marketplace (HACS) integrations and cards a sniff test
+before they get into the house. It looks for token theft, data sent off-box, obfuscated
+or compiled code that isn't the code you can read, risky dependencies, and repos that
+changed hands.
+
+Barkley was built with AI assistance, under human direction and review. The optional AI
+features are only as good as the model you pick.
+
+## The sniff report
+
+Since 0.15 the panel shows no 0–100 score. Each app has a sniff report with two readings:
+
+- **Threat**: signs of malicious behavior only. It reads none found, possible
+  (🐕 Grrrrr) or found (🚨 BORK BORK BORK). With none found, the label follows Exposure:
+  🦴 Good Boy (low), 🐾 Needs training (medium) or 🦮 Needs a leash (high). A found
+  threat puts one sentence at the top of the app's page, and the list says how many apps
+  show malicious behavior.
+- **Exposure**, from 0 to 10, shown as Low (under 2), Medium (2 to under 5) or High
+  (5 and up): what the app opens up to someone who isn't an administrator. It counts
+  pages that open without logging in to Home Assistant, login tokens the app may hand
+  out, published vulnerabilities in its libraries, and code a card loads from another
+  site or takes from the page address while it runs. Something only an administrator
+  can do adds nothing. The pages, tokens and library vulnerabilities count a quarter more on a
+  shared or work network and half more when Home Assistant is reachable from the
+  internet (Settings → Where Home Assistant runs). A found threat sets it to 10.
+
+Everything else on an app's page is context and isn't scored. Each block is tagged with
+where it comes from: **Barkley's scan**, **The developer's words** or **AI**. The
+developer's words, and the AI's summary of them ("AI inferred"), are never shown beside
+a found or possible threat. Nothing from the developer or the AI changes a reading.
+
+The old number is still in the technical report (the raw JSON link at the foot of an
+app's page), as the capability score: what the code openly uses, not a judgment.
+
+**What changed from 0.14:** reviews are gone (Accept, Mark reviewed, Accept all), and so
+are Malware check only, Addresses you trust and Paranoid mode. On its first start 0.15
+deletes what 0.14 stored for them, once; stored scans and other settings stay. If you
+think Barkley got something wrong, use **Report a false positive** under the item. It
+opens a pre-filled public issue that you finish and submit.
 
 ## How it works
 
 - Open **Barkley** in the sidebar (HA ingress; HA handles the login).
 - **What you have installed:** the first page asks the Marketplace what you have
   installed, with the version you run and the one the Marketplace would install now. It
-  leads with what needs a look (a checked update that brings something important, or a
-  scan that scored under 90 or didn't finish), then updates you haven't checked yet,
-  then checked updates that change nothing important. Items that are up to date and
-  fine fold into one line. The installed list is read again at most every 5 minutes.
+  leads with what needs a look: a found or possible threat, High exposure, a check that
+  didn't finish, or a checked update that brings a change to check. The installed list
+  is read again at most every 5 minutes.
 - **Sniff it / Sniff again** on an app scans the version you have installed.
   **Check update** scans the offered version and shows what the update would change,
-  most important first: new publishers, new data flows, new hosts, new findings. Stored
-  scans are reused on both sides, and the comparison never changes a score.
-- **One button for the rest:** "Sniff the N not yet sniffed" scans every installed app
-  that has no scan by this version of Barkley (after an update of Barkley, that is all
-  of them). "Sniff the N unfinished again" repeats every scan that didn't finish. Apps
-  already queued or running are skipped.
-- **The list:** the counts at the top are filters (worth a look, no concerns found,
-  with privacy notes, updates waiting, not checked). Switch between cards and a table;
+  most important first: new publishers, new data flows, new sites, new items. Stored
+  scans are reused on both sides, and the comparison never changes a reading.
+- **One button for the rest:** "Sniff N apps not yet sniffed with the current rules"
+  scans every installed app that has no scan with Barkley's current rules (after an
+  update of Barkley that changed what a scan finds, that is all of them; an update that
+  didn't keeps them). "Sniff N unfinished again" repeats every scan that didn't finish,
+  and "Sniff all N again" runs a fresh scan of each. Apps already queued or running are
+  skipped.
+- **The list:** Barkley currently checks integrations and dashboard cards only; the list says what
+  else you have that it doesn't check. The counts at the top are filters (needs a look,
+  with signs of a threat, with medium or high Exposure, no concerns found, with privacy
+  notes, updates waiting, not checked), and Order sorts by most concern first, Threat,
+  Exposure or name. Switch between cards and a table;
   long lists are split into pages. A status box at the top shows what's being sniffed,
   and the page reloads itself every 5 seconds while anything runs. A button brings you
   back to the page, filter and view you clicked it on.
@@ -31,16 +70,6 @@ repos that changed hands.
   the release the Marketplace would install or at a tag you give. Its second form,
   **What would updating change?**, takes a repository and the tag you have installed
   and compares that tag with the release the Marketplace would install now.
-- **Addresses you trust:** a few findings are only about where an address points (an
-  internet address written into the code as a number, or an address in a code library
-  that an automatic check finds suspicious-looking). Such a finding offers **Trust for
-  this app** and **Trust for every app**. The finding stays listed, under "Findings
-  about addresses you trust", and stops costing points until the address changes;
-  Barkley's own score is always shown beside yours, and the stored scan is never
-  changed. Findings about what an app sends, and paste sites, tunnels and chat
-  webhooks, can't be trusted away. Only your own clicks create a trust mark; no list
-  and no AI does. **Stop trusting** on the app's page, or the "Addresses you trust"
-  page (linked at the foot of the first page), undoes it.
 - **Find an app to sniff before you install it:** search the Marketplace catalog.
   **Other versions** lists the 10 newest releases, betas included, so you can sniff the
   exact version you plan to pick.
@@ -48,18 +77,59 @@ repos that changed hands.
   the stored one.
 - **Auto-sniff (on by default):** when the Marketplace installs or updates an integration
   or card, Barkley sniffs the version that landed and sends a notification (see below).
-  Turn it off, or pick who else gets notified, in the box on the panel's first page.
-- **The developer's security habits** (on an app's page): whether the repository runs
-  security scanners in its workflows, has Dependabot or Renovate and a SECURITY.md, how
-  many dependency-update pull requests wait, and open issues that look security-related.
+  Turn it off, pick where notifications go or turn them off (Send notifications to), or
+  choose which results notify you (Notify when), on the Settings page.
+- **An app's page**, top to bottom: the two readings, the Threat box and the Exposure
+  box, In short (with the developer's description after an AI request), privacy notes,
+  What Barkley found (items that add to Exposure are marked), What it touches, Where the login
+  you gave this app goes, Where it connects, Other addresses in its code, Where its code
+  comes from, Environment variables it uses, The developer's security habits, Everything
+  it uses inside Home Assistant, and History.
+- **On a phone** (a screen 600 px wide or narrower, such as the Home Assistant app) an
+  app's page is shorter: the two readings, the Threat and Exposure boxes, In short, and
+  every item that counts toward a reading. An item that counts toward Threat or Exposure
+  is never left out. **Show details** at the bottom shows the rest, including the AI
+  buttons, and **Hide details** at the top goes back. A wider screen always shows the
+  whole page.
+- **What it touches:** a picture of the app in your home. Seven rooms, the same for every
+  app (users and logins, other apps' settings, devices and entities, files, programs
+  and the system, your home network, your browser session), blue where the app reaches
+  beyond its own job and dashed where it does nothing; its own space said in gray; the
+  sites it sends requests to outside; a red line for a path from your data to a site
+  that isn't the app's own, a purple one to where the login you gave this app goes, and
+  orange doors for each way in.
+- **Where the login you gave this app goes:** the login you entered when you set up the
+  app (not your Home Assistant login), followed through its code, or into a library it
+  hands it to, to the requests that carry it. For a library, Barkley downloads its
+  published package and reads it as text (see Permissions). Context only.
+- **Where it connects:** the sites Barkley read a request to, one line each, plus
+  flagged sites and ports. A line folds open to show the scheme and port, who runs the
+  site, the addresses and where the code names it, and how the code sends requests
+  there: the method (GET, POST and so on) and the names of what goes into the body, the
+  headers and the address; for a card also the sites its map images come from. Values
+  are never recorded. Requests to an address the code puts together while it runs are
+  listed apart, with where the address comes from (what you entered at setup, a
+  server's answer, a list in the code, a device found on your network, Home Assistant's
+  own address, or "couldn't tell"). Sites the code only names are under Other addresses
+  in its code.
+- **Where its code comes from:** what the Marketplace installs, the project and whose
+  account it is under, who published this release and the earlier ones, how the
+  release's commit is signed, every Python package Home Assistant would install (the
+  ones that come along included), the npm packages a card is built from, published
+  libraries copied into the app, and code it gets while it runs.
+- **The developer's security habits:** whether the repository runs security scanners in
+  its workflows or commit hooks, has Dependabot or Renovate and a SECURITY.md, how many
+  dependency-update pull requests wait, and open issues that look security-related.
   It's context read from public signs (GitHub keeps scan alerts private) and never
-  changes the score. It costs 2 GitHub requests per scan.
+  changes a reading.
 - Every scan is stored in `/data/sniff-test.db` (SQLite), which is part of the app's
-  backups. Downloaded HA constraints are cached in `/data/cache` and left out of
-  backups.
+  backups. Just before a backup, Barkley moves its recent changes into that file, so
+  the backup has them. Once a day, if a quarter or more of the file is
+  space freed by deleted scans, Barkley compacts it. Downloaded HA constraints are
+  cached in `/data/cache` and left out of backups.
 
 Scanned code is treated as hostile: it is downloaded and read, never run, built or
-installed. Scores are computed by fixed rules; no AI decides anything.
+installed. The readings are computed by fixed rules; no AI decides anything.
 
 ## Auto-sniff: installs and updates
 
@@ -83,16 +153,18 @@ while Barkley was stopped). When an integration or card is installed or updated:
   packages again, for every installed version and every update waiting. It takes seconds:
   the app's code is not fetched or scanned again, and GitHub is not asked anything. When
   nothing changed you hear nothing. When something did, the result is stored as a **new
-  entry** (the earlier one stays in the history as it was), the score is worked out again
-  by the same rules, and the notification gives the old and new score and counts of what
-  changed, with a link to the comparison. If OSV can't be reached nothing changes and
+  entry** (the earlier one stays in the history as it was), the readings are worked out
+  again by the same rules, and the notification gives the readings, the Exposure number
+  before, and counts of what changed, with a link to the comparison. If OSV can't be reached nothing changes and
   Barkley tries again an hour later. "Check advisories again" on an app's page does the
   same on request.
-- It sends a **bell notification** in Home Assistant (always) and, if you picked one in
-  the panel, a `notify.<target>` message (for example your phone through the companion
-  app): the app and version, the verdict and score, up to three things worth a look in
-  plain words, and for an update what changed. Nothing from the scanned project (no
-  README text, code or evidence) is ever put in a notification. A test button sends a
+- It sends a **bell notification** in Home Assistant and, if you picked one in the
+  panel, a `notify.<target>` message (Send notifications to: either, both, or Disabled) (for example your phone through the companion
+  app): the app and version, the two readings with a colored light each (🟢 🟡 🔴), for
+  a found or possible threat one fixed sentence saying what it is, and for an update
+  counts of what changed. The `notify` message is shorter: its body starts with the
+  readings, and the app's name is only in its title. Nothing from the scanned project (no README text, code or
+  evidence) and nothing from an AI is ever put in a notification. A test button sends a
   sample through both.
 
 **Read this before you rely on it. A new integration runs as soon as it's installed.**
@@ -105,28 +177,38 @@ update's new code waits for the next restart, so there the auto-sniff and its di
 before the code runs. Barkley reports; it never moves, refuses or blocks anything.
 
 Scans of apps that aren't installed are deleted after 7 days (sniff-before-install scans
-included, unless the app was installed by then, in which case the scan is reused). A
-scan of anything installed, at any version, is never deleted.
+included, unless the app was installed by then, in which case the scan is reused). By
+default, a scan of anything installed, at any version, is never deleted. Settings →
+Versions kept per app can keep only the last 20, 10, 5 or 3 versions of each installed
+app; the installed version and a waiting update are always kept.
 
 ## Settings and options
 
-Since 0.14.0 Barkley has its own **Settings** page (the link at the top of the panel):
-the scoring settings (Paranoid mode, the no-Threat floor, pages without a login, hidden
-usage reporting), reviews, auto-sniff and notifications, AI, parallel scans, Semgrep jobs
-and the GitHub token. The options below are the starting values; once you save the
-Settings page, it wins. A GitHub token saved there is kept in its own file next to the
-database and wins over the option's.
+Barkley has its own **Settings** page (the Settings link on the panel's first page).
+It has two sections, each with Reset to defaults:
+
+- **Readings:** Where Home Assistant runs (Only my home network, A shared or work
+  network, Reachable from the internet), Minor items (Hide or Show), Build tool known
+  to be malware (2, 2.5 or 3) and Quiet projects.
+- **Checking and notifications:** Auto-sniff, Notify, Notify when, AI, AI mode, AI
+  answers, AI time limit,
+  Parallel scans, Semgrep jobs, Published libraries, Cache of code already read,
+  Versions kept per app, Memory for scans, Low memory and the GitHub token.
+
+The options below are the starting values; once you save the Settings page, it wins. A
+GitHub token saved there is kept in its own file next to the database and wins over the
+option's.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `exposure` | `local` | `public` if your HA is reachable from the internet. Raises inbound findings; never lowers exfiltration findings. |
+| `exposure` | `local` | `public` if your HA is reachable from the internet. It starts "Where Home Assistant runs" at Reachable from the internet. That raises the Exposure reading by half, and new sniffs count pages without a login, pages other websites may call and webhooks one level higher. A known vulnerability in a library is at most medium while `local`. Never lowers exfiltration or malware. |
 | `jobs` | `1` | Parallel Semgrep jobs inside one scan. More is faster and uses more memory. |
-| `parallel_scans` | `2` | How many scans may run at once. A second scan starts only while the box has room for another full scan above the 2 GB warning line (1.5 GB counted for each scan already running); otherwise it waits. Two checks of the same project never run together. |
+| `parallel_scans` | `2` | How many scans may run at once. A second scan starts only while there's memory for it (Settings → Memory for scans); otherwise it waits. Two checks of the same project never run together. |
 | `github_token` | empty | A GitHub token (no scopes needed) for the 5,000 requests/hour limit instead of 60. |
 | `ai_entity` | empty | Optional. Easier: pick your AI in the panel (any app's page, "Explain this app with AI"), which lists your AI Task entities. A choice made in the panel wins over this option. |
-| `ai_mode` | `deep` | `summary`: the AI explains the findings. `deep`: it can also read the code around one finding, port or unknown address when you click **Explain in context**. Also set in the panel (wins over this option). |
+| `ai_mode` | `deep` | `summary` (Explain only): the AI explains what the scan found. `deep` (Explain and read code): it can also read the code around one item, port or unknown address when you click **Explain in context**. Also set in the panel (wins over this option). |
 | `auto_scan` | `true` | Sniff every Marketplace install, update and offered update, and send a notification. Also set in the panel (wins over this option). |
-| `notify_target` | empty | A `notify` service name (for example `mobile_app_my_phone`) that gets each auto-sniff result besides the bell notification. Easier: pick it in the panel, which lists your notify services (wins over this option). |
+| `notify_target` | empty | A `notify` service name (for example `mobile_app_my_phone`) that gets each auto-sniff result besides the bell notification. Easier: pick it in the panel (Send notifications to), which lists your notify services and can also leave out the bell or turn notifications off (wins over this option). |
 
 ### AI explanations
 
@@ -134,20 +216,36 @@ Pick an AI on any app's page (the dropdown lists your AI Task entities; Home Ass
 renders one fixed template that returns only their ids and names), and each app's page
 gets an **Explain this app** button. Nothing is
 sent until you click it. Barkley then calls Home Assistant's `ai_task.generate_data`
-with that scan's findings: rule names, severities, file names and short code excerpts
+with what that scan found: rule names, severities, file names and short code excerpts
 from the public project that was scanned. No Home Assistant data is sent. The request
 goes to whatever AI provider your AI Task entity uses, which for OpenRouter and similar
 integrations is a cloud service.
 
-The AI only explains. The score, the verdict and the list of findings are computed
-without it, and nothing it says can change them. Its answer is shown as plain text
-labeled "AI explanation", next to the fixed explanation, and it can be wrong. Code
-from the scanned project can contain text aimed at the AI; it is marked as untrusted
-in the request.
+The AI only explains. The readings and the list of items are computed without it, and
+nothing it says can change them. Its answer is shown as plain text labeled "AI
+explanation", tagged AI, next to the fixed explanation, and it can be wrong. It's only
+as good as the model behind the entity you pick. Code from the scanned project can
+contain text aimed at the AI; it is marked as untrusted in the request.
+
+In the Explain and read code mode, the same click makes one more request, with the
+start of the README, the README passages on logins, accounts, where data goes, privacy
+and what the app runs, and the descriptions in the code (docstrings and the comment
+block above a function) that the scan stored: at most 6,000, 12,000 (the default) or
+18,000 characters (Settings → AI answers). The AI may write up to four sentences at
+6,000 and up to six above, on what the developer says the app does, each ending
+with the lines it rests on. Barkley shows a sentence only if those lines were sent and
+have text on them, every code name it mentions is on them, at least three of its longer
+words are on them, and it gives no verdict. Shown sentences are tagged **AI inferred**,
+under the item they are about or under In short as "The developer's description". The
+developer wrote those lines: Barkley checks that they exist and hold the words, not that
+they are true. This request is not sent when a threat was found. With a possible threat,
+the descriptions on the threat and on the logins it could take are not sent, and only a
+sentence about another listed item is kept. Nothing from it changes a reading, the list
+or a notification.
 
 ### AI deep analysis (`ai_mode: deep`)
 
-Each finding, each port, and each address the app's docs don't explain gets an
+Each item, each port, and each address that isn't one of the app's own sites gets an
 **Explain in context** button. During the scan, Barkley keeps the code around it:
 the function it's in, the functions that use a flagged address, the functions and
 classes of the app that it calls or refers to (in the same file or a sibling module),
@@ -158,7 +256,7 @@ click, that code and the question go to your AI; nothing is sent before. It is t
 app's own public code, never anything from your Home Assistant.
 A privacy note shows the button, or the reading, of the address or port behind it:
 the same reading as under "Where it connects", not a second one. A note whose addresses
-are all named in the app's documentation or manifest has none, and says so.
+are all the app's own sites has none, and says so.
 
 For integrations the AI may ask once to see more of the app's code. It can only pick
 from a list of names Barkley offers (at most three picks; never a file path; in a pick
@@ -171,27 +269,28 @@ store: one per version, for the installed version and a waiting update, never ov
 per app (a bigger app, or one with more than 3,000 Python files, gets no copy, and the
 sheet says the AI can't ask for more).
 
-For the finding "Changes how Home Assistant itself works" the page also says what is
+For the item "Changes how Home Assistant itself works" the page also says what is
 replaced and whose code that is ("What it replaces"). Barkley reads that from the
 code's import lines; no AI is involved. When a function of Home Assistant's own source
 is replaced by a function of the app, Barkley also reads that one file of Home Assistant
 (at your version, from Home Assistant's repository on GitHub) during the scan and
 compares the two line by line: "How it differs from the original" gives the counts and
 the comparison, or says why there is none. "The rest of the replacement" says whether
-the scan has anything else on the replacement's lines. Neither changes the score, and
+the scan has anything else on the replacement's lines. Neither changes a reading, and
 neither says the code is safe.
 
-On that finding, the AI is also sent the first lines of the app's
+On that item, the AI is also sent the first lines of the app's
 README (at most 80) and may add one sentence saying the code is consistent with it. It
-is shown apart, as the AI's opinion, only if it cites README lines and code lines and
-gives no verdict. A README is written by the app's author, so matching it is not the
-same as safe; the score does not change. No other finding gets this opinion.
+is shown apart, under "The AI thinks the code matches the README", only if it cites
+README lines and code lines and gives no verdict. A README is written by the app's
+author, so matching it is not the same as safe; no reading changes. No other item gets
+this opinion.
 
 The AI answers in short statements, and each must cite the lines it rests on.
 Barkley shows a statement only if the cited lines are in the code it sent, they are
 code (not comments), and they contain the names the statement mentions. A statement
-that calls a finding a false positive, safe or harmless is dropped: the AI may add
-questions but can't clear anything, and the score never changes. The page says how
+that calls an item a false positive, safe or harmless is dropped: the AI may add
+questions but can't clear anything, and no reading changes. The page says how
 many statements were left out and why.
 
 The entity needs a model that supports structured output. Home Assistant's OpenRouter
@@ -200,23 +299,29 @@ with an error on the page.
 
 ## Resources
 
-Semgrep is the heavy part: plan for 0.5–1 GB of RAM while a large card bundle is
-scanned (an integration scan peaked at about 1.1 GB). Up to `parallel_scans` scans run
+Semgrep is the heavy part. Across the 6,753 Marketplace apps Barkley scanned in
+November 2026, half the scans needed under 0.4 GB, 99 in 100 under 1 GB, and 18 more
+than 1.5 GB (the biggest, an integration, about 8.5 GB). Up to `parallel_scans` scans run
 at once, but only while memory allows. Home Assistant sets no memory limit for apps, so
-Barkley guards itself: with under 2 GB available on the box the panel warns, and
-under 1 GB it refuses to start a scan, so a scan can't push Home Assistant out of
-memory. Diagnostics shows the current figure.
+Barkley guards itself: with under 2 GB available on the box the panel warns, and by
+default it won't start a scan with under 1 GB free (Settings → Low memory), so a scan
+can't push Home Assistant out of memory. Diagnostics shows the current figure.
 
 ## Permissions
 
 The app asks for the Home Assistant API only. It reads the installed HA version (so
-dependencies resolve against the release you run), asks the Marketplace for its
-installed list (`marketplace/repositories/list`, or HACS's `hacs/repositories/list` on
-older HA; the only websocket commands the app sends), and, only when you click
-"Explain this app" or "Explain in context", calls `ai_task.generate_data`. To
+dependencies resolve against the release you run) and whether an external URL is set
+(yes or no; the address isn't kept), asks the Marketplace for its installed list
+(`marketplace/repositories/list`, or HACS's `hacs/repositories/list` on older HA), and,
+only when you click
+"Explain this app" or "Explain in context", calls `ai_task.generate_data` over the
+websocket (`call_service`, with the answer returned; a request through the Supervisor's
+API would end after 5 minutes). To
 fill the AI dropdown it asks Home Assistant to render one fixed template that returns
 only the ids and names of AI Task entities. For auto-sniff it subscribes to two of the
-Marketplace's websocket signals (an install that ended, an uninstall), calls
+Marketplace's websocket signals (`marketplace/subscribe`: an install that ended, an
+uninstall); that, the installed list and the AI call are the only websocket commands
+the app sends. It calls
 `persistent_notification.create` and, only when you picked one, `notify.<target>`; to
 offer the targets it reads the list of services once and keeps only the `notify` names.
 It reads its own app info from the Supervisor (allowed for every app) to build the
@@ -224,11 +329,19 @@ It reads its own app info from the Supervisor (allowed for every app) to build t
 no ports, no Supervisor role, no folder access: the app never reads your config folder
 and never opens the installed copies.
 
+Scanned code is never run, built or installed. One kind of library is downloaded and
+read: one an integration hands the login you gave it (or an address) to. Barkley
+downloads that library's published package from PyPI's file host (the exact version
+the app gets, checksum checked, at most four per scan and 40 MB each), unpacks it as
+files and reads it as text.
+
 The app ships its own AppArmor profile (`apparmor.txt`, security rating 8). It confines
-every process in the container to what Barkley needs: run only the image's own Python,
-the scanner and the pinned tools (Semgrep, GuardDog, osv-scanner, uv), write only under
-`/data` (the scan store, options and caches) and `/tmp` (one workspace per scan), and
-use only ordinary network sockets. Nothing downloaded is executable. The scanner reads
+every process in the container to what Barkley needs: run only programs the image
+ships (its own Python, the scanner and the pinned tools), and use only ordinary
+network sockets. Barkley writes only under `/data` (the scan store, options and caches)
+and `/tmp` (one workspace per scan); s6, the start-up system the container runs on, also
+writes its own folders under `/run` and `/etc`. Nothing downloaded is executable. The
+scanner reads
 hostile code with several parsers, and this is the line that holds if one of them has a
 bug. Diagnostics shows the profile the app runs under; the Supervisor loads the profile
 when the app is installed or updated, so after an update check that the Diagnostics
@@ -238,9 +351,13 @@ line names Barkley's own profile, ending in `sniff_test (enforce)`
 Inside that, each run of a scanner tool gets a sandbox of its own (Landlock, a Linux
 kernel feature): it can write only that scan's folder, can't read the scan store, the
 options or other scans, can run only what the image ships, and can connect only to port
-443 (Semgrep nowhere). It can't signal Barkley or read its environment, where the
-Supervisor's token is. Diagnostics shows "Tool sandbox (Landlock)"; on a kernel without
-Landlock the tools run under the AppArmor profile alone, and that line says so.
+443 (Semgrep nowhere). It can't read Barkley's environment, where the Supervisor's
+token is, or signal Barkley (Linux 6.12 or later). The Tool sandbox line on Diagnostics
+names Landlock. On a kernel without
+Landlock (HA OS today), each tool runs in a narrower AppArmor profile of the app's own,
+`tools`: it can't read the Supervisor's token, the options or the scan store, and writes
+only to `/tmp` and the cache. Diagnostics then names that profile. If neither sandbox
+works, Barkley doesn't start, and the log says why.
 
 ## Installing
 

@@ -155,7 +155,7 @@ def test_ha_source_never_turns_a_failure_into_a_cached_answer(tmp_path, monkeypa
 def test_the_replacement_is_compared_with_the_original_line_by_line(tmp_path):
     calls = []
     ctx = _built(tmp_path, _fetch(calls=calls))
-    assert ctx["version"] == 5
+    assert ctx["version"] == 6
     patch = ctx["items"][PATCH["id"]]["patch"]
     cmp = patch["compare"]
     assert calls == [HA_PATH]
@@ -208,7 +208,7 @@ def test_github_not_answering_is_said_and_a_rate_limit_goes_through(tmp_path):
 
     patch = _built(tmp_path, down)["items"][PATCH["id"]]["patch"]
     assert patch["compare"] == {"state": "none", "why": "unreachable", "ha_version": "2026.11.1"}
-    assert "Sniffing this version again tries once more." in ui.patch_html(patch)
+    assert "Sniff this version again to try once more." in ui.patch_html(patch)
 
     def limited(path):
         raise LIMIT
@@ -267,7 +267,7 @@ def test_the_calm_line_counts_what_else_the_scan_has_on_the_replacements_lines(t
     assert "Barkley&#x27;s other checks found nothing there" in html or (
         "Barkley's other checks found nothing there" in html
     )
-    assert "isn't a statement that the code is safe" in html
+    assert "It doesn't mean the code is safe" in html
 
     other = {**PATCH, "id": "c" * 16, "rule_id": "py-eval-exec", "line": 30}
     outside = {**PATCH, "id": "d" * 16, "rule_id": "py-runtime-pip", "line": 12}
@@ -280,7 +280,10 @@ def test_the_calm_line_counts_what_else_the_scan_has_on_the_replacements_lines(t
         "addresses": 1, "ports": 1,
     }  # fmt: skip
     html = ui.patch_html(patch)
-    assert "This scan also has there: 1 other finding (" in html and "1 address, 1 port" in html
+    assert (
+        "This scan also found these in those lines: 1 other thing Barkley flagged (" in html
+        and "1 address, 1 port" in html
+    )
     assert "found nothing there" not in html
 
 
@@ -290,7 +293,8 @@ def test_what_it_means_names_what_is_replaced_only_for_home_assistants_source():
          "origin": "Home Assistant's built-in camera integration"}
     )  # fmt: skip
     assert (
-        "swaps _files of VodSource" in built_in and "the camera integration can reach" in built_in
+        "replaces _files of VodSource" in built_in
+        and "everything the camera integration can:" in built_in
     )
     core = explain.patch_means({"object": "homeassistant.core.HomeAssistant", "attr": "x",
                                 "origin": "Home Assistant's own code"})  # fmt: skip
@@ -347,7 +351,7 @@ def test_the_request_carries_the_comparison_and_the_readme_in_their_own_fences(t
     assert f"<<<README {nonce} " in text and "README.md:3| Shows a thumbnail" in text
     assert "comparison_by_barkley" in text and '"lines_only_in_the_original": 2' in text
     assert "What does the replacement do differently from the original" in text
-    assert "swaps _files of VodSource" in text  # the specific meaning, not the general one
+    assert "replaces _files of VodSource" in text  # the specific meaning, not the general one
     assert "grab passwords" not in text
     assert ai_context.ALIGN_FIELD in structure
     # the second round carries them too
@@ -465,24 +469,25 @@ def test_the_page_shows_the_comparison_and_the_sheet_the_labelled_opinion(tmp_pa
     _, _, page = get(f"{base}/scan/{sid}")
     assert "How it differs from the original" in page
     assert "<code>VodSource._files</code> in Home Assistant 2026.11.1" in page
-    assert "1 line only in the replacement, 2 lines only in the original" in page
+    assert "1 line is only in the replacement, and 2 lines are only in the original" in page
     assert '<span class="del">   18       - ' in page and '<span class="add">         30 + ' in page
     assert "Compared by Barkley, not by AI." in page
     assert "The rest of the replacement" in page
-    assert "While it runs, the app swaps _files of VodSource" in page
+    assert "While it runs, the app replaces _files of VodSource" in page
     assert "grab passwords" not in page  # the general text gave way to the specific one
-    assert "Also sent: Barkley's comparison with the original in Home Assistant 2026.11.1" in page
+    assert "Barkley also sends its comparison with the original in Home Assistant 2026.11.1" in page
     assert "the first 9 lines of the app's <code>README.md</code>" in page
     assert "The AI's opinion" not in page and not calls
     assert _click(base, sid)[0] == 303
     _wait(httpd, sid)
     _, _, page = get(f"{base}/scan/{sid}")
-    assert "<h3>The AI's opinion: consistent with the README</h3>" in page
+    assert "<h3>The AI thinks the code matches the README</h3>" in page
     assert "The README says it shows a thumbnail for each recording" in page
-    assert "This is the AI's opinion, not one of Barkley's checks." in page
-    assert "which is not the same as safe" in page
+    assert "This is the AI's opinion. It isn't one of Barkley's checks." in page
+    assert "but that doesn't make it safe" in page
     assert "<script" not in page
-    assert store.report(sid)["score"] == 75 and 'aria-label="Score 75 of 100"' in page
+    assert store.report(sid)["score"] == 75  # the stored capability score is untouched
+    assert 'aria-label="Threat 0 of 10"' in page and "of 100" not in page  # readings, not the AI's
     assert store.report(sid)["findings"] == rep["findings"]  # nothing cleared or changed
     httpd.shutdown()
 

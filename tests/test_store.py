@@ -161,6 +161,9 @@ def test_cli_reuses_stored_scans_for_from_to(tmp_path, monkeypatch):
         raise AssertionError("should have used the stored scans")
 
     monkeypatch.setattr(cli, "scan", no_scan)
+    # (0.14.1) stored scans are found by the scan-logic key; these reports carry only the
+    # tool version, which stands in for it here
+    monkeypatch.setattr(cli.logic, "key", lambda: report()["tool"]["version"])
     out = tmp_path / "d.json"
     args = ["diff", "acme/acme", "--from", "v1", "--to", "v2", "--ha-version", "2026.11.0"]
     assert cli.main([*args, "--store", str(db), "--json", "-o", str(out)]) == 0
@@ -181,7 +184,9 @@ def test_cli_scan_store_then_diff_stored_fixture_pair(tmp_path, fixtures, monkey
     for name in ("clean_integration", "clean_integration_v2"):
         assert cli.main(["scan", str(fixtures / name), "--offline", "--store", str(db)]) == 0
     rows = Store(db).history()
-    assert [r.score for r in rows] == [50, 89]  # --offline is incomplete: capped at 89
+    # --offline is incomplete: capped at 89. (0.15) v2 only names its new host and makes
+    # no request to it, so there is no "possible" flow any more: 75, not 50.
+    assert [r.score for r in rows] == [75, 89]
     clean = Store(db).report(rows[1].id)
     assert clean["complete"] is False  # --offline: incomplete, but zero findings
     assert clean["findings"] == []
@@ -190,7 +195,7 @@ def test_cli_scan_store_then_diff_stored_fixture_pair(tmp_path, fixtures, monkey
     args = ["diff", f"@{old}", f"@{new}", "--store", str(db), "--json", "-o", str(out)]
     assert cli.main(args) == 0
     kinds = sorted(c["kind"] for c in json.loads(out.read_text())["changes"])
-    assert kinds == ["new_flow", "new_host", "new_read"]
+    assert kinds == ["new_host", "new_read"]
     assert cli.main(["history", "--store", str(db)]) == 0
 
 

@@ -9,8 +9,11 @@ card lockfiles are almost entirely build tooling:
   network-vector (AV:N) CVEs are tagged inbound, so --exposure public raises them.
 - Cards: dev-only packages (build tools; never in the shipped .js) get no dep-vuln;
   bundled packages are capped at medium, with no inbound tag (browser code).
-- dep-malicious is critical everywhere, dev packages included: a malicious build tool
-  can inject code into the bundle (the event-stream attack).
+- dep-malicious is critical for anything that ships. (0.15, his decision 2026-11-22) A
+  malicious package only used to build (dev-only, or a known build tool) is
+  dep-malicious-build: high, Threat "possible" (points set in Settings), since it runs on
+  the developer's machine and could still change the bundle (the event-stream attack).
+- npm's empty "0.0.1-security" stand-in is an info note (dep-npm-standin).
 
 A scanned repo can ship an `osv-scanner.toml` that ignores advisories (e.g. hides a
 MAL- entry). So lockfiles are copied alone into an empty directory of ours, and we always
@@ -19,6 +22,7 @@ pass our own empty `--config`.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import shutil
@@ -83,6 +87,16 @@ def _severity_for(score: float) -> Severity:
     return Severity.LOW
 
 
+# (0.15, full Marketplace run 2026-11-22) When npm takes a malicious package down it
+# publishes an empty stand-in under the same name, version "0.0.1-security", so the name
+# can't be taken again. A real card's lockfile held that stand-in: no code, nothing to report.
+_NPM_STANDIN = re.compile(r"0\.0\.1-security(?:\.\d{1,4})?")
+
+
+def npm_standin(ecosystem: str, version: str) -> bool:
+    return ecosystem == "npm" and bool(_NPM_STANDIN.fullmatch(version))
+
+
 def is_malicious(vuln: dict[str, Any]) -> bool:
     if str(vuln.get("id", "")).startswith("MAL-"):
         return True
@@ -124,6 +138,25 @@ def _network_vector(group: dict[str, Any], vulns: dict[str, dict[str, Any]]) -> 
     return False
 
 
+_IMPACT = re.compile(r"(?:^|/)(V?[CI]|S[CI]):([A-Z])")
+
+
+def availability_only(group: dict[str, Any], vulns: dict[str, dict[str, Any]]) -> bool:
+    """Every CVSS vector of the group's records says no confidentiality and no integrity
+    impact (v3 C:N/I:N; v4 VC/VI/SC/SI all N). False when there is no vector at all."""
+    seen = False
+    for vid in group.get("ids", []):
+        for sev in (vulns.get(vid) or {}).get("severity") or []:
+            vector = str(sev.get("score", ""))
+            parts = dict(_IMPACT.findall(vector))
+            if not parts:
+                continue
+            seen = True
+            if any(v != "N" for v in parts.values()):
+                return False
+    return seen
+
+
 def _ids_text(ids: list[str]) -> str:
     more = f" (+{len(ids) - _MAX_IDS} more)" if len(ids) > _MAX_IDS else ""
     return ", ".join(ids[:_MAX_IDS]) + more
@@ -134,10 +167,26 @@ class VulnPolicy:
     max_severity: Severity
     inbound: bool  # tag network-vector CVEs as inbound surface
     where: str  # how the package reaches the user, for the message
+    # (0.14.1) cap for an advisory whose every CVSS vector says no confidentiality and no
+    # integrity impact (ReDoS, DoS): in a browser that is a frozen tab
+    availability_max: Severity | None = None
 
 
 PYTHON_POLICY = VulnPolicy(Severity.HIGH, True, "installed into Home Assistant's Python")
-NPM_POLICY = VulnPolicy(Severity.MEDIUM, False, "bundled into the card's JavaScript")
+# (0.14.1, user decision 2026-11-18) Browser code: rated like Python packages (GitHub's
+# label, else CVSS, at most high), because a panel's or card's JavaScript runs on Home
+# Assistant's own origin, where a code-execution or XSS bug can reach the user's token;
+# availability-only advisories at most medium. Was capped at medium (2026-11-08).
+# (0.15) "listed", not "bundled": a lockfile says the card's build uses a package, not that
+# its code is in the file the browser loads (on the 600-app batch most card findings
+# were build tools listed as run-time packages).
+NPM_POLICY = VulnPolicy(
+    Severity.HIGH, False, "listed as one of the card's run-time packages", Severity.MEDIUM
+)
+# An unchanged published library an integration ships (analyzers/libraries.py).
+VENDORED_POLICY = VulnPolicy(
+    Severity.HIGH, False, "shipped unchanged in the app's web files", Severity.MEDIUM
+)
 
 # (0.14.0, user decision 2026-11-17) Tools that only transform code when the card is
 # built: they run on the developer's machine and none of their code ends up in the
@@ -158,6 +207,30 @@ NPM_BUILD_TOOLS = frozenset(
         "@babel/core",
         "@babel/parser",
         "@babel/preset-env",
+        # (0.15) Developer-machine tooling that cards often list under `dependencies`, or
+        # in a lockfile with no dev marks: file matching and watching, spawning shells,
+        # unpacking, test helpers. On the 600-app batch, 41 of 67 card findings were
+        # these, and none of the 11 cards' shipped files held a trace of them (their
+        # names, their error texts, `require("fs")` or `child_process`).
+        "braces",
+        "picomatch",
+        "micromatch",
+        "minimatch",
+        "brace-expansion",
+        "glob",
+        "fill-range",
+        "to-regex-range",
+        "anymatch",
+        "chokidar",
+        "readdirp",
+        "watchpack",
+        "cross-spawn",
+        "tar",
+        "get-func-name",
+        "pathval",
+        "chai",
+        "mocha",
+        "jest",
     }
 )
 
@@ -213,22 +286,34 @@ def latest_release(
 ) -> tuple[str | None, str | None, int | None]:
     """(newest final release, its date, final releases newer than `version`) from PyPI or
     the npm registry. Raises http.HttpError."""
-    have = version_key(ecosystem, version)
     if ecosystem == "PyPI":
         meta = http.get_json(f"https://pypi.org/pypi/{name}/json")
-        latest = str((meta.get("info") or {}).get("version") or "") or None
-        dates: dict[str, str] = {}
-        for v, files in (meta.get("releases") or {}).items():
-            live = [f for f in files or [] if not f.get("yanked")]
-            if live:
-                dates[v] = min(str(f.get("upload_time_iso_8601", "")) for f in live)
     elif ecosystem == "npm":
         meta = http.get_json("https://registry.npmjs.org/" + name.replace("/", "%2F"))
-        latest = str((meta.get("dist-tags") or {}).get("latest") or "") or None
-        times = meta.get("time") or {}
-        dates = {v: str(times.get(v, "")) for v in (meta.get("versions") or {})}
     else:
         return None, None, None
+    return latest_from_meta(meta, ecosystem, version)
+
+
+def latest_from_meta(
+    meta: Any, ecosystem: str, version: str
+) -> tuple[str | None, str | None, int | None]:
+    """latest_release's answer from a package's PyPI JSON or npm registry document that
+    is already in hand (pypi_meta reads every Python package's anyway)."""
+    if not isinstance(meta, dict):
+        return None, None, None
+    have = version_key(ecosystem, version)
+    dates: dict[str, str] = {}
+    if ecosystem == "PyPI":
+        latest = str((meta.get("info") or {}).get("version") or "") or None
+        for v, files in list((meta.get("releases") or {}).items())[:10000]:
+            live = [f for f in files or [] if isinstance(f, dict) and not f.get("yanked")]
+            if live:
+                dates[v] = min(str(f.get("upload_time_iso_8601", "")) for f in live)
+    else:
+        latest = str((meta.get("dist-tags") or {}).get("latest") or "") or None
+        times = meta.get("time") if isinstance(meta.get("time"), dict) else {}
+        dates = {v: str(times.get(v, "")) for v in list(meta.get("versions") or {})[:10000]}
     if latest is None:
         return None, None, None
     top = version_key(ecosystem, latest)
@@ -237,17 +322,94 @@ def latest_release(
     return latest, (dates.get(latest) or "")[:10] or None, behind
 
 
+_CVE = re.compile(r"^CVE-\d{4}-\d{4,7}$")
+_SSVC_WORDS = {
+    "Exploitation": ("none", "poc", "active"),
+    "Automatable": ("yes", "no"),
+    "Technical Impact": ("partial", "total"),
+}
+SSVC_TIMEOUT = 10.0
+SSVC_CACHE_SECONDS = 24 * 3600
+
+
+def _ssvc_cache(cve: str) -> Path:
+    from sniff_test import paths
+
+    return paths.cache_root() / "ssvc" / f"{cve}.json"
+
+
+def ssvc(cve: str) -> tuple[str, str, str, bool] | None:
+    """(0.14.1) CISA's SSVC decision points and KEV listing for one CVE, from the CVE
+    record (CISA's ADP container): (exploitation, automatable, impact, kev). None when
+    the record has none or couldn't be read: then nothing is raised or explained, and
+    the lookup never becomes a scan result. Answers are kept 24 hours."""
+    import time
+
+    from sniff_test import paths
+
+    if not _CVE.match(cve):
+        return None
+    cache = _ssvc_cache(cve)
+    try:
+        data = json.loads(cache.read_text("utf-8"))
+        if time.time() - float(data["t"]) < SSVC_CACHE_SECONDS:
+            got = data["ssvc"]
+            return tuple(got) if got else None  # type: ignore[return-value]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    try:
+        rec = http.lookup_json(f"https://cveawg.mitre.org/api/cve/{cve}", SSVC_TIMEOUT)
+    except http.HttpError:
+        return None
+    out: tuple[str, str, str, bool] | None = None
+    options: dict[str, str] = {}
+    kev = False
+    adps = ((rec or {}).get("containers") or {}).get("adp") if isinstance(rec, dict) else None
+    for adp in adps if isinstance(adps, list) else []:
+        for m in (adp.get("metrics") or []) if isinstance(adp, dict) else []:
+            other = m.get("other") if isinstance(m, dict) else None
+            if not isinstance(other, dict):
+                continue
+            if other.get("type") == "kev":
+                kev = True
+            if other.get("type") == "ssvc":
+                for opt in (other.get("content") or {}).get("options") or []:
+                    if isinstance(opt, dict):
+                        for k, v in opt.items():
+                            if k in _SSVC_WORDS and str(v).lower() in _SSVC_WORDS[k]:
+                                options[k] = str(v).lower()
+    if options or kev:
+        out = (
+            options.get("Exploitation", ""),
+            options.get("Automatable", ""),
+            options.get("Technical Impact", ""),
+            kev,
+        )
+    with contextlib.suppress(OSError):
+        paths.atomic_write(cache, json.dumps({"t": time.time(), "ssvc": out}))
+    return out
+
+
 def _dep_facts(p: _Pkg, ids: list[str], direct: set[str] | None, lookup: Lookup | None) -> DepFacts:
     advisories = []
     for vid in ids:
         rec = p.vulns.get(vid) or {}
+        aliases = tuple(str(a) for a in (rec.get("aliases") or [])[:4])
+        cves = [a for a in (vid, *aliases) if _CVE.match(a)]
+        # online only (`lookup` is None offline), like the newest-release facts
+        found = ssvc(cves[0]) if cves and lookup is not None else None
+        exploitation, automatable, impact, kev = found or ("", "", "", False)
         advisories.append(
             Advisory(
                 id=vid,
                 summary=str(rec.get("summary") or "")[:300],
                 details=str(rec.get("details") or "")[:_DETAILS_MAX],
                 fixed=fixed_for(rec, p.name, p.ecosystem, p.version),
-                aliases=tuple(str(a) for a in (rec.get("aliases") or [])[:4]),
+                aliases=aliases,
+                exploitation=exploitation,
+                automatable=automatable,
+                impact=impact,
+                kev=kev,
             )
         )
     latest = date = behind = None
@@ -284,6 +446,76 @@ def facts_sentence(d: DepFacts) -> str:
     return out
 
 
+BUILD_RULE = "dep-malicious-build"
+STANDIN_RULE = "dep-npm-standin"
+_SUMMARY_MAX = 240
+_OS_NAMES = {"darwin": "Macs", "linux": "Linux", "win32": "Windows"}
+
+
+def _summary(p: _Pkg, ids: list[str]) -> str:
+    """The advisory's own one-line summary (OSV's text, not the scanned app's)."""
+    for vid in ids:
+        text = str((p.vulns.get(vid) or {}).get("summary") or "").strip()
+        if text:
+            text = " ".join(text.split())[:_SUMMARY_MAX]
+            return text if text.endswith(".") else text + "."
+    return ""
+
+
+def _malicious_build(p: _Pkg, mal: list[str], file: str | None, os_: list[str] | None) -> Finding:
+    """(0.15, his decision 2026-11-22) Malware in a package only used to build: it runs on
+    the developer's machine, not in your home, but it could change what ships. Threat
+    "possible" (high; the points are a Setting), with what the advisory says."""
+    said = _summary(p, mal)
+    only = [o for o in (os_ or []) if not o.startswith("!")]
+    where = (
+        f" It only installs on {' and '.join(_OS_NAMES.get(o, o) for o in only[:3])}."
+        if only
+        else ""
+    )
+    return Finding(
+        rule_id=BUILD_RULE,
+        title="Built with a tool known to be malware",
+        severity=Severity.HIGH,
+        category=Category.DEPENDENCY,
+        message=(
+            f"{p.name} {p.version} is used to build the app and is listed as malicious "
+            f"({_ids_text(mal)}).{(' ' + said) if said else ''}{where} A build tool runs on "
+            "the developer's machine while the app is built, not in your home, but it could "
+            "change what ships. Barkley read the shipped files themselves; anything found "
+            "there is listed on its own. The developer should update or remove this tool."
+        ),
+        file=file,
+        evidence=f"{p.name}@{p.version} ({p.ecosystem}): {_ids_text(mal)}",
+        tags=frozenset({Tag.MALWARE, Tag.POSSIBLE}),
+        analyzer=NAME,
+        platforms=frozenset(p.platforms),
+    )
+
+
+def standin_note(p: _Pkg, file: str | None, history: Callable[[str], str] | None) -> Finding:
+    """(0.15, his decision 2026-11-22) npm's empty stand-in for a package it removed as
+    malware ("0.0.1-security"): no code, so nothing installed with it, but a dependency
+    nobody needed. `history` says, when it can, whether an earlier version may have been
+    installed on the developer's machine."""
+    told = history(p.name) if history is not None else ""
+    return Finding(
+        rule_id=STANDIN_RULE,
+        title="Lists an empty package npm put in place of removed malware",
+        severity=Severity.INFO,
+        category=Category.DEPENDENCY,
+        message=(
+            f"{p.name} {p.version} is the empty package npm publishes after it removes a "
+            "malicious one, so the name can't be taken again. It has no code: nothing from "
+            "it is installed or ships with the app. The app doesn't need it."
+            + (f" {told}" if told else "")
+        ),
+        file=file,
+        evidence=f"{p.name}@{p.version} ({p.ecosystem})",
+        analyzer=NAME,
+    )
+
+
 def to_findings(
     pkgs: list[_Pkg],
     file: str | None,
@@ -293,6 +525,8 @@ def to_findings(
     direct: set[str] | None = None,
     lookup: Lookup | None = None,
     build_tool: Callable[[str], bool] | None = None,
+    os_of: dict[tuple[str, str], list[str]] | None = None,
+    standin_history: Callable[[str], str] | None = None,
 ) -> list[Finding]:
     """skip_vulns: names whose CVEs aren't ours to report (HA-provided).
     dev_only: (name, version) of build-only packages: malware is reported, CVEs aren't.
@@ -302,7 +536,14 @@ def to_findings(
     for p in sorted(pkgs, key=lambda p: (p.name, p.version)):
         evidence_base = f"{p.name}@{p.version} ({p.ecosystem})"
         plats = frozenset(p.platforms)
+        if npm_standin(p.ecosystem, p.version):
+            out.append(standin_note(p, file, standin_history))
+            continue
         mal = sorted(v for v, data in p.vulns.items() if is_malicious(data))
+        builds = (p.name, p.version) in dev_only or (build_tool is not None and build_tool(p.name))
+        if mal and builds:
+            out.append(_malicious_build(p, mal, file, (os_of or {}).get((p.name, p.version))))
+            continue
         if mal:
             out.append(
                 Finding(
@@ -329,6 +570,8 @@ def to_findings(
         best_score, best = max(scored, key=lambda sg: sg[0] if sg[0] is not None else 5.0)
         severity = _severity_for(best_score) if best_score is not None else Severity.MEDIUM
         severity = min(severity, policy.max_severity)
+        if policy.availability_max is not None and availability_only(best, p.vulns):
+            severity = min(severity, policy.availability_max)
         ids = [g["ids"][0] for _s, g in scored if g.get("ids")]
         inbound = policy.inbound and _network_vector(best, p.vulns)
         tags = frozenset({Tag.INBOUND}) if inbound else frozenset()
@@ -481,6 +724,29 @@ def check_python(
     if errors:
         detail += "; " + " | ".join(errors)
     return AnalyzerResult(name, state, findings, detail, tool_version=osv_version())
+
+
+def npm_os(lockfile: Path) -> dict[tuple[str, str], list[str]]:
+    """(name, version) -> the systems a package-lock.json (v2/v3) says it installs on
+    (`"os": ["darwin"]`); empty for other lockfiles, which don't record it."""
+    if lockfile.name != "package-lock.json":
+        return {}
+    try:
+        if lockfile.stat().st_size > 64 * 1024 * 1024:
+            return {}
+        doc = json.loads(lockfile.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError, RecursionError):
+        return {}
+    out: dict[tuple[str, str], list[str]] = {}
+    pkgs = doc.get("packages") if isinstance(doc, dict) else None
+    for key, meta in (pkgs or {}).items() if isinstance(pkgs, dict) else ():
+        if not isinstance(meta, dict) or not isinstance(meta.get("os"), list):
+            continue
+        name = str(key).rsplit("node_modules/", 1)[-1]
+        version = meta.get("version")
+        if name and isinstance(version, str):
+            out[(name, version)] = [str(o)[:20] for o in meta["os"][:5]]
+    return out
 
 
 def npm_dev_only(lockfile: Path) -> set[tuple[str, str]]:
@@ -876,14 +1142,16 @@ def npm_lockfiles(root: Path) -> list[Path]:
     return [root / n for n in NPM_LOCKFILES if (root / n).is_file() and not (root / n).is_symlink()]
 
 
-def run_npm(target: Target, work: Path) -> AnalyzerResult:
+def run_npm(target: Target, work: Path, gh: Any = None) -> AnalyzerResult:
     root = target.source_root
     if target.kind is not TargetKind.PLUGIN or root is None:
         return AnalyzerResult(f"{NAME}-npm", AnalyzerState.NOT_APPLICABLE)
-    return check_npm(root, work)
+    from sniff_test.analyzers import npm_meta
+
+    return check_npm(root, work, npm_meta.standin_history(target.repo, gh))
 
 
-def check_npm(root: Path, work: Path) -> AnalyzerResult:
+def check_npm(root: Path, work: Path, history: Any = None) -> AnalyzerResult:
     """The card's lockfiles (and package.json) under `root`: the source tree at the
     scanned ref, or the copies a stored scan saved (recheck.py)."""
     name = f"{NAME}-npm"
@@ -930,6 +1198,8 @@ def check_npm(root: Path, work: Path) -> AnalyzerResult:
             direct=_npm_direct(root),
             lookup=latest_release,
             build_tool=is_build_tool,
+            os_of=npm_os(lf),
+            standin_history=history(lf.relative_to(root).as_posix()) if history else None,
         )
     state = AnalyzerState.ERROR if errors else AnalyzerState.OK
     detail = ", ".join(lf.name for lf in lockfiles) + (f"; {' | '.join(errors)}" if errors else "")

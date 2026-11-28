@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from sniff_test import memory, supervisor
-from sniff_test.analyzers import _proc, guarddog
+from sniff_test.analyzers import _proc
 from sniff_test.analyzers.semgrep import _tool_env as semgrep_env
 from sniff_test.analyzers.semgrep import rules_const_dir, rules_dir
 from sniff_test.fetch.github import GitHub, RateLimit
@@ -47,7 +47,6 @@ def _tail(text: str) -> str:
 _TOOLS: dict[str, tuple[Callable[[], tuple[Path, ...]], Callable[[], tuple[Path, ...]]]] = {
     "semgrep": (lambda: (), lambda: (rules_dir(), rules_const_dir())),
     "osv-scanner": (lambda: (), lambda: ()),
-    "guarddog": (lambda: guarddog._cache_dirs(), lambda: ()),
     "uv": (lambda: (), lambda: ()),
 }
 
@@ -55,15 +54,14 @@ _TOOLS: dict[str, tuple[Callable[[], tuple[Path, ...]], Callable[[], tuple[Path,
 def sandbox_check() -> Check:
     from sniff_test import sandbox
 
-    v, line = sandbox.status()
-    return Check("Tool sandbox (Landlock)", v > 0 or not _sandbox_required(), line)
+    _, line = sandbox.status()
+    return Check("Tool sandbox", sandbox.enabled() or not _sandbox_required(), line)
 
 
 def _sandbox_required() -> bool:
-    """Standalone has no AppArmor profile of Barkley's, so the sandbox is required there
-    (serve refuses to start without it unless BARKLEY_UNSANDBOXED=1)."""
-    conn = supervisor.connection()
-    return conn is not None and conn.mode == "direct"
+    """In the app and standalone the tools must be sandboxed (serve refuses to start
+    otherwise unless BARKLEY_UNSANDBOXED=1); the CLI on a dev machine runs without."""
+    return supervisor.connection() is not None
 
 
 def _run(name: str, cmd: list[str], cwd: Path, env: dict[str, str], timeout: int = 300) -> Check:
@@ -91,11 +89,21 @@ def _run(name: str, cmd: list[str], cwd: Path, env: dict[str, str], timeout: int
     )
 
 
+def _free() -> str:
+    """(#22) Free space in the temp folder: a scan of an integration with big libraries
+    keeps a few of their archives there at a time (about 0.5 GB is plenty)."""
+    from sniff_test.workspace import free_mb
+
+    mb = free_mb()
+    return "unknown" if mb is None else f"{mb:,} MB"
+
+
 def _facts() -> Check:
     lines = [
         f"uid={os.getuid()} gid={os.getgid()}",
         f"HOME={os.environ.get('HOME', '(unset)')}",
-        f"TMPDIR={os.environ.get('TMPDIR', '(unset)')} tempdir={tempfile.gettempdir()}",
+        f"TMPDIR={os.environ.get('TMPDIR', '(unset)')} tempdir={tempfile.gettempdir()}"
+        f" free={_free()}",
         f"cpus={os.cpu_count()}",
     ]
     try:
@@ -129,21 +137,42 @@ def python_check() -> Check:
     m = re.search(r"^# python: (\d+)\.(\d+)\.(\d+)", text, re.M)
     src = re.search(r"^# Source: home-assistant/core at (\S+)", text, re.M)
     if not m:
-        return Check("Barkley's Python", True, f"{mine} (HA's not recorded)")
+        return Check("Barkley's Python", True,
+                     f"{mine} (Home Assistant's Python version isn't recorded)")  # fmt: skip
     ha = tuple(int(x) for x in m.groups())
     ok = sys.version_info[:3] >= ha
-    where = f"HA {src.group(1)} runs {'.'.join(m.groups())}" if src else "HA's"
+    ha_ver = ".".join(m.groups())
+    where = (f"Home Assistant {src.group(1)} runs {ha_ver}" if src
+             else f"Home Assistant runs {ha_ver}")  # fmt: skip
     return Check(
         "Barkley's Python",
         ok,
-        f"{mine}; {where}" + ("" if ok else ": older, so files using newer syntax are "
-                              "skipped by the parse-only checks"),
+        f"{mine}; {where}" + ("" if ok else ". Barkley's Python is older, so the checks that "
+                              "parse Python code skip files that use newer Python syntax."),
     )  # fmt: skip
 
 
+def cpu_check(missing: list[str] | bool | None = False) -> Check:
+    """(0.14.1, #18) The scanner tools need x86-64-v2. A VM's default CPU type may not
+    offer it, and then every scan fails; say so before one does."""
+    from sniff_test import cpu
+
+    gap = cpu.missing_v2() if missing is False else missing
+    if gap is None:
+        return Check("CPU", True, "Not an x86-64 CPU, or Barkley can't read its flags, so "
+                     "there's nothing to check.")  # fmt: skip
+    if not gap:
+        return Check("CPU", True, "x86-64-v2 instructions present")
+    return Check("CPU", False, f"missing {', '.join(gap)}. {cpu.FIX}")
+
+
+# (0.15, #20) Settings → Low memory; the panel sets it before Diagnostics runs
+memory_floor: int = memory.REFUSE_BELOW
+
+
 def memory_check(mem: memory.Memory | None = None) -> Check:
-    """The scan guard: warn under ~2 GB available, refuse under ~1 GB."""
-    mem = mem or memory.check()
+    """The scan guard: warn under ~2 GB available, refuse under the Low memory floor."""
+    mem = (mem or memory.check()).with_floor(memory_floor)
     label = {"ok": "ok", "warn": "LOW", "refuse": "TOO LOW", "unknown": "unknown"}[mem.level]
     return Check(f"memory guard ({label})", not mem.refuse, mem.message())
 
@@ -153,7 +182,8 @@ def github_check(budget: RateLimit | None = None, fetch: bool = True) -> Check:
     if budget is None and fetch:
         budget = GitHub.from_env().rate_limit()
     if budget is None:
-        return Check("GitHub API", True, "budget unknown (GitHub unreachable?)")
+        return Check("GitHub API", True, "Barkley couldn't read the request limit. GitHub "
+                     "may be unreachable.")  # fmt: skip
     when = time.strftime("%H:%M UTC", time.gmtime(budget.reset_at))
     token = "with a token" if budget.authenticated else "no token: 60/hour, about 5 scans"
     return Check(
@@ -173,12 +203,13 @@ def supervisor_checks(
     conn = supervisor.connection()
     if conn is None:
         return [Check("Home Assistant", True,
-                      "not running as an add-on (no SUPERVISOR_TOKEN), and no HA_URL")]  # fmt: skip
+                      "not running as a Home Assistant app (no SUPERVISOR_TOKEN), and no "
+                      "HA_URL set")]  # fmt: skip
     out = []
     if conn.mode == "direct":
         how = ("https" if conn.tls else
-               "plain http: the token crosses the network unencrypted; use https if "
-               "Home Assistant offers it")  # fmt: skip
+               "plain http, so the token crosses the network unencrypted. Use https if "
+               "Home Assistant offers it.")  # fmt: skip
         out.append(Check("Home Assistant connection", True,
                          f"standalone, {conn.base} ({how})"))  # fmt: skip
     t0 = time.monotonic()
@@ -187,8 +218,8 @@ def supervisor_checks(
         out.append(Check("Home Assistant version", True, f"{ha} (from {conn.where})"))
     else:
         out.append(Check("Home Assistant version", False,
-                         f"{conn.where} didn't answer /api/config; scans fall back to "
-                         "the latest stable HA release"))  # fmt: skip
+                         f"{conn.where} didn't answer /api/config, so scans use the "
+                         "latest stable Home Assistant release instead."))  # fmt: skip
     try:
         items, other = installed_fn()
         updates = sum(1 for i in items if i.update)
@@ -208,7 +239,7 @@ def supervisor_checks(
 
 def _semgrep_scan(sample: Path, run_dir: Path) -> Check:
     sg = _run(
-        "semgrep scan (our rules, one-line sample)",
+        "semgrep scan (Barkley's rules, one-line sample)",
         # (0.14.0) Both rule folders, so a missing or broken second pass shows here.
         ["semgrep", "scan", "--config", str(rules_dir()), "--config", str(rules_const_dir()),
          "--json", "--metrics=off",
@@ -225,25 +256,6 @@ def _semgrep_scan(sample: Path, run_dir: Path) -> Check:
     except ValueError:
         sg.summary += "; output is not JSON"
     return sg
-
-
-def _guarddog_env() -> dict[str, str]:
-    gd_exe = shutil.which("guarddog")
-    return guarddog.tool_env(gd_exe) if gd_exe else _proc.tool_env()  # lists cached under /data
-
-
-def _guarddog_scan(sample: Path, run_dir: Path) -> Check:
-    gd_env = _guarddog_env()
-    gd_cmd = ["guarddog", "pypi", "scan", str(sample), "--output-format", "json"]
-    gd = _run("guarddog scan (one-line sample)", gd_cmd, run_dir, gd_env)
-    if not gd.ok and "sandbox" in gd.stderr.lower():
-        # What the analyzer does too: GuardDog only parses; the container is the
-        # outer sandbox. Reported, not hidden.
-        retry = _run("guarddog scan (one-line sample)", [*gd_cmd, "--no-sandbox"], run_dir,
-                     gd_env)  # fmt: skip
-        retry.summary += "; kernel sandbox unavailable here, ran with --no-sandbox"
-        gd = retry
-    return gd
 
 
 _OSV_SAMPLE = "osv-scanner scan (empty sample lockfile)"
@@ -287,6 +299,7 @@ def steps(addon: bool = False) -> list[Step]:
         ("environment", lambda s, r: _facts()),
         ("Barkley's Python", lambda s, r: python_check()),
         ("memory guard", lambda s, r: memory_check()),
+        ("CPU", lambda s, r: cpu_check()),
         ("tool sandbox", lambda s, r: sandbox_check()),
         ("GitHub API", lambda s, r: github_check()),
     ]
@@ -295,14 +308,11 @@ def steps(addon: bool = False) -> list[Step]:
     out += [
         ("semgrep --version",
          lambda s, r: _run("semgrep --version", ["semgrep", "--version"], r, semgrep_env())),
-        ("semgrep scan (our rules, one-line sample)", _semgrep_scan),
+        ("semgrep scan (Barkley's rules, one-line sample)", _semgrep_scan),
         ("osv-scanner --version",
          lambda s, r: _run("osv-scanner --version", ["osv-scanner", "--version"], r,
                            _proc.tool_env())),
         (_OSV_SAMPLE, _osv_scan),
-        ("guarddog --version",
-         lambda s, r: _run("guarddog --version", ["guarddog", "--version"], r, _guarddog_env())),
-        ("guarddog scan (one-line sample)", _guarddog_scan),
         ("uv --version", lambda s, r: _run("uv --version", ["uv", "--version"], r,
                                            _proc.tool_env())),
     ]  # fmt: skip

@@ -9,7 +9,7 @@ Kinds (decided 2026-11-17):
 - Capability: powerful things the app is able to do. Normal for some apps; what an
   attacker would get if the app were ever compromised.
 - Practice: how the app is made and released.
-- Vulnerability: published security bugs in the libraries it uses.
+- Vulnerability: published vulnerabilities in the libraries it uses.
 - Coverage: parts of the code the scan couldn't read.
 
 Kinds never change a severity. Scoring reads them only for the "no Threat" floor
@@ -26,23 +26,6 @@ COVERAGE = "coverage"
 
 ORDER = (THREAT, CAPABILITY, VULNERABILITY, PRACTICE, COVERAGE)
 
-TITLES = {
-    THREAT: "Threats",
-    CAPABILITY: "What it can do",
-    VULNERABILITY: "Known bugs in its libraries",
-    PRACTICE: "How it's made",
-    COVERAGE: "What Barkley couldn't read",
-}
-BLURBS = {
-    THREAT: "Signs of malicious behavior: sending your data or logins off the box, hidden or "
-    "disguised code, known malware.",
-    CAPABILITY: "Powerful things the app is able to do. Normal for some apps; it's what an "
-    "attacker would get if this app were ever compromised.",
-    VULNERABILITY: "Published security bugs in code libraries it uses.",
-    PRACTICE: "The developer's habits and how the release was built.",
-    COVERAGE: "Parts of the code the scan couldn't check.",
-}
-
 THREAT_RULES = frozenset(
     {
         "ha-exfil-taint",
@@ -50,6 +33,7 @@ THREAT_RULES = frozenset(
         "card-token-exfil",
         "endpoint-exfil-host",
         "dep-malicious",
+        "dep-malicious-build",
         "py-b64-exec",
         "card-b64-eval",
         "card-eval-remote",
@@ -72,15 +56,14 @@ PRACTICE_RULES = frozenset(
         "dep-sdist-only",
         "dep-very-new-package",
         "dep-typosquat",
+        "dep-lookalike-own",
         "py-runtime-pip-listed",
+        "py-pickle-stored",
         "telemetry-shadow",
         "telemetry-opt-out",
         "telemetry-usage",
     }
 )
-
-# Known malware can never be accepted (hard rule): no tick, no reviewed score.
-NEVER_ACCEPT = frozenset({"dep-malicious"})
 
 # Paranoid mode (default off, user decision 2026-11-17/18): while it's off these are left
 # out of the page and the score. The test for each: it touches no password or login,

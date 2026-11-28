@@ -80,10 +80,10 @@ def _target(tmp_path):
     return Target("a/b", TargetKind.INTEGRATION, tmp_path, tmp_path, repo="a/b", ref="v1")
 
 
-def test_run_makes_two_lookups_and_rate_limit_is_raised(tmp_path):
+def test_run_makes_three_lookups_and_rate_limit_is_raised(tmp_path):
     gh = GH()
     h = rh.run(_target(tmp_path), gh, NOW)
-    assert len(gh.paths) == 2 and h.update_prs["open"] == 0 and h.security_issues["open"] == 0
+    assert len(gh.paths) == 3 and h.update_prs["open"] == 0 and h.security_issues["open"] == 0
     try:
         rh.run(_target(tmp_path), GH(RateLimitError("u", 0.0, False)), NOW)
         raise AssertionError("a rate limit must not become a result")
@@ -103,11 +103,14 @@ def test_cross_check_and_page_section(tmp_path):
     assert not rh.to_dict(h, {"dep-vuln"}, "plugin")["dependabot_but_known_vulns"]  # npm
     html = ui.hygiene_html({"target": {"repo": "a/b"}, "hygiene": d})
     assert "Dependabot is set up to propose updates for Python packages" in html
-    assert "<b>3</b>, the oldest 4 months old" in html
+    assert (
+        "<b>3</b> dependency-update pull requests are waiting to be merged. "
+        "The oldest is 4 months old." in html
+    )
     assert 'href="https://github.com/a/b/issues/9"' in html
     assert "<script>" not in html and "&lt;script&gt;" in html
-    assert "yet this release ships some with known vulnerabilities" in html
-    assert "never changes the score" in html
+    assert "but this release ships some with known vulnerabilities (listed above)" in html
+    assert "never changes the readings" in html
     assert ui.hygiene_html({}) == ""  # reports from before 0.6.0
 
 
@@ -116,7 +119,8 @@ def test_turned_off_pulls_and_issues_need_no_request(tmp_path):
     t.repo_meta = {"full_name": "a/b", "has_pull_requests": False, "has_issues": False}
     gh = GH()
     h = rh.run(t, gh, NOW)
-    assert gh.paths == [] and h.update_prs == {"off": True} and not h.errors
+    assert gh.paths == ["/repos/a/b/actions/workflows?per_page=100"]
+    assert h.update_prs == {"off": True} and not h.errors
     html = ui.hygiene_html({"target": {"repo": "a/b"}, "hygiene": rh.to_dict(h, set(), "plugin")})
     assert "Pull requests are turned off" in html and "Issues are turned off" in html
 
@@ -129,3 +133,43 @@ def test_report_json_handles_turned_off_issues(tmp_path):
     h = rh.Hygiene(update_prs={"off": True}, security_issues={"off": True})
     scan = SimpleNamespace(hygiene=h, target=SimpleNamespace(kind="plugin"))
     assert _hygiene_json(scan, [])["security_issues"] == {"off": True}
+
+
+def test_code_scanning_switched_on_in_the_settings_counts(tmp_path):
+    """(0.15, his report) CodeQL's default setup has no workflow file; GitHub's workflow
+    list names it. A disabled one, and a look-alike path, don't count."""
+
+    class Listing(GH):
+        def __init__(self, rows):
+            super().__init__()
+            self.rows = rows
+
+        def get_json(self, path):
+            self.paths.append(path)
+            return {"workflows": self.rows} if "/actions/workflows" in path else []
+
+    on = [
+        {"name": "Build", "path": ".github/workflows/build.yml", "state": "active"},
+        {"name": "CodeQL", "path": "dynamic/github-code-scanning/codeql", "state": "active"},
+        {"name": "Dependabot Updates", "path": "dynamic/dependabot/dependabot-updates",
+         "state": "active"},
+    ]  # fmt: skip
+    h = rh.run(_target(tmp_path), Listing(on), NOW)
+    assert h.scanners == [{"name": "CodeQL", "kind": "code", "workflow": "", "via": "github"}]
+    assert h.dependabot_updates
+    d = rh.to_dict(h, set(), "plugin")
+    html = ui.hygiene_html({"target": {"repo": "a/b"}, "hygiene": d})
+    assert "GitHub's code scanning is switched on in the repository's settings: CodeQL" in html
+    assert "run no security scanner" not in html
+    assert "Dependabot's updates are switched on in the repository's settings" in html
+    off = [
+        {"name": "CodeQL", "path": "dynamic/github-code-scanning/codeql",
+         "state": "disabled_manually"},
+        {"name": "CodeQL", "path": ".github/workflows/dynamic/github-code-scanning/codeql",
+         "state": "active"},
+        "junk",
+    ]  # fmt: skip
+    h = rh.run(_target(tmp_path), Listing(off), NOW)
+    assert h.scanners == [] and not h.dependabot_updates
+    rh.settings_workflows(h, ["not", "a", "dict"])  # an answer of another shape: nothing
+    assert h.scanners == []

@@ -100,3 +100,56 @@ def test_finished_time_is_set(tmp_path):
     w.submit("scan", "acme/x", "v1")
     w.wait()
     assert w.jobs[0].finished > 0
+
+
+def test_filters_and_order_by_reading():
+    """(0.15) Filter by signs of a threat or by Exposure medium or high, and order the
+    list by either reading or by name; all of it kept in the address."""
+
+    def card(i: int, threat: float, t_level: str, exp: float, e_level: str) -> ui.Card:
+        rd = {"threat": threat, "threat_level": t_level, "exposure": exp,
+              "exposure_level": e_level, "complete": True}  # fmt: skip
+        return ui.Card(repo=f"a/r{i}", name=f"App {i}", kind="integration", installed="v1",
+                       available=None, scan=None, report={"readings": rd})  # fmt: skip
+
+    cards = [card(1, 0, "none", 6.0, "high"), card(2, 2.5, "possible", 0, "low"),
+             card(3, 0, "none", 3.0, "medium"), card(4, 0, "none", 0, "low")]  # fmt: skip
+    assert [c.name for c in cards if ui._keep(c, "threat")] == ["App 2"]
+    assert [c.name for c in cards if ui._keep(c, "exposure")] == ["App 1", "App 3"]
+    by_exp = sorted(cards, key=ui._sort_by("exposure"))
+    assert [c.name for c in by_exp] == ["App 1", "App 3", "App 2", "App 4"]
+    by_threat = sorted(cards, key=ui._sort_by("threat"))
+    assert by_threat[0].name == "App 2"
+    assert min(cards, key=ui._sort_by("name")).name == "App 1"
+    html = ui.render_grid("", cards, ui.View(sort="exposure"))
+    assert html.index("App 1") < html.index("App 3") < html.index("App 2")
+    assert 'href="/?view=cards&amp;sort=threat"' in html
+    assert "with signs of a threat" in html and "with medium or high Exposure" in html
+    assert ui.View.parse({"sort": ["exposure"]}).sort == "exposure"
+    assert ui.View.parse({"sort": ["<x>"]}).sort == "concern"
+    assert ui.View(f="threat", sort="name").qs("&") == "f=threat&view=cards&sort=name"
+
+
+def test_ai_runs_show_in_the_strip_on_their_card_and_keep_the_list_refreshing(tmp_path):
+    """(0.15) An AI request waiting for its answer is listed in the status strip in the AI's
+    colour, marks its app's card, and keeps the list reloading; names stay escaped."""
+    now = time.time()
+    runs = [server.AiRun(7, "", now - 75, "acme/one"),
+            server.AiRun(8, "ab" * 8, now - 3, "acme/two")]  # fmt: skip
+    html = server.status_html("", [], {"acme/one": "One <b>"}, "", now=now, ai=runs)
+    assert "Your AI is answering about One &lt;b&gt;…" in html and "1 min 15 s so far" in html
+    assert "Explain in context, 3 s so far" in html and 'href="/scan/8"' in html
+    assert 'class="thinking"' in html and "while your AI answers" in html
+    assert server.status_html("", [], {}, "", now=now) == ""
+    page = server.render_index("", Store(tmp_path / "s.db"), [], "t", status=html,
+                               ai_busy=True).decode()  # fmt: skip
+    assert '<meta http-equiv="refresh" content="5">' in page
+    card = ui.Card(repo="acme/one", name="One", kind="integration", installed="v1",
+                   available=None, scan=None, report=None, ai=True)  # fmt: skip
+    assert "aiwork" in ui.card_html("", card) and "AI is answering…" in ui.card_html("", card)
+    assert "class=aiwork" in ui.card_row("", card)
+    plain = ui.Card(repo="acme/one", name="One", kind="integration", installed="v1",
+                    available=None, scan=None, report=None)  # fmt: skip
+    assert "aiwork" not in ui.card_html("", plain) and "AI is answering" not in ui.card_html(
+        "", plain
+    )

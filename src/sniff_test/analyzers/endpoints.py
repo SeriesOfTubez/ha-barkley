@@ -10,7 +10,12 @@ things are findings, because the rest proved to be noise on real repos (one card
   Telegram bot token, Slack hook), i.e. data goes to the developer's channel, not yours;
 - `endpoint-public-ip-literal` (high): a URL whose host is a hardcoded public IP.
 
-Undeclared hosts feed the possible-exfil correlation (`correlate.py`).
+Undeclared hosts feed the possible-exfil correlation (`correlate.py`), except a host the
+code names only as an OAuth return address (0.15, issue #26): every place it appears is a
+string inside a Python constant whose name says REDIRECT or CALLBACK, and the URL's path
+ends in a callback or redirect segment (`redirect_only` on its facts). The browser is
+sent there after a sign-in; the app doesn't connect to it. It is still listed. Found with
+`ast.parse`, which only parses.
 
 Host edges also carry up to five URL samples (scheme, host, port and path; userinfo,
 query and fragment dropped, and the path of a credential URL hidden) and the URL ports.
@@ -32,7 +37,7 @@ import json
 import re
 import tokenize
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cache
 from importlib import resources
 from pathlib import Path
@@ -157,19 +162,66 @@ class Declared:
 
     hosts: set[str]  # registrable domains from manifest / package.json URLs
     names: set[str]  # normalized integration domain / repo name
+    # (0.15) lowercase owners (the repo's, the manifest's GitHub links'): on shared hosting
+    # only their own paths are the app's own (see SHARED_HOSTING)
+    owners: set[str] = field(default_factory=set)
 
     def matches(self, host: str) -> bool:
+        return self.why(host) is not None
+
+    def why(self, host: str) -> str | None:
+        """(0.15, his decision 2026-11-26) How a host came to be one of the app's:
+        "files" (its manifest or package.json links to the domain), "owner" (the repo
+        owner's Pages site), "name" (only its name matches the app's), else None. A name
+        match says nothing about who runs the site: an integration is often named after
+        the company whose service it uses."""
         reg = registrable(host)
         if reg in self.hosts:
-            return True
+            return "owner" if reg in {f"{o}.github.io" for o in self.owners} else "files"
         first = _norm(reg.split(".")[0])
         if first and first in self.names:
-            return True
+            return "name"
         # (0.14.0) A name that spans the top-level domain: `acme.energy` for an
         # integration named acme_energy. The whole registrable domain must equal the
         # name; no prefix matching.
         whole = _norm(reg)
-        return bool(whole) and whole in self.names
+        return "name" if whole and whole in self.names else None
+
+
+def developer_evidence(host: str, repo: str | None) -> bool:
+    """(0.15, his decision 2026-11-26) Whether a host on a free app-hosting service is
+    shown as the developer's server: the repo owner's name is one of its labels
+    (`api.<owner>.workers.dev`), or it contains the whole repo name. The app's short
+    name isn't enough: on real apps half of those were the company's own backend. Worked
+    out when a page is shown, so it never changes the scan or a reading."""
+    hit = _suffix_class(host.lower(), host_classes())
+    if not hit or hit[0] != "developer_hosted" or not repo or "/" not in repo:
+        return False
+    head = host.lower()[: -len(hit[1]) - 1] if host.lower() != hit[1] else ""
+    labels = [_norm(x) for x in head.split(".") if x]
+    owner, name = (_norm(x) for x in repo.split("/", 1))
+    if owner and owner in labels:
+        return True
+    return len(name) >= 6 and any(name in label for label in labels)
+
+
+# (0.15, his decision 2026-11-20) Shared hosting: anyone can put anything there, so a site
+# here is the app's own only when every address the code names is under the repo owner's
+# path (github.com/<owner>/…, raw.githubusercontent.com/<owner>/…). The owner's Pages site
+# (<owner>.github.io) is its own host and already handled.
+SHARED_HOSTING = frozenset(
+    {"github.com", "githubusercontent.com", "gitlab.com", "bitbucket.org", "codeberg.org",
+     "sourceforge.net"}
+)  # fmt: skip
+
+
+def owner_path(url: str | None, owners: set[str]) -> bool:
+    """Whether a URL's path starts with one of `owners` (`/acme/…`)."""
+    m = _URL.match(url or "")
+    if not m or not owners:
+        return False
+    first = (m["path"] or "/").lstrip("/").split("/", 1)[0].lower()
+    return bool(first) and first in owners
 
 
 def _url_host(url: Any) -> str | None:
@@ -188,7 +240,7 @@ def declared_for(target: Target) -> Declared:
     owners: set[str] = set()
     for key in ("documentation", "issue_tracker"):
         url = manifest.get(key)
-        if h := _url_host(url):
+        if (h := _url_host(url)) and registrable(h) not in SHARED_HOSTING:
             hosts.add(registrable(h))
             if h == "github.com" and (m := re.match(r"(?i)https?://github\.com/([\w.-]+)", url)):
                 owners.add(m[1].lower())
@@ -199,7 +251,7 @@ def declared_for(target: Target) -> Declared:
         pkg = _read_json(target.source_root / "package.json")
         repo = pkg.get("repository")
         for url in (pkg.get("homepage"), repo.get("url") if isinstance(repo, dict) else repo):
-            if h := _url_host(url):
+            if (h := _url_host(url)) and registrable(h) not in SHARED_HOSTING:
                 hosts.add(registrable(h))
     if target.domain:
         names.add(_norm(target.domain))
@@ -212,7 +264,7 @@ def declared_for(target: Target) -> Declared:
             lowered = lowered.removeprefix(prefix)
         names.add(_norm(lowered))
     names.discard("")
-    return Declared(hosts, names)
+    return Declared(hosts, names, owners)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -324,6 +376,29 @@ def _refs_in(chunk: str, rel: str, line: int, fragment: bool = False) -> Iterato
         yield HostRef(host, rel, line, url, m["scheme"].lower())
 
 
+# (0.15, his report 2026-11-23) a version number written like an address
+# (`APP_VERSION = "2.4.1.7"`, `"appVersion": "2.4.1.7"`, `fw_ver="1.2.3.4"`): the name
+# or key right before the string, split into words, says it's a version
+_NAME_BEFORE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_]{0,60})[\"']?\s{0,4}[:=]\s{0,4}[rRbBuUfF]{0,2}[\"'`]$"
+)
+_NAME_WORDS = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])")
+_VERSION_WORDS = frozenset({"version", "versions", "ver", "vers", "build", "release",
+                            "firmware", "fw", "sw", "rev", "revision"})  # fmt: skip
+
+
+def version_name(name: str) -> bool:
+    """Whether a name or key says it holds a version (`APP_VERSION`, `appVersion`, `fw`)."""
+    return any(w.lower() in _VERSION_WORDS for w in _NAME_WORDS.findall(name[:60]))
+
+
+def _version_before(text: str) -> bool:
+    """Whether the code right before a string names it a version (the last 80 characters
+    of the line before it)."""
+    m = _NAME_BEFORE.search(text[-80:])
+    return bool(m and version_name(m[1]))
+
+
 def _bare_ref(value: str, rel: str, line: int) -> HostRef | None:
     v = value.strip().lower()
     if _IPV4.match(v):
@@ -343,6 +418,41 @@ def _bare_ref(value: str, rel: str, line: int) -> HostRef | None:
     return HostRef(v, rel, line, None, None)
 
 
+_MAX_JSON = 2 * 1024 * 1024
+_MAX_JSON_FILES = 400
+
+
+def _json_keys(root: Path) -> set[str]:
+    """(0.15, issue #14) Dotted keys in the app's own JSON files (translation catalogs):
+    `i18n.Msg("timeline.when.at")` names a key of `frontend/i18n/.../nl.json`, not a site
+    in Austria. Parsed only; bounded by size and count."""
+    import json
+
+    keys: set[str] = set()
+    seen = 0
+    for p in sorted(root.rglob("*.json")):
+        if seen >= _MAX_JSON_FILES or not p.is_file() or p.is_symlink():
+            continue
+        seen += 1
+        try:
+            if p.stat().st_size > _MAX_JSON:
+                continue
+            data = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, ValueError, RecursionError):
+            continue
+        stack = [data]
+        while stack and len(keys) < 200_000:
+            node = stack.pop()
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if isinstance(k, str) and "." in k:
+                        keys.add(k.strip().lower())
+                    stack.append(v)
+            elif isinstance(node, list):
+                stack.extend(node)
+    return keys
+
+
 def extract(root: Path) -> tuple[list[HostRef], list[tuple[str, int]]]:
     """All host references under root, plus (file, line) of Telegram bot-token literals."""
     refs: list[HostRef] = []
@@ -358,10 +468,17 @@ def extract(root: Path) -> tuple[list[HostRef], list[tuple[str, int]]]:
             continue
         rel = p.relative_to(root).as_posix()
         if p.suffix in _PY:
+            lines: list[str] | None = None
             for line, value, whole in py_strings(text):
                 refs.extend(_refs_in(value, rel, line, fragment=not whole))
                 if whole:
                     if bare := _bare_ref(value, rel, line):
+                        if _IPV4.match(bare.host):
+                            lines = lines if lines is not None else text.splitlines()
+                            src = lines[line - 1] if 0 < line <= len(lines) else ""
+                            at = src.find(value)
+                            if at > 0 and _version_before(src[:at]):
+                                continue  # a version number, not an address
                         refs.append(bare)
                     if _TELEGRAM_TOKEN.match(value.strip()):
                         tokens.append((rel, line))
@@ -369,9 +486,302 @@ def extract(root: Path) -> tuple[list[HostRef], list[tuple[str, int]]]:
             for line, chunk in _js_chunks(text):
                 refs.extend(_refs_in(chunk, rel, line))
                 for q in re.finditer(r"[\"'`](\d{1,3}(?:\.\d{1,3}){3})[\"'`]", chunk):
+                    if _version_before(chunk[max(0, q.start() - 80) : q.start() + 1]):
+                        continue  # `version:"1.2.3.4"`: a version number
                     if bare := _bare_ref(q[1], rel, line):
                         refs.append(bare)
+    if any(r.url is None for r in refs):
+        keys = _json_keys(root)
+        refs = [r for r in refs if r.url is not None or r.host not in keys]
     return refs, tokens
+
+
+# --- (0.15) hosts used like an address -------------------------------------------------------
+#
+# From the full Marketplace run: when some request's address can't be read, any host the
+# code names could be where it goes, and 12 of 36 "data leaving" pairings named a host that
+# is never an address: a link in a message, an XML namespace, an Android app's package name
+# (`com.google.android.youtube.tv`) or a dotted key (`container.disk.io`). A host counts
+# as a possible destination then only when some string in the Python code uses it like an
+# address: a URL standing alone (formatting allowed), or a bare host under a name that
+# says so (`HOST =`, `{"server": …}`, `host=`), or handed straight to a sending call. Not:
+# a URL inside prose, in a log or message call, in Clark notation (`{http://…}tag`) or
+# under a namespace name (`NS = {…}`), a docstring. Read with `ast.parse`; nothing runs.
+
+_ADDRESS_NAME = re.compile(
+    r"(?i)host|url|uri|server|domain|endpoint|broker|addr|base|api|fqdn|gateway|remote|cloud"
+)
+_NAMESPACE_NAME = re.compile(r"(?i)(?:^|_)(?:ns|nsmap|namespaces?|xmlns|schemas?)(?:_|$|\d)")
+_MESSAGE_CALLS = frozenset(
+    {"debug", "info", "warning", "warn", "error", "exception", "critical", "log", "print",
+     "async_create", "create_issue", "async_create_issue", "persistent_notification",
+     "_", "gettext", "async_show_form", "async_abort", "async_show_menu"}
+)  # fmt: skip
+_MESSAGE_KEYWORDS = frozenset(
+    {"description_placeholders", "learn_more_url", "documentation", "issue_tracker",
+     "translation_placeholders", "message", "title", "description", "help"}
+)  # fmt: skip
+_MAX_ADDR_FILES = 2000
+
+
+def _context_names(node: ast.AST, parents: dict[int, ast.AST]) -> tuple[list[str], str | None]:
+    """The names a string sits under (assignment targets, dict keys, keyword names), and
+    the name of the call it is an argument of (None when not in one), walking up through
+    f-strings, `+`, `%`, `.format()`, tuples and lists."""
+    names: list[str] = []
+    call: str | None = None
+    cur = node
+    for _ in range(12):
+        par = parents.get(id(cur))
+        if par is None:
+            break
+        if isinstance(par, ast.Dict):
+            for k, v in zip(par.keys, par.values, strict=False):
+                if v is cur and isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    names.append(k.value)
+        elif isinstance(par, ast.keyword) and par.arg:
+            names.append(par.arg)
+        elif isinstance(par, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = par.targets if isinstance(par, ast.Assign) else [par.target]
+            for t in targets:
+                if isinstance(t, ast.Name):
+                    names.append(t.id)
+                elif isinstance(t, ast.Attribute):
+                    names.append(t.attr)
+            break
+        elif isinstance(par, ast.Call):
+            if cur is not par.func and call is None:
+                f = par.func
+                call = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "") or ""
+                if call == "format" and isinstance(f, ast.Attribute):
+                    call = None  # "https://{}/x".format(h) builds the address
+                    cur = par
+                    continue
+            if call is not None:
+                break
+        elif isinstance(par, (ast.Expr, ast.Return, ast.FunctionDef, ast.AsyncFunctionDef,
+                              ast.ClassDef, ast.Module)):  # fmt: skip
+            break
+        cur = par
+    return names, call
+
+
+def addressed_hosts(root: Path) -> set[str]:
+    """Hosts some Python string under `root` uses like an address (see above)."""
+    out: set[str] = set()
+    for n, p in enumerate(sorted(root.rglob("*.py"))):
+        if n >= _MAX_ADDR_FILES or not p.is_file() or p.is_symlink():
+            continue
+        try:
+            if p.stat().st_size > _MAX_FILE:
+                continue
+            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
+            continue
+        parents: dict[int, ast.AST] = {}
+        docs: set[int] = set()
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[id(child)] = node
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+                docs.add(id(node.value))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            value = node.value
+            if id(node) in docs or len(value) > 4000 or "." not in value:
+                continue
+            names, call = _context_names(node, parents)
+            if call and call.lower() in _MESSAGE_CALLS:
+                continue
+            if any(k in _MESSAGE_KEYWORDS for k in names):
+                continue
+            if any(_NAMESPACE_NAME.search(k) for k in names):
+                continue
+            stripped = value.strip()
+            if stripped.startswith("{") and "}" in stripped:
+                continue  # an XML tag in Clark notation
+            urls = list(_URL.finditer(value))
+            if urls:
+                prose = re.search(r"\s", stripped) is not None or re.search(
+                    r"(?i)href\s*=|\]\(|<a\s", value
+                )
+                if prose:
+                    continue
+                for m in urls:
+                    if _host_ok(m["host"].lower()):
+                        out.add(m["host"].lower())
+                continue
+            bare = _bare_ref(value, "", 0)
+            if bare is None or (_IPV4.match(bare.host) and any(version_name(k) for k in names)):
+                continue
+            if any(_ADDRESS_NAME.search(k) for k in names) or (
+                call is not None and call.lower() in _SEND_CALLS
+            ):
+                out.add(bare.host)
+    return out
+
+
+# --- OAuth return addresses (0.15, issue #26) ---------------------------------------------
+
+# Both must hold, so a send to a path merely named /callback still counts as a destination.
+_REDIRECT_NAME = re.compile(r"(?i)redirect|callback")
+_REDIRECT_PATH = re.compile(r"(?i)(?:callback|redirect)[\w-]{0,40}$")
+
+
+def _target_names(node: ast.AST) -> list[str]:
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]  # type: ignore[attr-defined]
+    out = []
+    for t in targets:
+        if isinstance(t, ast.Name):
+            out.append(t.id)
+        elif isinstance(t, ast.Attribute):
+            out.append(t.attr)
+    return out
+
+
+def redirect_lines(text: str) -> dict[str, set[int]]:
+    """Constant name -> lines of its string constants, for module- or class-level
+    assignments whose name says REDIRECT or CALLBACK (`DEFAULT_OAUTH_REDIRECT_ALLOWLIST =
+    ("https://…/auth_callback", …)`). Parse only; a file that doesn't parse has none."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return {}
+    out: dict[str, set[int]] = {}
+    bodies = [tree.body] + [n.body for n in tree.body if isinstance(n, ast.ClassDef)]
+    for body in bodies:
+        for node in body:
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+                continue
+            for name in _target_names(node):
+                if not _REDIRECT_NAME.search(name):
+                    continue
+                for sub in ast.walk(node.value):
+                    if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                        out.setdefault(name, set()).add(sub.lineno)
+    return out
+
+
+# A call that sends or connects: a redirect constant handed to one is a destination.
+_SEND_CALLS = frozenset(
+    {"post", "get", "put", "patch", "delete", "request", "urlopen", "fetch", "send",
+     "ws_connect", "connect", "create_connection", "stream", "head", "options"}
+)  # fmt: skip
+
+
+def sent_names(text: str) -> set[str]:
+    """Names that appear anywhere inside a send or connect call (its arguments or what
+    it's called on): `session.post(REDIRECTS[0], …)` gives REDIRECTS. Parse only."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return set()
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        name = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""
+        if name.lower() not in _SEND_CALLS:
+            continue
+        for part in [*node.args, *(k.value for k in node.keywords)]:
+            for sub in ast.walk(part):
+                if isinstance(sub, ast.Name):
+                    out.add(sub.id)
+                elif isinstance(sub, ast.Attribute):
+                    out.add(sub.attr)
+    return out
+
+
+def _redirect_ref(ref: HostRef, lines: dict[str, set[int]]) -> bool:
+    if not ref.url or ref.line not in lines.get(ref.file, set()):
+        return False
+    m = _URL.match(ref.url)
+    path = (m["path"] or "") if m else ""
+    path = path.split("?", 1)[0].split("#", 1)[0].rstrip("/")[-200:]
+    return bool(_REDIRECT_PATH.search(path))
+
+
+def redirect_only_hosts(root: Path, refs: list[HostRef]) -> set[str]:
+    """Hosts every reference to which is an OAuth return address (see the module doc). A
+    constant that any Python file of the app hands to a send or connect call doesn't
+    count: its addresses are destinations."""
+    texts: dict[str, str] = {}
+    for p in sorted(root.rglob("*.py")):
+        try:
+            if p.is_symlink() or not p.is_file() or p.stat().st_size > _MAX_FILE:
+                continue
+            texts[p.relative_to(root).as_posix()] = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+    ref_files = {r.file for r in refs}
+    per_file = {rel: redirect_lines(t) for rel, t in texts.items() if rel in ref_files}
+    if not any(per_file.values()):
+        return set()
+    sent: set[str] = set()
+    for t in texts.values():
+        sent |= sent_names(t)
+    lines = {rel: {ln for name, ls in consts.items() if name not in sent for ln in ls}
+             for rel, consts in per_file.items()}  # fmt: skip
+    by_host: dict[str, list[bool]] = {}
+    for r in refs:
+        by_host.setdefault(r.host, []).append(_redirect_ref(r, lines))
+    return {h for h, marks in by_host.items() if marks and all(marks)}
+
+
+# --- what the developer's own docs say (0.15, his question) ------------------------------
+
+# A host the README or .github/FUNDING.yml names gets `readme_line` / `funding` on its facts:
+# the developer's words, shown as such, never changing its class or what's scored (a
+# README could name a collection site to make it look expected).
+_DOC_MAX = 1024 * 1024
+_FUNDING_HOSTS = {
+    "github": "github.com", "patreon": "patreon.com", "ko_fi": "ko-fi.com",
+    "buy_me_a_coffee": "buymeacoffee.com", "liberapay": "liberapay.com",
+    "open_collective": "opencollective.com", "polar": "polar.sh", "thanks_dev": "thanks.dev",
+    "tidelift": "tidelift.com", "community_bridge": "funding.communitybridge.org",
+    "issuehunt": "issuehunt.io", "lfx_crowdfunding": "crowdfunding.lfx.linuxfoundation.org",
+}  # fmt: skip
+_FUNDING_KEY = re.compile(r"^[ \t]*+([a-z_]{2,30})[ \t]*+:", re.M)
+
+
+def _plain(host: str) -> str:
+    return host.lower().removeprefix("www.")
+
+
+def doc_mentions(source_root: Path | None) -> tuple[dict[str, int], set[str]]:
+    """(host -> first README line naming it, hosts FUNDING.yml lists). Text only."""
+    readme: dict[str, int] = {}
+    funding: set[str] = set()
+    if source_root is None:
+        return readme, funding
+
+    def text_of(rel: str) -> str | None:
+        p = source_root / rel
+        try:
+            if p.is_symlink() or not p.is_file() or p.stat().st_size > _DOC_MAX:
+                return None
+            return p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+
+    for name in ("README.md", "README.rst", "README.txt", "README", "readme.md"):
+        if (text := text_of(name)) is not None:
+            for n, line in enumerate(text.splitlines(), 1):
+                for m in _URL.finditer(line[:5000]):
+                    readme.setdefault(_plain(m["host"]), n)
+            break
+    gh = source_root / ".github"
+    names = []  # GitHub reads FUNDING.yml in any case, .yml or .yaml
+    if gh.is_dir() and not gh.is_symlink():
+        wanted = ("funding.yml", "funding.yaml")
+        names = sorted(p.name for p in gh.iterdir() if p.name.lower() in wanted)
+    if names and (text := text_of(f".github/{names[0]}")) is not None:
+        lines = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+        funding |= {_plain(m["host"]) for m in _URL.finditer(lines[:20000])}
+        funding |= {_FUNDING_HOSTS[k] for k in _FUNDING_KEY.findall(lines) if k in _FUNDING_HOSTS}
+    return readme, funding
 
 
 # --- classification ------------------------------------------------------------------
@@ -386,7 +796,8 @@ def classify(host: str, declared: Declared) -> str:
     except ValueError:
         ip = None
     if ip is not None:
-        if not ip.is_global:
+        # (0.15) multicast (device discovery, 239.255.255.250) stays on the home network
+        if not ip.is_global or ip.is_multicast:
             return "local"
         return "resolver" if str(ip) in _KNOWN_RESOLVERS else "public_ip"
     if "." not in host or host == "localhost" or host.endswith(_LOCAL_SUFFIXES):
@@ -669,8 +1080,19 @@ def run(target: Target) -> AnalyzerResult:
     findings: list[Finding] = []
     facts: list[Fact] = []
     hosts = {r.host for r in refs}
+    redirects = redirect_only_hosts(target.root, refs)
+    readme, funding = doc_mentions(target.source_root)
+    # (0.15) shared hosting is the app's own only when every address is under the owner
+    shared: dict[str, bool] = {}
+    for r in refs:
+        if registrable(r.host) in SHARED_HOSTING:
+            shared[r.host] = shared.get(r.host, True) and owner_path(r.url, declared.owners)
     for ref in refs:
         cls = classify(ref.host, declared)
+        if ref.host in shared and cls not in ("namespace", "exfil_service", "messaging"):
+            # code hosting: the owner's own paths are the app's, the rest are where code
+            # lives (as github.com always was), never "undeclared"
+            cls = "declared" if shared[ref.host] else "infrastructure"
         if cls == "namespace":
             continue
         cred = _cred_kind(ref.url)
@@ -708,12 +1130,22 @@ def run(target: Target) -> AnalyzerResult:
                 )
             )
         attrs: dict[str, Any] = {"class": cls}
+        if cls == "declared":
+            attrs["declared_by"] = (
+                "owner" if ref.host in shared else declared.why(ref.host) or "files"
+            )
         if svc := known.lookup(ref.host):  # a name only; the class above is untouched
             attrs["service"] = svc.label
         if ref.scheme:
             attrs["schemes"] = [ref.scheme]
         if cred:
             attrs["credential"] = cred
+        if ref.host in redirects and not cred:
+            attrs["redirect_only"] = True
+        if (line := readme.get(_plain(ref.host))) is not None:
+            attrs["readme_line"] = line
+        if _plain(ref.host) in funding:
+            attrs["funding"] = True
         if sample := url_sample(ref.url, credential=bool(cred)):
             attrs["urls"] = [sample]
             m = _URL.match(ref.url or "")

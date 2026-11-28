@@ -173,7 +173,7 @@ def test_create_token_failure_still_revokes_the_login():
     lg.token_fn = boom
     state, _ = lg.start("token")
     _sid, session = lg.finish("c", state, state)  # the login itself still works
-    assert session.token_error == "Couldn't create Barkley's token (nope)."
+    assert session.token_error == "Barkley couldn't create its token (nope)."
     assert ha.revoked == ["refresh-c"]
 
 
@@ -340,7 +340,7 @@ def test_a_failed_create_keeps_the_login_for_another_try_or_a_paste(first_run):
     form = {"token": _csrf(page), "back": "setup"}
     assert _req(port, "POST", "/ha-token/create", me, form)[1] == "/setup?bad=create"
     page = _req(port, "GET", "/setup?bad=create", me)[3].decode()
-    assert "create Barkley" in page and "unknown_error" in page and browser.revoked == []
+    assert "create its token" in page and "unknown_error" in page and browser.revoked == []
     fake.fail_create = False
     assert _req(port, "POST", "/ha-token/create", me, form)[1] == "/setup?saved=1"
     assert browser.revoked == ["refresh-c"]

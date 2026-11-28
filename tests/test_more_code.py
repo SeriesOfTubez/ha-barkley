@@ -118,7 +118,7 @@ def test_the_flagged_statements_function_is_cut_to_fit_not_left_out(tmp_path):
 
 def test_a_monkeypatch_item_says_what_is_replaced_and_whose_it_is(tmp_path):
     ctx = context.build(_pkg(tmp_path), [PATCH], None)
-    assert ctx["version"] == 5
+    assert ctx["version"] == 6
     assert ctx["items"][PATCH["id"]]["patch"] == {
         "object": "homeassistant.components.camera.media.VodSource",
         "origin": "Home Assistant's built-in camera integration",
@@ -348,7 +348,7 @@ def test_one_click_runs_the_second_round_with_what_the_ai_picked(tmp_path):
     assert (
         "What it replaces" in page and "Home Assistant&#x27;s built-in camera integration" in page
     )
-    assert "Barkley adds up to 150 lines" in page and not calls
+    assert "Barkley adds up to 150 more lines" in page and not calls
     assert _click(base, sid)[0] == 303
     _wait(httpd, sid)
     assert len(calls) == 2
@@ -365,7 +365,9 @@ def test_one_click_runs_the_second_round_with_what_the_ai_picked(tmp_path):
     assert "thumbs.py:14|" not in first[0] and "thumbs.py:10|     def url(self, day):" in first[0]
     _, _, page = get(f"{base}/scan/{sid}")
     assert "asked to see more (<code>thumbs.py: _name</code>), and read again" in page
-    assert "The statements below are from both readings; the questions are from the second" in page
+    assert (
+        "The statements below come from both readings. The questions come from the second" in page
+    )
     # cites an added line, and the name is on it: shown
     assert "The link&#x27;s name is a hash made by <code>hashlib.sha256</code>." in page
     assert "is harmless" not in page and "keeps files under" not in page
@@ -374,7 +376,8 @@ def test_one_click_runs_the_second_round_with_what_the_ai_picked(tmp_path):
     assert "plus 2 it asked for" in page and "Added because the AI asked to see" in page
     assert "asked for 1 thing that wasn't on Barkley's list" in page
     assert "<script" not in page
-    assert store.report(sid)["score"] == 75 and 'aria-label="Score 75 of 100"' in page
+    assert store.report(sid)["score"] == 75  # the stored capability score is untouched
+    assert 'aria-label="Threat 0 of 10"' in page and "of 100" not in page  # readings, not the AI's
     assert "more" not in store.report(sid)["context"]["snippets"]["s1"]  # the scan isn't edited
     httpd.shutdown()
 

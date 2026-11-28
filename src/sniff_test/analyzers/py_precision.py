@@ -29,6 +29,7 @@ import dataclasses
 import functools
 import json
 import re
+from collections.abc import Callable
 from importlib import resources
 from pathlib import Path
 
@@ -87,6 +88,10 @@ def _own_domain(res: Resolver, rel: str, call: ast.Call, domain: str | None) -> 
     )
     if arg is None:
         return False  # every integration's entries
+    # (0.15) a flow's own `self.handler`: the domain in a config flow, the entry's id in an
+    # options flow (which matches no domain), never another integration's
+    if _dotted(arg) == "self.handler":
+        return True
     value = res.value(rel, arg)
     if value is not None:
         return value in own_domains(res, domain)
@@ -565,6 +570,187 @@ def secrets_dropped(f: Finding, res: Resolver) -> bool:
     return all(_prose(c, up) or (own_copy and _own_copy(c, up, depth)) for c in hits)
 
 
+# --- (0.15) one named entry of secrets.yaml -------------------------------------------------
+
+ONE_ENTRY_RULE = "ha-read-own-secret"
+
+
+def own_secret_key(f: Finding, res: Resolver) -> str | None:
+    """`ha-read-secrets` where the loaded file is held in one name, and every use of that
+    name in the function is a lookup of one fixed key (`secrets.get(KEY_NAME)`,
+    `secrets["x"]`, the key a constant Barkley can read) or a test of it (`if not
+    secrets`, `isinstance(secrets, dict)`). The other entries never leave the function.
+    Returns the key, else None. (5 real "data leaving" pairings read the app's own key,
+    such as an encryption key the user set for it.)"""
+    if f.rule_id != "ha-read-secrets" or not f.file or not f.line:
+        return None
+    tree = res.tree(f.file)
+    if tree is None:
+        return None
+    up = parents(tree)
+    stmts = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Assign) and n.lineno <= f.line <= (n.end_lineno or n.lineno)
+        and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+    ]  # fmt: skip
+    if len(stmts) != 1 or (func := _enclosing(stmts[0], up)) is None:
+        return None
+    name = stmts[0].targets[0].id  # type: ignore[attr-defined]
+    stores = [n for n in ast.walk(func) if isinstance(n, ast.Name) and n.id == name
+              and not isinstance(n.ctx, ast.Load)]  # fmt: skip
+    if len(stores) != 1:
+        return None
+    keys: set[str] = set()
+    for n in ast.walk(func):
+        if not (isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Load)):
+            continue
+        p = up.get(n)
+        if _none_test(n, up):
+            continue
+        if (
+            isinstance(p, ast.Call)
+            and isinstance(p.func, ast.Name)
+            and p.func.id == "isinstance"
+            and p.args
+            and p.args[0] is n
+        ):
+            continue
+        key_node: ast.expr | None = None
+        if isinstance(p, ast.Subscript) and p.value is n:
+            key_node = p.slice
+        elif isinstance(p, ast.Attribute) and p.value is n and p.attr == "get":
+            call = up.get(p)
+            if isinstance(call, ast.Call) and call.func is p and call.args and not call.keywords:
+                key_node = call.args[0]
+        key = res.value(f.file, key_node) if key_node is not None else None
+        if not isinstance(key, str) or not key:
+            return None
+        keys.add(key)
+    return next(iter(keys)) if len(keys) == 1 else None
+
+
+def reads_own_secret(f: Finding, key: str) -> Finding:
+    return dataclasses.replace(
+        f,
+        rule_id=ONE_ENTRY_RULE,
+        title="Reads one named entry from your secrets file",
+        severity=Severity.MEDIUM,
+        message=(
+            f"Opens secrets.yaml and reads only the entry named {key[:60]!r}. In the "
+            "function that opens it, Barkley saw no other entry used."
+        ),
+    )
+
+
+# --- (0.15) unpickling data the app stored ------------------------------------------------
+
+PICKLE_RULE = "py-pickle-stored"
+_DECODE_MODULES = frozenset({"base64", "binascii", "zlib", "lzma", "bz2", "gzip", "codecs"})
+_DECODE_METHODS = frozenset({"encode", "decode", "fromhex"})
+
+
+def _stored_origin(node: ast.expr, func: ast.AST, res: Resolver, rel: str, depth: int = 0) -> bool:
+    """The encoded data at `node` comes from a parameter of `func` (or `self`), through
+    decoding steps and names given one value: data the app was handed or kept, not text
+    written in it. A constant, a file read or anything else Barkley can't follow: False."""
+    if depth > 8:
+        return False
+    if res.value(rel, node) is not None or isinstance(node, ast.Constant):
+        return False  # written in the app
+    if isinstance(node, ast.Call):
+        f = node.func
+        mod = f.value.id if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) else ""
+        if mod in _DECODE_MODULES or (isinstance(f, ast.Name) and f.id in ("bytes", "str")):
+            return bool(node.args) and _stored_origin(node.args[0], func, res, rel, depth + 1)
+        if isinstance(f, ast.Attribute) and f.attr in _DECODE_METHODS:
+            inner = node.args[0] if f.attr == "fromhex" and node.args else f.value
+            return _stored_origin(inner, func, res, rel, depth + 1)
+        return False
+    if isinstance(node, ast.Subscript):
+        return _stored_origin(node.value, func, res, rel, depth + 1)
+    if isinstance(node, ast.Attribute):
+        if isinstance(node.value, ast.Name) and node.value.id == "self":
+            # `self.blob`: not when the file gives that attribute a value written in it
+            tree = res.tree(rel)
+            for n in ast.walk(tree) if tree is not None else ():
+                if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None:
+                    targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                    if any((isinstance(t, ast.Attribute) and t.attr == node.attr)
+                           or (isinstance(t, ast.Name) and t.id == node.attr)
+                           for t in targets) and _written(n.value, res, rel):  # fmt: skip
+                        return False
+        return _stored_origin(node.value, func, res, rel, depth + 1)
+    if isinstance(node, ast.Name):
+        args = func.args  # type: ignore[attr-defined]
+        params = {a.arg for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]}
+        stores = [n for n in ast.walk(func) if isinstance(n, ast.Name) and n.id == node.id
+                  and not isinstance(n.ctx, ast.Load)]  # fmt: skip
+        if node.id in params:
+            # the value it was handed, never replaced, and no encoded default
+            defaults = [*args.defaults, *(d for d in args.kw_defaults if d is not None)]
+            return not stores and not any(_written(d, res, rel) for d in defaults)
+        if node.id == "self":
+            return True
+        if len(stores) != 1:
+            return False
+        up = parents(func)
+        assign = up.get(stores[0])
+        if isinstance(assign, ast.Assign) and len(assign.targets) == 1:
+            return _stored_origin(assign.value, func, res, rel, depth + 1)
+        return False
+    return False
+
+
+def _written(node: ast.expr, res: Resolver, rel: str) -> bool:
+    """Text or bytes written in the app (a literal anywhere inside, or a constant)."""
+    return any(
+        (isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)) and len(n.value) > 16)
+        or (isinstance(n, (ast.Name, ast.Attribute)) and res.value(rel, n) is not None)
+        for n in ast.walk(node)
+    )
+
+
+def pickle_of_stored(f: Finding, res: Resolver) -> bool:
+    """`py-b64-exec` whose every sink on the line is `pickle.loads` of data that came from
+    a parameter or the object itself (a cookie jar the app saved, a unique id it built):
+    unsafe to unpickle if someone else can change that data, but not hidden code. Code
+    written in the app as encoded text, or read from a file it ships, keeps the finding."""
+    if f.rule_id != "py-b64-exec" or not f.file or not f.line:
+        return False
+    tree = res.tree(f.file)
+    if tree is None:
+        return False
+    up = parents(tree)
+    sinks = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and n.lineno <= f.line <= (n.end_lineno or n.lineno)
+        and isinstance(n.func, ast.Attribute) and n.func.attr in ("loads", "load")
+        and isinstance(n.func.value, ast.Name) and n.func.value.id in ("pickle", "marshal")
+    ]  # fmt: skip
+    if not sinks or any(n.func.value.id != "pickle" or not n.args for n in sinks):  # type: ignore[attr-defined]
+        return False
+    for n in sinks:
+        func = _enclosing(n, up)
+        if func is None or not _stored_origin(n.args[0], func, res, f.file):
+            return False
+    return True
+
+
+def stored_pickle(f: Finding) -> Finding:
+    return dataclasses.replace(
+        f,
+        rule_id=PICKLE_RULE,
+        title="Unpickles data it stored",
+        severity=Severity.MEDIUM,
+        tags=frozenset(),
+        message=(
+            "Decodes data it was handed or kept and loads it with pickle. Pickle can run "
+            "code while loading, so whoever can change that data could run code in Home "
+            "Assistant. The data isn't written in the app, so this is not hidden code."
+        ),
+    )
+
+
 # --- test code no runtime module imports ---------------------------------------------
 
 _TEST_DIRS = frozenset({"test", "tests", "testing"})
@@ -581,8 +767,20 @@ def _looks_like_test(rel: str) -> bool:
     )
 
 
-def test_only_files(res: Resolver) -> frozenset[str]:
-    """Python files that look like tests (a test folder, test_*.py, conftest.py) and that
+_SCRIPT_DIRS = frozenset({"scripts", "script", "tools", "examples", "example", "dev"})
+
+
+def looks_like_a_script(rel: str) -> bool:
+    """(0.15) A developer's own helper: a file in a scripts/tools/examples folder, or
+    named like a test without the underscore (`TestLogin.py`)."""
+    p = Path(rel)
+    return bool(_SCRIPT_DIRS & set(p.parts[:-1])) or p.name.lower().startswith("test")
+
+
+def test_only_files(res: Resolver, also: Callable[[str], bool] | None = None) -> frozenset[str]:
+    """`also`: a wider test for "looks like a test" (the requests list also sets
+    developer scripts aside; findings keep the narrow test).
+    Python files that look like tests (a test folder, test_*.py, conftest.py) and that
     no other module of the app imports or names. Home Assistant imports an integration's
     package and its platforms; a test file nothing imports is never loaded by it."""
     files = sorted(
@@ -590,7 +788,7 @@ def test_only_files(res: Resolver) -> frozenset[str]:
         for p in res.root.rglob("*.py")
         if p.is_file() and not p.is_symlink()
     )[:5000]
-    tests = {r for r in files if _looks_like_test(r)}
+    tests = {r for r in files if _looks_like_test(r) or (also is not None and also(r))}
     if not tests:
         return frozenset()
     used: set[str] = set()
@@ -682,3 +880,255 @@ def supervisor_presence_only(f: Finding, res: Resolver) -> bool:
         return False
 
     return all(tested(n) for n in reads)
+
+
+# --- (0.15) sent to the Supervisor on this box, not off it --------------------------------
+
+# The methods `ha-exfil-taint` counts as sending (rules/python/exfil-taint.yaml)
+_SEND = frozenset(
+    {"get", "post", "put", "patch", "delete", "head", "request", "ws_connect", "urlopen"}
+)
+# The Supervisor's own name inside Home Assistant's network, and its old one. The slash
+# makes the host certain: "http://supervisor.example/" must not pass.
+_SUPERVISOR_URL = re.compile(r"^http://(supervisor|hassio)/")
+
+
+def supervisor_only(f: Finding, res: Resolver) -> str | None:
+    """`ha-exfil-taint` whose every sending call on that line names the Supervisor as a
+    literal address (`session.get("http://supervisor/addons", headers=…)`): the data
+    goes to the Supervisor on the same box, the party the Supervisor's key is meant for,
+    so nothing leaves the box. Returns the certain start of the address, else None. An
+    address held in a variable Barkley can't resolve keeps the finding."""
+    if f.rule_id != "ha-exfil-taint" or not f.file or not f.line:
+        return None
+    tree = res.tree(f.file)
+    if tree is None:
+        return None
+    urls: list[str] = []
+    for n in ast.walk(tree):
+        if not (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr in (*_SEND, "Request")
+            and n.lineno <= f.line <= (n.end_lineno or n.lineno)
+        ):
+            continue
+        start = _to_supervisor(res, f.file, n, tree)
+        if not start:
+            return None
+        urls.append(start)
+    return urls[0] if urls else None
+
+
+LOCAL_RULE = "ha-supervisor-token-local"
+
+
+def _to_supervisor(
+    res: Resolver, rel: str, call: ast.Call, tree: ast.AST | None = None, depth: int = 0
+) -> str:
+    """The certain start of a sending call's address when it names the Supervisor.
+    (0.15) `urllib.request.Request("http://supervisor/…", …)` counts, and so does
+    `urlopen(request)` where `request` is given exactly one value in the function, such a
+    `Request(…)` (a real integration announced itself to the Supervisor that way)."""
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr in (*_SEND, "Request")):
+        return ""
+    addr = next((k.value for k in call.keywords if k.arg == "url"), None)
+    if addr is None and call.args:
+        addr = call.args[1] if call.func.attr == "request" and len(call.args) > 1 else call.args[0]
+    if (
+        isinstance(addr, ast.Name)
+        and call.func.attr == "urlopen"
+        and tree is not None
+        and depth == 0
+        and (req := _single_request(tree, call, addr.id)) is not None
+    ):
+        return _to_supervisor(res, rel, req, tree, 1)
+    start = _prefix(res, rel, addr) if addr is not None else ""
+    return start if _SUPERVISOR_URL.match(start) else ""
+
+
+def _single_request(tree: ast.AST, call: ast.Call, name: str) -> ast.Call | None:
+    """The `Request(…)` that `name` holds at `call`: the only value it is given in the
+    function around the call (any other assignment, or none: None)."""
+    up = parents(tree)
+    func = _enclosing(call, up)
+    if func is None:
+        return None
+    stores = [
+        n
+        for n in ast.walk(func)
+        if isinstance(n, ast.Name) and n.id == name and not isinstance(n.ctx, ast.Load)
+    ]
+    if len(stores) != 1:
+        return None
+    assign = up.get(stores[0])
+    if not (isinstance(assign, ast.Assign) and len(assign.targets) == 1):
+        return None
+    value = assign.value
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr == "Request"
+    ):
+        return value
+    return None
+
+
+def supervisor_token_stays(f: Finding, res: Resolver) -> str | None:
+    """`ha-supervisor-token` whose value never leaves the function that reads it, except
+    to the Supervisor: it is kept in one local name, and every use of that name is a test
+    of whether it is set, or sits inside a sending call whose literal address is the
+    Supervisor. Returns that address, else None (returned, stored, passed to another
+    function or sent anywhere else: None)."""
+    if f.rule_id != "ha-supervisor-token" or not f.file or not f.line:
+        return None
+    tree = res.tree(f.file)
+    if tree is None:
+        return None
+    up = parents(tree)
+    stmts = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Assign) and n.lineno <= f.line <= (n.end_lineno or n.lineno)
+        and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+        and any(_env_read(c) for c in ast.walk(n.value))
+    ]  # fmt: skip
+    if len(stmts) != 1 or (func := _enclosing(stmts[0], up)) is None:
+        return None
+    name = stmts[0].targets[0].id  # type: ignore[attr-defined]
+    stores = [n for n in ast.walk(func) if isinstance(n, ast.Name) and n.id == name
+              and not isinstance(n.ctx, ast.Load)]  # fmt: skip
+    if len(stores) != 1:
+        return None  # assigned again somewhere: not certain what it holds
+    url = ""
+    for n in ast.walk(func):
+        if not (isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Load)):
+            continue
+        if _none_test(n, up):
+            continue
+        p, hit = up.get(n), ""
+        while p is not None and p is not func and not hit:
+            if isinstance(p, ast.Call):
+                hit = _to_supervisor(res, f.file, p)
+                if not hit and not (isinstance(p.func, ast.Name) and p.func.id in ("str", "dict")):
+                    return None  # handed to some other call
+            p = up.get(p)
+        if not hit:
+            return None
+        url = url or hit
+    return url or None
+
+
+def sent_to_supervisor(f: Finding, url: str) -> Finding:
+    """The Supervisor's key, used only to ask the Supervisor on the same box."""
+    return dataclasses.replace(
+        f,
+        rule_id=LOCAL_RULE,
+        title="Asks the Supervisor with the Supervisor's key",
+        message=(
+            "Reads the Supervisor API token from the environment and sends it to the "
+            f"Supervisor on this box ({url}), which is who the key is for. In the function "
+            "that reads it, Barkley saw it go nowhere else."
+        ),
+    )
+
+
+# --- (0.14.1, #21) checking a login token sent to the app --------------------------------
+
+CHECK_RULE = "ha-auth-token-check"
+_CHECK_CALLS = frozenset({"async_validate_access_token", "async_get_refresh_token"})
+# What a check may read from the token it found: whose it is, nothing secret (.token and
+# .jwt_key are the token itself and the key that signs its access tokens)
+_CHECK_ATTRS = frozenset({"user", "id", "user_id"})
+
+
+def _none_test(node: ast.AST, up: dict[ast.AST, ast.AST]) -> bool:
+    """`node` is only tested: `node is None`, `node is not None`, `not node`, `if node:`."""
+    p = up.get(node)
+    if isinstance(p, ast.Compare) and len(p.ops) == 1 and isinstance(p.ops[0], (ast.Is, ast.IsNot)):
+        other = p.comparators[0] if p.left is node else p.left
+        return isinstance(other, ast.Constant) and other.value is None
+    if isinstance(p, ast.UnaryOp) and isinstance(p.op, ast.Not):
+        return True
+    return isinstance(p, (ast.If, ast.While, ast.IfExp, ast.Assert)) and p.test is node
+
+
+def _enclosing(node: ast.AST, up: dict[ast.AST, ast.AST]) -> ast.AST | None:
+    while node in up:
+        node = up[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return node
+    return None
+
+
+def token_check_only(f: Finding, res: Resolver) -> Finding | None:
+    """An `ha-auth-internals` hit that only checks a token sent to the app becomes
+    `ha-auth-token-check` (low, never paired with a destination): the call's result is
+    only tested for None, or kept in one name that is only tested or read for `.user`,
+    `.id` or `.user_id`, as Home Assistant's own signed-link check does. Anything else
+    (the token itself, its signing key, the object passed on) stays as it is."""
+    if f.rule_id != "ha-auth-internals" or not f.file or not f.line:
+        return None
+    tree = res.tree(f.file)
+    if tree is None:
+        return None
+    up = parents(tree)
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr in _CHECK_CALLS
+        and n.func.lineno == f.line
+        and isinstance(n.func.value, ast.Attribute)
+        and n.func.value.attr == "auth"
+    ]
+    if len(calls) != 1:
+        return None
+    call = calls[0]
+    node: ast.AST = call
+    if isinstance(up.get(node), ast.Await):
+        node = up[node]
+    if _none_test(node, up):
+        return _token_check(f)
+    target = up.get(node)
+    if isinstance(target, ast.Assign) and len(target.targets) == 1:
+        name = target.targets[0]
+    elif isinstance(target, ast.NamedExpr):
+        name = target.target
+    else:
+        return None
+    if not isinstance(name, ast.Name):
+        return None
+    scope = _enclosing(call, up)
+    if scope is None:
+        return None
+    stores = [
+        n for n in ast.walk(scope)
+        if isinstance(n, ast.Name) and n.id == name.id and isinstance(n.ctx, ast.Store)
+    ]  # fmt: skip
+    if len(stores) != 1:
+        return None
+    for n in ast.walk(scope):
+        if not (isinstance(n, ast.Name) and n.id == name.id and isinstance(n.ctx, ast.Load)):
+            continue
+        p = up.get(n)
+        if _none_test(n, up):
+            continue
+        if isinstance(p, ast.Attribute) and p.value is n and p.attr in _CHECK_ATTRS:
+            continue
+        return None
+    return _token_check(f)
+
+
+def _token_check(f: Finding) -> Finding:
+    return dataclasses.replace(
+        f,
+        rule_id=CHECK_RULE,
+        title="Checks login tokens sent to it",
+        severity=Severity.LOW,
+        message=(
+            "Checks whether a login token or a signed link someone sent to the app is "
+            "valid, and whose it is, the way Home Assistant's own login check does. Only "
+            "that is used: the token itself and the key that signs it aren't read."
+        ),
+    )

@@ -1,12 +1,15 @@
 [project]
 name = "ha-sniff-test"
-version = "0.14.0"
+version = "0.15.0"
 description = "🐕 Sniffs Home Assistant Marketplace (HACS) integrations and cards before they get into the house."
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
     "jsbeautifier==2.0.3",
+    # (0.15) reads a scanned repo's disclosure.yaml with the safe loader, after refusing
+    # anchors, aliases and tags (analyzers/disclosure.py)
+    "pyyaml==6.0.3",
     "rich>=13.7",
 ]
 
@@ -54,6 +57,6 @@ ignore = [
 testpaths = ["tests"]
 markers = [
     "network: hits GitHub/PyPI (deselect with -m 'not network')",
-    "tools: requires external scanners (semgrep, osv-scanner, guarddog)",
+    "tools: requires external scanners (semgrep, osv-scanner)",
 ]
 addopts = "-m 'not network'"

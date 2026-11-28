@@ -145,8 +145,9 @@ def test_fixture_pair_surfaces_exactly_the_new_host_and_secrets_read(fixtures):
     d = diff(old, new)
     assert d["warnings"] == []
     got = sorted((c["kind"], c["text"]) for c in d["changes"])
+    # (0.15) No "possible" flow: the host is only named (const.STATUS), every request the
+    # app makes goes to its own API, so nothing could carry the secrets there.
     assert got == [
-        ("new_flow", "possible: secrets.yaml → status.weather-mirror.invalid · possible-exfil"),
         ("new_host", "undeclared: status.weather-mirror.invalid (const.py:4)"),
         ("new_read", "secrets.yaml (diagnostics.py:6) · ha-read-secrets"),
     ]

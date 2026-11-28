@@ -326,3 +326,37 @@ def test_claims_can_cite_a_reformatted_part(tmp_path):
     claim = f"It sends `tok` in the `Authorization` header (card.js#L1:{n})."
     got = ai_context.accept(rep, "f1", {"claim_1": claim})
     assert got["claims"][0]["cites"] == [["card.js#L1", n, n]]
+
+
+def test_a_comment_block_above_a_function_is_its_description(tmp_path):
+    """(0.15, his ask 2026-11-21) Without a docstring, the comment block right above a
+    function is the developer's description of it (Python and readable JS); minified code
+    and a lone lint marker give none."""
+    from sniff_test.report import context
+
+    (tmp_path / "a.py").write_text(
+        "import os\n\n"
+        "# Sends the reading to the vendor cloud every five minutes,\n"
+        "# with the user's API key.\n"
+        "@decorator\n"
+        "def push():\n"
+        "    return os.environ\n\n"
+        "# noqa\n"
+        "def other():\n"
+        "    return 1\n"
+    )
+    (tmp_path / "card.js").write_text(
+        "/**\n * Draws the energy flow and asks Home Assistant for history.\n */\n"
+        "async loadHistory(hass) {\n  const x = 1;\n  return fetch('/api/history');\n}\n"
+    )
+    (tmp_path / "min.js").write_text(
+        "// Loads it all from the cloud quickly\n" + "a=1;" * 200 + "\n"
+    )
+    tree = context._Tree(tmp_path)
+    doc = context.docstring(tree, "a.py", 7)
+    assert doc and doc["comment"] and doc["start"] == 3 and doc["of"] == "push"
+    assert "vendor cloud" in " ".join(doc["code"])
+    assert context.docstring(tree, "a.py", 11) is None
+    js = context.js_comment(tree, "card.js", 6)
+    assert js and js["start"] == 1 and "energy flow" in " ".join(js["code"])
+    assert context.js_comment(tree, "min.js", 2) is None

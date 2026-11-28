@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sniff_test import __version__
+from sniff_test.analyzers import libraries
 from sniff_test.analyzers.python_deps import Resolution
 from sniff_test.analyzers.repo_signals import Provenance
 from sniff_test.models import AnalyzerResult, AnalyzerState, DepFacts, Fact, Finding, Target
@@ -61,6 +62,29 @@ class ScanResult:
     # they go beside it in the store.
     inputs: dict[str, Any] | None = None
     source: dict[str, Any] | None = None  # (0.11.0) sources.capture(); kept beside the scan
+    # (0.14.1) unchanged published libraries not read as code (analyzers/libraries.py)
+    libraries: list[Any] = field(default_factory=list)
+    # (0.15) what every library lookup came to, the ones read as code included
+    library_lookups: dict[str, Any] | None = None
+    # (0.14.1) the scan-logic key (logic.key()) this scan was made with
+    logic: str | None = None
+    # (0.14.1) what the scan cache answered: files of the main pass, from the cache, and
+    # the seconds those answers took when they were made (scancache.Stats)
+    cache: dict[str, Any] | None = None
+    # (0.15) how the Python sends web requests (analyzers/py_requests.summary); never scored
+    requests: dict[str, Any] | None = None
+    # (0.15) environment variables read and set, by name (analyzers/py_env.summary)
+    environment: dict[str, Any] | None = None
+    # (0.15) the kinds of entity it sets up for itself (analyzers/platforms); context only
+    platforms: list[str] | None = None
+    # (0.15) Lua it runs through lupa and where that Lua comes from (analyzers/py_lua)
+    lua: dict[str, Any] | None = None
+    # (0.15) the developer's disclosure.yaml, read as hostile input (analyzers/disclosure);
+    # shown beside the scan, never scored
+    disclosure: dict[str, Any] | None = None
+    # (0.15) how far behind each package is: {"pypi": {name: …}, "npm": {name: …}}
+    # (pypi_meta.versions_behind, npm_meta.lookup); context on the package lines only
+    package_versions: dict[str, Any] | None = None
 
 
 def sanitize_untrusted(text: str | None, limit: int = _UNTRUSTED_MAX) -> str:
@@ -89,6 +113,8 @@ def finding_json(f: Finding) -> dict[str, Any]:
         # hosts/IPs the user may mark trusted in the panel (lowercase, validated shape)
         **({"addresses": list(f.addresses)} if f.addresses else {}),
         **({"fingerprint": f.fingerprint} if f.fingerprint else {}),
+        **({"page": sanitize_untrusted(f.page, 200)} if f.page is not None else {}),
+        **({"page_note": sanitize_untrusted(f.page_note, 300)} if f.page_note else {}),
     }
 
 
@@ -111,6 +137,15 @@ def dependency_json(d: DepFacts) -> dict[str, Any]:
                 "aliases": [sanitize_untrusted(x, 40) for x in a.aliases],
                 "summary": sanitize_untrusted(a.summary, 300),
                 "details": sanitize_untrusted(a.details, 1500),
+                # (0.14.1) values checked against SSVC's own words (osv.ssvc)
+                "ssvc": {
+                    "exploitation": a.exploitation,
+                    "automatable": a.automatable,
+                    "impact": a.impact,
+                    "kev": a.kev,
+                }
+                if a.exploitation or a.kev
+                else None,
             }
             for a in d.advisories
         ],
@@ -129,7 +164,11 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
         counts[str(f.severity)] = counts.get(str(f.severity), 0) + 1
     return {
         "schema_version": SCHEMA_VERSION,
-        "tool": {"name": "sniff-test", "version": __version__},
+        "tool": {
+            "name": "sniff-test",
+            "version": __version__,
+            **({"logic": scan.logic} if scan.logic else {}),
+        },
         "target": {
             "input": t.source,
             "kind": str(t.kind),
@@ -137,6 +176,7 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
             "ref": t.ref,
             "commit_sha": t.commit_sha,
             "install_source": t.install_source,
+            **({"signature": dict(t.signature)} if t.signature else {}),
             "artifact_sha256": t.artifact_sha256,
             "domain": t.domain,
         },
@@ -175,6 +215,28 @@ def to_dict(scan: ScanResult) -> dict[str, Any]:
         "hygiene": _hygiene_json(scan, findings),
         # (0.14.0) shown on the app's page, never scored (popularity isn't safety)
         "popularity": {"stars": t.stars, "downloads": t.downloads} if t.repo else None,
+        # (0.14.1) files identical to a published npm file, not read as code; values come
+        # from jsDelivr and npm, checked against npm's name and version rules
+        "libraries": libraries.to_json(scan.libraries),
+        # (0.15) every lookup's outcome; `read`: packages named but read as code, with why
+        "library_lookups": libraries.lookups_json(scan.library_lookups),
+        "cache": scan.cache,
+        # (0.15) the method of each web request and the names of what it carries; names
+        # are text from the scanned code (untrusted)
+        "requests": scan.requests,
+        # (0.15) environment variables read and set; names are plain names from the code
+        "environment": scan.environment,
+        # (0.15) entity platforms from its own module names (sensor, climate…)
+        "platforms": scan.platforms,
+        # (0.15) Lua runners and the Lua they run; names are plain-checked file and module
+        # names from the code, sites come from py_flow (untrusted, escaped in the panel)
+        "lua": scan.lua,
+        # (0.15) the developer's disclosure.yaml: {"state": "read", "data": …} or
+        # {"state": "ignored", "problems": […]}; text from the scanned repo (untrusted)
+        "disclosure": scan.disclosure,
+        # (0.15) newest release of each package and how many are newer; versions come
+        # from PyPI and npm (untrusted text, escaped in the panel)
+        "package_versions": scan.package_versions,
         "ai_brief": ai_brief(scan, findings),
         # Code from the scanned repo (untrusted), for "Explain in context". Not in ai_brief.
         "context": scan.context,
@@ -205,6 +267,8 @@ def _provenance_json(p: Provenance | None) -> dict[str, Any] | None:
         "requested_as": p.requested_as,
         "created_at": p.created_at,
         "owner_type": p.owner_type,
+        "pushed_at": p.pushed_at,
+        "archived": p.archived,
         "former_names": p.former_names,
         "installed_tag": p.installed_tag,
         "publishers": p.publishers,

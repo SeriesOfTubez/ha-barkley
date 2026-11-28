@@ -71,8 +71,24 @@ rules:
           - pattern-not: importlib.import_module(f"{__package__}...")
           - pattern-not: importlib.import_module(f"{__name__}...")
           # HA's own platform loading idiom: import_module(f".{platform}", __name__)
-      - pattern: importlib.util.spec_from_file_location(...)
-      - pattern: $SPEC.loader.exec_module(...)
+      # (0.15, issue #14) Loading one of its own files by a fixed name, next to this
+      # file (a fallback for running a module on its own), is not a computed import.
+      - patterns:
+          - pattern-either:
+              - pattern: importlib.util.spec_from_file_location(...)
+              - pattern: $SPEC.loader.exec_module(...)
+          - pattern-not: importlib.util.spec_from_file_location($N, $P.with_name("..."))
+          - pattern-not: importlib.util.spec_from_file_location($N, $P.parent / "...")
+          - pattern-not: importlib.util.spec_from_file_location($N, os.path.join(os.path.dirname(__file__), "..."))
+          - pattern-not-inside: |
+              $SPEC = importlib.util.spec_from_file_location($N, $P.with_name("..."))
+              ...
+          - pattern-not-inside: |
+              $SPEC = importlib.util.spec_from_file_location($N, $P.parent / "...")
+              ...
+          - pattern-not-inside: |
+              $SPEC = importlib.util.spec_from_file_location($N, os.path.join(os.path.dirname(__file__), "..."))
+              ...
       - pattern: importlib.machinery.SourceFileLoader(...)
 
   - id: py-runtime-pip
@@ -146,8 +162,20 @@ rules:
     pattern-either:
       - pattern: base64.$F("=~/^[A-Za-z0-9+\/=_-]{300,}$/", ...)
       - pattern: bytes.fromhex("=~/^[0-9a-fA-F\s]{300,}$/")
-      - pattern: '"".join(chr($C) for $C in $XS)'
-      - pattern: '"".join(map(chr, $XS))'
+      # (0.15) A string spelled as a fixed list of numbers. Looping chr() over range() or
+      # bytes read from a device is decoding data (a real integration strips control
+      # characters with "".join(chr(v) for v in range(33))), not hiding a name.
+      # (0.15) only numbers written in the code: `[byte1, byte2]` read from a device is
+      # data being decoded (a real integration)
+      - patterns:
+          - pattern-either:
+              - pattern: '"".join(chr(...) for $C in [$X, ...])'
+              - pattern: '"".join(chr(...) for $C in ($X, ...))'
+              - pattern: '"".join(map(chr, [$X, ...]))'
+              - pattern: '"".join(map(chr, ($X, ...)))'
+          - metavariable-regex:
+              metavariable: $X
+              regex: ^(0[xXoObB])?[0-9a-fA-F_]+$
       - pattern: chr($A) + chr($B) + chr($C)
       # (0.14.0) A builtin looked up by a plain variable is an interpreter's ordinary
       # name lookup (a real Python-in-Python integration does it); a name built from

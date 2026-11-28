@@ -1,6 +1,6 @@
-# Barkley without the Supervisor: next to Home Assistant Container or Core, or on another
+# Barkley without the Supervisor: next to Home Assistant Container, or on another
 # machine than Home Assistant (a NAS, a PC) to keep scans off a small box.
-# Step by step: the wiki page "Standalone (no Supervisor)".
+# Step by step: docs/Standalone.md, also at https://ha-barkley.github.io/docs/standalone/
 #
 #   mkdir -p data && sudo chown 1000:1000 data
 #   docker compose up -d
@@ -15,7 +15,7 @@
 # runs the scanner directly.
 services:
   barkley:
-    image: ghcr.io/seriesoftubez/barkley:0.14.0
+    image: ghcr.io/seriesoftubez/barkley:0.15.0
     entrypoint: ["sniff-test"]
     command: ["serve"]
     restart: unless-stopped

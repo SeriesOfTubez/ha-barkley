@@ -103,7 +103,9 @@ def test_classification(tmp_path, monkeypatch):
         'F = "https://telemetry.weather-cdn.invalid/c"\n'
         'G = "http://www.w3.org/2000/svg"\n'
         'H = "8.8.8.8"\n'
-        'I = "https://stats.someone.workers.dev"\n',
+        'I = "https://stats.someone.workers.dev"\n'
+        'J = "239.255.255.250"\n'  # (0.15) multicast: device discovery on the home network
+        'K = "http://www.onvif.org/ver10/device/wsdl"\n',  # (0.15) a standard's namespace
     )
     hosts = _hosts(endpoints.run(_target(root, repo="acme/acme-weather")))
     assert hosts == {
@@ -115,7 +117,52 @@ def test_classification(tmp_path, monkeypatch):
         "telemetry.weather-cdn.invalid": "undeclared",
         "8.8.8.8": "resolver",
         "stats.someone.workers.dev": "developer_hosted",
-    }  # w3.org (a namespace) is dropped entirely
+        "239.255.255.250": "local",
+    }  # w3.org and onvif.org (namespaces) are dropped entirely
+
+
+def test_why_a_host_is_the_apps(tmp_path):
+    """(0.15, his decision 2026-11-26) The scan says how a host came to be the app's: a
+    name match alone says nothing about who runs it (a third party's integration named
+    after a phone company read the company's API as "the app's own site")."""
+    root = _write(
+        tmp_path,
+        "x.py",
+        'A = "https://api.acme-weather.example/v2"\n'  # only the name matches
+        'B = "https://github.com/acme/acme-weather/issues"\n'  # under the owner's path
+        'C = "https://acme.github.io/acme-weather"\n'  # the owner's Pages site
+        'D = "https://cdn.weather-docs.example/x"\n',  # its manifest links to the domain
+        {"domain": "acme_weather", "documentation": "https://weather-docs.example/start"},
+    )
+    by = {
+        f.key: f.attrs.get("declared_by")
+        for f in endpoints.run(_target(root, repo="acme/acme-weather")).facts
+        if f.kind == "host"
+    }
+    assert by == {
+        "api.acme-weather.example": "name",
+        "github.com": "owner",
+        "acme.github.io": "owner",
+        "cdn.weather-docs.example": "files",
+    }
+
+
+@pytest.mark.parametrize(
+    ("host", "repo", "mine"),
+    [
+        ("quizgame-api.someone.workers.dev", "someone/quizgame", True),  # owner's account
+        ("api.some-one.workers.dev", "Some-One/x", True),  # names are compared plainly
+        ("homeassistant-acme-cars-worker.onrender.com", "x/homeassistant-acme-cars", True),
+        ("acmedk-app-acme-prod.azurewebsites.net", "x/ha-acme", False),  # short name only
+        ("council-api-prod.azurewebsites.net", "x/waste-days", False),
+        ("workers.dev", "workers/dev", False),  # the bare suffix, from a list of services
+        ("api.someone.example", "someone/x", False),  # not free hosting at all
+        ("api.someone.workers.dev", None, False),
+        ("acme.workers.dev", "x/acme", False),  # a repo name under 6 letters isn't enough
+    ],
+)
+def test_developer_evidence(host, repo, mine):
+    assert endpoints.developer_evidence(host, repo) is mine
 
 
 def test_exfil_service_table_is_a_finding(tmp_path, monkeypatch):
@@ -290,3 +337,78 @@ def test_port_direction_from_the_calls_around_it(tmp_path):
     r = endpoints.run(_target(tmp_path))
     dirs = {int(f.key): f.attrs.get("directions") for f in r.facts if f.kind == "port"}
     assert dirs == {80: ["out"], 8099: ["in"], 1234: None, 502: ["out"]}
+
+
+# --- (0.15, his decision 2026-11-20) shared hosting is the app's own only under its owner ---
+
+
+def _shared(tmp_path, *urls):
+    lines = "".join(f'U{i} = "{u}"\n' for i, u in enumerate(urls))
+    root = _write(tmp_path / "pkg", "const.py", lines)
+    target = _target(root, repo="acme/acme-weather")
+    return _hosts(endpoints.run(target))
+
+
+def test_github_under_the_owner_is_the_app_s_own(tmp_path):
+    got = _shared(tmp_path, "https://github.com/acme/acme-weather/issues",
+                  "https://raw.githubusercontent.com/acme/acme-weather/main/x.json")  # fmt: skip
+    assert got == {"github.com": "declared", "raw.githubusercontent.com": "declared"}
+
+
+def test_anyone_else_s_path_on_shared_hosting_is_not(tmp_path):
+    got = _shared(tmp_path, "https://github.com/acme/acme-weather",
+                  "https://github.com/someone-else/tool/releases",
+                  "https://raw.githubusercontent.com/someone-else/x/main/y.py",
+                  "https://gitlab.com/acme2/x")  # fmt: skip
+    assert got == {"github.com": "infrastructure", "raw.githubusercontent.com": "infrastructure",
+                   "gitlab.com": "infrastructure"}  # fmt: skip
+
+
+def test_a_translation_key_is_not_a_site(tmp_path):
+    """(0.15, issue #14 bug 4) `Msg("timeline.when.at")` names a key of the app's own
+    translation catalog; a scheme-less name that is no JSON key stays a site."""
+    root = _write(
+        tmp_path / "acme_weather",
+        "views.py",
+        'def at(i18n, t):\n    return i18n.Msg("timeline.when.at", t=t)\n\n'
+        'BACKUP = "api.acme-weather.at"\n',
+    )
+    i18n = root / "frontend" / "i18n"
+    i18n.mkdir(parents=True)
+    (i18n / "nl.json").write_text('{"timeline.when.at": "{t}", "timeline": {"x.y": 1}}')
+    hosts = {f.key for f in endpoints.run(_target(root)).facts if f.kind == "host"}
+    assert "timeline.when.at" not in hosts
+    assert "api.acme-weather.at" in hosts
+
+
+def test_a_version_number_written_like_an_address_is_not_one(tmp_path):
+    # (his report 2026-11-23) a real cloud integration's `APP_VERSION = "2.4.1.7"` showed
+    # under "Other addresses in its code" as an IP address
+    (tmp_path / "const.py").write_text(
+        'APP_VERSION = "2.4.1.7"\n'
+        'HEADERS = {"appVersion": "7.10.3.4", "x": 1}\n'
+        'client = Client(fw_ver="3.1.2.9")\n'
+        'SERVER = "203.0.113.44"\n'  # "SERVER" holds "ver" but isn't a version
+        'host = "10.1.2.3"\n'
+        'BUILD = {"build": "1.2.3.4"}\n'
+    )
+    (tmp_path / "card.js").write_text('const a={version:"2.4.6.8",ip:"198.51.100.9"};\n')
+    refs, _ = endpoints.extract(tmp_path)
+    assert {r.host for r in refs} == {"203.0.113.44", "10.1.2.3", "198.51.100.9"}
+
+
+def test_a_version_named_ip_is_not_counted_as_called(tmp_path):
+    (tmp_path / "a.py").write_text('SW_VERSION = "1.4.2.7"\nTARGET_HOST = "203.0.113.34"\n')
+    assert endpoints.addressed_hosts(tmp_path) == {"203.0.113.34"}
+
+
+def test_version_lens_stays_linear_on_hostile_lines():
+    import time
+
+    for text in ("a" * 100_000 + '= "', "_" * 100_000 + ':"', "x=" * 50_000 + '"'):
+        t = time.perf_counter()
+        endpoints._version_before(text)
+        assert time.perf_counter() - t < 0.5
+    t = time.perf_counter()
+    assert not endpoints.version_name("A" * 10_000)
+    assert time.perf_counter() - t < 0.5

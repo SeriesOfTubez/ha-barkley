@@ -21,9 +21,10 @@ for a new install is sniffing it from search first. An update's code waits for a
 so its sniff and diff come before it runs. Barkley reports; it never moves, refuses or
 blocks anything (user decision 2026-11-10).
 
-Notifications go through HA's own services (persistent_notification always, an optional
-notify.<target>). Their text is built from validated repo names and versions, scores,
-verdicts and the fixed titles of rules: never from scanned text (README, code, evidence).
+Notifications go through HA's own services: persistent_notification (the bell) and an
+optional notify.<target>, either or both, or neither (0.15, #29: Send notifications to,
+Disabled). Their text is built from validated repo names and versions, scores, verdicts
+and the fixed titles of rules: never from scanned text (README, code, evidence).
 
 A restart in the middle of a sniff (an app rebuild, a host reboot) can't lose the change:
 the snapshot is written as soon as the list is read, so the next start wouldn't see the
@@ -40,6 +41,7 @@ installed list can't be read.
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import threading
 import time
@@ -48,11 +50,9 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sniff_test import supervisor, trust
-from sniff_test.diff import HEADLINE_RANK
+from sniff_test import readings, shown, supervisor
+from sniff_test.diff import HEADLINE_RANK, what_sentence
 from sniff_test.diff import diff as diff_reports
-from sniff_test.report import explain
-from sniff_test.scoring import VERDICTS
 from sniff_test.store import Store, StoreError
 from sniff_test.supervisor import Installed, SupervisorError
 
@@ -70,17 +70,16 @@ _LOG_KEPT = 20
 _PENDING_KEPT = 20
 _RECONNECT = 10  # seconds; doubles up to POLL while the subscription keeps failing
 
-_VERDICT = {v.key: (v.label, v.emoji) for _, v in VERDICTS}
 _KIND = {"integration": "Integration", "card": "Card", "plugin": "Card"}
 _GROUP = {  # diff.py's summary buckets, in fixed plain words (singular, plural)
     "findings": ("finding", "findings"),
     "flows": ("data flow", "data flows"),
-    "data": ("kind of private data read", "kinds of private data read"),
+    "data": ("type of private data it reads", "types of private data it reads"),
     "hosts": ("site", "sites"),
     "packages": ("package", "packages"),
-    "hooks": ("hook into Home Assistant", "hooks into Home Assistant"),
+    "hooks": ("way it plugs into Home Assistant", "ways it plugs into Home Assistant"),
     "repo": ("publisher or repository change", "publisher or repository changes"),
-    "coverage": ("change in what could be checked", "changes in what could be checked"),
+    "coverage": ("change in what Barkley could check", "changes in what Barkley could check"),
 }
 _NO_SIGN = {"repo", "coverage"}  # already say "change"
 _SIGN = {"+": "new", "-": "removed", "~": "changed"}
@@ -95,6 +94,9 @@ class Change:
     kind: str
     version: str  # what landed; for "available", the offered version
     previous: str | None = None  # the version before; for "available", the installed one
+    # (0.15) an update already offered when the app was installed: its notification gets
+    # its own id, so it doesn't replace the install's (the installed version is what runs)
+    after_install: bool = False
 
 
 def _now_iso(now: float) -> str:
@@ -118,13 +120,19 @@ def snapshot_changes(old: dict[str, Any] | None, new: dict[str, Any]) -> list[Ch
     out = []
     for key, cur in new.items():
         prev = old.get(key)
+        offered = cur.get("available") or ""
         if not isinstance(prev, dict):
             out.append(Change("install", cur["repo"], cur["kind"], cur["version"]))
+            # (0.15, seen on his box 2026-11-23) an older version installed on purpose
+            # with an update already waiting: the offer is sniffed too. Before, the
+            # snapshot kept the offer, so no later check saw it as new.
+            if offered and offered != cur["version"]:
+                out.append(Change("available", cur["repo"], cur["kind"], offered,
+                                  cur["version"], after_install=True))  # fmt: skip
             continue
         if prev.get("version") != cur["version"]:
             out.append(Change("update", cur["repo"], cur["kind"], cur["version"],
                               str(prev.get("version") or "")))  # fmt: skip
-        offered = cur.get("available") or ""
         if offered and offered != cur["version"] and offered != (prev.get("available") or ""):
             out.append(Change("available", cur["repo"], cur["kind"], offered, cur["version"]))
     return out
@@ -132,8 +140,11 @@ def snapshot_changes(old: dict[str, Any] | None, new: dict[str, Any]) -> list[Ch
 
 def snapshot_of(items: Iterable[Installed]) -> dict[str, dict[str, str]]:
     return {
+        # (0.15, #27) an offer counts only when it's newer (Installed.update): on a
+        # pre-release track the older stable release isn't one
         it.repo.lower(): {"repo": it.repo, "kind": it.kind, "version": it.installed,
-                          "available": it.available}
+                          "available": it.available
+                          if it.update or it.available == it.installed else ""}
         for it in items
     }  # fmt: skip
 
@@ -147,21 +158,6 @@ def matters(signal: str, data: dict[str, Any]) -> bool:
     if signal == supervisor.SIGNAL_REPOSITORY:
         return data.get("action") == "uninstall"
     return False
-
-
-def top_titles(report: dict[str, Any], limit: int = 3) -> list[str]:
-    """Fixed rule titles of the most serious finding groups (never evidence text)."""
-    order = {"critical": 0, "high": 1, "medium": 2}
-    seen: list[tuple[int, str]] = []
-    for f in report.get("findings", []):
-        sev = str(f.get("severity"))
-        if sev not in order or (f.get("review") or {}).get("state") == "accepted":
-            continue
-        title = explain.explain(str(f.get("rule_id"))).title
-        if (order[sev], title) not in seen:
-            seen.append((order[sev], title))
-    seen.sort(key=lambda s: s[0])
-    return [t for _, t in seen[:limit]]
 
 
 def change_summary(d: dict[str, Any]) -> str:
@@ -180,66 +176,121 @@ def change_summary(d: dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
+# (preview) a stoplight per reading (his decision 2026-11-20): none/Low green, possible/
+# Medium yellow, found/High red
+_LIGHT = {"none": "🟢", "low": "🟢", "possible": "🟡", "medium": "🟡", "found": "🔴",
+          "high": "🔴"}  # fmt: skip
+_T_WORDS = {"none": "none", "possible": "possible", "found": "found"}
+
+
+_LEVELS = {"low": 0, "medium": 1, "high": 2}
+
+
+def worth_notifying(entry: dict[str, Any], when: str) -> bool:
+    """(0.15, #29) Settings → Notify when. A sniff that didn't finish always notifies,
+    and so does any sign of malicious behavior; otherwise Exposure must reach the level."""
+    if when not in ("medium", "high", "threat") or not entry.get("complete", True):
+        return True
+    rd = entry.get("readings") or {}
+    if rd.get("threat_level") in ("possible", "found"):
+        return True
+    if when == "threat":
+        return False
+    return _LEVELS.get(str(rd.get("exposure_level")), 0) >= _LEVELS[when]
+
+
+def readings_line(rd: dict[str, Any], was: dict[str, Any] | None = None) -> str:
+    """'🟢 Threat: none · 🟡 Exposure: medium (4.5, was 1.25)': fixed words and numbers.
+    (his call 2026-11-25) An Exposure of 0 that didn't change has no number: "low" says it."""
+    t, x = str(rd.get("threat_level")), str(rd.get("exposure_level"))
+    num = _num(rd.get("exposure"))
+    if was is not None and _num(was.get("exposure")) != num:
+        num += f", was {_num(was.get('exposure'))}"
+    shown = "" if num == "0" else f" ({num})"
+    return (f"{_LIGHT.get(t, '🟡')} Threat: {_T_WORDS.get(t, '?')} · "
+            f"{_LIGHT.get(x, '🟡')} Exposure: {x if x in _LIGHT else '?'}{shown}")  # fmt: skip
+
+
+def _num(v: Any) -> str:
+    try:
+        n = float(v or 0)
+    except (TypeError, ValueError):
+        return "?"
+    return f"{n:.0f}" if n == int(n) else f"{n:.2f}".rstrip("0")
+
+
 def notification(
     entry: dict[str, Any],
     report: dict[str, Any],
     d: dict[str, Any] | None,
     panel: str,
-    notify_reopen: bool = True,
 ) -> tuple[str, str, str]:
     """(title, markdown message, plain message) for one auto-sniffed install or update.
     Every piece is validated or fixed text; nothing comes from the scanned repo."""
-    repo, ver, prev = entry["repo"], entry["version"], entry.get("previous")
+    ver, prev = entry["version"], entry.get("previous")
     kind = _KIND.get(str(entry.get("kind")), "App")
-    label, emoji = _VERDICT.get(str(report.get("verdict", {}).get("key")), ("?", ""))
-    score = int(report.get("score", 0))
     offered = entry.get("action") == "available"
     if offered:
-        did = f"has an update waiting, {prev} → {ver}, sniffed before you install it"
+        did = f"has an update waiting, {prev} to {ver}. Barkley sniffed it before you install it"
+        short = "Sniffed before you install it."
     else:
         did = (
-            f"was updated from {prev} to {ver} and sniffed"
+            f"was updated from {prev} to {ver}. Barkley sniffed it"
             if prev
-            else f"{ver} was installed and sniffed"
+            else f"{ver} was installed. Barkley sniffed it"
         )
-    lines = [f"{kind} {repo} {did}: {emoji} {label}, {score}/100."]
-    titles = top_titles(report)
-    if titles:
-        lines.append("Worth a look: " + "; ".join(titles) + ".")
-    elif report.get("findings"):
-        lines.append("Only minor things were found.")
-    else:
-        lines.append("No security concerns were found.")
+        short = f"Updated from {prev}." if prev else "Newly installed."
+    rd = report.get("readings") or readings.compute(report).to_dict()
+    return _readings_notification(entry, report, d, panel, rd, kind, did, offered, short)
+
+
+def _readings_notification(
+    entry: dict[str, Any],
+    report: dict[str, Any],
+    d: dict[str, Any] | None,
+    panel: str,
+    rd: dict[str, Any],
+    kind: str,
+    did: str,
+    offered: bool,
+    short: str,
+) -> tuple[str, str, str]:
+    """Counts, readings, fixed phrases and validated names only: never the developer's
+    words or AI text. (his call 2026-11-25) The phone push starts with the readings: the
+    title already names the app and version, a tap opens Barkley, and a phone cuts the
+    body off after a few lines."""
+    repo, ver, prev = entry["repo"], entry["version"], entry.get("previous")
+    was = entry.get("was_readings") if isinstance(entry.get("was_readings"), dict) else None
+    rline = readings_line(rd, was)
+    lines = [f"{kind} {repo} {did}. {rline}."]
+    if rd.get("threat_level") in ("found", "possible") and rd.get("threat_reason"):
+        lines.append(f"It {rd['threat_reason']}.")  # a fixed phrase (readings._THREAT_PHRASE)
+    if rd.get("threat_level") == "found":
+        lines.append("Remove it, then log out of Home Assistant everywhere.")
     if d is not None:
         summary = change_summary(d)
         lines.append(
-            f"What the update changes: {summary}." if summary
+            f"Changes in this update: {summary}." if summary
             else f"Nothing important changed since {prev}."
         )  # fmt: skip
+        # (0.15, his decision 2026-11-23) what else it changes, as counts only: fixed words,
+        # never a name from the scanned code
+        what = what_sentence(d.get("what") or [])
+        if what:
+            lines.append(f"It also {what[0].lower()}{what[1:]}")
     if not report.get("complete", True):
-        lines.append("Part of the check didn't finish, so the score is capped at 89.")
-    r = report.get("review") or {}
-    if r.get("reviewed"):  # (0.14.0) the reviewed score is the big one; Barkley's beside it
-        lines.append(f"Reviewed by you; Barkley's own score is {int(r.get('own_score') or 0)}.")
-    due = len(r.get("reopened") or [])
-    if due and notify_reopen:
-        lines.append(f"{due} finding{'s' * (due != 1)} you accepted changed in this version "
-                     f"and {'is' if due == 1 else 'are'} open again.")  # fmt: skip
-    t = report.get("trust")
-    if t and not r.get("reviewed"):  # counts and Barkley's number; never the addresses
-        n = len(t.get("addresses") or [])
-        lines.append(
-            f"The score counts {n} address{'es' * (n != 1)} you trust as fine; "
-            f"Barkley's own score is {int(t.get('own_score') or 0)}."
-        )
+        lines.append("Part of the check didn't finish.")
     ids = entry.get("scan_ids") or []
     where = f"scan @{ids[-1]}" if ids else "the app's page"
     if len(ids) == 2:
-        where += f", what the update changes @{ids[0]} → @{ids[1]}"
+        where += f" and what the update changes (@{ids[0]} → @{ids[1]})"
     link = f"[Open Barkley]({panel})" if panel else "Open Barkley from the sidebar"
-    title = f"Barkley: {repo} {ver}" + (" (update waiting)" if offered else "")
-    plain = " ".join(lines) + f" Open Barkley from the sidebar: {where}."
-    return title, "\n\n".join(lines) + f"\n\n{link}: {where}.", plain
+    if rd.get("threat_level") == "found":
+        title = f"Barkley: 🔴 malicious behavior found in {repo} {ver}"
+    else:
+        title = f"Barkley: {repo} {ver}" + (" (update waiting)" if offered else "")
+    plain = " ".join([f"{rline}.", *lines[1:], short])
+    return title, "\n\n".join(lines) + f"\n\n{link} to see {where}.", plain
 
 
 def _package_findings(report: dict[str, Any]) -> dict[tuple[str, str], tuple[str, str]]:
@@ -274,11 +325,11 @@ def advisory_summary(n: dict[str, int]) -> str:
     if n["malicious"]:
         parts.append(f"{pk(n['malicious'])} now listed as malicious")
     if n["new"]:
-        parts.append(f"{pk(n['new'])} newly with known vulnerabilities")
+        parts.append(f"{pk(n['new'])} now with known vulnerabilities")
     if n["changed"]:
         parts.append(f"{pk(n['changed'])} with different advisories than before")
     if n["gone"]:
-        parts.append(f"{pk(n['gone'])} no longer with any")
+        parts.append(f"{pk(n['gone'])} with no advisories any more")
     return ", ".join(parts)
 
 
@@ -286,36 +337,38 @@ def advisory_notification(
     entry: dict[str, Any], report: dict[str, Any], panel: str
 ) -> tuple[str, str, str]:
     """(title, markdown, plain) for a stored scan whose package advisories changed.
-    Counts, scores and validated names only: package names come from the scanned repo's
+    Counts, readings and validated names only: package names come from the scanned repo's
     lockfile and advisory text from OSV, so neither is ever put in a notification."""
     repo, ver = entry["repo"], entry["version"]
     kind = _KIND.get(str(entry.get("kind")), "App")
-    label, emoji = _VERDICT.get(str(report.get("verdict", {}).get("key")), ("?", ""))
-    score, was = int(report.get("score", 0)), entry.get("was")
-    moved = f" (it was {int(was)}/100)" if isinstance(was, int) and was != score else ""
+    rd = report.get("readings") or readings.compute(report).to_dict()
+    was = entry.get("was_readings") if isinstance(entry.get("was_readings"), dict) else None
     lines = []
     if entry.get("malicious"):
         lines.append("A package this app uses is now listed as malicious.")
     lines.append(
-        f"{kind} {repo} {ver}: the known advisories for the packages it uses changed since "
-        f"Barkley sniffed it. {emoji} {label}, {score}/100{moved}."
+        f"The known security advisories for the packages {kind.lower()} {repo} {ver} uses "
+        f"have changed since Barkley sniffed it. {readings_line(rd, was)}."
     )
     if entry.get("changes"):
         lines.append(f"What changed: {entry['changes']}.")
-    lines.append("The app's code was not scanned again; only its packages were asked about.")
-    t = report.get("trust")
-    if t:
-        n = len(t.get("addresses") or [])
-        lines.append(
-            f"The score counts {n} address{'es' * (n != 1)} you trust as fine; "
-            f"Barkley's own score is {int(t.get('own_score') or 0)}."
-        )
+    lines.append("Barkley didn't scan the app's code again. It only looked up its packages again.")
+    # the phone push: the readings first, no name (the title has it)
+    phone = [
+        *lines[: 1 if entry.get("malicious") else 0],
+        f"{readings_line(rd, was)}.",
+        "The known security advisories for its packages have changed.",
+        *[x for x in lines if x.startswith("What changed:")],
+        lines[-1],
+    ]
     ids = entry.get("scan_ids") or []
-    where = f"scan @{ids[-1]}, what changed @{ids[0]} → @{ids[-1]}" if len(ids) == 2 else "the app"
+    where = (
+        f"scan @{ids[-1]} and what changed (@{ids[0]} → @{ids[-1]})" if len(ids) == 2 else "the app"
+    )
     link = f"[Open Barkley]({panel})" if panel else "Open Barkley from the sidebar"
     title = f"Barkley: {repo} {ver} (advisories changed)"
-    plain = " ".join(lines) + f" Open Barkley from the sidebar: {where}."
-    return title, "\n\n".join(lines) + f"\n\n{link}: {where}.", plain
+    plain = " ".join(phone)
+    return title, "\n\n".join(lines) + f"\n\n{link} to see {where}.", plain
 
 
 class Watcher:
@@ -343,12 +396,12 @@ class Watcher:
         age_out_days: float = AGE_OUT_DAYS,
     ):
         self.store = store
-        # (0.14.0) the report as the panel shows it (settings, reviews, Malware check only)
-        # and the "notify when an accepted finding changes" setting; set by server.serve
-        self.view_fn: Callable[[dict[str, Any]], dict[str, Any]] = lambda r: trust.view(
-            r, self.store.trusted()
-        )
-        self.notify_reopen_fn: Callable[[], bool] = lambda: True
+        # (0.14.0) the report as the panel shows it (the scoring settings, the readings);
+        # set by server.serve
+        self.view_fn: Callable[[dict[str, Any]], dict[str, Any]] = shown.view
+        self.notify_when_fn: Callable[[], str] = lambda: "all"  # (0.15, #29) Notify when
+        # (0.15) Versions kept per installed app (settings.keep_versions); 0: all of them
+        self.keep_versions_fn: Callable[[], int] = lambda: 0
         self.worker = worker
         self.installed_fn = installed_fn
         self.subscribe_fn = subscribe_fn
@@ -368,8 +421,15 @@ class Watcher:
         if stored_target is not None:  # "none" = bell only, chosen in the panel
             notify_target = "" if stored_target == "none" else stored_target
         self.notify_target = notify_target if supervisor.notify_target_ok(notify_target) else ""
+        # (0.15, #29) Send notifications to: the bell can be left out (a notify service
+        # only), and with no service either, notifications are disabled
+        self.notify_bell = store.setting("notify_bell") != "off"
         self.mode = "not started"
         self.error = ""
+        # (0.15) standalone: set when Barkley gets its Home Assistant token, so a
+        # subscription that failed for want of one is tried again now, not up to `poll`
+        # seconds later (retry_now)
+        self.wake = threading.Event()
         self.since = 0.0
         self.last_check = 0.0
         self.last_sweep = 0.0
@@ -399,15 +459,26 @@ class Watcher:
         print(f"auto-sniff: {'on' if on else 'off'} (chosen in the panel)", file=sys.stderr,
               flush=True)  # fmt: skip
 
-    def set_target(self, target: str) -> bool:
-        """Only a target HA listed can be chosen ("" = bell only)."""
+    def set_target(self, target: str, bell: bool = True) -> bool:
+        """Only a target HA listed can be chosen ("" = no notify service). `bell` False
+        leaves the bell out; with no service too, notifications are disabled."""
         if target and (not supervisor.notify_target_ok(target) or target not in self.targets()[0]):
             return False
         self.notify_target = target
+        self.notify_bell = bell
         self.store.set_setting("notify_target", target or "none")
-        print(f"auto-sniff notifications: bell{' + notify.' + target if target else ' only'} "
-              "(chosen in the panel)", file=sys.stderr, flush=True)  # fmt: skip
+        self.store.set_setting("notify_bell", "on" if bell else "off")
+        print(f"auto-sniff notifications: {self.channels()} (chosen in the panel)",
+              file=sys.stderr, flush=True)  # fmt: skip
         return True
+
+    def channels(self) -> str:
+        """Where notifications go, for the log: 'bell', 'bell + notify.x', 'notify.x' or
+        'disabled'."""
+        out = (["bell"] if self.notify_bell else []) + (
+            [f"notify.{self.notify_target}"] if self.notify_target else []
+        )
+        return " + ".join(out) or "disabled"
 
     def targets(self, refresh: bool = False) -> tuple[list[str], str]:
         """notify.* targets HA offers, cached 5 minutes."""
@@ -454,28 +525,65 @@ class Watcher:
 
     def diagnostics(self) -> tuple[bool, str]:
         """(ok, one line) for the Diagnostics page and the panel."""
-        head = "on" if self.enabled else "off (installs and updates are noticed, not sniffed)"
-        how = self.mode
-        if self.since:
-            how += f" since {_now_iso(self.since)[11:16]} UTC"
-        bits = [f"auto-sniff {head}", how]
-        if self.last_event:
-            bits.append(f"last event: {self.last_event}")
-        if self.last_check:
-            bits.append(f"list read {int(self.now_fn() - self.last_check) // 60} min ago")
-        if self.rechecked:
-            bits.append(
-                f"advisories re-checked for {self.rechecked} scan(s) since the start, "
-                f"{self.recheck_changes} changed"
+        bits = [
+            "Auto-sniff is on"
+            if self.enabled
+            else "Auto-sniff is off. Barkley notices installs and updates but doesn't sniff them"
+        ]
+        at = f"{_now_iso(self.since)[11:16]} UTC" if self.since else ""
+        since = f" since {at}" if at else ""
+        how = {
+            "subscribed": f"Barkley has listened for Marketplace events{since}",
+            "polling (no subscription)": "Barkley couldn't subscribe to Marketplace events, so "
+            "it reads the installed list on a timer"
+            + (f". Its last subscription started at {at}" if at else ""),
+            "polling": f"Barkley reads the installed list on a timer{since}",
+            "not started": f"Barkley isn't listening for Marketplace events yet{since}",
+        }
+        if self.error == supervisor.NOT_SET_UP:  # standalone, before the first-time setup
+            how["polling (no subscription)"] = (
+                "Auto-sniff starts once Barkley has its own Home Assistant token"
             )
-        if self.error:
-            bits.append(f"last error: {self.error[:200]}")
+        bits.append(how.get(self.mode, f"Barkley is {self.mode}{since}"))
+        if self.last_event:
+            bits.append(f"Last Marketplace event: {self.last_event}")
+        if self.last_check:
+            bits.append(
+                f"It read the installed list {int(self.now_fn() - self.last_check) // 60} min ago"
+            )
+        if self.rechecked:
+            n = self.rechecked
+            bits.append(
+                f"Since it started, it checked the advisories of {n} scan{'s' * (n != 1)} "
+                f"again, and {self.recheck_changes} had changed"
+            )
+        if self.error and self.error != supervisor.NOT_SET_UP:
+            bits.append(f"Last error: {self.error[:200]}")
+        where = [w for w, on in (("the bell", self.notify_bell),
+                                 (f"notify.{self.notify_target}", bool(self.notify_target)))
+                 if on]  # fmt: skip
         bits.append(
-            f"notifications: bell{' + notify.' + self.notify_target if self.notify_target else ''}"
+            "Notifications go to " + " and to ".join(where)
+            if where
+            else "Notifications are disabled"
         )
-        return not self.error, "; ".join(bits)
+        return not self.error, ". ".join(bits)
 
     # --- the thread --------------------------------------------------------------------
+
+    def retry_now(self) -> None:
+        """Barkley has a new Home Assistant token: subscribe again without waiting."""
+        self.wake.set()
+
+    def _pause(self, seconds: float) -> bool:
+        """Wait `seconds`, or less if retry_now() is called. True when it was."""
+        if self.sleep_fn is time.sleep:
+            self.wake.wait(seconds)
+        else:  # tests pass their own sleep
+            self.sleep_fn(seconds)
+        woke = self.wake.is_set()
+        self.wake.clear()
+        return woke
 
     def start(self) -> threading.Thread:
         self._thread = threading.Thread(target=self.run_forever, name="auto-sniff", daemon=True)
@@ -521,7 +629,8 @@ class Watcher:
         else:
             self.mode = "polling"
         if sub is None:
-            self.sleep_fn(min(wait, self.poll))
+            if self._pause(min(wait, self.poll)):
+                return _RECONNECT  # a new token: subscribe now, and back off from the start
             self.tick()
             return min(wait * 2, self.poll)
         try:
@@ -673,27 +782,19 @@ class Watcher:
             "state": job.state,
             "message": str(job.message)[:300],
             "scan_ids": list(job.scan_ids),
-            "score": int(shown.get("score", 0)),
-            "was": int(self.view_fn(old).get("score", 0)),
-            "verdict": str(shown.get("verdict", {}).get("key", "")),
+            "readings": shown.get("readings"),
+            "was_readings": self.view_fn(old).get("readings"),
             "complete": bool(shown.get("complete", True)),
             "changes": advisory_summary(counts),
             "malicious": counts["malicious"],
         }
         self._log(entry)
-        if (shown.get("review") or {}).get("malware_only") and not counts["malicious"]:
-            print(f"auto-sniff: advisories of {repo} {ver} changed; not notified (Malware "
-                  "check only: no known malware)", file=sys.stderr, flush=True)  # fmt: skip
-            return
         title, md, plain = advisory_notification(entry, shown, self.panel_path())
         err = self._notify(title, md, plain, f"barkley_{repo.lower()}")
-        sent = (
-            f"notification failed: {err}" if err
-            else "notified bell" + (f" + notify.{self.notify_target}" if self.notify_target else "")
-        )  # fmt: skip
-        print(f"auto-sniff: advisories of {repo} {ver} changed: {entry['was']} → "
-              f"{entry['score']}/100, {entry['changes']}; {ids}; {sent}",
-              file=sys.stderr, flush=True)  # fmt: skip
+        sent = self._sent(err)
+        now = readings_line(entry.get("readings") or {}, entry.get("was_readings"))
+        print(f"auto-sniff: advisories of {repo} {ver} changed: {now}, {entry['changes']}; "
+              f"{ids}; {sent}", file=sys.stderr, flush=True)  # fmt: skip
 
     def _active(self, repo: str, ref: str) -> bool:
         return any(
@@ -734,7 +835,8 @@ class Watcher:
             if isinstance(x, dict) and all(isinstance(x.get(k), str) for k in ("repo", "version")):
                 out.append(Change(str(x.get("action") or "install"), x["repo"],
                                   str(x.get("kind") or ""), x["version"],
-                                  str(x["previous"]) if x.get("previous") else None))  # fmt: skip
+                                  str(x["previous"]) if x.get("previous") else None,
+                                  after_install=x.get("after_install") is True))  # fmt: skip
         return out
 
     def _save_pending(self, items: list[Change]) -> None:
@@ -819,27 +921,29 @@ class Watcher:
             try:
                 report = self.store.report(job.scan_ids[-1])
                 if len(job.scan_ids) == 2:
-                    d = diff_reports(self.store.report(job.scan_ids[0]), report)
-                # the score as the panel shows it: the user's settings and review
+                    old = self.store.report(job.scan_ids[0])
+                    d = diff_reports(old, report)
+                    was = self.view_fn(old).get("readings")  # for "was 1.25"
+                    if was:
+                        entry["was_readings"] = was
+                # the report as the panel shows it, with its readings
                 # (the diff above compares the stored reports)
                 report = self.view_fn(report)
             except StoreError as ex:
                 entry["state"], entry["message"] = "failed", str(ex)
                 report = None
         if report is not None:
-            entry["score"] = int(report.get("score", 0))
-            entry["verdict"] = str(report.get("verdict", {}).get("key", ""))
+            entry["readings"] = report.get("readings")
             entry["complete"] = bool(report.get("complete", True))
             entry["changes"] = change_summary(d) if d is not None else ""
         self._log(entry)
-        quiet = False
+        if report is not None and not worth_notifying(entry, self.notify_when_fn()):
+            rd = entry.get("readings") or {}
+            print(f"auto-sniff: {c.repo} {c.version} sniffed: {readings_line(rd)}; not notified "
+                  "(Notify when in Settings)", file=sys.stderr, flush=True)  # fmt: skip
+            return
         if report is not None:
-            title, md, plain = notification(
-                entry, report, d, self.panel_path(), self.notify_reopen_fn()
-            )
-            # Malware check only: notified only when a Threat or known malware is found
-            r = report.get("review") or {}
-            quiet = bool(r.get("malware_only")) and not report.get("findings")
+            title, md, plain = notification(entry, report, d, self.panel_path())
         else:
             if c.action == "available":
                 did = f"the offered update {c.version}"
@@ -848,9 +952,10 @@ class Watcher:
             title = f"Barkley: {c.repo} {c.version}"
             md = plain = (
                 f"Barkley couldn't sniff {did} of {c.repo} ({job.state}: "
-                f"{str(job.message)[:200]}). Open Barkley from the sidebar to try again."
+                f"{str(job.message)[:200]}). Open Barkley to try again."
             )
-        err = "" if quiet else self._notify(title, md, plain, f"barkley_{c.repo.lower()}")
+        nid = f"barkley_{c.repo.lower()}" + ("_update" if c.after_install else "")
+        err = self._notify(title, md, plain, nid)
         # One line per outcome in the app's log (a finished job printed nothing before, so
         # the log on the user's box couldn't say whether a sniff ended before a rebuild).
         ver = f"{c.previous} → {c.version}" if c.previous else c.version
@@ -858,26 +963,33 @@ class Watcher:
             ver += " (update waiting)"
         ids = " → ".join(f"@{i}" for i in job.scan_ids) or "no scan"
         if report is not None:
-            label, emoji = _VERDICT.get(entry.get("verdict", ""), ("?", ""))
-            what = f"sniffed: {emoji} {label} {entry['score']}/100"
+            rd = entry.get("readings") or {}
+            what = f"sniffed: {readings_line(rd)}" if rd else "sniffed"
             if entry.get("changes"):
                 what += f", {entry['changes']}"
             if not entry.get("complete", True):
                 what += " (incomplete)"
         else:
             what = f"{entry['state']}: {entry['message'][:200]}"
-        sent = (
-            "not notified (Malware check only: no Threat found)" if quiet
-            else f"notification failed: {err}" if err
-            else "notified bell" + (f" + notify.{self.notify_target}" if self.notify_target else "")
-        )  # fmt: skip
+        sent = self._sent(err)
         print(f"auto-sniff: {c.repo} {ver} {what}; {ids}; {sent}", file=sys.stderr, flush=True)
 
+    def _sent(self, err: str) -> str:
+        if err:
+            return f"notification failed: {err}"
+        where = self.channels()
+        return (
+            "not notified (notifications disabled in Settings)"
+            if where == "disabled"
+            else (f"notified {where}")
+        )
+
     def _notify(self, title: str, md: str, plain: str, nid: str) -> str:
-        """Both channels; errors are logged and returned, never raised into the worker."""
+        """The chosen channels; errors are logged and returned, never raised into the
+        worker. Nothing is sent when notifications are disabled."""
         errors = []
         nid = "".join(ch if ch.isalnum() else "_" for ch in nid)[:100]
-        if self.notify_fn is not None:
+        if self.notify_bell and self.notify_fn is not None:
             try:
                 self.notify_fn(title, md, nid)
             except SupervisorError as ex:
@@ -894,21 +1006,24 @@ class Watcher:
     def notify_test(self) -> str:
         """The panel's test button: a real notification through both channels."""
         md = (
-            "This is how Barkley tells you about an auto-sniffed install or update: the app, "
-            "its version, the verdict and score, what's worth a look, and for an update what "
+            "This is a test. When Barkley sniffs an install or update, it tells you the app, "
+            "its version, its two readings, what to check and, for an update, what "
             "changed. "
             + (f"[Open Barkley]({self.panel_path()})" if self.panel_path() else "Open Barkley")
         )
-        plain = (
-            "This is how Barkley tells you about an auto-sniffed install or update. "
-            "Open Barkley from the sidebar."
-        )
+        plain = "This is a test. When Barkley sniffs an install or update, it tells you here."
+        if self.channels() == "disabled":
+            self.last_test = "Notifications are disabled, so nothing was sent."
+            return ""
         err = self._notify("Barkley: test notification", md, plain, "barkley_test")
-        self.last_test = err or f"sent at {_now_iso(self.now_fn())[11:16]} UTC"
+        self.last_test = err or f"Test notification sent at {_now_iso(self.now_fn())[11:16]} UTC."
         return err
 
     def sweep(self) -> int:
-        """Delete scans of apps that aren't installed once they're `age_out_days` old."""
+        """Delete scans of apps that aren't installed once they're `age_out_days` old,
+        then older versions' scans past "Versions kept" (_trim_versions), then compact the
+        store if a quarter of it is free pages (Store.compact). Returns how many scans
+        were deleted."""
         try:
             items, _other = self.installed_fn()
         except SupervisorError:
@@ -939,6 +1054,49 @@ class Watcher:
             )
         self.swept += n
         self._drop_old_sources(items)
+        trimmed = self._trim_versions(items, busy)
+        if trimmed:
+            print(
+                f"auto-sniff: deleted {trimmed} scan(s) of older versions of installed apps "
+                f"(keeping the last {self.keep_versions_fn()} versions)",
+                file=sys.stderr,
+                flush=True,
+            )
+        self.swept += trimmed
+        try:
+            if self.store.compact():
+                print("auto-sniff: compacted the scan store", file=sys.stderr, flush=True)
+        except sqlite3.Error as e:
+            print(f"auto-sniff: couldn't compact the scan store ({type(e).__name__})",
+                  file=sys.stderr, flush=True)  # fmt: skip
+        return n + trimmed
+
+    def _trim_versions(self, items: list[Installed], busy: set[str]) -> int:
+        """(0.15, his decision 2026-11-25) With "Versions kept" set, an installed app keeps
+        the scans of its newest N versions (newest scan first), its installed version and
+        a waiting update; the older versions' scans are deleted. Every scan of a kept
+        version stays (re-sniffs, advisory re-checks). An app with a job queued or running
+        is left alone, and so is a scan with no version."""
+        keep_n = self.keep_versions_fn()
+        if keep_n <= 0:
+            return 0
+        pinned = {it.repo.lower(): {it.installed, it.available} for it in items}
+        refs: dict[str, list[str]] = {}
+        rows = []
+        for r in self.store.history(limit=100000):  # newest first
+            repo = (r.repo or "").lower()
+            if repo not in pinned or repo in busy or not r.ref:
+                continue
+            seen = refs.setdefault(repo, [])
+            if r.ref not in seen:
+                seen.append(r.ref)
+            rows.append((repo, r))
+        n = 0
+        for repo, r in rows:
+            if r.ref in pinned[repo] or r.ref in refs[repo][:keep_n]:
+                continue
+            if self.store.delete(r.id):
+                n += 1
         return n
 
     def _drop_old_sources(self, items: list[Installed]) -> None:

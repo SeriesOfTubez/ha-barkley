@@ -6,7 +6,6 @@ import ast
 import dataclasses
 import hashlib
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -14,7 +13,16 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from sniff_test.analyzers import _proc, js_fold, js_wrapper, py_precision, py_tamper
+from sniff_test import scancache
+from sniff_test.analyzers import (
+    _proc,
+    js_fold,
+    js_loader,
+    js_settings,
+    js_wrapper,
+    py_precision,
+    py_tamper,
+)
 from sniff_test.analyzers.py_resolve import Resolver
 from sniff_test.models import (
     RULE_FILE_NOT_CHECKED,
@@ -61,11 +69,26 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 #   1117, CodeMirror). `new (as)(a, -1)` constructs the same class and parses.
 # Like the first two, inside a string, regex or comment they only add a space or a pair
 # of brackets to our copy.
+#
+# (0.15.0, 2026-11-20) Class static blocks (ES2022, `class C { static { ... } }`): neither
+# Semgrep 1.185 nor 1.186 parses them, not even an empty one (no upstream issue found).
+# A real card's 1.77 MB map chunk lost about 2% of its code to parser recovery around 11
+# of them, and a rule matched nothing inside one. `static {` becomes `static
+# __sniff_static_block() {`: a static method that is never called, in the same class,
+# with the same body and the same `this`, so every rule reads the body. In code,
+# `static` followed by `{` on the same line is only ever a static block (anything else is
+# a syntax error, and `static` is reserved in modules); a property (`a.static{`), a
+# private name (`#static`) or a longer word (`isstatic{`) is left alone by the
+# lookbehind. Only spaces or tabs may sit between: across a newline a classic script can
+# read `static` as a variable, so that form is left as it is (still reported as code
+# Barkley couldn't read, never hidden). Inside a string, regex or comment it only adds a
+# name and brackets to our copy. Linear: a fixed lookbehind and one run of blanks.
 _JS_PARSE_FIXES = (
     (re.compile(r"<!--"), "< !--"),
     (re.compile(r"-->"), "-- >"),
     (re.compile(r"\?\.(?=[0-9])"), "? ."),
     (re.compile(r"\bnew(\s+)(as|satisfies)(\s*)\("), r"new\1(\2)\3("),
+    (re.compile(r"(?<![\w$.#])static([ \t]*)\{"), r"static __sniff_static_block()\1{"),
 )
 
 
@@ -135,7 +158,7 @@ def normalize_js(root: Path, pristine: dict[str, str] | None = None) -> int:
 
 def _tool_env() -> dict[str, str]:
     keep = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "SSL_CERT_FILE")
-    env = {k: v for k, v in os.environ.items() if k in keep}
+    env = {k: v for k, v in _proc.tool_env().items() if k in keep}
     env["SEMGREP_SEND_METRICS"] = "off"
     env["SEMGREP_ENABLE_VERSION_CHECK"] = "0"
     return env
@@ -178,12 +201,17 @@ def _evidence(path: Path, start: int, end: int) -> str:
 
 
 def _evidence_at(path: Path, line: int, col: int) -> str:
-    """For minified files a 'line' can be megabytes; take a window around the match."""
+    """For minified files a 'line' can be megabytes; take a window around the match.
+    (0.15) Semgrep's column counts bytes: each character of more than one byte before the
+    match (`…`, `°`, an emoji in a bundled label) would push a window cut by characters
+    to the right of it, so the column is turned into a character index first."""
     try:
-        with path.open(encoding="utf-8", errors="replace") as fh:
-            for i, ln in enumerate(fh, 1):
+        with path.open("rb") as fh:
+            for i, raw in enumerate(fh, 1):
                 if i == line:
-                    lo = max(0, col - 1 - 80)
+                    at = len(raw[: max(0, col - 1)].decode("utf-8", "replace"))
+                    ln = raw.decode("utf-8", "replace")
+                    lo = max(0, at - 80)
                     snippet = ln[lo : lo + _EVIDENCE_MAX].strip()
                     return ("…" if lo else "") + snippet
     except OSError:
@@ -347,15 +375,47 @@ def _only_rebinds_names(f: Finding, root: Path, trees: dict[str, Any]) -> bool:
     return all(names_only(t) for t in targets)
 
 
+def _put_back(findings: list[Finding], trees: dict[str, Any]) -> list[Finding]:
+    """(0.15, #32) py_tamper.temporary for the `ha-monkeypatch` lines Semgrep matched:
+    a line that puts a saved original back is dropped, and a patch the same function
+    undoes says so. Uses the trees `_only_rebinds_names` parsed (never run)."""
+    out: list[Finding] = []
+    for f in findings:
+        tree = trees.get(f.file) if f.rule_id == py_tamper.RULE_ID and f.file else None
+        if tree is None:
+            out.append(f)
+            continue
+        restores, undone = py_tamper.temporary(tree)
+        if f.line in restores:
+            continue
+        if f.line in undone and py_tamper.PUT_BACK not in f.message:
+            f = dataclasses.replace(f, message=f"{f.message} {py_tamper.PUT_BACK}")
+        out.append(f)
+    return out
+
+
 def _precise(findings: list[Finding], root: Path, target: Target) -> list[Finding]:
     """(0.14.0) analyzers/py_precision: whose config entries, which .storage file, which
     packages. Fixed-list package installs go to Target.runtime_requirements."""
     res = Resolver(root)
     out: list[Finding] = []
+    # (0.15) a send whose literal address is the Supervisor on this box isn't off-box
+    local = {f.id for f in findings if py_precision.supervisor_only(f, res)}
     for f in findings:
+        if f.id in local:
+            continue
+        if (url := py_precision.supervisor_token_stays(f, res)) is not None:
+            out.append(py_precision.sent_to_supervisor(f, url))
+            continue
         if py_precision.entry_finding_dropped(f, res, target.domain):
             continue
         if py_precision.secrets_dropped(f, res):
+            continue
+        if py_precision.pickle_of_stored(f, res):
+            out.append(py_precision.stored_pickle(f))  # (0.15) a habit, not hidden code
+            continue
+        if (key := py_precision.own_secret_key(f, res)) is not None:
+            out.append(py_precision.reads_own_secret(f, key))  # (0.15) one named entry
             continue
         if py_precision.supervisor_presence_only(f, res):
             continue
@@ -369,6 +429,9 @@ def _precise(findings: list[Finding], root: Path, target: Target) -> list[Findin
             ):
                 level = py_precision.own_storage(f)  # unparseable file: the old text check
             out.append(level or f)
+            continue
+        if (checked := py_precision.token_check_only(f, res)) is not None:
+            out.append(checked)  # (#21) a token check, not a reach into the auth store
             continue
         if (listed := py_precision.pip_listed(f, res)) is not None:
             out.append(listed[0])
@@ -509,7 +572,181 @@ def _unfinished(errors: list[dict[str, Any]]) -> tuple[int, int]:
     )
 
 
-def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
+def _precise_cached(
+    hits: list[js_wrapper.Hit],
+    root: Path,
+    runner: js_wrapper.Runner,
+    card: bool,
+    cache: scancache.Cache | None,
+) -> set[int]:
+    """js_wrapper.precise, kept for the whole app: the key is every file of the app (its
+    scope check also reads HTML and Python) and every token hit, so any change reads
+    everything again."""
+    if cache is None or not cache.on:
+        return js_wrapper.precise(hits, root, runner, card=card)
+    h = hashlib.sha256(b"card" if card else b"integration")
+    try:
+        for p in sorted(root.rglob("*")):
+            if p.is_file() and not p.is_symlink():
+                h.update(p.relative_to(root).as_posix().encode() + b"\0")
+                h.update(hashlib.sha256(p.read_bytes()).digest())
+    except OSError:
+        return js_wrapper.precise(hits, root, runner, card=card)
+    spots = sorted({(x.path.resolve().relative_to(root).as_posix(), x.start, x.end) for x in hits})
+    h.update(json.dumps(spots).encode())
+    key = h.hexdigest()
+    got = cache.get("js_wrapper", key)
+    if got is not None and isinstance(got.get("dropped"), list):
+        dropped = {tuple(d) for d in got["dropped"] if isinstance(d, list) and len(d) == 3}
+        cache.stats.saved += float(got.get("secs") or 0)
+        return {
+            id(x.finding)
+            for x in hits
+            if (x.path.resolve().relative_to(root).as_posix(), x.start, x.end) in dropped
+        }
+    started = scancache.now()
+    ids = js_wrapper.precise(hits, root, runner, card=card)
+    dropped_spots = sorted(
+        {
+            (x.path.resolve().relative_to(root).as_posix(), x.start, x.end)
+            for x in hits
+            if id(x.finding) in ids
+        }
+    )
+    cache.put("js_wrapper", key, {"dropped": dropped_spots, "secs": scancache.now() - started})
+    return ids
+
+
+_PARSE_TYPES = _UNREAD_TYPES | {"PartialParsing"}
+# More files than this aren't listed on Semgrep's command line one by one: the app is
+# read as one folder, without the cache (a command line has a size limit).
+_MAX_LISTED = 3000
+
+
+def _cacheable(errors: list[dict[str, Any]]) -> bool:
+    """A file's answer can be kept only if every error is a parse error, which repeats
+    exactly on the same bytes (a timeout or a crash may not: "try again")."""
+    return all(_error_type(e) in _PARSE_TYPES for e in errors)
+
+
+def _key_path(r: dict[str, Any]) -> str:
+    return str(Path(str(r.get("path", ""))).resolve())
+
+
+# (0.15) Python 3.14 (PEP 758) lets `except A, B, C:` drop the parentheses. Semgrep
+# 1.185 and 1.186 fail on that clause when something else in the file (a `match`, a PEP
+# 695 `type` alias or generic) sends it to its fallback parser, which takes one comma
+# only (upstream issue 12079), and skip the rules for that part of the file: 6 of 360
+# real integrations. Semgrep reads the files with the parentheses added (every line stays
+# where it was), and the original bytes are put back as soon as it is done.
+_BARE_EXCEPT = re.compile(r"^[ \t]*+except\*?[ \t]++[^(\s:#][^:\n,]*+,", re.M)
+_MAX_PY_BYTES = 5_000_000
+
+
+def _parenthesize_excepts(text: str) -> str | None:
+    """`text` with each bare multi-name `except` clause in parentheses; None when the
+    tokenizer can't read it. Tokenizing only reads the text, it never runs it."""
+    import io
+    import tokenize
+
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, SyntaxError, ValueError):
+        return None
+    edits: list[tuple[int, int, int]] = []  # (row, col of first name, col of ":")
+    starts_line = True
+    i, n = 0, len(toks)
+    while i < n:
+        t = toks[i]
+        if t.type in (tokenize.NL, tokenize.COMMENT):
+            i += 1
+            continue
+        if starts_line and t.type == tokenize.NAME and t.string == "except":
+            j = i + 1
+            if j < n and toks[j].type == tokenize.OP and toks[j].string == "*":
+                j += 1
+            first = toks[j] if j < n else None
+            depth, comma, named, k = 0, False, False, j
+            while k < n:
+                u = toks[k]
+                if u.type == tokenize.OP and u.string in "([{":
+                    depth += 1
+                elif u.type == tokenize.OP and u.string in ")]}":
+                    depth -= 1
+                elif depth == 0 and u.type == tokenize.OP and u.string == ",":
+                    comma = True
+                elif depth == 0 and u.type == tokenize.NAME and u.string == "as":
+                    named = True
+                elif u.type == tokenize.NEWLINE or (
+                    depth == 0 and u.type == tokenize.OP and u.string == ":"
+                ):
+                    break
+                k += 1
+            if (
+                k < n
+                and first is not None
+                and comma
+                and not named
+                and toks[k].string == ":"
+                and not (first.type == tokenize.OP and first.string == "(")
+                and first.start[0] == toks[k].start[0]
+            ):
+                edits.append((first.start[0], first.start[1], toks[k].start[1]))
+            i = k
+        starts_line = t.type in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT)
+        i += 1
+    if not edits:
+        return text
+    lines = text.splitlines(keepends=True)
+    for row, a, b in sorted(edits, reverse=True):
+        line = lines[row - 1]
+        lines[row - 1] = line[:a] + "(" + line[a:b].rstrip() + ")" + line[b:]
+    return "".join(lines)
+
+
+def normalize_py(root: Path) -> dict[Path, bytes]:
+    """Parenthesize bare multi-name `except` clauses for Semgrep (see _BARE_EXCEPT).
+    Returns the original bytes of each file it changed, to be put back."""
+    saved: dict[Path, bytes] = {}
+    for p in root.rglob("*.py"):
+        if not p.is_file() or p.is_symlink():
+            continue
+        try:
+            data = p.read_bytes()
+        except OSError:
+            continue
+        if len(data) > _MAX_PY_BYTES:
+            continue
+        text = data.decode("utf-8", errors="surrogateescape")
+        if not _BARE_EXCEPT.search(text):
+            continue
+        new = _parenthesize_excepts(text)
+        if new is not None and new != text:
+            saved[p] = data
+            p.write_text(new, encoding="utf-8", errors="surrogateescape")
+    return saved
+
+
+def run(
+    target: Target,
+    work: Path,
+    jobs: int | None = None,
+    cache: scancache.Cache | None = None,
+) -> AnalyzerResult:
+    saved = normalize_py(target.root.resolve())
+    try:
+        return _run(target, work, jobs, cache)
+    finally:
+        for path, data in saved.items():
+            path.write_bytes(data)
+
+
+def _run(
+    target: Target,
+    work: Path,
+    jobs: int | None = None,
+    cache: scancache.Cache | None = None,
+) -> AnalyzerResult:
     exe = shutil.which("semgrep")
     if not exe:
         return AnalyzerResult(NAME, AnalyzerState.SKIPPED, detail="semgrep not installed")
@@ -520,7 +757,7 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
     run_dir = work / "semgrep-run"
     run_dir.mkdir(exist_ok=True)
 
-    def scan(config: Path, targets: list[Path]) -> dict[str, Any]:
+    def scan(config: Path, targets: list[Path], timed: bool = False) -> dict[str, Any]:
         cmd = [
             exe,
             "scan",
@@ -539,6 +776,8 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
         ]
         if jobs:
             cmd += ["--jobs", str(jobs)]
+        if timed:
+            cmd.append("--time")  # per-file times, for the cache's "about N s saved"
         cmd += [str(p) for p in targets]
         # never run from inside the scanned tree; sandboxed, with no network at all
         proc = _proc.run(cmd, run_dir, _PROCESS_TIMEOUT, _tool_env(), tool="semgrep",
@@ -548,8 +787,137 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
         except ValueError:
             raise _ScanFailed(failure_detail(proc)) from None
 
+    mirrors = [0]
+
+    def scan_uncached(
+        config: Path, targets: list[Path], miss: list[Path], some_hit: bool
+    ) -> dict[str, Any]:
+        """Semgrep on the files the cache didn't answer, read the way a plain scan reads
+        them: with nothing cached, the same targets; with some cached, a folder target
+        is replaced by a mirror folder holding only the others (copies in the run
+        folder, with the same empty .semgrepignore). Semgrep reads a list of files given
+        one by one noticeably slower than a folder (38 s against 31 s on a real card)."""
+        if not some_hit:
+            return scan(config, targets, timed=True)
+        if not (len(targets) == 1 and targets[0].is_dir()):
+            return scan(config, miss, timed=True)
+        mirrors[0] += 1
+        mirror = (run_dir / f"uncached-{mirrors[0]}").resolve()
+        for f in miss:
+            dst = mirror / f.relative_to(root)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            # a copy, not a hard link: the app's AppArmor profile grants no link
+            # permission, and a denied call would show in the audit log
+            shutil.copyfile(f, dst)
+        (mirror / ".semgrepignore").write_text("")  # Semgrep's default ignores stay off
+        data = scan(config, [mirror], timed=True)
+
+        def back(value: Any) -> Any:
+            try:
+                return str(root / Path(str(value)).resolve().relative_to(mirror))
+            except ValueError:
+                return value
+
+        for item in [*data.get("results", []), *data.get("errors", [])]:
+            if item.get("path"):
+                item["path"] = back(item["path"])
+        paths_ = data.get("paths") or {}
+        paths_["scanned"] = [back(x) for x in paths_.get("scanned") or []]
+        for x in paths_.get("skipped") or []:
+            if isinstance(x, dict) and x.get("path"):
+                x["path"] = back(x["path"])
+        for t in (data.get("time") or {}).get("targets") or []:
+            if t.get("path"):
+                t["path"] = back(t["path"])
+        shutil.rmtree(mirror, ignore_errors=True)
+        return data
+
+    def cached(config: Path, targets: list[Path], count: bool = False) -> dict[str, Any]:
+        """scan(), with each file's answer kept and reused (scancache). The merged output
+        has the same results, errors and scanned paths a single run would give."""
+        if cache is None or not cache.on:
+            return scan(config, targets)
+        files: list[Path] = []
+        for t in targets:
+            if t.is_dir():
+                files += [p for p in sorted(t.rglob("*")) if p.is_file() and not p.is_symlink()
+                          and p.name != ".semgrepignore"]  # fmt: skip
+            else:
+                files.append(t)
+        if len(files) > _MAX_LISTED:
+            return scan(config, targets)
+        keys: dict[str, tuple[Path, str]] = {}
+        hit: dict[Path, dict[str, Any]] = {}
+        for f in files:
+            try:
+                k = scancache.file_key(config.name, f.relative_to(root).as_posix(), f.read_bytes())
+            except (OSError, ValueError):
+                return scan(config, targets)
+            keys[str(f.resolve())] = (f, k)
+            got = cache.get("semgrep", k)
+            if got is not None:
+                hit[f] = got
+        miss = [f for f in files if f not in hit]
+        if count:  # the "N of M files" line counts the main pass's files once
+            cache.stats.files += len(files)
+            cache.stats.hits += len(hit)
+        out: dict[str, Any] = {"results": [], "errors": [], "paths": {"scanned": []}}
+        if miss:
+            started = scancache.now()
+            out = scan_uncached(config, targets, miss, bool(hit))
+            wall = scancache.now() - started
+            out.setdefault("results", [])
+            out.setdefault("errors", [])
+            out.setdefault("paths", {}).setdefault("scanned", [])
+            general = [e for e in out["errors"] if not e.get("path")]
+            per: dict[str, dict[str, Any]] = {
+                str(f.resolve()): {"results": [], "errors": [], "scanned": False, "secs": 0.0}
+                for f in miss
+            }
+            for r in out["results"]:
+                if (entry := per.get(_key_path(r))) is not None:
+                    entry["results"].append(r)
+            for e in out["errors"]:
+                if e.get("path") and (entry := per.get(_key_path(e))) is not None:
+                    entry["errors"].append(e)
+            for sp in out["paths"]["scanned"]:
+                if (entry := per.get(str(Path(sp).resolve()))) is not None:
+                    entry["scanned"] = True
+            for t in (out.get("time") or {}).get("targets") or []:
+                if (entry := per.get(str(Path(str(t.get("path", ""))).resolve()))) is not None:
+                    rt = t.get("run_time", 0)
+                    entry["secs"] = float(sum(rt) if isinstance(rt, list) else rt or 0)
+            # Semgrep's per-file times add up over its parallel jobs: share the run's
+            # wall-clock time out by them, so "about N saved" never says more than it took
+            busy = sum(e["secs"] for e in per.values())
+            for entry in per.values():
+                entry["secs"] = round(wall * entry["secs"] / busy, 3) if busy else 0.0
+            skipped = {
+                str(Path(str(x.get("path", ""))).resolve())
+                for x in out["paths"].get("skipped") or []
+                if isinstance(x, dict)
+            }
+            if not general:
+                for abs_path, entry in per.items():
+                    if abs_path in skipped or not _cacheable(entry["errors"]):
+                        continue
+                    rel = keys[abs_path][0].relative_to(root).as_posix()
+                    cache.put("semgrep", keys[abs_path][1], {
+                        "results": [{**r, "path": rel} for r in entry["results"]],
+                        "errors": [{**e, "path": rel} for e in entry["errors"]],
+                        "scanned": entry["scanned"], "secs": entry["secs"],
+                    })  # fmt: skip
+        for f, got in hit.items():
+            here = str(f)
+            out["results"] += [{**r, "path": here} for r in got.get("results", [])]
+            out["errors"] += [{**e, "path": here} for e in got.get("errors", [])]
+            if got.get("scanned"):
+                out["paths"]["scanned"].append(here)
+            cache.stats.saved += float(got.get("secs") or 0)
+        return out
+
     try:
-        data = scan(rules_dir(), [root])
+        data = cached(rules_dir(), [root], count=True)
         # (0.14.0) Second pass, JavaScript only: the constant-propagation copy of the
         # token rule (Semgrep mixes two taint rules' propagation settings in one run).
         # Names built from pieces (analyzers/js_fold.py) are written back in place and
@@ -560,14 +928,14 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
         # js_fold.TOKEN_HINTS; a name built from pieces is in fold.rewrites, which both
         # passes read again below). A real 1.6 MB card bundle without them: no second parse.
         need = [p for p in js if p not in fold.rewrites and js_fold.may_hold_token(p)]
-        data2 = scan(rules_const_dir(), need) if need else {"results": [], "errors": []}
+        data2 = cached(rules_const_dir(), need) if need else {"results": [], "errors": []}
         if fold.rewrites:
             originals = {p: p.read_bytes() for p in fold.rewrites}
             try:
                 for p, b in fold.rewrites.items():
                     p.write_bytes(b)
                 files = sorted(fold.rewrites)
-                again, again2 = scan(rules_dir(), files), scan(rules_const_dir(), files)
+                again, again2 = cached(rules_dir(), files), cached(rules_const_dir(), files)
             finally:
                 for p, b in originals.items():
                     p.write_bytes(b)
@@ -607,6 +975,7 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
     findings: list[Finding] = []
     facts: list[Fact] = []
     token_hits: list[js_wrapper.Hit] = []
+    eval_hits: list[js_loader.Hit] = []
     for r in data.get("results", []):
         if (fact := to_fact(r, root, target.domain)) is not None:
             facts.append(fact)
@@ -622,15 +991,31 @@ def run(target: Target, work: Path, jobs: int | None = None) -> AnalyzerResult:
                 )
                 if f.rule_id == js_wrapper.RULE:
                     token_hits.append(js_wrapper.Hit(f, root / f.file, start, end))
+                elif f.rule_id == "card-eval-remote":
+                    eval_hits.append(js_loader.Hit(f, root / f.file, start))
             findings.append(f)
     if token_hits:  # (0.14.0) same-origin URLs the rule can't prove (js_wrapper)
         runner = js_wrapper.semgrep_runner(exe, root, run_dir, _tool_env(), _proc.run)
         card = target.kind is TargetKind.PLUGIN
-        same_origin = js_wrapper.precise(token_hits, root, runner, card=card)
+        same_origin = _precise_cached(token_hits, root, runner, card, cache)
         findings = [f for f in findings if id(f) not in same_origin]
+        # (0.15) a path from the card's own settings, with a "/" default or none: a note
+        notes = js_settings.settings_note(
+            [h for h in token_hits if id(h.finding) not in same_origin]
+        )
+        findings = [js_settings.as_note(f, *notes[id(f)]) if id(f) in notes else f
+                    for f in findings]  # fmt: skip
+    if eval_hits:  # (0.15) a loader: a door graded by the addresses it can be handed
+        loader_ids = js_loader.loaders(eval_hits, root)
+        if loader_ids:
+            findings = [js_loader.as_note(f) if id(f) in loader_ids else f for f in findings]
+            remote = ("card-remote-script", "card-remote-pinned")
+            known = {f.evidence for f in findings if f.rule_id in remote}
+            findings += [f for f in js_loader.script_addresses(root) if f.evidence not in known]
     findings += fold.findings
     trees: dict[str, Any] = {}
     findings = [f for f in findings if not _only_rebinds_names(f, root, trees)]
+    findings = _put_back(findings, trees)
     findings = _precise(findings, root, target)
     # The assignment forms the ha-monkeypatch rule can't see (chained, `+=`, aliased
     # from-imports, ...), from the same parsed trees. Skips lines Semgrep kept.

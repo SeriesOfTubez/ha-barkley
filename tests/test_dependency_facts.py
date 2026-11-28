@@ -60,7 +60,7 @@ def test_lookup_failure_keeps_the_finding_and_says_so():
 
     [f] = osv.to_findings([_pkg()], "manifest.json", set(), lookup=down)
     assert f.dependency.latest is None and "network error" in f.dependency.lookup_error
-    assert "we couldn't look up the newest release" in dependency_line(
+    assert "Barkley couldn't look up the newest release" in dependency_line(
         dependency_json(f.dependency)
     )
 
@@ -94,7 +94,7 @@ def test_dependency_line_reads_plainly(monkeypatch):
                  "4.3.1", "2023-03-16", 0)  # fmt: skip
     assert dependency_line(dependency_json(d)) == (
         "<b>deepmerge 4.3.1</b>: no fixed version yet · the newest release (2023-03-16) · "
-        "<b>no release in over 3 years: likely unmaintained, so a fix may never come</b> · "
+        "<b>no release in over 3 years, so it's likely unmaintained and a fix may never come</b> · "
         "the app lists it itself"
     )
 
@@ -211,7 +211,10 @@ def test_a_package_without_releases_for_years_reads_as_unmaintained(monkeypatch)
                  "4.3.1", "2023-03-16", 0)  # fmt: skip
     monkeypatch.setattr("sniff_test.ui.years_since", lambda _d: 3)
     line = dependency_line(dependency_json(d))
-    assert "<b>no release in over 3 years: likely unmaintained, so a fix may never come</b>" in line
+    assert (
+        "<b>no release in over 3 years, so it's likely unmaintained and a fix may never come</b>"
+        in line
+    )
     fresh = DepFacts("js-yaml", "npm", "4.1.1", (osv.Advisory("G", fixed="4.3.2"),), True,
                      "5.5.0", "2026-10-15", 16)  # fmt: skip
     monkeypatch.setattr("sniff_test.ui.years_since", lambda _d: 0)

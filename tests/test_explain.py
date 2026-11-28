@@ -5,7 +5,6 @@ from pathlib import Path
 
 import yaml
 
-from sniff_test.analyzers import guarddog
 from sniff_test.report import explain
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +21,10 @@ def _semgrep_rule_ids() -> set[str]:
 
 def _analyzer_rule_ids() -> set[str]:
     """Rule ids written as literals in the analyzers and fetch code."""
-    rx = re.compile(r'"((?:dep|repo|py|endpoint|scan|card|ha)-[a-z0-9-]+|possible-exfil)"')
+    rx = re.compile(
+        r'"((?:dep|repo|py|endpoint|scan|card|ha|packed)-[a-z0-9-]+'
+        r'|possible-exfil|changes-other-app)"'
+    )
     out = set()
     for f in (ROOT / "src" / "sniff_test").rglob("*.py"):
         if f.parent.name in ("analyzers", "fetch"):
@@ -38,15 +40,6 @@ def test_every_rule_has_plain_text():
     assert missing == []
 
 
-def test_every_kept_guarddog_rule_has_plain_text():
-    kept = [r.removeprefix("threat-") for r, sev in guarddog.SEVERITY.items() if sev]
-    assert sorted(r for r in kept if r not in explain.GUARDDOG_WHAT) == []
-    e = explain.explain("dep-guarddog-filesystem-autostart")
-    assert e.title == "One of its code libraries sets something up to start automatically"
-    new = explain.explain("dep-guarddog-something-new")
-    assert new.title.startswith("One of its code libraries")
-
-
 def test_text_is_plain_and_complete():
     for rule, e in explain.RULES.items():
         assert e.title and e.means and e.worry and e.chip, rule
@@ -56,7 +49,7 @@ def test_text_is_plain_and_complete():
 
 
 def test_unknown_rule_falls_back():
-    assert explain.explain("brand-new-rule").title == "Something worth knowing"
+    assert explain.explain("brand-new-rule").title == "Barkley found something"
 
 
 def test_can_do_counts_from_the_graph():

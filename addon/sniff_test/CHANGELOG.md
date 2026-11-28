@@ -3,6 +3,392 @@
 Barkley is AI-assisted. The full release notes are on GitHub:
 https://github.com/SeriesOfTubez/ha-barkley/releases
 
+## 0.15.0
+
+This release changes what a scan finds, so scans made by 0.14 aren't reused. After the
+update the list offers one button to sniff your apps again.
+
+**The sniff report: Threat and Exposure**
+
+- Each app now gets two readings in place of the 0–100 score. Threat counts only signs
+  of malicious behavior: none found, possible, or found. Exposure, from 0 to 10 (Low,
+  Medium or High), counts what lets someone who isn't an administrator in: pages that
+  skip Home Assistant's login, login tokens the app may hand out, and published
+  vulnerabilities in its libraries. Everything else Barkley finds is listed as context
+  and changes neither reading.
+- The dog words follow both readings. A possible threat is 🐕 Grrrrr and a found one
+  🚨 BORK BORK BORK. With no threat, 🦴 Good Boy needs low Exposure; medium is 🐾 Needs
+  training and high is 🦮 Needs a leash.
+- The 0–100 number stays in the technical report (raw JSON) and the command line, as the
+  capability score: what the code openly uses, not a judgment.
+- Settings: "Where Home Assistant runs" (home, a shared or work network, or reachable
+  from the internet) replaces Exposure, and "Minor items" (Hide or Show) replaces
+  Paranoid mode. Powerful no threat, Pages without a login and Hidden usage reporting
+  are gone: they only changed the score.
+- Command line: `--fail-on possible` or `--fail-on found` replaces `--fail-under`.
+- Notifications show the two readings with a colored light each (🟢 🟡 🔴), and for an
+  update the Exposure number before it. A phone notification starts with the readings
+  and leaves the app's name to its title, so a phone doesn't cut off what matters.
+- On a phone an app's page is shorter: the readings, In short and every item that counts
+  toward a reading. Show details shows the rest of the page, including the AI buttons.
+- The developer's description and the AI summary no longer squeeze their parts side by
+  side.
+- The list sorts and filters by the readings. "Needs a look" means a found or possible
+  threat, High exposure, a check that didn't finish, or an update with a change to check.
+
+**Reviews are gone**
+
+- Accept, Mark reviewed, Accept all, the Reviewed filter, the reviewed score, Malware
+  check only and Addresses you trust are removed. With the Threat and Exposure readings
+  they no longer changed anything. If you think Barkley got something wrong, use Report
+  a false positive under it.
+- On its first start, 0.15 deletes what 0.14 stored for them: the findings you
+  accepted, the addresses you trusted and the apps set to Malware check only. Your
+  stored scans and settings stay.
+
+**Every block says where it comes from**
+
+- Each block on an app's page is tagged Barkley's scan, The developer's words, or AI.
+  The developer's words, and the AI's summary of them ("AI inferred"), are never shown
+  beside a found or possible threat. Nothing from the developer or the AI changes a
+  reading.
+- The developer's note under an item is the description (docstring) the developer wrote
+  in the code there, quoted with its file and lines.
+
+**More facts on an app's page (none of them scored)**
+
+- How it sends web requests (integrations): open a site under Where it connects to see
+  the method (GET, POST and so on) of each request the Python code sends there, and the
+  names of what the call puts into the body, the headers and the address. Values are
+  never recorded. Requests to an address the code puts together while it runs are listed
+  apart. The method alone doesn't tell you what is sent: a GET can carry data too.
+  Barkley reads requests that go through the app's own helper functions too.
+- How a card sends web requests: fetch, XMLHttpRequest and sendBeacon calls whose site
+  is written out, with the method, the headers and query fields, and whether there's a
+  body. Map image addresses show as "Loads map images". Sites with a request or map
+  images go under Where it connects; the others go under Other addresses in its code.
+- A site code comes from is listed under Where it connects too, with an orange line in
+  the words of the picture's arrow: "Loads code from here that runs in your dashboard"
+  for a card, "Sends Lua code that the app runs in Home Assistant" for an integration.
+- Environment variables it uses (integrations): which ones the code reads and sets, by
+  name when the code spells the name out, and whether it reads back one it set itself.
+- Pages that open without logging in to Home Assistant are listed in the Exposure box
+  with the address each one answers on, when the code spells it out.
+- A site named only in a list of sign-in return addresses (OAuth) is no longer treated
+  as a place the app could send your logins to. It stays listed, with a line saying so.
+- A site the app's README names, or its funding file lists, says so in the site's fold,
+  with a link to that line of the README. It doesn't change the site's group.
+- On code hosting (GitHub, GitLab, Bitbucket, Codeberg, SourceForge) a site counts as
+  one the app's files link to only when every address the code names there is under the
+  repository owner's path.
+- Where it connects claims only what the scan shows about who runs a site. "The app's
+  own sites" is now **Sites its files link to** (its manifest or package.json, or the
+  repository owner's GitHub). A site whose name only matches the app's goes under **Sites
+  named like the app**, which says Barkley can't tell who runs it: an integration is often
+  named after the company whose service it uses. A site on a free app-hosting service is a
+  **server the developer runs** only when its address carries the repository owner's or
+  the repository's name; otherwise it's one of the other sites, with no note of its own.
+  The readings don't change.
+- **What the developer's disclosure.yaml says:** when the repository has a
+  `disclosure.yaml` ([the spec](https://ha-barkley.github.io/disclosure/)), Barkley shows
+  it after Where it connects, beside what the scan found, and says where the two don't
+  match: a site Barkley read a request to that the file doesn't list, a connection the
+  file says is encrypted that the code reaches without encryption, usage reporting the
+  file says is off by default that the code sends on its own, a page that opens without a
+  login that the file doesn't list. The sites under Where it connects say whether the
+  file lists them. Connections, telemetry and pages are compared; the rest of the file is
+  shown as the developer's words. The file never changes a reading. Barkley reads only
+  files that follow version 1 of the spec, at most 64 KB, and refuses YAML anchors,
+  aliases and tags; a file it doesn't use is named, with why.
+- Sites, ports and libraries are one line each and fold open. A long list shows five,
+  then "N more".
+- Under the app's name: the kind of app, the version, a link to the repository, stars,
+  and downloads when GitHub counts them.
+
+**What it touches: a picture of the app in your home**
+
+- On each app's scan report. Inside your Home Assistant are seven rooms, the same
+  for every app: users and logins, other apps' settings, devices and entities, files,
+  programs and the system, your home network, and your browser session. A room is
+  blue when the app reaches into it beyond its own job, and dashed when Barkley saw it
+  do nothing there.
+- What the app does in its own space is said in gray: the kinds of entity it adds, its
+  own storage file, its own sidebar page, devices Home Assistant finds for it. A card
+  says it runs in your browser session with your Home Assistant login.
+- Outside are the sites it sends requests to. A path Barkley found from your data to a
+  site that isn't the app's own is red.
+- Exposure is orange and points in: a door for each way in (a page that opens without
+  logging in, messages from the internet, a link that can run code), and a strip on the
+  app for libraries with known vulnerabilities.
+- A dotted orange arrow shows code from outside that runs here: from the site a card
+  loads code from into your browser session, and from where an integration downloads
+  Lua into Programs and the system. When the address comes from a server's answer, the
+  arrow starts at a dashed box linked to the sites that answer. The "leaves your home"
+  label sits over the lines that leave, and lines behind it break around it.
+- An item that adds to the Exposure reading is marked Exposure, with a link up to that
+  box. The rest of What Barkley found is context. Only the AI's own row under an item is
+  in the AI's color.
+- The Exposure box names the site code is loaded from and says what the app relies on:
+  that site, and whoever publishes the code. Barkley never downloads that code.
+- Page sections: What Barkley found (the items), What it touches (the picture). The
+  developer's description, after an AI request, is now part of In short.
+- The short AI text from Explain this app is labeled AI summary, apart from Explain in
+  context.
+- On a phone the same picture is stacked, one part under the other.
+
+**Where the login you gave this app goes**
+
+- Barkley follows the logins you enter when you set up an integration (a password,
+  token or API key) through its code to the requests that carry them. A box on the
+  app's page lists each one: what is sent, whether the app or a library sends it, and
+  where it goes. On the picture that line is purple.
+- When the code builds a request's address while it runs, Barkley says where the
+  address comes from: what you entered at setup, a list of sites in the code, a
+  server's answer, a device found on your network, Home Assistant's own address, or
+  "couldn't tell". An address you entered shows as a dashed box on the picture: Barkley
+  can't tell whether it's on your home network or the internet. Sites the code picks
+  from a list in it are shown with the sites it connects to, and on the picture. When
+  the address comes from the answer of one of a few sites in the code, those sites are
+  named. Barkley also follows methods an app's class gets from its own base class.
+- When an integration hands the login you gave it, or an address, to a library it
+  requires, Barkley reads inside that library, one level deep. It downloads the
+  library's published package (the exact version the app gets, checksum checked, at
+  most four per scan and 40 MB each, from PyPI's file host Barkley already used) and
+  reads it as text. It is never installed, imported or run. A site the library connects
+  to is listed with "through a library". If the download fails, the page says the
+  library wasn't read; that's never a finding.
+- All of this is context. None of it changes a reading.
+
+**Where its code comes from**
+
+- A new section on an app's page: what the Marketplace installs, the project and whose
+  account it is under, who published this release and who published the earlier ones,
+  and how the release's commit is signed.
+- Every Python package Home Assistant would install for an integration, the ones that
+  come along with the app's own included. For a card, the npm packages its
+  `package.json` lists. Each line says how many releases it is behind and the newest
+  version with its date, or "up to date", and "pinned by Home Assistant" where Home
+  Assistant's own pin holds it. For a card, "built with" names the lock file's version
+  when it isn't the one `package.json` names.
+- Published libraries it ships: each recognized library says "not read" or "read as
+  code", with the reason (too new, too few downloads, no answer from npm, a malware
+  warning), and how many large files matched nothing.
+- Code it gets while it runs: packages it installs or code it loads after it's installed.
+  For an integration that runs Lua code through the lupa package, where that Lua comes
+  from: downloaded while it runs (and from where), shipped in the release, packed in its
+  code, or a file Barkley couldn't follow. Barkley has no checks for Lua code itself.
+
+**AI**
+
+- In the Explain and read code mode, Explain this app makes one more request with the
+  README passages and code descriptions the scan stored: the README's opening lines
+  first, then the descriptions (docstrings, and the comment block above a function).
+  The README gets at most 60% of the space when the code has descriptions. The AI may
+  sum up what the developer says the app does, in sentences tagged "AI inferred".
+  Barkley shows a sentence only if the lines it cites were sent and hold its words, and
+  it gives no verdict. That request isn't sent when a threat was found.
+- Settings → AI answers: how much of the developer's text one request may carry: 6,000,
+  12,000 (default) or 18,000 characters, with one code description per 1,000 characters.
+  The AI may write up to 4 sentences at 6,000 and up to 6 above that. Picking a size
+  fills in its time limit (3, 6 or 9 minutes), which you can change.
+- Settings → AI time limit: Barkley stops waiting after that many minutes, or, switched
+  off, waits as long as your model takes. While it waits, the page has a Stop waiting
+  button. A time-out says how long it waited and what you can do; it never changes a
+  reading. Home Assistant may still finish an answer Barkley stopped waiting for, but
+  Barkley won't use it.
+- Barkley now sends AI requests over Home Assistant's websocket. A request sent through
+  the Supervisor's API ends after 5 minutes, and a slow model can take longer.
+- While your AI answers, the app's card on the list gets a moving outline in the AI's
+  color, the box at the top of the list names the app and how long it has waited, and
+  the app's page shows a box with the time so far.
+
+**Update comparison**
+
+- A summary of what the update changes beyond security, added and removed: actions you
+  can use in automations, kinds of entity, pages and sidebar pages, commands and
+  webhooks it accepts, other integrations' actions it calls, packages, sites it sends
+  requests to, sites the login you gave it goes to, and environment variables it reads.
+  For example: "Adds 3 actions you can use in automations, adds 1 kind of entity, adds 2
+  packages it requires, no longer adds 1 sidebar page." A fold names them. Barkley
+  counts kinds of entity (switches, sensors), not entities: how many an app creates
+  depends on your devices. An update notification carries the same sentence, with
+  counts only. Both versions must be sniffed by 0.15 or later.
+
+- It now also says when an update changes how the release's commit is signed, sends a
+  new kind of request to a site, puts new names into a request, reads or sets a new
+  environment variable, or brings a new, changed or newly read published library.
+  Signing that stops or changes kind is a change to check. The rest are listed under the
+  smaller changes.
+
+**Faster scans**
+
+- Published libraries: an integration's large JavaScript file that is byte for byte a
+  file of a well-known npm package (a month old, 10,000 downloads a week, no malware
+  advisory) isn't read as code. It's listed on the app's page and checked for
+  advisories like any dependency. Barkley asks jsDelivr by the file's SHA-256; no
+  answer means the file is read. On by default; Settings → Published libraries.
+- The check that a login token only goes to Home Assistant itself reuses its work
+  within a scan. Same results, less time.
+- An update of Barkley no longer sniffs every app again unless it changed what a scan
+  finds (its rules, its checks or the scanner tools). Barkley works this out from its
+  own files when it starts.
+- A cache of code already read: a file Barkley has read before, byte for byte, isn't
+  read again (an app's new release, Sniff again). 1 GB by default; Settings → Cache of
+  code already read. An app's page says how many files came from it.
+
+**Where Home Assistant runs decides how much a library's known vulnerability counts**
+
+- A home or work network: a known vulnerability in a dependency is at most medium, and
+  the item says why. Reachable from the internet: its rating, and critical when CISA
+  lists it as exploited in the wild, automatable and of total impact (read from the CVE
+  record). Malware and data leaving are never lowered.
+- A known vulnerability in a card's or panel's JavaScript is rated by GitHub's rating
+  (at most high) instead of always medium; one that can only slow or stop the page
+  stays at most medium.
+
+**Fewer false alarms, from scanning the Marketplace**
+
+Barkley scanned 6,753 of the 6,759 apps in the Marketplace's list (November 2026): three
+repositories were gone, and three downloads were over Barkley's 256 MB limit. It flagged
+92 as a possible or found threat, and when their code was read, none was malicious. Every
+change below is a general check applied to every app, not an exception for one:
+
+- A login token sent to Home Assistant itself: through a helper that takes the address
+  in any place, a class method, or a script without modules; after a check that the
+  address is one of Home Assistant's own paths or its own origin; over Home Assistant's
+  websocket; or as a blob address that never leaves the browser.
+- Data leaving: a site counts as a destination only when the code uses it like an
+  address (not a link in a message, an XML namespace, an app package name or a dotted
+  key). A version number written like an IP address (`APP_VERSION = "2.4.1.7"`) isn't
+  listed as an address. Login-token code that only counts, checks or removes tokens,
+  another app's settings fields that aren't secrets, the Supervisor's key sent to the
+  Supervisor, and one named entry of secrets.yaml are no longer paired with a site.
+- Loading saved data with pickle is a habit (medium), not hidden code. Encoded pictures,
+  fonts and keys aren't hidden code. Packed text is unpacked, as data, and read like the
+  app's own files; the page says so, what kind of code it holds, and when it changes
+  another app's files. Barkley has no checks for Lua code, so in packed Lua it only
+  looks for web addresses.
+- A build tool known to be malware is a possible threat, not a found one: it runs on
+  the developer's machine, not in your home, but could change what ships. Settings →
+  Build tool known to be malware sets how much it counts (2, 2.5 or 3).
+- A library name one typo from a popular one is a note when PyPI's record shows the
+  app's own owner published it; medium when only a link says so.
+- npm's empty stand-in for a package it removed is a note, with when it was added.
+- A library's plugin loader (code that runs what it's handed) is a note; script
+  addresses in an app that has one count toward Exposure, like other code it loads.
+- A card that sends its login token to the address in its own settings, where the
+  card's default is one of Home Assistant's own paths (or there's no default), gets a
+  note, not a Threat. A default that points elsewhere stays a Threat.
+- A possible theft needs a site the code was read sending a request to (or a request
+  whose address Barkley couldn't read), and a real credential: another app's saved
+  field counts only when it's named like one (password, token, key, secret and so on).
+- Test scripts Home Assistant never loads don't count toward the readings. The app's
+  page lists them in "Ignored test scripts that aren't loaded". When the app imports
+  code by a name Barkley can't follow, nothing is set aside.
+- A card's build tools (file watching, unpacking, test helpers) that its lockfile lists
+  as run-time packages aren't counted as code your browser runs. They're listed, not
+  counted.
+
+**New in the readings**
+
+- Code a card loads from the internet while it runs counts toward Exposure: 5 when the
+  version it gets is decided while it runs, 2 when it's one exact version.
+- A card that runs code taken from the page address is Exposure 5, not a Threat: anyone
+  who gets a logged-in user to open a link could run code in the dashboard.
+- An integration that downloads Lua code while it runs and runs it through lupa is
+  Exposure 5, like a card's code from another site. With lupa's out-of-the-box settings
+  that code can use Python and run programs, so it can do anything the app can. A
+  runner that keeps the code away from both is listed and not counted.
+
+**The list and Settings**
+
+- Filters "Signs of a threat" and "Exposure medium or high", and an Order menu: most
+  concern first, Threat, Exposure, or name.
+- Apps you sniffed but didn't install stay listed after Barkley's rules change, marked
+  "Sniffed with earlier rules", with a button to sniff them again.
+- When the Marketplace has removed an app, its page says so.
+- An app's page shows the release day and the last push to the project. Settings →
+  Quiet projects says when a project has gone quiet (12 months by default, or never).
+  It changes no reading.
+- An app with only some of its sites unencrypted says "Partly unencrypted", with how
+  many.
+- Settings → Low memory: scans don't start with less than 1 GB free. You can lower it
+  to 0.5 GB or scan anyway, if you accept that Home Assistant may run short.
+- Settings → Notify when: every result (default), Exposure medium or high, Exposure
+  high, or only signs of malicious behavior. A sniff that didn't finish always notifies.
+- Settings → Send notifications to (was Notify): Home Assistant's bell (default), the
+  bell and a notify service, only the notify service, or Disabled. With Disabled,
+  auto-sniff still sniffs and lists every result, and sends nothing.
+- On a pre-release track, only a newer version counts as an update.
+- History shows each scan's Threat and Exposure.
+- Settings → Versions kept per app: all of them (default), or the last 20, 10, 5 or 3
+  versions of each installed app. The installed version and a waiting update are always
+  kept. The row shows how much space the scan store uses.
+- Before a Home Assistant backup, Barkley moves the scan store's recent changes into
+  its file, so the backup has them. Once a day, if a quarter or more of
+  the file is space freed by deleted scans, Barkley compacts it.
+- Standalone: Barkley tells you when a new version is out. Once a day it asks GitHub
+  for its latest release. When there's a newer one, the list shows the image to use and
+  Home Assistant shows a notification, once per version. Settings → New Barkley
+  versions turns it off. As an app, Home Assistant already shows Barkley's updates.
+- Standalone: auto-sniff starts as soon as Barkley has its Home Assistant token. Before,
+  Settings could say "no token yet" for up to 10 minutes after the first-time setup.
+
+**Scanner tools are more tightly confined**
+
+- On Home Assistant OS, whose kernel has no Landlock, each scanner tool now runs in
+  its own AppArmor profile. It can't read the app's options, the GitHub token file or
+  the scan store, and it can write only to Barkley's caches and temporary space. Where
+  Landlock is available, Barkley's Landlock sandbox confines the tools as before. With
+  neither, Barkley won't start unless you set `BARKLEY_UNSANDBOXED=1`. Diagnostics has
+  a Tool sandbox line.
+- Semgrep comes with the `mcp` library pinned at 1.29.0, which has a high CVE fixed
+  in 1.30.0. The image now installs 1.30.0 in its place. Barkley never runs the part
+  of Semgrep that uses it.
+
+**Removed**
+
+- GuardDog: on a hand-checked sample of 600 Marketplace apps, 1 of its 23 findings was
+  right, and none was malware. Barkley no longer downloads every library of an
+  integration to run GuardDog on it, so a scan needs far less temporary space. (It
+  still downloads the few libraries the app hands the login you gave it to; see above.)
+- The GitHub wiki. The docs moved from the GitHub wiki to `docs/` in the repository and
+  the website, https://ha-barkley.github.io/docs/.
+
+**Fixes from the issue tracker**
+
+- A login-token check is not a reach into the auth store: an app that only checks
+  whether a token or signed link sent to it is valid (as Home Assistant's own check
+  does) gets a low "Checks login tokens sent to it", and that is never paired with the
+  app's outside addresses as possible data leaving.
+- Several calls of the same kind in one Python function are one item; an admin-only
+  websocket command says so.
+- Security checks run through pre-commit (local hooks included), lefthook or husky, and
+  Ruff's security rules selected in `pyproject.toml`, `ruff.toml` or `.ruff.toml`, count
+  as the developer's security habits. Only checks a workflow runs count toward the A+
+  star.
+- A full temporary folder says "out of temporary space: N MB free".
+- A CPU without the x86-64-v2 instructions (a VM's default CPU type) says so, with the
+  fix, as soon as Barkley starts: at the top of its page, in its log, in Diagnostics and
+  on each failed scan. On Proxmox: `host` on a single node, or with several nodes the
+  highest x86-64 level all of them support.
+- A release zip whose only change is the version stamp no longer reads as different
+  from the tagged source when the stamp also dropped a comment on that line. Code is
+  compared without its comments.
+- Code that saves an original, patches it for a moment and puts it back is one
+  monkeypatch, not two. The patch says it's put back, and that until then it applies
+  to all of Home Assistant.
+- Code inside a JavaScript class static block (`static { … }`) is now read. Semgrep
+  couldn't parse it, so Barkley rewrites the block in its own copy, with the same
+  meaning, before scanning.
+- A card's item title read "It can it dashboard card uses …" in 0.14.0. Fixed.
+- An app installed at an older version, with a newer one already offered, had only the
+  installed version sniffed: the offered update never was. Both are sniffed now, and
+  the update's notification no longer replaces the install's.
+- Report a false positive now fills in the app's repository too (GitHub left that one
+  field empty), and the code a click sends says "this line" for one line.
+- Plainer words across the panel and the notifications.
+
 ## 0.14.0
 
 **Reviews and a Settings page**

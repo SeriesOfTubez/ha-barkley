@@ -24,10 +24,15 @@ The calls (paths below are Core's; an add-on prefixes them with /core):
   Older HA with the HACS custom integration answers `hacs/repositories/list`, which
   returns the same fields; it is asked only when Core doesn't know the first command.
 
-- (M8) `POST /api/services/ai_task/generate_data?return_response`,
-  only when the user clicks "Explain this app" and has chosen an AI Task entity in the
-  options. It sends findings about a public repo (the report's `ai_brief`), never HA
-  data, to whatever AI provider that entity uses.
+- (M8) `ai_task.generate_data`, only when the user clicks an AI button and has chosen an
+  AI Task entity. It sends findings about a public repo (the report's `ai_brief`), never
+  HA data, to whatever AI provider that entity uses. (0.15, his decision 2026-11-23) It
+  goes over the Core websocket (`call_service` with `return_response`), not the REST
+  API: the Supervisor's proxy ends a proxied REST request after 300 s
+  (supervisor/api/proxy.py `_api_client`), and a slow model may take longer. Core puts
+  no time limit on it there (websocket_api/commands.py `handle_call_service`). Domain,
+  service and fields are fixed in code (`_ai_message`); `call_service` is NOT in
+  `_ALLOWED_COMMANDS`, so `core_command` can't call any other service.
 
 - (M8) `POST /api/template` with one template fixed in code
   (`AI_ENTITIES_TEMPLATE`) that returns only the ids and names of `ai_task` entities, so
@@ -53,7 +58,7 @@ administrator's), so these connections could reach almost anything in Core. The 
 sends only the list commands and the subscribe command with fixed signals,
 `auth/current_user` (the login), the one AI Task service call, the two notification
 services and the one fixed template, all in code (`_ALLOWED_COMMANDS`, `WATCH_SIGNALS`,
-`AI_TASK_PATH`, `AI_ENTITIES_TEMPLATE`, `NOTIFY_PATH`); nothing from a request or a
+`_ai_message`, `AI_ENTITIES_TEMPLATE`, `NOTIFY_PATH`); nothing from a request or a
 report ever becomes a command, a service name, a template or a URL (a notify target is
 checked against the list HA gave and a strict pattern).
 
@@ -71,6 +76,7 @@ import secrets
 import socket
 import ssl
 import struct
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -273,9 +279,24 @@ def _with(tok: str | None) -> Connection:
     return conn
 
 
-AI_TASK_PATH = "/api/services/ai_task/generate_data?return_response"
 _AI_ENTITY = re.compile(r"^ai_task\.[a-z0-9_]{1,100}$")
-_AI_TIMEOUT = 180
+_AI_TIMEOUT = 360.0  # the default of Settings → AI answers (12,000 characters, 6 minutes)
+_AI_POLL = 2.0  # seconds between looks at the Stop waiting flag
+
+
+class AiTimeout(SupervisorError):
+    """(0.15) The AI didn't answer within the time limit the user set."""
+
+    def __init__(self, seconds: float) -> None:
+        self.seconds = seconds
+        super().__init__(f"no answer within {seconds:.0f} s")
+
+
+class AiStopped(SupervisorError):
+    """(0.15) The user clicked Stop waiting."""
+
+    def __init__(self) -> None:
+        super().__init__("stopped waiting")
 
 
 TEMPLATE_PATH = "/api/template"
@@ -314,45 +335,74 @@ def ai_entity_ok(entity_id: str) -> bool:
     return bool(_AI_ENTITY.match(entity_id))
 
 
+def _ai_message(entity_id: str, instructions: str, structure: dict[str, Any],
+                task_name: str) -> dict[str, Any]:  # fmt: skip
+    """The one service call Barkley makes over the websocket: ai_task.generate_data with
+    the answer returned. Only the fields' values vary; nothing else can be asked for."""
+    return {
+        "id": 1,
+        "type": "call_service",
+        "domain": "ai_task",
+        "service": "generate_data",
+        "service_data": {
+            "task_name": task_name,
+            "entity_id": entity_id,
+            "instructions": instructions,
+            "structure": structure,
+        },
+        "return_response": True,
+    }
+
+
 def ai_generate_data(
     entity_id: str,
     instructions: str,
     structure: dict[str, Any],
     task_name: str,
     tok: str | None = None,
-    timeout: float = _AI_TIMEOUT,
+    timeout: float | None = _AI_TIMEOUT,
+    cancel: threading.Event | None = None,
+    *,
+    host: str | None = None,
+    port: int | None = None,
+    path: str | None = None,
 ) -> Any:
-    """Call ai_task.generate_data and return its `data` (validated by HA against
-    `structure`). Raises SupervisorError with HA's message on any failure."""
+    """Call ai_task.generate_data over the Core websocket and return its `data`
+    (validated by HA against `structure`). `timeout` None waits as long as the model
+    takes; `cancel` set (Stop waiting) ends the wait within _AI_POLL seconds. Home
+    Assistant keeps the model working either way: Barkley only stops listening. Raises
+    AiTimeout, AiStopped, or SupervisorError with HA's message."""
     conn = _with(tok)
     if not ai_entity_ok(entity_id):
         raise SupervisorError(f"{entity_id!r} is not an AI Task entity (ai_task.…)")
-    body = json.dumps(
-        {
-            "task_name": task_name,
-            "entity_id": entity_id,
-            "instructions": instructions,
-            "structure": structure,
-        }
-    ).encode()
-    req = urllib.request.Request(f"{conn.base}{AI_TASK_PATH}", data=body, method="POST")  # noqa: S310
-    req.add_header("Authorization", f"Bearer {conn.token}")
-    req.add_header("Content-Type", "application/json")
+    ws = _open_core(conn.token, host, port, path)
     try:
-        with _open(req, timeout, conn) as r:
-            answer = json.load(r)
-    except urllib.error.HTTPError as ex:
-        try:
-            msg = json.loads(ex.read() or b"{}").get("message") or ex.reason
-        except ValueError:
-            msg = ex.reason
-        raise SupervisorError(f"Home Assistant answered {ex.code}: {msg}") from ex
-    except (OSError, ValueError) as ex:
+        ws.send_json(_ai_message(entity_id, instructions, structure, task_name))
+        end = time.monotonic() + timeout if timeout else None
+        while True:
+            if cancel is not None and cancel.is_set():
+                raise AiStopped()
+            look = time.monotonic() + _AI_POLL
+            try:
+                msg = ws.recv_json(min(look, end) if end is not None else look)
+            except TimeoutError:
+                if end is not None and time.monotonic() >= end:
+                    raise AiTimeout(float(timeout or 0)) from None
+                continue
+            if isinstance(msg, dict) and msg.get("id") == 1 and msg.get("type") == "result":
+                break
+        if not msg.get("success"):
+            err = msg.get("error") if isinstance(msg.get("error"), dict) else {}
+            raise SupervisorError(f"Home Assistant answered: {str(err.get('message'))[:300]}")
+        result = msg.get("result") if isinstance(msg.get("result"), dict) else {}
+        resp = result.get("response")
+        if not isinstance(resp, dict) or "data" not in resp:
+            raise SupervisorError("AI Task returned no data")
+        return resp["data"]
+    except (OSError, AttributeError) as ex:
         raise SupervisorError(f"AI Task call failed: {ex}") from ex
-    resp = answer.get("service_response") if isinstance(answer, dict) else None
-    if not isinstance(resp, dict) or "data" not in resp:
-        raise SupervisorError("AI Task returned no data")
-    return resp["data"]
+    finally:
+        ws.close()
 
 
 def token() -> str | None:
@@ -871,7 +921,26 @@ class Installed:
 
     @property
     def update(self) -> bool:
-        return bool(self.available) and self.available != self.installed
+        """(0.15, #27) Only a newer version is an update: on a pre-release track the
+        Marketplace can offer the older stable release, which isn't one."""
+        if not self.available or self.available == self.installed:
+            return False
+        have, offer = _vkey(self.installed), _vkey(self.available)
+        if have[0] and offer[0]:  # both are versions (a commit hash isn't)
+            return offer > have
+        return True
+
+    @property
+    def prerelease(self) -> bool:
+        """(0.15, #27) The installed version is a pre-release (`2.0.0-beta.3`, `2.0.0b1`)."""
+        nums, final = _vkey(self.installed)
+        return bool(nums) and not final
+
+
+def _vkey(version: str) -> tuple:
+    from sniff_test.models import version_key
+
+    return version_key("PyPI", version)
 
 
 def parse_installed(result: Any) -> tuple[list[Installed], dict[str, int]]:

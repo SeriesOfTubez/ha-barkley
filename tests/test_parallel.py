@@ -124,13 +124,15 @@ def test_auto_keeps_a_small_reserve_inside_a_containers_own_limit(tmp_path):
     assert _room(tmp_path, _limited(2.6, 3), 1) == ""
     # the same free memory on a machine Home Assistant shares: 2 + 1.5 doesn't
     why = _room(tmp_path, _mem(2.6), 1)
-    assert why.startswith("waiting for memory: 2.6 GB free, 3.5 GB needed beside the 1")
+    assert why.startswith(
+        "waiting for memory. 2.6 GB is free and 3.5 GB is needed while 1 other scan runs"
+    )
 
 
 def test_a_fixed_amount_runs_as_many_as_fit_and_never_past_the_container(tmp_path):
     assert _room(tmp_path, _mem(20), 1, gb=4) == ""  # 4 GB: two scans
     why = _room(tmp_path, _mem(20), 2, gb=4)
-    assert why.startswith("waiting for a running scan to finish: 4 GB") and "fits 2" in why
+    assert why.startswith("waiting for a running scan to finish. 4 GB") and "fits 2 scans" in why
     assert _room(tmp_path, _mem(20), 7, gb=12) == ""  # a big machine: eight at 1.5 GB
     # 8 GB chosen, but the container allows 3: two at most
     assert "fits 2" in _room(tmp_path, _limited(2.9, 3), 2, gb=8)

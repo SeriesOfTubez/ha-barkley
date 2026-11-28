@@ -69,11 +69,19 @@ def integration_dir(source_root: Path, hacs: dict[str, Any]) -> tuple[Path, list
 
 
 def plugin_filenames(repo_name: str, hacs: dict[str, Any]) -> list[str]:
-    base = repo_name.lower().removeprefix("lovelace-")
-    names = [f"{base}.js", f"{base}.umd.js", f"{base}-bundle.js"]
+    """The file names Home Assistant's Marketplace accepts for a card (Core 2026.11,
+    `marketplace/repositories/plugin.py` `_valid_filenames`): hacs.json's `filename`
+    alone when it is set, else the repository's name without "lovelace-", the full
+    name, and the full name with .umd.js or -bundle.js. (0.15) The full name was
+    missing, so a real card whose file is named after its whole repository failed."""
     if fn := hacs.get("filename"):
-        names.insert(0, str(fn))
-    return names
+        return [str(fn)]
+    return [
+        f"{repo_name.replace('lovelace-', '')}.js",
+        f"{repo_name}.js",
+        f"{repo_name}.umd.js",
+        f"{repo_name}-bundle.js",
+    ]
 
 
 def _manifest_domain(root: Path) -> str | None:
@@ -197,7 +205,7 @@ def fetch_remote(
         else:
             ref = repo["default_branch"]
             install_source = "default_branch"
-    sha = gh.commit_sha(owner, name, ref)
+    sha, signature = gh.commit(owner, name, ref)
     if install_source == "default_branch":
         notes.append(_no_release_note(ref, sha))
 
@@ -273,6 +281,7 @@ def fetch_remote(
         repo_meta=repo,
         stars=_count(repo, "stargazers_count"),
         downloads=downloads,
+        signature=signature,
     )
 
 

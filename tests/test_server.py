@@ -10,7 +10,7 @@ import urllib.request
 import pytest
 from test_store import EDGE, FINDING, report
 
-from sniff_test import server
+from sniff_test import server, ui
 from sniff_test.store import Store
 
 HOSTILE = '<script>alert(1)</script>"><img src=x onerror=alert(2)>'
@@ -75,7 +75,7 @@ def test_refuses_clients_other_than_the_allowed(tmp_path):
     try:
         status, _, body = get(f"http://127.0.0.1:{httpd.server_address[1]}/")
         assert status == 403
-        assert "only reachable through Home Assistant" in body
+        assert "Barkley only opens through Home Assistant." in body
     finally:
         httpd.shutdown()
 
@@ -146,7 +146,7 @@ def test_update_job_reuses_the_stored_installed_scan_and_links_a_diff(panel):
     status, _, page = get(f"{base}/diff?old={installed}&new={job.scan_ids[1]}")
     assert status == 200
     assert "x.invalid" in page
-    assert "100 → 75" in page
+    assert "Before: " in page and "After: " in page and "→ 75" not in page  # readings
 
 
 def test_ingress_path_header_is_used_only_when_well_formed(panel):
@@ -175,7 +175,7 @@ def test_failed_scan_marks_the_job_and_the_worker_survives(tmp_path):
     w.submit("scan", "acme/acme", "v1")
     w.wait()
     assert [j.state for j in w.jobs] == ["done", "failed"]
-    assert "boom" in w.jobs[1].message
+    assert "boom" not in w.jobs[1].message and "app log" in w.jobs[1].message
     assert len(store.history()) == 1
 
 
@@ -339,15 +339,15 @@ def test_installed_grid_leads_with_what_needs_attention(addon):
     assert order[:2] == ["Never", "Unchecked"] or order[:2] == ["Unchecked", "Never"]
     assert order.index("Moved") < order.index("Fine")
     moved = _card(page, "Moved")
-    assert 'class="app grey"' not in moved and "Update v2 needs a look" in moved
-    assert "Update v2 needs a look" in moved and "diff?old=" in moved
+    assert 'class="app grey"' not in moved and "Update v2: check it first" in moved
+    assert "Update v2: check it first" in moved and "diff?old=" in moved
     unchecked = _card(page, "Unchecked")
     assert "app grey" in unchecked or 'class="app "' not in unchecked
     assert "Check update" in unchecked and 'name=to value="v2"' in unchecked
     assert "Sniff it" in _card(page, "Never")
     assert "<b>5</b> apps installed" in page
-    assert "Sniff the 2 not yet sniffed" in page
-    assert "Not scanned (not an integration or card): 2 theme" in page
+    assert "Sniff 2 apps not yet sniffed" in page
+    assert "currently checks integrations and dashboard cards only. Not checked: 2 themes" in page
     _, _, look = get(base + "/?f=look")
     assert _card_order(look) == ["Moved"]
     _, _, ups = get(base + "/?f=updates")
@@ -362,7 +362,7 @@ def test_detail_page_of_an_installed_app_shows_its_update(addon):
     assert "<h1>Moved</h1>" in page and "All apps</a>" in page
     assert "Update available: v1 → v2" in page
     assert "Everything the update" in page
-    assert "What we found" in page and "Where it connects" in page
+    assert "What Barkley found" in page and "Where it connects" in page
 
 
 def test_check_runs_the_update_diff_reusing_stored_scans(addon):
@@ -399,7 +399,10 @@ def test_installed_list_error_is_shown_and_typed_checks_remain(addon):
 
     state["fn"] = broken
     _, _, page = get(base + "/?refresh=1")
-    assert "Can't list installed items: HACS isn&#x27;t &lt;b&gt;installed&lt;/b&gt;" in page
+    assert (
+        "Barkley can't list your installed apps: HACS isn&#x27;t &lt;b&gt;installed&lt;/b&gt;"
+        in page
+    )
     assert "What would updating change?" in page
 
 
@@ -429,6 +432,19 @@ def test_memory_guard_warns_and_refuses(addon):
     assert scan_fn.calls == []
 
 
+def test_low_memory_off_lets_a_scan_run_under_1_gb(addon):
+    """(0.15, #20) Settings → Low memory: Scan anyway."""
+    _, scan_fn, base, httpd, state = addon
+    state["mem"] = _mem(0.5)
+    _worker(httpd).floor_fn = lambda: 0
+    _, _, page = get(base + "/")
+    assert "scans are refused" not in page
+    post(base + "/scan", {"repo": "acme/acme", "ref": "v1", "token": token(base)})
+    _worker(httpd).wait()
+    assert _worker(httpd).jobs[0].state == "done"
+    assert scan_fn.calls
+
+
 def test_no_installed_section_outside_an_addon(panel):
     _, _, base, _ = panel
     _, _, page = get(base + "/")
@@ -455,7 +471,7 @@ def test_scans_from_older_rules_dont_count(addon):
     _, _, page = get(base + "/")
     fine = _card(page, "Fine")  # the old 75 isn't shown as today's verdict
     assert "app grey" in fine and ">75<" not in fine and "Sniff it" in fine
-    assert "Sniff the 5 not yet sniffed" in page
+    assert "Sniff 5 apps not yet sniffed" in page
     assert post(base + "/installed-all", {"token": token(base)})[0] == 303
     _worker(httpd).wait()
     assert ("acme/fine", "v1") in scan_fn.calls
@@ -488,18 +504,18 @@ def test_one_button_sniffs_every_unfinished_scan_again(addon):
         bad["complete"] = False
         store.save(bad)
     _, _, page = get(base + "/?refresh=1")
-    assert "Sniff the 2 unfinished again" in page and "not yet sniffed" not in page
+    assert "Sniff 2 unfinished again" in page and "not yet sniffed" not in page
     panel = httpd.panel
     job = server.Job(98, "installed", "acme/never", "v3", state="queued")
     panel.worker.jobs.insert(0, job)  # already waiting: not counted, not queued twice
     _, _, page = get(base + "/")
-    assert "Sniff the 1 unfinished again" in page
+    assert "Sniff 1 unfinished again" in page
     assert post(base + "/installed-all", {"token": token(base)})[0] == 303
     _worker(httpd).wait()
     assert scan_fn.calls == [("acme/new", "v1")]  # the complete ones are left alone
     panel.worker.jobs.remove(job)
     _, _, page = get(base + "/?refresh=1")
-    assert "Sniff the 1 unfinished again" in page  # acme/never is still unfinished
+    assert "Sniff 1 unfinished again" in page  # acme/never is still unfinished
 
 
 # --- auto-sniff: the panel's box and settings -------------------------------------------
@@ -558,6 +574,48 @@ def test_auto_settings_are_stored_and_the_test_button_notifies(auto):
     assert post(base + "/notify-test", {"token": "bad"})[0] == 403
 
 
+def test_send_notifications_to_offers_the_bell_the_service_either_or_disabled(auto):
+    """(0.15, #29 follow-up) one choice for where results go, with Disabled."""
+    store, base, _httpd, w, sent = auto
+    _, _, page = get(base + "/settings")
+    assert "Send notifications to" in page and ">Notify<" not in page
+    for value, label in (
+        ("", "Home Assistant&#x27;s bell (default)"),
+        ("mobile_app_phone", "The bell and notify.mobile_app_phone"),
+        (":only:mobile_app_phone", "Only notify.mobile_app_phone"),
+        (":disabled", "Disabled"),
+    ):
+        assert f'value="{value}"' in page and label in page
+    tok = token(base)
+    assert (
+        post(base + "/notify-target", {"token": tok, "target": ":only:mobile_app_phone"})[0] == 303
+    )
+    assert (w.notify_target, w.notify_bell) == ("mobile_app_phone", False)
+    for bad in (":only:not_offered", ":only:", ":only:../x", ":nope"):
+        assert post(base + "/notify-target", {"token": tok, "target": bad})[0] == 400
+    assert (w.notify_target, w.notify_bell) == ("mobile_app_phone", False)
+    assert post(base + "/notify-target", {"token": tok, "target": ":disabled"})[0] == 303
+    assert (w.notify_target, w.notify_bell) == ("", False) and store.setting("notify_bell") == "off"
+    _, _, page = get(base + "/settings")
+    assert '<option value=":disabled" selected>' in page
+    code, headers = post(base + "/notify-test", {"token": tok})
+    assert code == 303 and headers["Location"].endswith("/settings#notify-test")
+    assert sent == []
+    _, _, page = get(base + "/settings")
+    said = "Notifications are disabled, so nothing was sent."
+    assert page.count(said) == 1  # (his report) right under the button, not further down
+    button = page.index('id="notify-test"')
+    assert button < page.index(said) < page.index("Notify when")
+    assert post(base + "/notify-target", {"token": tok, "target": ""})[0] == 303
+    assert (w.notify_target, w.notify_bell) == ("", True)
+
+
+def test_send_to_value_and_parse_round_trip():
+    for target, bell in (("", True), ("x_1", True), ("x_1", False), ("", False)):
+        assert server.parse_send_to(server.send_to_value(target, bell)) == (target, bell)
+    assert server.parse_send_to(None) is None and server.parse_send_to(":only:") is None
+
+
 def test_auto_jobs_show_in_the_jobs_table_and_doctor_names_the_watcher(auto, monkeypatch):
     _store, base, httpd, _w, _sent = auto
     job = httpd.panel.worker.submit("auto", "acme/quiet", "v2", prev="v1")
@@ -568,7 +626,7 @@ def test_auto_jobs_show_in_the_jobs_table_and_doctor_names_the_watcher(auto, mon
     assert f"diff?old={job.scan_ids[0]}&amp;new={job.scan_ids[1]}" in page
     monkeypatch.setattr(server.doctor, "run_checks", lambda **kw: [])
     _, page = doctor_done(base)
-    assert "Auto-sniff (Marketplace events)" in page and "auto-sniff on" in page
+    assert "Auto-sniff (Marketplace events)" in page and "Auto-sniff is on" in page
 
 
 def test_the_watcher_refreshes_the_panels_installed_list(auto):
@@ -616,3 +674,41 @@ def test_a_redirect_target_is_one_local_path():
         "/scan/\u00e9",
     ):
         assert local_path(bad) == "/", bad
+
+
+def test_one_page_load_reads_every_job_once(addon):
+    """(0.15, his report) A scan that ended while the list was drawn left its card on
+    "checking…" while the status box said done, and the page stopped reloading. The page now
+    works from one copy of the jobs, so the card, the box and the reload agree."""
+    _, _, base, httpd, _ = addon
+    panel = httpd.panel
+    job = server.Job(98, "update", "acme/new", "v1", "v2", state="running")
+    panel.worker.jobs.insert(0, job)
+    snap = panel.jobs_now()
+    job.state, job.finished = "done", time.time()  # the scan ends mid-page
+    cards = panel.installed_html(base, False, ui.View(), snap)
+    assert "checking…" in _card(cards, "Unchecked")
+    strip = server.status_html(base, snap, {}, "")
+    assert "Checking the update of" in strip and "is done" not in strip
+    page = server.render_index(base, panel.store, snap, "t", cards, status=strip).decode()
+    assert '<meta http-equiv="refresh"' in page  # it reloads, and then shows the result
+    assert panel.jobs_now()[0].state == "done"
+    panel.worker.jobs.remove(job)
+
+
+def test_an_apps_page_says_when_it_is_being_sniffed_again(addon):
+    """(0.15, his report) Sniff again on an app's page: the page shows the running sniff
+    and reloads, then links to the new result."""
+    store, _, base, httpd, _ = addon
+    sid = store.save(report(repo="acme/fine", ref="v1"))
+    job = server.Job(97, "scan", "acme/fine", "v1", state="running")
+    httpd.panel.worker.jobs.insert(0, job)
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert "Sniffing" in page and '<meta http-equiv="refresh"' in page
+    assert f'href="/scan/{sid}"' in page  # its Refresh stays on this page
+    new = store.save(report(repo="acme/fine", ref="v1"))
+    job.state, job.scan_ids, job.finished = "done", [new], time.time()
+    _, _, page = get(f"{base}/scan/{sid}")
+    assert f'is done: <a href="/scan/{new}">see the result</a>' in page
+    assert '<meta http-equiv="refresh"' not in page
+    httpd.panel.worker.jobs.remove(job)

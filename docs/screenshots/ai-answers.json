@@ -1,0 +1,80 @@
+{
+ "model": "Claude Sonnet 5.5, standing in for the AI Task entity you pick in Home Assistant",
+ "made": "2026-11-23",
+ "entity": "ai_task.claude_sonnet",
+ "note": "Real answers to Barkley's own requests for its made-up test apps (scripts/doc_shots.py); only what passes Barkley's checks is shown.",
+ "answers": {
+  "clean_integration_v2--app": {
+   "item": "",
+   "data": {
+    "summary": "Barkley's readings for this app are Threat: none and Exposure: low. It found no signs of malicious behavior, and it does not open anything up to people who are not administrators. One thing is listed as context: the app reads your secrets.yaml file.",
+    "f_69d7042508fc39a2": "The app opens secrets.yaml directly in diagnostics.py. That file holds the passwords and keys for your whole system, so reading it means the app can see all of them. This is listed as context about what the app can do. It does not count toward the Threat or Exposure readings. Whether it matters depends on why the app needs it, and the scan data does not say."
+   }
+  },
+  "clean_integration_v2--words": {
+   "item": "",
+   "data": {
+    "says_1": "It is a second version of a test control app, with the same code as the first plus a read of the secrets file and a host it does not declare, and its description says it is never executed (diagnostics.py:1-2).",
+    "about_1": "1"
+   }
+  },
+  "evil_integration--app": {
+   "item": "",
+   "data": {
+    "summary": "Barkley's readings for this app are Threat: found and Exposure: high. The app shows signs of malicious behavior, and the main reason is that it sends your Home Assistant data out of your home. Several other items are listed as context about what the app can do and how it is made.",
+    "f_dd4ca35667bf8ddf": "The app collects login tokens and posts them to an outside address in __init__.py. That is the pattern used to steal credentials. This counts toward the Threat reading, which is found.",
+    "f_066caca4ce5cf72a": "The app decodes a hidden block of text and runs it as code (__init__.py, line 23). Hiding code this way keeps it from being reviewed, and malware often loads itself like this. This counts toward the Threat reading.",
+    "f_8369c5bc4f171350": "The app asks for a package named 'reqeusts', which is one typo away from the well-known 'requests'. Fake names like this are used to get people to install the wrong package. This is context and is not scored, but it fits with the other items here.",
+    "f_edeca6caf4a6616b": "The app has a Discord webhook address written into const.py. Anything sent to it goes to a channel the developer controls, not one you set up. This counts toward the Threat reading.",
+    "f_2fd327047a391333": "The app reaches into Home Assistant's login system and collects the refresh tokens of users. Normal apps at most look up who is calling them. This is context about what the app can do and is not scored by itself. Here it is the same tokens that item one sends out.",
+    "f_1e30a15f93c57f7b": "The app reads the saved credentials of other integrations, in helpers.py. That is where their passwords and API tokens are kept. This is context about what the app can do and is not scored by itself.",
+    "f_0acb1edb12f82309": "The app opens secrets.yaml directly in helpers.py. That file holds the passwords and keys for your whole system. This is context about what the app can do and is not scored by itself.",
+    "f_d88fea5b9c6574f2": "The app reads other integrations' credentials and secrets.yaml, and it can send data to hosts it does not declare (alerts.weather-cdn.invalid and weather-cdn.invalid). Barkley did not see one place where the data goes out, so this is a match between separate findings, not a proven path. It counts toward the Threat reading.",
+    "f_c59e53b0b6f09f39": "The package 'reqeusts' could not be found, so Home Assistant would fail to install this app. Missing or misspelled package names can point to removed malware or a typosquat. This is context and is not scored, but it is worth noting alongside the typo item.",
+    "f_b3c992b1c2bb181d": "The app gets a list of every Home Assistant user, with names, ids and whether they are admins. This is context about what the app can do and is not scored by itself. The same file also collects those users' tokens."
+   }
+  },
+  "evil_integration--item": {
+   "item": "dd4ca35667bf8ddf",
+   "data": {
+    "claim_1": "The code asks Home Assistant for every user account with `hass.auth.async_get_users`. (__init__.py:17)",
+    "claim_2": "From those accounts it builds a list called `tokens` that holds the `token` of every refresh token each user has. (__init__.py:18)",
+    "claim_3": "It then sends `tokens` out over the network with `session.post`, as JSON under the key `t`, to the address stored in `TELEMETRY`. (__init__.py:20)",
+    "claim_4": "`TELEMETRY` is imported from the app's own `.const` file. (__init__.py:9)",
+    "question_1": "What web address does `TELEMETRY` hold? Its value is set in const.py, which is not shown here.",
+    "question_2": "Who runs the server that receives this data, and what does it do with it? The code does not show that.",
+    "question_3": ""
+   }
+  },
+  "oauth_redirects--app": {
+   "item": "",
+   "data": {
+    "summary": "Barkley's readings for this app are Threat: none and Exposure: low. It found one thing the app can do, which is reading your secrets file. That is listed as context and is not scored. All of Barkley's checks finished.",
+    "f_a5a78544a8ad84c2": "The app opens secrets.yaml directly in __init__.py. That file holds the passwords and keys for your whole system, and an app normally gets its settings from Home Assistant instead. Barkley counts this as something the app can do, not as a sign of malicious behavior."
+   }
+  },
+  "oauth_redirects--item": {
+   "item": "a5a78544a8ad84c2",
+   "data": {
+    "claim_1": "The function `redact` opens the file `secrets.yaml` in the Home Assistant config folder. (__init__.py:10)",
+    "claim_2": "It goes through the file one line at a time and splits each line at the first colon with `line.partition`. (__init__.py:11-12)",
+    "claim_3": "For each line that has text after the colon, it replaces that text with `***` inside the `text` it was given. (__init__.py:13-14)",
+    "claim_4": "It hands back the changed `text`. (__init__.py:15)",
+    "question_1": "Where does the `text` passed to `redact` come from, and where is the result shown or sent? Neither is visible in these lines.",
+    "question_2": "",
+    "question_3": ""
+   }
+  },
+  "oauth_redirects--words": {
+   "item": "",
+   "data": {
+    "says_1": "It is a made-up bridge integration that is described as a test fixture (__init__.py:1).",
+    "about_1": "",
+    "says_2": "It says its constants are for that same made-up bridge, and that the hosts in them are `.invalid` (const.py:1).",
+    "about_2": "",
+    "says_3": "It says `redact` hides the user's secrets in text the bridge shows (__init__.py:9).",
+    "about_3": "1"
+   }
+  }
+ }
+}

@@ -58,9 +58,26 @@ def shell(cmd):
     os.path.join("a", "b")
 
 
-def obfuscated(xs):
+def obfuscated(xs, data):
     # ruleid: py-obfuscation
-    s = "".join(chr(c) for c in xs)
+    s = "".join(chr(c) for c in [101, 118, 97, 108])
+    # ruleid: py-obfuscation
+    s = "".join(map(chr, (101, 118, 97, 108)))
+    # ruleid: py-obfuscation
+    s = "".join(chr(c ^ 7) for c in [98, 113, 102, 107])
+    # ok: py-obfuscation
+    name = name.strip("".join(chr(value) for value in range(33)))
+    # ok: py-obfuscation
+    text = "".join(chr(b) for b in data)
+    # ok: py-obfuscation
+    text = "".join(map(chr, xs))
+    # (0.15) bytes read from a device, not numbers written in the code
+    # ok: py-obfuscation
+    ascii_chars = "".join([chr(byte) for byte in [byte1, byte2]])
+    # ok: py-obfuscation
+    ascii_chars = "".join(chr(byte) for byte in [byte1, byte2])
+    # ruleid: py-obfuscation
+    s = "".join(chr(c) for c in [0x65, 0x76, 0x61, 0x6C])
     # ok: py-obfuscation
     f = getattr(__builtins__, s)
     return f
@@ -113,3 +130,34 @@ def installs(self, run_cmd):
     subprocess.run(["sh", "-c", "pip install evil-pkg"])
     # ruleid: py-runtime-pip
     raise RuntimeError(run_cmd("pip install evil-pkg"))
+
+
+def own_file_fallback():
+    import importlib.util
+    import os
+    from pathlib import Path
+
+    try:
+        from . import const
+    except ImportError:
+        # ok: py-dynamic-import
+        spec = importlib.util.spec_from_file_location("_c", Path(__file__).with_name("const.py"))
+        const = importlib.util.module_from_spec(spec)
+        # ok: py-dynamic-import
+        spec.loader.exec_module(const)
+    # ok: py-dynamic-import
+    s2 = importlib.util.spec_from_file_location("_d", Path(__file__).parent / "data.py")
+    # ok: py-dynamic-import
+    s3 = importlib.util.spec_from_file_location("_e", os.path.join(os.path.dirname(__file__), "x.py"))
+    return const, s2, s3
+
+
+def loads_what_it_is_told(path, name):
+    import importlib.util
+
+    # ruleid: py-dynamic-import
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    # ruleid: py-dynamic-import
+    spec.loader.exec_module(mod)
+    return mod

@@ -162,7 +162,7 @@ class Login:
             purpose = self._states.pop(state, (0.0, ""))[1]
         same = bool(state) and secrets.compare_digest(state, cookie_state or "")
         if not (known and same):
-            raise LoginError("That login link is stale or wasn't started here. Try again.")
+            raise LoginError("That login link has expired or didn't start here. Try again.")
         if not code:
             raise LoginError("Home Assistant didn't finish the login.")
         with self._lock:
@@ -182,7 +182,9 @@ class Login:
             try:
                 user = self.user_fn(access)
             except SupervisorError as ex:
-                raise LoginError(f"Couldn't ask Home Assistant who logged in ({ex}).") from ex
+                raise LoginError(
+                    f"Barkley couldn't ask Home Assistant who logged in ({ex})."
+                ) from ex
             if not user.is_admin:
                 raise LoginError(
                     f"{user.name or 'That user'} isn't a Home Assistant administrator. Barkley "
@@ -193,7 +195,7 @@ class Login:
                 try:
                     self.token_fn(access)
                 except SupervisorError as ex:
-                    token_error = f"Couldn't create Barkley's token ({ex})."
+                    token_error = f"Barkley couldn't create its token ({ex})."
             sid = secrets.token_urlsafe(32)
             hold = purpose == FIRST
         except BaseException:

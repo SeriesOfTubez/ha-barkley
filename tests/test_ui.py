@@ -45,29 +45,6 @@ def test_hostile_text_is_escaped_in_every_section():
     assert "&lt;script&gt;" in page
 
 
-def test_no_flow_lines_without_flows():
-    svg = ui.flow_svg(report(), "acme")
-    assert "<path d=" not in svg.replace('<path d="M0,0', "")
-    assert "No path found" in svg or "names no network addresses" in svg
-
-
-def test_flow_lines_follow_the_graph():
-    src, off = "data:secrets.yaml", "network:off-box (destination not visible statically)"
-    rep = _with(
-        report(),
-        nodes=[
-            {"id": src, "kind": "data", "label": "secrets.yaml"},
-            {"id": off, "kind": "network", "label": "off-box (destination not visible statically)"},
-        ],
-        edges=[_edge("reads", src), _edge("flows_to", off, evidence="proven", source=src)],
-    )
-    svg = ui.flow_svg(rep, "acme")
-    assert svg.count('marker-end="url(#arr)"') == 1  # the wide layout
-    assert svg.count('marker-end="url(#arrv)"') == 1  # the stacked one for phones
-    assert "Somewhere off your box" in svg and "Your secrets file" in svg
-    assert 'stroke-dasharray="6 4"' not in svg  # proven: solid
-
-
 def test_ports_alone_never_claim_a_home_network():
     rep = _with(
         report(),
@@ -78,13 +55,6 @@ def test_ports_alone_never_claim_a_home_network():
     text = ui.connection_sentence(rep) + ui.in_short(rep)
     assert "home network" not in text
     assert "port 502 (Modbus)" in text
-
-
-def test_bands():
-    assert [ui.band(s) for s in (100, 90, 89, 70, 69, 40, 39, 0)] == [
-        "green", "green", "yellow", "yellow", "orange", "orange", "red", "red"
-    ]  # fmt: skip
-    assert ui.band(95, complete=False) == "grey" and ui.band(None) == "grey"
 
 
 def test_diff_changes_read_as_plain_english():
@@ -103,11 +73,11 @@ def test_diff_changes_read_as_plain_english():
           "text": "proven: user's access token → evil.invalid · card-token-exfil",
           "detail": {"source": "auth:user's access token", "targets": ["host:evil.invalid"],
                      "evidence": "proven"}},
-         "Danger", "We traced your HA login being sent to evil.invalid"),
+         "Danger", "Barkley traced your HA login being sent to evil.invalid"),
         ({"kind": "new_host", "sign": "+", "rank": 70,
           "text": "undeclared: status.weather-mirror.invalid (const.py:4)",
           "detail": {"target": "host:status.weather-mirror.invalid", "class": "undeclared"}},
-         "New", "not in the app's docs"),
+         "New", "not linked from the app's own files"),
         ({"kind": "new_package", "sign": "+", "rank": 45, "text": "depends on requests 2.32.0",
           "detail": {"target": "package:pypi/requests", "attrs": {}}},
          "New", "A new dependency"),
@@ -121,7 +91,7 @@ def test_diff_changes_read_as_plain_english():
           "text": "mallory published v2, and published none of the 12 release(s) up to v1 "
                   "(alice 12)",
           "detail": {}},
-         "Worth a look", "A new publisher"),
+         "Check this", "A new publisher"),
         ({"kind": "install_source", "sign": "~", "rank": 30,
           "text": "installed from release_asset → tag_source", "detail": {}},
          "Changed", "now installs the tagged source"),
@@ -158,6 +128,42 @@ def test_usage_trace_shows_once_as_a_privacy_note():
         edges=[_edge("connects_to", f"host:{h}", {"class": "developer_hosted", "urls": []})],
     )
     page = ui.render_app("", 1, rep, []).decode()
-    assert page.count("usage statistics to the developer") == 1
+    # (0.15) no owner or repo name in the address: the note doesn't say who runs it
+    assert page.count("<h3>Can send usage statistics</h3>") == 1
+    assert "to the developer" not in page
     assert "Can send usage data to the developer" not in page
     assert "It runs when you use the app." in page
+
+
+def test_where_it_connects_claims_only_what_the_scan_shows():
+    """(0.15, his decision 2026-11-26) A site whose name only matches the app's has a
+    group of its own that names nobody, and a free-hosting site is "the developer's"
+    only with the owner's or the repo's name in it; the readings never move."""
+    sites = {
+        "api.acme.example": {"class": "declared", "declared_by": "name"},
+        "docs.acme-docs.example": {"class": "declared", "declared_by": "files"},
+        "quizgame-api.acme.workers.dev": {"class": "developer_hosted"},  # owner "acme"
+        "council-api-prod.azurewebsites.net": {"class": "developer_hosted"},
+    }
+    rep = _with(
+        report(repo="acme/acme"),
+        nodes=[{"id": f"host:{h}", "kind": "host", "label": h} for h in sites],
+        edges=[_edge("connects_to", f"host:{h}", a) for h, a in sites.items()],
+    )
+    zones = {h.name: h.zone for h in ui.hosts(rep)}
+    assert zones == {
+        "api.acme.example": "named",
+        "docs.acme-docs.example": "own",
+        "quizgame-api.acme.workers.dev": "dev",
+        "council-api-prod.azurewebsites.net": "other",
+    }
+    page = unescape(ui.render_app("", 1, rep, []).decode())
+    for title in ("Sites its files link to", "Sites named like the app",
+                  "Servers the developer runs", "Other sites"):  # fmt: skip
+        assert f"{title}</h3>" in page
+    assert "The app's own sites" not in page
+    assert "Barkley can't tell who runs them" in page
+    # In short counts only the sites its own files link to
+    assert "1 of them is linked from the app's own files or GitHub." in page
+    # an older scan (no declared_by) keeps its sites in the first group
+    assert ui.Host("api.acme.example", "declared").zone == "own"

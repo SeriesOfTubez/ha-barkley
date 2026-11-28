@@ -4,8 +4,11 @@ Worked out from a stored report when a page renders, so they work on every store
 (0.4.0 reports have no URL samples or port facts; their notes are just thinner).
 
 Notes:
-- `telemetry` / `developer`: a server the developer runs (serverless hosting such as
-  workers.dev), titled telemetry when the host or URL path says so;
+- `telemetry` / `developer`: a server on free app hosting (such as workers.dev), titled
+  telemetry when the host or URL path says so. (0.15) "The developer runs it" only when
+  the address carries the repo owner's name or the repo's name
+  (endpoints.developer_evidence); otherwise a telemetry-looking one keeps a note that
+  names nobody, and any other one gets no note;
 - `analytics`: analytics, tag-manager or crash-report services;
 - `unencrypted`: a site on the internet the code only ever addresses with `http://` or
   `ws://`. A host that also appears with `https://` is left out: on 25 real repos those
@@ -28,6 +31,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from sniff_test.analyzers.endpoints import developer_evidence
 
 _TELEMETRY = re.compile(
     r"(?i)telemetry|analytic|metric|(?:^|[./_-])(?:ping|stats?|track|beacon)(?:$|[./_-])"
@@ -131,7 +136,7 @@ def _fold(note: Note, usage: dict[str, dict[str, Any]]) -> Note:
         told = _trace_text(found[0][1])
     else:
         told = " ".join(f"{h}: {_trace_text(f)}" for h, f in found)
-    rest = "" if len(found) == len(note.hosts) else " For the other addresses: " + note.unknown
+    rest = "" if len(found) == len(note.hosts) else " For the other addresses, " + note.unknown
     note.unknown = (told + " Barkley can't tell what it sends." + rest).strip()
     locs = [_loc(f) for _, f in found]
     note.where = [*dict.fromkeys([*locs, *note.where])][:4]
@@ -162,7 +167,7 @@ def notes(report: dict[str, Any]) -> list[Note]:
         note = Note(
             "telemetry",
             "Telemetry",
-            "Can send usage statistics to the developer",
+            "Can send usage statistics",
             "The code has what looks like usage reporting. Any server it contacts sees your "
             "home's internet address.",
             "",
@@ -171,7 +176,7 @@ def notes(report: dict[str, Any]) -> list[Note]:
             [str(edges[h].get("id") or "") if h in edges else "" for h in loose],
             [str(edges[h]["attrs"].get("class") or "") if h in edges else "" for h in loose],
         )
-        note.unknown = "Whether it's switched on."
+        note.unknown = "Barkley can't tell whether it's switched on."
         kept.insert(0, _fold(note, usage))
     return kept
 
@@ -182,14 +187,26 @@ def _notes(report: dict[str, Any]) -> list[Note]:
     dev_other: list[tuple[dict, dict]] = []
     analytics: list[tuple[dict, dict]] = []
     plain: list[tuple[dict, dict]] = []
+    web = 0
+    repo = str((report.get("target") or {}).get("repo") or "")
+    tel_other: list[tuple[dict, dict]] = []
     for e, n in _host_edges(report):
         cls = e["attrs"].get("class")
         if cls == "developer_hosted":
+            # (0.15, his decision 2026-11-26) "the developer runs it" only with evidence in
+            # the address; otherwise a statistics-looking address keeps a note that says
+            # nothing about who runs it, and any other one gets none
             text = " ".join([n["label"], *e["attrs"].get("urls", [])])
-            (dev_tel if _TELEMETRY.search(text) else dev_other).append((e, n))
+            mine = developer_evidence(str(n["label"]), repo)
+            if _TELEMETRY.search(text):
+                (dev_tel if mine else tel_other).append((e, n))
+            elif mine:
+                dev_other.append((e, n))
         elif cls == "analytics":
             analytics.append((e, n))
         schemes = set(e["attrs"].get("schemes", []))
+        if schemes & {"http", "ws", "https", "wss"} and cls not in _NO_TRANSPORT_NOTE:
+            web += 1  # a site the note could be about: how many of them are unencrypted
         if (
             schemes & {"http", "ws"}
             and not schemes & {"https", "wss"}
@@ -203,14 +220,30 @@ def _notes(report: dict[str, Any]) -> list[Note]:
                 "telemetry",
                 "Telemetry",
                 "Can send usage statistics to the developer",
-                "The app can contact a server the developer runs (not the device maker), "
-                "and its address says it collects statistics. Any server it contacts sees "
-                "your home's internet address.",
-                "Whether it's switched on, or exactly what it sends. Check the app's "
-                "options in Settings > Devices & services.",
+                "The app can contact a server that the developer runs, not the device "
+                "maker. The server's address says it collects statistics. Any server it "
+                "contacts sees your home's internet address.",
+                "Barkley can't tell whether it's switched on, or exactly what it sends. "
+                "Check the app's options in Settings > Devices & services.",
                 [n["label"] for _, n in dev_tel],
                 _where([e for e, _ in dev_tel]),
                 *_ids([e for e, _ in dev_tel]),
+            )
+        )
+    if tel_other:
+        out.append(
+            Note(
+                "telemetry",
+                "Telemetry",
+                "Can send usage statistics",
+                "The app can contact a server on a free app-hosting service. The server's "
+                "address says it collects statistics. Any server it contacts sees your "
+                "home's internet address.",
+                "Barkley can't tell who runs the server, whether it's switched on, or exactly "
+                "what it sends. Check the app's options in Settings > Devices & services.",
+                [n["label"] for _, n in tel_other],
+                _where([e for e, _ in tel_other]),
+                *_ids([e for e, _ in tel_other]),
             )
         )
     if dev_other:
@@ -219,10 +252,12 @@ def _notes(report: dict[str, Any]) -> list[Note]:
                 "developer",
                 "Developer server",
                 "Talks to a server the developer runs",
-                "The app can contact a server hosted on a free app-hosting service, which "
-                "usually means the developer runs it rather than the device maker. Any "
-                "server it contacts sees your home's internet address.",
-                "What it sends there, or when. It may be a harmless helper, such as a login relay.",
+                "The app can contact a server on a free app-hosting service, and the "
+                "address carries the developer's GitHub name or the repo's name. So the "
+                "developer most likely runs it, not the device maker. Any server it contacts "
+                "sees your home's internet address.",
+                "Barkley can't tell what it sends there, or when. It may be a harmless "
+                "helper, such as a server that passes on a sign-in.",
                 [n["label"] for _, n in dev_other],
                 _where([e for e, _ in dev_other]),
                 *_ids([e for e, _ in dev_other]),
@@ -236,23 +271,33 @@ def _notes(report: dict[str, Any]) -> list[Note]:
                 "Uses an analytics or crash-report service",
                 "The code mentions a service that collects usage statistics or error "
                 "reports. Error reports can include details about your setup.",
-                "Whether it's switched on, or what it sends.",
+                "Barkley can't tell whether it's switched on, or what it sends.",
                 [n["label"] for _, n in analytics],
                 _where([e for e, _ in analytics]),
                 *_ids([e for e, _ in analytics]),
             )
         )
     if plain:
+        # (his report 2026-11-21) "Unencrypted" read as if all its traffic were clear text;
+        # when only some of its sites are, the chip and the title say how many
+        some = len(plain) < web
         out.append(
             Note(
                 "unencrypted",
-                "Unencrypted",
-                "Uses unencrypted web addresses on the internet",
-                "The code only ever reaches these sites with http:// or ws://, never the "
-                "encrypted https:// or wss://. Anything sent that way can be read or "
-                "changed on the way.",
-                "Whether the app sends anything private over them, or whether the site "
-                "redirects to an encrypted address.",
+                "Partly unencrypted" if some else "Unencrypted",
+                (
+                    f"Reaches {len(plain)} of its {web} sites without encryption"
+                    if some
+                    else "Uses unencrypted web addresses on the internet"
+                ),
+                (
+                    "The code only ever reaches these sites with http:// or ws://, never the "
+                    "encrypted https:// or wss://. Anything sent that way can be read or "
+                    "changed along the route."
+                    + (" Its other sites are reached with encryption." if some else "")
+                ),
+                "Barkley can't tell whether the app sends anything private over these "
+                "addresses, or whether the sites switch to an encrypted address.",
                 [n["label"] for _, n in plain],
                 _where([e for e, _ in plain]),
                 *_ids([e for e, _ in plain]),
@@ -267,8 +312,9 @@ def _notes(report: dict[str, Any]) -> list[Note]:
                 "May use unencrypted MQTT",
                 "The code uses port 1883, the usual port for MQTT without encryption. "
                 "Device status and commands sent that way can be read on the way.",
-                "Which server it connects to (it may be on your home network, where this "
-                "matters less) and whether encryption is switched on elsewhere.",
+                "Barkley can't tell which server it connects to, or whether encryption is "
+                "switched on somewhere else. If the server is on your home network, this "
+                "matters less.",
                 [],
                 _where(mqtt),
                 *_ids(mqtt),

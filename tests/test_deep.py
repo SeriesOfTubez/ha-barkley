@@ -51,7 +51,7 @@ def test_summary_mode_has_no_button_and_refuses_the_call(tmp_path):
     store, base, httpd = _serve(tmp_path, lambda *a: calls.append(a), mode="summary")
     sid = store.save(_report(tmp_path))
     _, _, page = get(f"{base}/scan/{sid}")
-    assert "Explain in context</button>" not in page and "AI summary only" in page
+    assert "Explain in context</button>" not in page and "Explain only" in page
     assert post(f"{base}/explain-item", {"token": token(base), "scan": sid, "item": FID})[0] == 400
     assert not calls
     httpd.shutdown()
@@ -87,11 +87,11 @@ def test_deep_flow_sends_the_snippet_and_shows_only_checked_claims(tmp_path):
     assert "It reads <code>secrets.yaml</code> and returns it." in page
     assert "(diag.py:3\u20134)" in page
     assert "The code is safe" not in page and "A comment asks" not in page
-    assert "Left out 2 statements" in page
-    assert "reading of the code: 1 statement, 1 question" in page
+    assert "Barkley left out 2 statements" in page
+    assert "reading of the code (1 statement, 1 question)" in page
     assert "<script>" not in page
     assert store.report(sid)["score"] == 75  # untouched
-    assert 'aria-label="Score 75 of 100"' in page
+    assert 'aria-label="Threat 0 of 10"' in page and "of 100" not in page  # readings, not the AI's
     httpd.shutdown()
 
 
@@ -190,7 +190,8 @@ def test_sheet_lists_keep_bullets_inside_zones():
 
     css = Path(ui.__file__).read_text()
     assert ".modal .sheet ul { list-style:disc" in css
-    assert css.index(".modal .sheet ul") < css.index(".zone ul")  # wins by specificity, not order
+    # wins by specificity, not order (0.15: the sheets also sit outside the zones now)
+    assert css.index(".modal .sheet ul") < css.index(":is(.zone, .libs) ul")
 
 
 def test_a_running_reading_refreshes_to_a_fresh_url_that_keeps_its_sheet_open(tmp_path):
@@ -225,7 +226,7 @@ def test_a_running_reading_refreshes_to_a_fresh_url_that_keeps_its_sheet_open(tm
     gate.set()
     _wait(httpd, sid)
     _, _, done = get(f"{base}/scan/{sid}?open={FID}")
-    assert "http-equiv" not in done and "reading of the code: 1 statement" in done
+    assert "http-equiv" not in done and "reading of the code (1 statement" in done
     # nothing refreshes any more: the sheet opens and closes in place again
     assert f'class="aichip" href="#ai-{FID}"' in done and f'class="x" href="#item-{FID}"' in done
     httpd.shutdown()

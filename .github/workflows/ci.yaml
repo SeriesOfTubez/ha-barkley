@@ -1,7 +1,7 @@
 # The offline checks from the README's Development section, on every push and pull
 # request. No secrets, read-only token. Semgrep is pinned to the version the image
 # ships, so the rule tests run on the engine users get. The tests that need
-# osv-scanner and GuardDog skip themselves here; the network tests are opt-in.
+# osv-scanner skips itself here; the network tests are opt-in.
 #
 # tests/fixtures and tests/rules hold deliberately malicious sample code. Nothing here
 # runs it: the tests parse it, the same way the scanner does.
@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       SEMGREP_VERSION: 1.185.0
+      # the same override as the Dockerfile's SEMGREP_OVERRIDES (it says why)
+      SEMGREP_OVERRIDES: mcp==1.30.0
       SEMGREP_SEND_METRICS: "off"
       SEMGREP_ENABLE_VERSION_CHECK: "0"
     steps:
@@ -32,12 +34,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
 
       - name: Install the project (locked) and Semgrep (wheels only)
         run: |
           uv sync --locked
-          uv tool install --no-build "semgrep==${SEMGREP_VERSION}"
+          printf '%s\n' "${SEMGREP_OVERRIDES}" > "${RUNNER_TEMP}/semgrep-overrides.txt"
+          uv tool install --no-build --overrides "${RUNNER_TEMP}/semgrep-overrides.txt" \
+            "semgrep==${SEMGREP_VERSION}"
 
       - name: Lint
         run: |

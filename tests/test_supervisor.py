@@ -9,6 +9,7 @@ import json
 import socket
 import struct
 import threading
+import time
 
 import pytest
 
@@ -70,7 +71,8 @@ class FakeSupervisor:
 
     def __init__(self, result=None, *, accept_token="tok", error=None, fragment=False,
                  known=("marketplace/repositories/list",), ws_path="/core/websocket",
-                 results=None):  # fmt: skip
+                 results=None, delay=0.0):  # fmt: skip
+        self.delay = delay  # seconds before a result is sent (a slow AI)
         self.result = HACS_ROWS if result is None else result
         self.results = results or {}  # command -> result, for commands other than the list
         self.ws_path = ws_path
@@ -134,6 +136,8 @@ class FakeSupervisor:
                                                "success": False, "error": err})  # fmt: skip
                     else:
                         self._send_json(conn, {"id": 99, "type": "event", "event": {}})
+                        if self.delay:
+                            time.sleep(self.delay)
                         res = self.results.get(msg["type"], self.result)
                         self._send_json(conn, {"id": msg["id"], "type": "result",
                                                "success": True, "result": res})  # fmt: skip
@@ -268,7 +272,7 @@ def test_diagnostics_say_where_the_ha_version_came_from(monkeypatch):
     assert not checks[0].ok and "latest stable" in checks[0].summary
     assert not checks[1].ok and "HACS isn't installed" in checks[1].summary
     monkeypatch.delenv("SUPERVISOR_TOKEN")
-    assert "not running as an add-on" in doctor.supervisor_checks()[0].summary
+    assert "not running as a Home Assistant app" in doctor.supervisor_checks()[0].summary
 
 
 # --- auto-sniff: the subscription and the notification calls ------------------------------
@@ -559,3 +563,71 @@ def test_idle_turns_come_although_events_keep_arriving():
     sub.close()
     assert len(seen) > 1 and seen[-1] is None and all(e is not None for e in seen[:-1])
     assert took < 1.0
+
+
+def test_a_pre_release_is_not_offered_the_older_stable_release():
+    """(0.15, #27) On a pre-release track the Marketplace may offer the older stable
+    release: that isn't an update. A newer version is."""
+    from sniff_test.supervisor import Installed
+
+    def it(installed, available):
+        return Installed("acme/card", "card", "Card", installed, available, False)
+
+    assert not it("v2.0.0-beta.3", "v1.9.5").update
+    assert it("v2.0.0-beta.3", "v1.9.5").prerelease
+    assert it("v2.0.0b1", "v2.0.0").update  # the final release of the same version
+    assert it("v2.0.0-beta.3", "v2.1.0").update
+    assert it("1.2.0", "1.3.0").update and not it("1.2.0", "1.3.0").prerelease
+    assert not it("1.3.0", "1.3.0").update
+    assert it("a1b2c3d", "v1.0.0").update  # a commit: today's rule (different = offered)
+
+
+AI_ANSWER = {"context": {"id": "x"}, "response": {"data": {"summary": "Fine."}}}
+
+
+def _ai(fake, **kw):
+    return supervisor.ai_generate_data("ai_task.test", "Explain.", {"summary": {}}, "Barkley",
+                                       "tok", host="127.0.0.1", port=fake.port, **kw)  # fmt: skip
+
+
+def test_the_ai_call_goes_over_the_websocket_as_one_fixed_service_call():
+    """(0.15) ai_task.generate_data over the Core websocket (the Supervisor's proxy ends a
+    REST request after 300 s); only the field values vary."""
+    fake = FakeSupervisor(known=("call_service",), results={"call_service": AI_ANSWER})
+    assert _ai(fake) == {"summary": "Fine."}
+    sent = [m for m in fake.sent if m.get("type") == "call_service"]
+    assert len(sent) == 1
+    assert {k: sent[0][k] for k in ("domain", "service", "return_response")} == {
+        "domain": "ai_task", "service": "generate_data", "return_response": True,
+    }  # fmt: skip
+    assert sent[0]["service_data"]["entity_id"] == "ai_task.test"
+    # call_service still isn't a command anything else may send
+    with pytest.raises(SupervisorError, match="not allowed"):
+        supervisor.core_command("call_service", "tok", host="127.0.0.1", port=fake.port)
+
+
+def test_the_ai_call_stops_at_the_time_limit_or_when_asked():
+    slow = FakeSupervisor(known=("call_service",), results={"call_service": AI_ANSWER},
+                          delay=3)  # fmt: skip
+    with pytest.raises(supervisor.AiTimeout):
+        _ai(slow, timeout=0.5)
+    stop = threading.Event()
+    threading.Timer(0.3, stop.set).start()
+    started = time.monotonic()
+    with pytest.raises(supervisor.AiStopped):
+        _ai(FakeSupervisor(known=("call_service",), results={"call_service": AI_ANSWER},
+                           delay=3), timeout=None, cancel=stop)  # fmt: skip
+    assert time.monotonic() - started < supervisor._AI_POLL + 1.5
+    # no limit: it waits for the slow answer
+    assert _ai(FakeSupervisor(known=("call_service",), results={"call_service": AI_ANSWER},
+                              delay=1), timeout=None) == {"summary": "Fine."}  # fmt: skip
+
+
+def test_an_ai_task_error_and_a_missing_answer_are_said_plainly():
+    err = FakeSupervisor(known=(), error={"code": "home_assistant_error",
+                                          "message": "model has no schema"})  # fmt: skip
+    with pytest.raises(SupervisorError, match="Home Assistant answered: model has no schema"):
+        _ai(err)
+    empty = FakeSupervisor(known=("call_service",), results={"call_service": {"context": {}}})
+    with pytest.raises(SupervisorError, match="returned no data"):
+        _ai(empty)

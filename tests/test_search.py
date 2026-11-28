@@ -85,3 +85,43 @@ def test_no_search_outside_an_addon(tmp_path):
     assert get(base + "/search?q=x")[0] == 404
     store.save(report())
     httpd.shutdown()
+
+
+def test_an_app_sniffed_from_search_stays_listed_after_barkleys_rules_change(tmp_path):
+    """(0.15, his report) an update of Barkley changes the rules key; installed apps are
+    sniffed again, and the others used to vanish from the list."""
+    _store, scan_fn, base, httpd = _serve(tmp_path)
+    post(base + "/scan", {"repo": "acme/printer-card", "token": token(base)})
+    httpd.panel.worker.wait()
+    _, _, index = get(base + "/")
+    assert "Sniffed, not installed (1)" in index and "Sniffed with earlier rules" not in index
+    httpd.panel.worker.tool_version = "logic-new"
+    _, _, index = get(base + "/")
+    part = index[index.index('id="not-installed"') :]
+    assert "Sniffed, not installed (1)" in index and "Printer Card" in part
+    assert "Sniffed with earlier rules" in part and "Sniff again" in part
+    assert "Sniff 1 again with the current rules" in part
+    status, headers = post(base + "/not-installed-again", {"token": token(base)})
+    assert status == 303 and headers["Location"].endswith("#not-installed")
+    httpd.panel.worker.wait()
+    assert len(scan_fn.calls) == 2 and scan_fn.calls[1][0] == "acme/printer-card"
+    httpd.shutdown()
+
+
+def test_the_not_installed_list_has_its_own_pages():
+    from sniff_test import ui
+
+    cards = [
+        ui.Card(repo=f"acme/app{i:02d}", name=f"App {i:02d}", kind="card", installed="v1",
+                available=None, scan=None, report=None)
+        for i in range(30)
+    ]  # fmt: skip
+    html = server.not_installed_cards_html("", cards, ui.View(pg=2))
+    assert "Sniffed, not installed (30)" in html and "Page 1 of 3" in html
+    assert "App 11" in html and "App 12" not in html  # 12 cards a page
+    assert 'href="/?view=cards&amp;page=2&amp;page2=2#not-installed"' in html  # page kept
+    html = server.not_installed_cards_html("", cards, ui.View(pg2=3))
+    assert "App 24" in html and "App 29" in html and "App 23" not in html
+    assert "Page 3 of 3" in server.not_installed_cards_html("", cards, ui.View(pg2=99))
+    v = ui.View.parse({"page2": ["2"], "page": ["x"]})
+    assert (v.pg, v.pg2) == (1, 2) and v.qs("&") == "view=cards&page2=2"

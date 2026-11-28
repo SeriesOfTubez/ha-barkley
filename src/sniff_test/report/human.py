@@ -42,21 +42,24 @@ _QUIPS = {
     "py-b64-exec": "🐕 Something's buried in the yard, and it's not a bone.",
     "card-b64-eval": "🐕 Something's buried in the yard, and it's not a bone.",
     "card-hidden-name": "🐕 Spelling it out in pieces doesn't fool the nose.",
-    "card-read-tokens": "🐕 Nose is in the token drawer. Why is the nose in the token drawer?",
+    "card-read-tokens": "🐕 It reads your login tokens.",
     "ha-read-secrets": "🐕 Sniffing around secrets.yaml. Bad.",
     "ha-auth-internals": "🐕 Pawing at the auth system.",
-    "ha-monkeypatch": "🐕 Rearranging the furniture in HA core while nobody's looking.",
-    "py-runtime-pip": "🐕 Brings its own snacks at runtime. Nobody checked the snacks.",
-    "repo-no-releases": "🐕 No releases, just vibes.",
-    "ha-unauth-view": "🐕 Left a doggy door open with no lock on it.",
-    "possible-exfil": "🐕 Sniffed secrets near an open window. Can't prove it jumped out.",
-    "endpoint-exfil-host": "🐕 Knows a guy who knows a guy. The guy collects data.",
-    "repo-transferred": "🐕 This house changed owners. Checking the new collar.",
+    "ha-monkeypatch": "🐕 It replaces parts of Home Assistant's own code.",
+    "py-runtime-pip": "🐕 It installs packages while it runs, and Barkley can't check which.",
+    "repo-no-releases": "🐕 No releases.",
+    "ha-unauth-view": "🐕 It opens a web page anyone can reach without logging in.",
+    "possible-exfil": (
+        "🐕 It reads secrets and can reach a site Barkley can't explain. "
+        "Barkley can't prove they're sent."
+    ),
+    "endpoint-exfil-host": "🐕 Its code names a site that collects data.",
+    "repo-transferred": "🐕 This repository changed owners.",
 }
 _VERDICT_QUIP = {
     "good_boy": "🦴 Tail wagging. Nothing smelled off.",
-    "kinda_sus": "🐕 Head tilt. A few things worth a sniff.",
-    "very_sus": "🐕‍🦺 The dog won't stop staring at it.",
+    "kinda_sus": "🐕 A few things to check.",
+    "very_sus": "🐕‍🦺 Several concerns.",
     "bork": "🚨 BORK BORK BORK. Do not let this in the house.",
 }
 
@@ -78,7 +81,11 @@ def _finding_block(console: Console, f: Finding) -> None:
     if Tag.POSSIBLE in f.tags:
         head.append("  (possible)", style="italic")
     if f.base_severity is not None:
-        head.append(f"  [raised from {f.base_severity} by public exposure]", style="dim")
+        moved = "raised" if f.severity > f.base_severity else "lowered"
+        head.append(
+            f"  [{moved} from {f.base_severity} because of how Home Assistant is exposed]",
+            style="dim",
+        )
     console.print(head)
     loc = _location(f)
     console.print(Padding(Text(f.rule_id + (f"  {loc}" if loc else ""), style="dim"), _INDENT))
@@ -105,7 +112,7 @@ def hooks_line(graph: dict | None) -> str:
         "registers", ("service", "entity_service", "http_view", "webhook", "panel", "ws_command")
     )
     if reg:
-        parts.append(f"registers {reg} service/endpoint group(s)")
+        parts.append(f"registers {reg} group(s) of actions or web endpoints")
     hosts = [e for e in out if e["relation"] == "connects_to"]
     undeclared = sum(
         1
@@ -114,7 +121,8 @@ def hooks_line(graph: dict | None) -> str:
     )
     if hosts:
         parts.append(
-            f"mentions {len(hosts)} host(s)" + (f", {undeclared} undeclared" if undeclared else "")
+            f"mentions {len(hosts)} site(s)"
+            + (f", {undeclared} Barkley can't explain" if undeclared else "")
         )
     sensitive = sorted(
         nodes[e["target"]]["label"] for e in out if e["relation"] == "reads" and e["finding_ids"]
@@ -123,18 +131,26 @@ def hooks_line(graph: dict | None) -> str:
         parts.append("reads " + ", ".join(sensitive))
     pkgs = n("depends_on", ("package",)) + n("bundles", ("package",))
     if pkgs:
-        parts.append(f"{pkgs} package(s)")
-    return "Hooks: " + "; ".join(parts) if parts else ""
+        parts.append(f"uses {pkgs} package(s)")
+    return "What it touches: " + "; ".join(parts) if parts else ""
 
 
-def render(scan: ScanResult, console: Console, verbose: bool = False) -> None:
+def render(
+    scan: ScanResult,
+    console: Console,
+    verbose: bool = False,
+    readings_of: dict | None = None,
+) -> None:
+    from sniff_test.ui import _SOURCE  # the panel's plain words for where the code came from
+
     t, s = scan.target, scan.score
     where = t.repo or t.source
     ref = f"@{t.ref}" if t.ref else ""
     sha = f" ({t.commit_sha[:12]})" if t.commit_sha else ""
     console.print(
         f"[dim]{escape(str(t.kind))} · {escape(where)}{escape(ref)}{sha}"
-        f" · installed from: {escape(t.install_source)} · exposure: {scan.exposure}[/]"
+        f" · installed from: {escape(_SOURCE.get(t.install_source, t.install_source))}"
+        f" · exposure: {scan.exposure}[/]"
     )
     console.print()
 
@@ -172,19 +188,30 @@ def render(scan: ScanResult, console: Console, verbose: bool = False) -> None:
             for problem in a.problems[:5]:  # (0.14.0) files it couldn't fetch, in plain words
                 console.print(Text("  " + retry.plain(problem), style="yellow"))
 
-    style = _VERDICT_STYLE[s.verdict.key]
-    body = Text.assemble(
-        (f"{s.verdict.emoji}  {s.verdict.label}", f"bold {style}"),
-        (f"  ({s.verdict.blurb})", style),
-        "\n",
-        (f"Score: {s.score}/100", "bold"),
+    # (0.15) the two readings first; the capability score after them, without dog words
+    # (his decision 2026-11-20: what the code openly uses, not a judgment)
+    from sniff_test.ui import readings_band, verdict_line
+
+    rd = readings_of or {}
+    level = str(rd.get("threat_level") or "none")
+    style = readings_band(rd) if rd else "green"
+    style = {"orange": "dark_orange"}.get(style, style)  # a Rich colour name
+    body = Text.assemble((verdict_line(rd), f"bold {style}"))
+    if rd:
+        body.append(
+            f"\nThreat: {level} ({rd.get('threat', 0):g} of 10) · Exposure: "
+            f"{rd.get('exposure_level')} ({rd.get('exposure', 0):g} of 10)",
+            "bold",
+        )
+        if rd.get("threat_reason") and level != "none":
+            body.append(f"\nIt {rd['threat_reason']}.", style)
+    body.append(
+        f"\nCapability score: {s.score}/100 (what the code openly uses, not a judgment)",
+        "dim",
     )
-    if s.caps:
-        body.append("\n" + "; ".join(s.caps), style="dim")
     if not s.complete:
-        body.append("\nScan incomplete: some analyzers did not run.", style="yellow")
+        body.append("\nThe scan didn't finish. Some checks did not run.", style="yellow")
     console.print(Panel(body, expand=False, border_style=style))
-    console.print(_VERDICT_QUIP[s.verdict.key])
 
 
 # --- history -------------------------------------------------------------------------
@@ -220,7 +247,7 @@ def render_releases(t: Timeline, console: Console, limit: int | None = 20) -> No
     console.print(f"🐕 sniffing the release history of [bold]{escape(t.repo)}[/]")
     if t.renamed:
         console.print(
-            f"[yellow]requested as {escape(t.requested_as or '')}: GitHub redirected, so "
+            f"[yellow]You asked for {escape(t.requested_as or '')}, but GitHub redirected, so "
             "this repository was moved or renamed[/]"
         )
     created = (t.created_at or "")[:10]
@@ -229,7 +256,7 @@ def render_releases(t: Timeline, console: Console, limit: int | None = 20) -> No
         f"[dim]created {created} · {len(t.releases)} releases · {len(humans)} human publisher(s)[/]"
     )
     if len(t.handovers) > 3:
-        console.print(f"[dim]{len(t.handovers) - 3} earlier handover(s) not shown[/]")
+        console.print(f"[dim]{len(t.handovers) - 3} earlier change(s) of publisher not shown[/]")
     for h in t.handovers[-3:]:
         when = next((r.published_at or "" for r in t.releases if r.tag == h.tag), "")[:10]
         console.print(
@@ -241,7 +268,8 @@ def render_releases(t: Timeline, console: Console, limit: int | None = 20) -> No
     console.print()
     if not t.releases:
         console.print(
-            f"No releases: HACS installs the tip of '{escape(t.default_branch or 'main')}'."
+            "This repository has no releases, so HACS installs the latest code on "
+            f"'{escape(t.default_branch or 'main')}'."
         )
         return
     firsts = {h.tag: h for h in t.handovers}
@@ -286,7 +314,7 @@ def render_releases(t: Timeline, console: Console, limit: int | None = 20) -> No
     console.print()
     if t.hacs_default is None:
         console.print(
-            "No stable release among the 30 newest, so HACS installs the tip of "
+            "There is no stable release among the 30 newest, so HACS installs the latest code on "
             f"'{escape(t.default_branch or 'main')}'."
         )
     for p in t.publishers:
@@ -330,7 +358,7 @@ _GROUP_NAME = {
     "data": "data access",
     "hosts": "host",
     "packages": "package",
-    "hooks": "HA hook",
+    "hooks": "Home Assistant hook",
     "repo": "repo",
     "coverage": "coverage",
 }
@@ -393,7 +421,9 @@ def render_diff(d: dict, console: Console, verbose: bool = False) -> None:
         for c in rest:
             counts[c["group"]] = counts.get(c["group"], 0) + 1
         parts = [
-            f"{n} {_GROUP_NAME.get(g, g)} change{'s' if n > 1 else ''}"
+            f"{n} change{'s' if n > 1 else ''} in what was checked"
+            if g == "coverage"
+            else f"{n} {_GROUP_NAME.get(g, g)} change{'s' if n > 1 else ''}"
             for g, n in sorted(counts.items(), key=lambda x: -x[1])
         ]
         console.print(f"[dim]Also changed: {', '.join(parts)} (--verbose to list)[/]")

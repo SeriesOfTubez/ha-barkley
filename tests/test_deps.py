@@ -1,4 +1,4 @@
-"""Dependency analysis: unit tests with mocked uv / OSV / GuardDog / PyPI output."""
+"""Dependency analysis: unit tests with mocked uv / OSV / PyPI output."""
 
 import json
 import subprocess
@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from sniff_test.analyzers import guarddog, osv, pypi_meta, python_deps
+from sniff_test.analyzers import osv, pypi_meta, python_deps
 from sniff_test.deps import ha_env, reqs
 from sniff_test.deps.ha_env import HAEnv
-from sniff_test.deps.uv import Artifact, parse_pylock
+from sniff_test.deps.uv import parse_pylock
 from sniff_test.models import AnalyzerState, Severity, Tag, Target, TargetKind
 
 # --- requirement parsing ------------------------------------------------------------
@@ -310,6 +310,52 @@ def test_osv_mal_advisory_is_critical_malware():
     assert Tag.MALWARE in f.tags
 
 
+def test_npms_empty_stand_in_for_a_removed_package_is_a_note():
+    """(full Marketplace run 2026-11-22) npm replaces a removed malicious package with an
+    empty "0.0.1-security" version; a real card's lockfile held one. (His decision the same
+    day: an info note, with its history when Barkley can tell it.)"""
+    p = osv._Pkg("acme.js", "0.0.1-security", "npm", {"MAL-1": {"id": "MAL-1"}},
+                 [{"ids": ["MAL-1"]}])  # fmt: skip
+    [note] = osv.to_findings([p], "package-lock.json", set())
+    assert (note.rule_id, note.severity, note.tags) == ("dep-npm-standin", Severity.INFO,
+                                                       frozenset())  # fmt: skip
+    assert "no code" in note.message
+    told = "It was added to the app's lockfile after npm emptied it on 2020-03-12."
+    [note] = osv.to_findings([p], "package-lock.json", set(), standin_history=lambda n: told)
+    assert note.message.endswith(told)
+    p = osv._Pkg("acme.js", "0.0.2", "npm", {"MAL-1": {"id": "MAL-1"}}, [{"ids": ["MAL-1"]}])
+    assert osv.to_findings([p], "package-lock.json", set())[0].rule_id == "dep-malicious"
+    assert not osv.npm_standin("PyPI", "0.0.1-security")
+
+
+def test_a_malicious_build_tool_is_possible_and_says_what_it_did():
+    """(his decision 2026-11-22) Only used to build: it runs on the developer's machine,
+    so "possible", explained with the advisory's own summary."""
+    adv = {"id": "MAL-0000-0001", "summary": "Malicious code in acme-watch (npm)"}
+    p = osv._Pkg("acme-watch", "1.2.9", "npm", {adv["id"]: adv}, [{"ids": [adv["id"]]}])
+    [f] = osv.to_findings([p], "package-lock.json", set(), dev_only={("acme-watch", "1.2.9")},
+                          os_of={("acme-watch", "1.2.9"): ["darwin"]})  # fmt: skip
+    assert (f.rule_id, f.severity) == ("dep-malicious-build", Severity.HIGH)
+    assert Tag.MALWARE in f.tags and Tag.POSSIBLE in f.tags
+    assert "Malicious code in acme-watch (npm)." in f.message
+    assert "only installs on Macs" in f.message and "update or remove" in f.message
+    # a known build tool name counts too, without the dev mark
+    [f] = osv.to_findings([p], "yarn.lock", set(), build_tool=lambda n: n == "acme-watch")
+    assert f.rule_id == "dep-malicious-build" and "installs on" not in f.message
+    # one that ships stays found
+    [f] = osv.to_findings([p], "package-lock.json", set())
+    assert f.rule_id == "dep-malicious" and f.severity is Severity.CRITICAL
+
+
+def test_npm_os_reads_the_lockfiles_install_systems(tmp_path):
+    lock = tmp_path / "package-lock.json"
+    lock.write_text('{"packages": {"": {}, "node_modules/acme-watch": {"version": "1.2.9", '
+                    '"os": ["darwin"]}, "node_modules/a": {"version": "1.0.0"}}}')  # fmt: skip
+    assert osv.npm_os(lock) == {("acme-watch", "1.2.9"): ["darwin"]}
+    (tmp_path / "yarn.lock").write_text("x")
+    assert osv.npm_os(tmp_path / "yarn.lock") == {}
+
+
 def test_osv_github_malware_cwe_counts_as_malicious():
     v = {"id": "GHSA-mh6f-8j2x-4483", "database_specific": {"cwe_ids": ["CWE-506"]}}
     [f] = osv.to_findings([_pkg("event-stream", [v], [{"ids": [v["id"]]}])], None, set())
@@ -361,44 +407,6 @@ def test_card_without_npm_deps_is_not_applicable(tmp_path):
 # --- GuardDog -------------------------------------------------------------------------------
 
 
-def test_guarddog_mapping_keeps_threats_only():
-    data = {
-        "results": {
-            "capability-network-outbound": [{"location": "a.py:1", "match": "requests.post"}],
-            "threat-runtime-environment-read": [{"location": "a.py:2", "match": "os.environ"}],
-            "threat-network-exfil-messenger": [
-                {"location": "a.py:3", "match": "discord.com/api/webhooks/1/", "message": "m"},
-                {"location": "b.py:9", "match": "discord.com/api/webhooks/2/"},
-            ],
-            "threat-runtime-obfuscation-base64exec": [{"location": "a.py:4", "match": "b64"}],
-            "threat-brand-new-rule": [{"location": "a.py:5", "match": "?"}],
-            "threat-filesystem-read": {},
-        }
-    }
-    pkg = python_deps.ResolvedPackage("evil", "1.0", {"x86_64", "aarch64"})
-    art = Artifact("https://x", "evil-1.0-cp314-cp314-musllinux_1_2_x86_64.whl", None, "wheel")
-    found = {f.rule_id: f for f in guarddog.to_findings(data, pkg, art)}
-    assert set(found) == {
-        "dep-guarddog-network-exfil-messenger",
-        "dep-guarddog-runtime-obfuscation-base64exec",
-        "dep-guarddog-brand-new-rule",
-    }
-    exfil = found["dep-guarddog-network-exfil-messenger"]
-    assert exfil.severity is Severity.HIGH and Tag.POSSIBLE in exfil.tags
-    assert exfil.platforms == {"x86_64"}  # arch-specific wheel
-    assert "and 1 more" in exfil.message
-    assert found["dep-guarddog-brand-new-rule"].severity is Severity.LOW
-    assert all(f.severity < Severity.CRITICAL for f in found.values())
-
-
-def test_guarddog_skips_ha_provided_packages(tmp_path):
-    res = python_deps.Resolution()
-    res.packages[("aiohttp", "3.14.5")] = python_deps.ResolvedPackage(
-        "aiohttp", "3.14.5", {"x86_64"}, ha_provided=True
-    )
-    assert guarddog.run(res, tmp_path).state is AnalyzerState.NOT_APPLICABLE
-
-
 # --- dep-vuln policy (decided 2026-11-08) ---------------------------------------------------
 
 _CRIT = [{"id": "C", "severity": [{"score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}]}]
@@ -409,11 +417,13 @@ def test_python_cve_alone_is_never_critical_but_stays_inbound():
     assert f.severity is Severity.HIGH and Tag.INBOUND in f.tags
 
 
-def test_bundled_npm_cve_is_capped_at_medium_without_inbound():
-    p = _pkg("js-yaml", _CRIT, [{"ids": ["C"], "max_severity": "9.8"}], "npm")
+def test_bundled_npm_cve_is_capped_at_high_without_inbound():
+    # (0.14.1, user decision 2026-11-18) browser code is rated like Python packages, at
+    # most high; it was capped at medium before
+    p = _pkg("acme-yaml-parser", _CRIT, [{"ids": ["C"], "max_severity": "9.8"}], "npm")
     [f] = osv.to_findings([p], "package-lock.json", set(), osv.NPM_POLICY)
-    assert f.severity is Severity.MEDIUM and Tag.INBOUND not in f.tags
-    assert "bundled into the card" in f.message
+    assert f.severity is Severity.HIGH and Tag.INBOUND not in f.tags
+    assert "listed as one of the card's run-time packages" in f.message
 
 
 def test_dev_only_npm_packages_report_malware_but_not_cves():
@@ -421,7 +431,9 @@ def test_dev_only_npm_packages_report_malware_but_not_cves():
     mal = osv._Pkg("flatmap-stream", "0.1.1", "npm", {"MAL-1": {"id": "MAL-1"}}, [])
     dev = {("vite", "1.0"), ("flatmap-stream", "0.1.1")}
     found = osv.to_findings([cve, mal], "package-lock.json", set(), osv.NPM_POLICY, dev)
-    assert [f.rule_id for f in found] == ["dep-malicious"]
+    # (0.15, his decision 2026-11-22) still reported: malware only used to build is
+    # "possible" (it could change what ships), not "found"
+    assert [(f.rule_id, f.severity) for f in found] == [("dep-malicious-build", Severity.HIGH)]
 
 
 def test_npm_dev_only_from_lockfile_v3_and_v1(tmp_path):
@@ -453,34 +465,17 @@ def test_npm_dev_only_from_lockfile_v3_and_v1(tmp_path):
                     "rollup": {
                         "version": "2.0.0",
                         "dev": True,
-                        "dependencies": {"fsevents": {"version": "2.1.0", "dev": True}},
+                        "dependencies": {"acme-watch": {"version": "2.1.0", "dev": True}},
                     },
                     "lit": {"version": "3.1.0"},
                 },
             }
         )
     )
-    assert osv.npm_dev_only(v1) == {("rollup", "2.0.0"), ("fsevents", "2.1.0")}
+    assert osv.npm_dev_only(v1) == {("rollup", "2.0.0"), ("acme-watch", "2.1.0")}
     yarn = tmp_path / "yarn.lock"
     yarn.write_text("# yarn\n")
     assert osv.npm_dev_only(yarn) == set()
-
-
-def test_guarddog_medium_heuristics_drop_to_low_in_popular_packages():
-    data = {
-        "results": {
-            "threat-filesystem-autostart": [{"location": "typer/x.py:1", "match": ".bashrc"}],
-            "threat-network-exfil-messenger": [{"location": "typer/y.py:2", "match": "discord"}],
-        }
-    }
-    art = Artifact("https://x", "typer-0.15.2-py3-none-any.whl", None, "wheel")
-    popular = python_deps.ResolvedPackage("typer", "0.15.2", {"x86_64"})
-    sev = {f.rule_id: f.severity for f in guarddog.to_findings(data, popular, art)}
-    assert sev["dep-guarddog-filesystem-autostart"] is Severity.LOW
-    assert sev["dep-guarddog-network-exfil-messenger"] is Severity.HIGH  # hijack still loud
-    obscure = python_deps.ResolvedPackage("zzz-obscure-lib", "1.0", {"x86_64"})
-    sev = {f.rule_id: f.severity for f in guarddog.to_findings(data, obscure, art)}
-    assert sev["dep-guarddog-filesystem-autostart"] is Severity.MEDIUM
 
 
 # --- HA's shipped set as of its release ---------------------------------------------------
@@ -683,10 +678,102 @@ def test_a_cards_build_tool_advisory_is_shown_but_not_scored():
     assert got == {
         ("rollup", "dep-build-tool-vuln", Severity.INFO),
         ("babel/plugin-transform-modules-systemjs", "dep-build-tool-vuln", Severity.INFO),
-        ("babel/runtime", "dep-vuln", Severity.MEDIUM),
-        ("rollup/plugin-commonjs", "dep-vuln", Severity.MEDIUM),
-        ("esbuild", "dep-malicious", Severity.CRITICAL),
+        # (0.14.1) rated by GitHub's label, at most high (was capped at medium)
+        ("babel/runtime", "dep-vuln", Severity.HIGH),
+        ("rollup/plugin-commonjs", "dep-vuln", Severity.HIGH),
+        # (0.15) malware in a build tool: "possible", not "found" (his decision 2026-11-22)
+        ("esbuild", "dep-malicious-build", Severity.HIGH),
     }
     info = [f for f in fs if f.rule_id == "dep-build-tool-vuln"]
     assert score(info, True).score == 100
     assert "isn't part of the card's JavaScript" in info[0].message
+
+
+def test_the_stand_ins_history_from_the_lockfile_and_npms_date(monkeypatch):
+    """(his ask 2026-11-22) When npm emptied the name, and whether the app's lockfile held
+    it before then. Fakes for npm and GitHub: nothing goes out."""
+    from sniff_test.analyzers import npm_meta
+
+    monkeypatch.setattr(
+        npm_meta.http, "lookup_json",
+        lambda url, timeout: {"time": {"0.0.1-security": "2020-03-12T18:00:00.000Z"}},
+    )  # fmt: skip
+
+    class GH:
+        def __init__(self, commits, text):
+            self.commits, self.text, self.asked = commits, text, []
+
+        def get_json(self, path):
+            self.asked.append(path)
+            return self.commits
+
+        def file_at(self, owner, name, path, ref):
+            return self.text
+
+    never = GH([], None)
+    tell = npm_meta.standin_history("acme/card", never)("package-lock.json")
+    assert "before the app's lockfile existed" in tell("node.js")
+    assert never.asked == [
+        "/repos/acme/card/commits?path=package-lock.json&until=2020-03-12T18:00:00.000Z&per_page=1"
+    ]
+    after = GH([{"sha": "abc"}], '{"packages": {"node_modules/other": {}}}')
+    assert "added to the app's lockfile after npm emptied it on 2020-03-12" in (
+        npm_meta.standin_history("acme/card", after)("package-lock.json")("node.js")
+    )
+    before = GH([{"sha": "abc"}], '{"packages": {"node_modules/node.js": {}}}')
+    said = npm_meta.standin_history("acme/card", before)("package-lock.json")("node.js")
+    assert "may have been installed on the developer's machine" in said
+    # a name that isn't npm's, or a lookup that fails: nothing said
+    assert npm_meta.standin_history("acme/card", before)("package-lock.json")("../x") == ""
+
+    def boom(url, timeout):
+        raise npm_meta.http.HttpError("rate limited")
+
+    monkeypatch.setattr(npm_meta.http, "lookup_json", boom)
+    assert npm_meta.standin_history("acme/card", before)("package-lock.json")("node.js") == ""
+    assert npm_meta.standin_history(None, before) is None
+
+
+@pytest.mark.parametrize(
+    "provenance,links,rule,severity",
+    [
+        # PyPI's provenance names a workflow in the app owner's GitHub account
+        ({"attestation_bundles": [{"publisher": {"kind": "GitHub",
+                                                 "repository": "Acme-Owner/pymungo"}}]},
+         {}, "dep-lookalike-own", Severity.INFO),
+        # only a link to the owner's account: anyone can type one
+        (None, {"Repository": "https://github.com/acme-owner/pymungo"}, "dep-typosquat",
+         Severity.MEDIUM),
+        # someone else's workflow, someone else's link: as before
+        ({"attestation_bundles": [{"publisher": {"kind": "GitHub",
+                                                 "repository": "someone/pymungo"}}]},
+         {"Repository": "https://github.com/someone/pymungo"}, "dep-typosquat", Severity.HIGH),
+        # a link that only starts like the owner's account
+        (None, {"Home": "https://github.com/acme-owner-evil/x"}, "dep-typosquat", Severity.HIGH),
+    ],
+)  # fmt: skip
+def test_a_lookalike_name_tied_to_the_apps_owner(monkeypatch, provenance, links, rule, severity):
+    """(his decision 2026-11-22) A name one typo from a popular package that contains the
+    app's own name is a blind spot alone (a `mysql` app could mistype `mysqlclient`): the
+    tie must be to the owner. Fakes for PyPI: nothing goes out."""
+    meta = {"info": {"version": "0.1.3", "project_urls": links},
+            "releases": {"0.1.3": [{"filename": "pymungo-0.1.3-py3-none-any.whl"}]}}  # fmt: skip
+
+    def fake(url, timeout):
+        if url.endswith("/provenance"):
+            assert url == ("https://pypi.org/integrity/pymungo/0.1.3/"
+                           "pymungo-0.1.3-py3-none-any.whl/provenance")  # fmt: skip
+            return provenance
+        return meta
+
+    monkeypatch.setattr(pypi_meta.http, "lookup_json", fake)
+    monkeypatch.setattr(pypi_meta, "typosquat_target", lambda n, *a: "requests")
+    monkeypatch.setattr(pypi_meta.http, "get_json", lambda url: {})
+    result = pypi_meta.run([reqs.parse("pymungo")], None, None, owner="acme-owner")
+    [f] = [f for f in result.findings if f.rule_id.startswith("dep-")]
+    assert (f.rule_id, f.severity) == (rule, severity)
+    if rule == "dep-lookalike-own":
+        assert "their own library" in f.message
+    # offline: no lookup, unchanged
+    off = pypi_meta.run([reqs.parse("pymungo")], None, None, online=False, owner="acme-owner")
+    assert [(x.rule_id, x.severity) for x in off.findings] == [("dep-typosquat", Severity.HIGH)]

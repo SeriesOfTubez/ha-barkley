@@ -40,7 +40,7 @@ from sniff_test.models import (
     TargetKind,
 )
 from sniff_test.paths import cache_root
-from sniff_test.workspace import UnsafeArchiveError, extract, single_top_dir
+from sniff_test.workspace import UnsafeArchiveError, extract, single_top_dir, space_hint
 
 NAME = "python-deps"
 PYPI_JSON = "https://pypi.org/pypi/{name}/json"
@@ -62,6 +62,8 @@ class ResolvedPackage:
     direct: bool = False
     ha_provided: bool = False
     sdist_only: bool = False
+    # (0.15) pypi_meta.versions_behind: newest, newest_date, newer, held_by_ha
+    behind: dict | None = None
 
 
 @dataclass
@@ -158,11 +160,24 @@ def fetch_artifact(art: Artifact, work: Path) -> Path | None:
     except (UnsafeArchiveError, OSError) as e:
         shutil.rmtree(dest, ignore_errors=True)  # a half-unpacked folder is never reused
         kind = "unsafe" if isinstance(e, UnsafeArchiveError) else "other"
-        art.failure = retry.Failure(art.filename, host, 1, 0.0, kind, str(e)[:300]).as_dict()
+        why = str(e)[:300] + space_hint(str(e), work)
+        art.failure = retry.Failure(art.filename, host, 1, 0.0, kind, why).as_dict()
         return None
     art.failure = None
     art.local = dest
     return dest
+
+
+def discard_artifact(art: Artifact, work: Path) -> None:
+    """(0.14.1, #22) Delete an archive and its unpacked copy once nothing reads them any
+    more, so a scan keeps a few in the temp folder at a
+    time instead of all of them (one real integration peaked at 354 MB)."""
+    dl = work / "dists"
+    key = (art.sha256 or re.sub(r"[^A-Za-z0-9]", "_", art.filename))[:32]
+    archive = dl / f"{key}-{re.sub(r'[^A-Za-z0-9._-]', '_', art.filename)}"
+    shutil.rmtree(dl / f"{key}.d", ignore_errors=True)
+    archive.unlink(missing_ok=True)
+    art.local = None
 
 
 def static_requires(sdist_dir: Path) -> list[str]:
@@ -303,7 +318,7 @@ def run(target: Target, work: Path, env: HAEnv | None) -> tuple[AnalyzerResult, 
                 key = (culprit.name, culprit.reason)
                 culprits.setdefault(key, (culprit, set()))[1].add(plat)
                 continue
-            # sdist only: fetch it (never build) for GuardDog, and resolve what it declares.
+            # sdist only: fetch it (never build) and resolve what it declares.
             pinned = next((r.pinned for r in plain if r.name == culprit.name), None)
             got = _pypi_sdist(culprit.name, culprit.version or pinned)
             if got is None:

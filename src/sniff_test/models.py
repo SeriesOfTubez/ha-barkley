@@ -45,8 +45,11 @@ class Tag(StrEnum):
     INBOUND = "inbound"  # weighted up under --exposure public
     POSSIBLE = "possible"  # heuristic correlation, not a proven path
     MALWARE = "malware"  # known-malicious package / payload pattern
-    # (0.14.0) in a test file no runtime module imports: HA never loads it. A label only;
-    # the finding stays and scores as before (hostile code can hide in tests too).
+    # (0.14.0) in a test file no runtime module imports: HA never loads it. The finding
+    # stays in the stored report and the capability score. (0.15, his decision 2026-11-21)
+    # It doesn't count toward Threat or Exposure and isn't listed under "What it can do":
+    # the panel lists it apart, as a test script Home Assistant never loads. Not set when
+    # a computed import could load the file (scanner.loadable_tests).
     TEST_CODE = "test-code"
 
 
@@ -71,6 +74,20 @@ class Advisory:
     details: str = ""
     fixed: str | None = None  # first fixed version above ours; "" = OSV lists none; None = unknown
     aliases: tuple[str, ...] = ()  # e.g. the CVE id of a GHSA advisory
+    # (0.14.1) CISA's SSVC decision points from the CVE record (osv.ssvc), "" when unknown:
+    # exploitation none | poc | active; automatable yes | no; impact partial | total;
+    # kev: the CVE is in CISA's Known Exploited Vulnerabilities catalog
+    exploitation: str = ""
+    automatable: str = ""
+    impact: str = ""
+    kev: bool = False
+
+    @property
+    def worst_case(self) -> bool:
+        """Exploited in the wild (SSVC active, or listed in KEV: SSVC's exploitation
+        field lags), automatable, total technical impact."""
+        exploited = self.exploitation == "active" or self.kev
+        return exploited and self.automatable == "yes" and self.impact == "total"
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +190,12 @@ class Finding:
     addresses: tuple[str, ...] = ()
     # (0.14.0) report/fingerprint.py: stays the same while the flagged code does
     fingerprint: str | None = None
+    # (0.15) ha-unauth-view: the address the page answers on, as the code writes it ("" when
+    # it's built while the app runs; None when not looked up). Untrusted text (py_pages.py)
+    page: str | None = None
+    # (0.15) ha-unauth-view: the first lines of the view class's docstring, the developer's
+    # own description of the page. Untrusted text; shown as theirs, never beside a threat.
+    page_note: str | None = None
 
     @property
     def id(self) -> str:
@@ -277,3 +300,6 @@ class Target:
     # count of the release file HACS installs (None: installed from the source)
     stars: int | None = None
     downloads: int | None = None
+    # (0.15) GitHub's verdict on the scanned commit's signature (fetch/github.signature_state):
+    # {"state": github | developer | unsigned | unverified, "reason"?}; None for local scans
+    signature: dict[str, str] | None = None
