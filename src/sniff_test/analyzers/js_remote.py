@@ -155,7 +155,7 @@ def _path_parts(host: str, path: str) -> tuple[str | None] | None:
     if host == "raw.githubusercontent.com":  # <owner>/<repo>/<ref>/<file>
         ok = len(segs) >= 4 and Path(segs[-1]).suffix.lower() in _JS
         return (segs[2],) if ok else None
-    if host.endswith("jsdelivr.net"):
+    if host in ("cdn.jsdelivr.net", "fastly.jsdelivr.net"):  # its two names in CDN_HOSTS
         if not segs or segs[0] not in ("npm", "gh"):
             return None
         if segs[0] == "gh":  # gh/<owner>/<repo>[@ref]/<file>
