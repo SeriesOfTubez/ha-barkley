@@ -3560,6 +3560,8 @@ class Panel:
                             print(f"pasted Home Assistant token refused: {ex}", file=sys.stderr)
                             return self._redirect(f"{self._base()}{page}bad=hatoken")
                         print("Home Assistant token: pasted in the panel", file=sys.stderr)
+                        if panel.watcher is not None:  # auto-sniff subscribes now
+                            panel.watcher.retry_now()
                         if panel.login is not None:
                             panel.login.release(self._sid())
                         return self._redirect(f"{self._base()}{page}saved=1")

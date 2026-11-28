@@ -595,6 +595,8 @@ def _serve(args: argparse.Namespace, out: Console, err: Console) -> int:
                 period = settings_mod.load(store, start).token_days
                 tok, name = ha_token.create(access, period)
                 ha_token.adopt(store, tok, "created", name)
+                if watcher is not None:  # auto-sniff subscribes now, not at its next retry
+                    watcher.retry_now()
 
             login_cfg.token_fn = make_token
             # A held first login is revoked on shutdown: docker stop sends SIGTERM, which

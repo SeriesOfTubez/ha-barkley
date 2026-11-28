@@ -426,6 +426,10 @@ class Watcher:
         self.notify_bell = store.setting("notify_bell") != "off"
         self.mode = "not started"
         self.error = ""
+        # (0.15) standalone: set when Barkley gets its Home Assistant token, so a
+        # subscription that failed for want of one is tried again now, not up to `poll`
+        # seconds later (retry_now)
+        self.wake = threading.Event()
         self.since = 0.0
         self.last_check = 0.0
         self.last_sweep = 0.0
@@ -536,6 +540,10 @@ class Watcher:
             "polling": f"Barkley reads the installed list on a timer{since}",
             "not started": f"Barkley isn't listening for Marketplace events yet{since}",
         }
+        if self.error == supervisor.NOT_SET_UP:  # standalone, before the first-time setup
+            how["polling (no subscription)"] = (
+                "Auto-sniff starts once Barkley has its own Home Assistant token"
+            )
         bits.append(how.get(self.mode, f"Barkley is {self.mode}{since}"))
         if self.last_event:
             bits.append(f"Last Marketplace event: {self.last_event}")
@@ -549,7 +557,7 @@ class Watcher:
                 f"Since it started, it checked the advisories of {n} scan{'s' * (n != 1)} "
                 f"again, and {self.recheck_changes} had changed"
             )
-        if self.error:
+        if self.error and self.error != supervisor.NOT_SET_UP:
             bits.append(f"Last error: {self.error[:200]}")
         where = [w for w, on in (("the bell", self.notify_bell),
                                  (f"notify.{self.notify_target}", bool(self.notify_target)))
@@ -562,6 +570,20 @@ class Watcher:
         return not self.error, ". ".join(bits)
 
     # --- the thread --------------------------------------------------------------------
+
+    def retry_now(self) -> None:
+        """Barkley has a new Home Assistant token: subscribe again without waiting."""
+        self.wake.set()
+
+    def _pause(self, seconds: float) -> bool:
+        """Wait `seconds`, or less if retry_now() is called. True when it was."""
+        if self.sleep_fn is time.sleep:
+            self.wake.wait(seconds)
+        else:  # tests pass their own sleep
+            self.sleep_fn(seconds)
+        woke = self.wake.is_set()
+        self.wake.clear()
+        return woke
 
     def start(self) -> threading.Thread:
         self._thread = threading.Thread(target=self.run_forever, name="auto-sniff", daemon=True)
@@ -607,7 +629,8 @@ class Watcher:
         else:
             self.mode = "polling"
         if sub is None:
-            self.sleep_fn(min(wait, self.poll))
+            if self._pause(min(wait, self.poll)):
+                return _RECONNECT  # a new token: subscribe now, and back off from the start
             self.tick()
             return min(wait * 2, self.poll)
         try:

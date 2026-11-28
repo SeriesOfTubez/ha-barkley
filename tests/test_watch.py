@@ -583,3 +583,27 @@ def test_disabled_sends_nothing_but_still_sniffs_and_lists(ctx, capsys):
     assert "Notifications are disabled" in w.diagnostics()[1]
     again = watch.Watcher(store, worker, fakes.installed, notify_target="mobile_app_phone")
     assert again.channels() == "disabled"  # the panel's choice wins over the option
+
+
+def test_before_the_first_time_setup_auto_sniff_says_it_waits_for_the_token(ctx):
+    _store, _worker, _fakes, w = ctx
+    w.mode, w.error = "polling (no subscription)", supervisor.NOT_SET_UP
+    ok, line = w.diagnostics()
+    assert not ok and "starts once Barkley has its own Home Assistant token" in line
+    assert "Last error" not in line and "couldn't subscribe" not in line
+
+
+def test_a_new_token_wakes_a_failed_subscription_at_once(tmp_path):
+    """(0.15, his report) after Create token, Settings still showed "no token yet" for up
+    to 10 minutes: the retry waited out its backoff. The token now wakes it."""
+    import time
+
+    def no_token():
+        raise SupervisorError(supervisor.NOT_SET_UP)
+
+    w = watch.Watcher(Store(tmp_path / "s.db"), None, lambda: ([], []), subscribe_fn=no_token)
+    threading.Timer(0.2, w.retry_now).start()
+    started = time.monotonic()
+    assert w._round(600) == watch._RECONNECT  # woken: back off from the start
+    assert time.monotonic() - started < 5
+    assert w.mode == "polling (no subscription)" and not w.wake.is_set()
