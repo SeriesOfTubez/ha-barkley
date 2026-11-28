@@ -15,7 +15,7 @@
 # runs the scanner directly.
 services:
   barkley:
-    image: ghcr.io/seriesoftubez/barkley:0.14.0
+    image: ghcr.io/seriesoftubez/barkley:0.15.0
     entrypoint: ["sniff-test"]
     command: ["serve"]
     restart: unless-stopped
