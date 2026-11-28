@@ -1209,7 +1209,7 @@ def render_grid(base: str, cards: list[Card], v: View | None = None, lead: str =
     else:
         body = '<div class="grid">' + "".join(card_html(base, c) for c in window) + "</div>"
     legend = (
-        '<details class="legend-d"><summary>What the readings and colours mean</summary>'
+        '<details class="legend-d"><summary>What the readings and colors mean</summary>'
         '<p class="small">Threat counts only signs of malicious behavior: none found, '
         "possible, or found. Exposure, from 0 to 10, counts what lets someone who isn't an "
         "administrator in: pages that skip Home Assistant's login, login tokens it may hand "

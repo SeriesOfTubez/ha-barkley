@@ -13,11 +13,15 @@ answer differently.
 To make them again:
 
     for f in evil_integration evil_card hidden_card clean_integration clean_integration_v2 oauth_redirects petal_garden; do
-      uv run sniff-test scan tests/fixtures/$f --json --offline -o /tmp/reports/$f.json
+      uv run sniff-test scan tests/fixtures/$f --json --ha-version 2026.11.2 -o /tmp/reports/$f.json
     done
     uv run --with playwright python scripts/doc_shots.py --reports /tmp/reports \
       --answers docs/screenshots/ai-answers.json --out /tmp/doc-shots --shots
     # then copy the chosen PNGs into docs/images/
+
+Don't add `--offline`: it skips the dependency checks, so every app with requirements
+shows as Unfinished. The dependency checks ask PyPI about the test apps' made-up
+requirements. Without Chrome, pass Playwright's own browser with `--chromium`.
 
 `disclosure-light.png` and `disclosure-dark.png` are in An app's page and on the
 disclosure.yaml spec page on the website. They show the made-up Petal Garden
