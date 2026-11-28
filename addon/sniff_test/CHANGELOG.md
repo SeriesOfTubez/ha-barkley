@@ -107,7 +107,7 @@ update the list offers one button to sniff your apps again.
 
 **What it touches: a picture of the app in your home**
 
-- At the top of an app's page. Inside your Home Assistant are seven rooms, the same
+- On each app's scan report. Inside your Home Assistant are seven rooms, the same
   for every app: users and logins, other apps' settings, devices and entities, files,
   programs and the system, your home network, and your browser session. A room is
   blue when the app reaches into it beyond its own job, and dashed when Barkley saw it
