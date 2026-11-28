@@ -2,9 +2,9 @@
 
 ## What you need
 
-- Home Assistant OS or Supervised (Barkley is an app, so it needs the Supervisor), on
-  amd64 or aarch64. With Home Assistant Container or Core, or to run Barkley on another
-  machine than a small box, see [Standalone (no Supervisor)](Standalone.md).
+- Home Assistant OS (Barkley is an app, and only Home Assistant OS has apps), on amd64
+  or aarch64. With Home Assistant Container, or to run Barkley on another machine than a
+  small box, see [Standalone (no Supervisor)](Standalone.md).
 - About 200 MB for the download. Most scans use under 0.5 GB of memory, a few big apps
   far more; by default Barkley won't start a scan with under 1 GB free. See
   [Diagnostics and troubleshooting](Diagnostics-and-troubleshooting.md) for the memory guard.

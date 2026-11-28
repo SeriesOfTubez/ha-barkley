@@ -14,7 +14,7 @@ Barkley reads the code of Home Assistant Marketplace (formerly HACS) custom inte
 
 **Getting started**
 - [Installing and updating](Installing-and-updating.md)
-- [Standalone (no Supervisor)](Standalone.md): Home Assistant Container or Core, or Barkley on
+- [Standalone (no Supervisor)](Standalone.md): Home Assistant Container, or Barkley on
   another machine
 - [The list](The-list.md): what you see when you open Barkley
 - [An app's page](An-apps-page.md): the sniff report, with the two readings and everything

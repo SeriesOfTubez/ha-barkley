@@ -1,4 +1,4 @@
-# Barkley without the Supervisor: next to Home Assistant Container or Core, or on another
+# Barkley without the Supervisor: next to Home Assistant Container, or on another
 # machine than Home Assistant (a NAS, a PC) to keep scans off a small box.
 # Step by step: docs/Standalone.md, also at https://ha-barkley.github.io/docs/standalone/
 #

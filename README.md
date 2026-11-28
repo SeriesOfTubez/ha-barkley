@@ -132,7 +132,7 @@ and the AI features work, and what the app is allowed to do.
 
 ## Install on Home Assistant
 
-Barkley runs as an app (add-on), so it needs Home Assistant OS or Supervised.
+Barkley runs as an app (add-on), so it needs Home Assistant OS.
 
 1. Settings → Apps → the app store → ⋮ → Repositories, and add
    `https://github.com/SeriesOfTubez/ha-barkley`.
@@ -143,7 +143,7 @@ need under 0.5 GB of memory. Across the 6,753 Marketplace apps Barkley scanned i
 November 2026, 99 in 100 needed under 1 GB, 18 needed more than 1.5 GB, and the biggest
 about 8.5 GB.
 
-**Home Assistant Container or Core, or a small box?** The same image runs as a container
+**Home Assistant Container, or a small box?** The same image runs as a container
 next to Home Assistant or on another machine, with a login through Home Assistant:
 [`standalone/compose.yaml`](standalone/compose.yaml) and the docs page
 [Standalone (no Supervisor)](docs/Standalone.md).
